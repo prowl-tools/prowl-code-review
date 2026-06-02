@@ -24,10 +24,12 @@ It exists because commercial reviewers (CodeRabbit, Greptile) resell LLM inferen
 
 These are first-class, not polish. Stripping them yields a tool no better than what already exists.
 
-1. **Agentic cross-file context** — the #1 lever. Catches broken callers, contract/interface violations, inconsistent patterns. (backlog #4)
-2. **Multi-pass specialized review + judge/dedup** — parallel lenses (correctness/security/perf/tests) merged and de-duplicated by a judge pass into one clean result. (backlog #5)
-3. **Linter/SAST grounding** — ESLint/Ruff/Semgrep/Gitleaks fed in as signals to catch deterministic issues and curb hallucination. (backlog #11)
-4. **False-positive verification** — a skeptical second pass + confidence scoring + severity threshold, so output is high-signal. (backlog #7)
+1. **Agentic cross-file context** — the #1 lever. Catches broken callers, contract/interface violations, inconsistent patterns. (backlog: *Agentic cross-file context retrieval*)
+2. **Multi-pass specialized review + judge/dedup** — parallel lenses (correctness/security/perf/tests) merged and de-duplicated by a judge pass into one clean result. (backlog: *Multi-pass specialized review + judge/dedup*)
+3. **Linter/SAST grounding** — ESLint/Ruff/Semgrep/Gitleaks fed in as signals to catch deterministic issues and curb hallucination. (backlog: *Linter / SAST grounding*)
+4. **False-positive verification** — a skeptical second pass + confidence scoring + severity threshold, so output is high-signal. (backlog: *False-positive verification pass*)
+
+Cross-cutting parity work also tracked in the backlog: **multi-language** (tree-sitter; not JS/TS-only), a **quality eval harness** (precision/recall to prove parity), **review state persistence** (stateless-Action store underpinning incremental review + learnings), and **LLM resilience / per-PR budget cap**.
 
 ## Presentation Conventions (premium feel = free GitHub API features)
 

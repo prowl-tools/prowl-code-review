@@ -15,137 +15,191 @@ User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Ea
 
 2. **Multi-provider BYOK LLM abstraction + prompt caching**
    As a developer, I want to pick Claude, OpenAI, or Gemini via env vars with caching built in, so that I'm never vendor-locked and reviews stay cheap.
-   - Acceptance: `providers/` exposes one interface; selection via `PROWL_AI_PROVIDER` (default `anthropic`) + `PROWL_AI_KEY`, mirroring `prowl/src/generator/ai.ts`. Anthropic/OpenAI/Gemini implementations; sane default models (e.g. a stronger model for the judge, cheaper for specialist passes).
-   - Acceptance: **prompt caching** wired so stable content (system prompt, guidelines, fetched repo context, tool defs) is cached and only the diff is uncached; cache-aware token accounting. Target high cache-hit on re-reviews.
+   - Acceptance: `providers/` exposes one interface; selection via `PROWL_AI_PROVIDER` (default `anthropic`) + `PROWL_AI_KEY`, mirroring `prowl/src/generator/ai.ts`. Sane default models (stronger for the judge, cheaper for specialist passes).
+   - Acceptance: **prompt caching** wired so stable content (system prompt, guidelines, fetched repo context, tool defs) is cached and only the diff is uncached; cache-aware token accounting.
    - Acceptance: unit tests for provider selection, missing-key error, and cache-block construction (`fetch` mocked).
 
 3. **Diff fetch + parsing with size guards**
    As a developer, I want the tool to fetch a PR's diff and parse it into files/hunks/lines, so that reviews target real changed code and inline comments map to exact lines.
-   - Acceptance: `github/diff.ts` fetches PR diff + metadata via Octokit (`@actions/github`).
-   - Acceptance: `review/parse-diff.ts` maps hunks to `path` + new-side line numbers (and ranges) for later inline comments.
-   - Acceptance: config caps (`maxFiles`, `maxDiffBytes`) chunk/skip oversized diffs; skipped content is reported, never silently dropped.
+   - Acceptance: `github/diff.ts` fetches PR diff + metadata via Octokit; `review/parse-diff.ts` maps hunks to `path` + new-side line numbers/ranges.
+   - Acceptance: config caps (`maxFiles`, `maxDiffBytes`) chunk/skip oversized diffs; skipped content reported, never silently dropped.
 
 4. **Agentic cross-file context retrieval (the #1 bug-catching lever)**
-   As a reviewer, I want the agent to pull in the callers, callees, and related files of changed code on demand, so that it catches broken callers, contract/interface violations, and inconsistent patterns that diff-only review misses.
+   As a reviewer, I want the agent to pull in callers, callees, and related files of changed code on demand, so that it catches broken callers, contract/interface violations, and inconsistent patterns that diff-only review misses.
    - Acceptance: the review agent has **read-file + grep/search tools** over the checked-out repo and decides what to fetch (agentic retrieval) — **no vector DB / embeddings**.
-   - Acceptance: for each changed export/function, the agent can locate and read its callers and definition sites; fetched context is added to the (cached) prompt.
-   - Acceptance: bounded by config (max files/bytes fetched) and reported; works in the GitHub Action checkout and locally.
+   - Acceptance: for each changed export/function, the agent can locate and read its callers/definition sites; fetched context added to the (cached) prompt; bounded by config and reported.
 
-5. **Multi-pass specialized review + judge/dedup pass**
+5. **Multi-language support**
+   As a developer on any stack, I want context retrieval and linting to work beyond JS/TS, so that `prowl-review` is a real CodeRabbit replacement (and covers the Prowl suite's Python/YAML too).
+   - Acceptance: language-agnostic parsing via tree-sitter grammars (TS/JS, Python, Go, Ruby, Java, etc.) feeding caller/definition lookup for #4.
+   - Acceptance: per-language linter auto-selection in grounding (#14); graceful degradation for unsupported languages (still reviews via the LLM, just without AST-assisted context).
+
+6. **Multi-pass specialized review + judge/dedup pass**
    As a reviewer, I want several focused passes (correctness, security, performance, tests) merged by a judge, so that diverse lenses catch more and a single clean result is produced.
    - Acceptance: N specialist passes run in parallel, each with a tightly-scoped prompt; configurable set.
-   - Acceptance: a **judge pass** dedups (hash of file+line+category), re-categorizes, drops nitpicks/speculation, and ranks by severity — producing one consolidated finding list.
-   - Acceptance: shared context written once and referenced by passes (avoid N× token blow-up); unit tests for dedup/merge.
+   - Acceptance: a **judge pass** dedups (hash of file+line+category), re-categorizes, drops nitpicks/speculation, ranks by severity; shared context written once and referenced (avoid N× token blow-up). Unit tests for dedup/merge.
 
-6. **Findings schema (severity + confidence) + review prompts**
+7. **Findings schema (severity + confidence) + review prompts**
    As a developer, I want structured, severity- and confidence-tagged findings, so that output is consistent, filterable, and machine-mappable to comments.
    - Acceptance: Zod schema — `file`, `line`/range, `severity` (Critical/Major/Minor/Trivial/Info), `confidence` (0–1), `category`, `title`, `body`, optional `suggestion`.
    - Acceptance: specialist + judge prompts in `review/prompt.ts`, built from diff + fetched context; providers return validated findings (retry on malformed).
 
-7. **False-positive verification pass**
+8. **False-positive verification pass**
    As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
-   - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them.
-   - Acceptance: severity threshold + dedup applied before posting; counts of dropped/false-positive findings logged.
+   - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them; severity threshold + dedup applied before posting; counts of dropped findings logged.
 
-8. **Structured walkthrough summary (presentation)**
+9. **Structured walkthrough summary (presentation)**
    As a reviewer, I want a clean PR walkthrough comment, so that the review reads premium instead of a text wall.
-   - Acceptance: one summary body with: plain-language summary, **Impact + estimated-effort** badges, a grouped/layered changed-files overview, and severity counts (🔴/🟠/🟡 …).
+   - Acceptance: one summary body with plain-language summary, **Impact + estimated-effort** badges, grouped/layered changed-files overview, and severity counts.
    - Acceptance: optional **Mermaid** sequence/flow diagram when the PR affects a clear flow (feature-flagged; degrade gracefully).
 
-9. **Inline comments with committable suggestions (presentation)**
-   As a reviewer, I want findings posted inline on exact lines with one-click fixes, so that it feels like CodeRabbit/Greptile and I can apply fixes instantly.
-   - Acceptance: a **single cohesive review** (`POST .../pulls/{n}/reviews`) with summary body + `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
-   - Acceptance: each finding renders a **severity badge** + a committable ```suggestion``` block when a safe fix exists; findings outside the diff fall back to the summary.
+10. **Inline comments with committable suggestions (presentation)**
+    As a reviewer, I want findings posted inline on exact lines with one-click fixes, so that it feels like CodeRabbit/Greptile and I can apply fixes instantly.
+    - Acceptance: a **single cohesive review** (`POST .../pulls/{n}/reviews`) with summary body + `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
+    - Acceptance: each finding renders a **severity badge** + a committable GitHub `suggestion` block when a safe fix exists; findings outside the diff fall back to the summary.
 
-10. **GitHub Action wrapper + dogfood**
+11. **GitHub Action wrapper + dogfood**
     As a developer, I want a drop-in Action, so that adding one workflow file + an API-key secret enables premium reviews on any repo with no hosting.
     - Acceptance: `action.yml` (Node action) triggers on `pull_request` [opened, synchronize, ready_for_review, reopened]; runs the full pipeline.
     - Acceptance: declares `permissions: pull-requests: write, checks: write, contents: read`; uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
     - Acceptance: dogfooded on a real code repo (e.g. `prowl`) — a PR with a deliberate cross-file bug surfaces it inline with a suggestion.
 
+12. **Review state persistence strategy**
+    As a maintainer, I want a defined place to persist per-PR state in a stateless Action, so that incremental review, update-not-duplicate, and learnings actually work.
+    - Acceptance: decide and implement a store for last-reviewed SHA, already-posted findings, and learnings (e.g. a hidden marker comment and/or a `.prowl-review/` artifact); documented and reused by #18/#19/#26.
+
+13. **Quality eval harness**
+    As a maintainer, I want to score the reviewer against a fixed benchmark of PRs-with-known-bugs, so that I can tune prompts/passes and *prove* parity with CodeRabbit/Greptile instead of guessing.
+    - Acceptance: a curated benchmark set (seeded real bugs + clean PRs) and a runner that computes precision/recall/F1 and false-positive rate.
+    - Acceptance: results are reproducible per prompt/model version; regressions are visible before release.
+
 ## Medium Priority
 
-11. **Linter / SAST grounding**
+14. **Linter / SAST grounding**
     As a reviewer, I want deterministic linter/SAST findings fed into the review, so that mechanical issues are caught and the LLM hallucinates less.
-    - Acceptance: run available linters on changed files in parallel (ESLint, Ruff, Semgrep, Gitleaks — auto-selected by language), normalize to the findings schema.
-    - Acceptance: results injected into the prompt as grounding signals; LLM reconciles (confirm/dismiss) rather than re-discovering them.
+    - Acceptance: run available linters on changed files in parallel (ESLint, Ruff, Semgrep, Gitleaks — auto-selected by language per #5), normalize to the findings schema, inject as grounding signals; LLM reconciles rather than re-discovers.
 
-12. **Update-not-duplicate + resolve outdated threads**
+15. **LLM resilience: retry/backoff + partial-failure handling**
+    As a developer, I want reviews to survive provider hiccups, so that a transient 429 or one failed pass doesn't kill the whole review.
+    - Acceptance: exponential backoff + jitter on 429/5xx; a failed specialist pass degrades gracefully (judge proceeds with the rest) and is reported.
+
+16. **Per-PR budget cap**
+    As a developer, I want a max-spend ceiling per review, so that a huge PR can't quietly cost me real money.
+    - Acceptance: configurable token/cost cap; when exceeded, the tool trims scope (or posts a "review truncated — raise the cap" note) instead of running unbounded.
+
+17. **Default ignore list**
+    As a developer, I want generated/vendored files ignored by default, so that reviews aren't noisy or expensive.
+    - Acceptance: sensible built-in ignores (lockfiles, `dist/`/`build/`, snapshots, `node_modules`, vendored dirs), overridable via config.
+
+18. **Fork-PR handling / security model**
+    As an OSS maintainer, I want defined behavior on fork PRs, so that the tool degrades safely when secrets and write tokens aren't available.
+    - Acceptance: detect fork PRs (read-only token / no `PROWL_AI_KEY`); fall back to a documented mode (e.g. summary-only via `pull_request_target` guidance, or skip with a clear message). No secret leakage to fork code.
+
+19. **Update-not-duplicate + resolve outdated threads**
     As a developer, I want re-runs to update the existing review instead of stacking new ones, so that the PR stays clean across pushes.
-    - Acceptance: find the bot's prior review/summary by author and PATCH it; post only net-new inline findings.
-    - Acceptance: mark fixed/outdated inline threads resolved via GraphQL `resolveReviewThread`.
+    - Acceptance: find the bot's prior review/summary by author and PATCH it; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
 
-13. **Incremental re-review on new commits**
+20. **Incremental re-review on new commits**
     As a developer, I want pushes to an open PR to review only the new changes without repeating prior findings, so that re-reviews are fast and cheap.
-    - Acceptance: on `synchronize`, review only the delta since the last reviewed SHA (persisted via marker comment or check); previously-posted findings are not repeated.
+    - Acceptance: on `synchronize`, review only the delta since the last reviewed SHA (from #12); previously-posted findings not repeated.
 
-14. **Check run / merge gate**
+21. **Check run / merge gate**
     As an org owner, I want a pass/fail status check with line annotations, so that critical findings can block merge.
     - Acceptance: create a Check Run (Checks API) with `conclusion` from severity (e.g. Critical → failure) + summary + up to 50 annotations/batch; configurable gating.
 
-15. **`@prowl-review` chat replies**
+22. **Bot command set**
+    As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
+    - Acceptance: support `review` / `full review` (manual + full re-scan), `pause`/`resume`, `ignore`, `resolve`, `configure` via `@prowl-review <cmd>` comments.
+
+23. **`@prowl-review` chat replies**
     As a developer, I want to mention the bot in a PR comment and get a contextual, in-thread reply, so that I can ask follow-ups.
     - Acceptance: `respond` command + Action triggers on `issue_comment` / `pull_request_review_comment` containing `@prowl-review`; reply threads correctly with PR/diff context.
 
-16. **`.prowl-review.yml` config + `init` command**
-    As a developer, I want a per-repo config, so that I can tune providers/models, specialist passes, severity threshold, path filters, risk-tiering, tone, and ignore globs.
+24. **Draft-PR & auto-review controls**
+    As a developer, I want control over when reviews fire, so that drafts are my buffer (you raised this directly).
+    - Acceptance: skip drafts until "ready for review" by default; config toggle for auto-review vs. on-demand (`@prowl-review review`) only.
+
+25. **`.prowl-review.yml` config + `init` command**
+    As a developer, I want a per-repo config, so that I can tune providers/models, specialist passes, severity threshold, path filters/instructions, risk-tiering, tone, and ignore globs.
     - Acceptance: Zod-validated loader (style of `prowl/src/config/schema.ts`); documented defaults; `prowl-review init` scaffolds a commented config.
 
-17. **Risk-tiered orchestration (cost control)**
-    As a developer, I want small diffs to run fewer passes and large/complex ones to run more, so that cost scales with risk.
-    - Acceptance: pass-count/model tier selected from diff size/complexity (config-overridable); the chosen tier and est. cost are logged.
-
-18. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
+26. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
-    - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` (what to check) and a `LEARNED_PATTERNS.md` (known false positives / must-catch patterns) into the prompt.
-    - Acceptance: a documented feedback path (e.g. 👎 reaction or `@prowl-review ignore`) appends to the learned-patterns file.
+    - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` and a `LEARNED_PATTERNS.md` into the prompt; a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to learned-patterns (persisted per #12).
 
-19. **Local pre-push CLI mode**
+27. **Risk-tiered orchestration (cost control)**
+    As a developer, I want small diffs to run fewer passes and large/complex ones more, so that cost scales with risk.
+    - Acceptance: pass-count/model tier selected from diff size/complexity (config-overridable); chosen tier + est. cost logged.
+
+28. **Issue/ticket validation**
+    As a developer, I want the reviewer to check whether the PR satisfies its linked issue, so that scope gaps are caught early.
+    - Acceptance: when a PR links a GitHub issue (and optionally Linear/Jira), pull the issue's acceptance criteria into the review and flag unmet/missing requirements.
+
+29. **Finishing touches: PR description / docstring / test generation**
+    As a developer, I want the reviewer to draft the PR description and offer docstrings/unit tests, so that I get CodeRabbit-style assists.
+    - Acceptance: auto-generate/update a PR description from the diff (opt-in); commands to generate docstrings and unit-test stubs for changed code.
+
+30. **Dependency-CVE / license scanning**
+    As a security-conscious developer, I want changed dependencies checked for known CVEs and license issues, so that risky deps are flagged in review.
+    - Acceptance: detect dependency-manifest changes; surface known-vuln advisories and license-policy violations as findings.
+
+31. **Local pre-push CLI mode**
     As a developer, I want to run the same reviewer locally against a branch/diff before pushing, so that I get two layers of review with no extra tooling.
     - Acceptance: `prowl-review review --base <ref> --head <ref>` prints findings (severity, file:line, suggestion) to the terminal without GitHub.
 
-20. **Token-usage + cost logging**
+32. **Token-usage + cost logging**
     As a developer, I want per-review token/cost output (incl. cache hits), so that I can confirm I'm paying cents and there's no per-hour cap.
     - Acceptance: logs input/output/cached tokens and estimated cost per provider per run.
 
-21. **Reusable org-level workflow**
+33. **Reusable org-level workflow**
     As an org owner, I want one reusable workflow referenced by all repos, so that "across all my projects" needs no YAML copy-paste.
     - Acceptance: documented `workflow_call` workflow (intended for `Prowl-qa/.github`) that any repo invokes in a few lines.
 
-22. **Document the auth policy (BYOK default; Codex the only subscription exception)**
+34. **Document the auth policy (BYOK default; Codex the only subscription exception)**
     As a user, I want clear docs on how `prowl-review` authenticates to each provider, so that I understand the cost model and avoid TOS/account-ban risk.
     - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store/proxy keys.
-    - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see item 27) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
+    - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see the Codex-subscription backend item) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
 
 ## Low Priority
 
-23. **Suggested-fix validation**
+35. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
-    - Acceptance: only generate ```suggestion``` for high-confidence findings; optionally apply-and-typecheck/lint the fix in a sandbox before including it.
+    - Acceptance: only generate `suggestion` blocks for high-confidence findings; optionally apply-and-typecheck/lint the fix in a sandbox before including it.
 
-24. **npm + Homebrew distribution**
+36. **Data-privacy positioning**
+    As a privacy-conscious user, I want it documented that my code only ever goes to my own provider, so that I trust the tool over hosted SaaS.
+    - Acceptance: doc + landing point — BYOK means we never see/store code or keys; inference goes directly from the user's runner to the user's chosen provider.
+
+37. **Repo hygiene & demo**
+    As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
+    - Acceptance: `CONTRIBUTING.md`, `SECURITY.md`, an example/demo repo, a demo GIF/screenshots, and a documented telemetry-opt-in (default off) policy.
+
+38. **npm + Homebrew distribution**
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
     - Acceptance: published `prowl-review` npm package; `Formula/prowl-review.rb` added to `homebrew-tap` (pulls npm tarball, Apache-2.0, node@20).
 
-25. **Docs + marketing integration**
+39. **Docs + marketing integration**
     As a prospective user, I want docs and a landing section, so that I can discover and set up the tool.
     - Acceptance: `docs/code-review.md` + sidebar entry in `prowl-docs`; a code-review section + install snippet in `prowl-web`; raccoon/brand conventions; "made for agents, controlled by humans" framing.
 
-26. **Retire/replace baseline Anthropic workflows**
+40. **Retire/replace baseline Anthropic workflows**
     As a maintainer, I want to remove the placeholder `claude-code-action` workflows once `prowl-review` reaches parity, so that the repo dogfoods its own tool.
-    - Acceptance: replace `.github/workflows/claude-code-review.yml` after inline reviews (item 9) land; revisit `claude.yml` after `@prowl-review` chat (item 15) lands.
+    - Acceptance: replace `.github/workflows/claude-code-review.yml` after inline reviews land; revisit `claude.yml` after `@prowl-review` chat lands.
 
-27. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
+41. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
     As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
-    - Acceptance: **OpenAI/Codex only.** A documented feature, **off by default**, enabled via an explicit config flag.
-    - Acceptance: docs flag it as relying on Codex's subscription auth, against OpenAI's reverse-engineering clause, tolerated-but-not-sanctioned, and liable to break/trigger enforcement; not recommended as the default for automated org-wide CI.
+    - Acceptance: **OpenAI/Codex only.** Documented, **off by default**, enabled via an explicit flag; flagged as relying on Codex's subscription auth, against OpenAI's reverse-engineering clause, tolerated-but-not-sanctioned, liable to break/trigger enforcement; not recommended for automated org-wide CI.
     - Acceptance: **isolated behind the provider abstraction** so it can be removed cleanly if OpenAI blocks it; never the default; no equivalent path for Claude/Gemini.
 
-28. **Phase 2 — Hosted GitHub App (install-once)**
+42. **SCM breadth (GitLab / Bitbucket) — deferred to post-v1**
+    As a non-GitHub user, I want the reviewer to work on GitLab/Bitbucket eventually, so that the tool isn't GitHub-locked.
+    - Acceptance: explicitly **deferred** — recorded as a conscious post-v1 decision; revisit after the GitHub Action path is proven. Provider/SCM seams kept clean enough not to preclude it.
+
+43. **Phase 2 — Hosted GitHub App (install-once)**
     As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
     - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Deferred until the Action path is proven.
 
-29. **Watch & adopt delegated-API OAuth if a provider ships it**
+44. **Watch & adopt delegated-API OAuth if a provider ships it**
     As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
     - Acceptance: tracking note records that no provider offers delegated-API OAuth as of 2026-06 (OpenAI "Sign in with ChatGPT" = identity only).
     - Acceptance: when a real authorization-code flow yielding delegated API access (billed to the user's own account) ships, add it as a first-class auth option behind the provider abstraction.
