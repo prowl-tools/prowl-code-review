@@ -74,6 +74,12 @@ User stories use: **As a `<role>`, I want `<capability>`, so that `<value>`.** E
     As an org owner, I want one reusable workflow referenced by all repos, so that "across all my projects" needs no YAML copy-paste.
     - Acceptance: documented `workflow_call` workflow (intended for `Prowl-qa/.github`) that any repo invokes in a few lines.
 
+18. **Document the auth policy (BYOK default; Codex the only subscription exception)**
+    As a user, I want clear docs on how `prowl-review` authenticates to each provider, so that I understand the cost model and avoid TOS/account-ban risk.
+    - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store or proxy keys.
+    - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see item 19) and is **not** offered for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent).
+    - Acceptance: explain *why* (TOS + documented account suspensions) so users aren't surprised.
+
 ## Low Priority
 
 14. **npm + Homebrew distribution**
@@ -91,5 +97,16 @@ User stories use: **As a `<role>`, I want `<capability>`, so that `<value>`.** E
 17. **Phase 2 — Hosted GitHub App (install-once)**
     As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
     - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Build deferred until Action path is proven.
+
+19. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
+    As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
+    - Acceptance: **OpenAI/Codex only.** A documented feature, **off by default**, enabled via an explicit config flag.
+    - Acceptance: docs clearly flag it as relying on Codex's subscription auth, against OpenAI's reverse-engineering clause, tolerated-but-not-formally-sanctioned, and liable to break or trigger enforcement; not recommended as the default for automated org-wide CI.
+    - Acceptance: **isolated behind the provider abstraction** so it can be removed cleanly if OpenAI blocks it; never the default; no equivalent path offered for Claude/Gemini.
+
+20. **Watch & adopt delegated-API OAuth if a provider ships it**
+    As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
+    - Acceptance: tracking note records that no provider offers delegated-API OAuth as of 2026-06 (OpenAI "Sign in with ChatGPT" = identity only).
+    - Acceptance: when a real authorization-code flow yielding delegated API access (billed to the user's own account) ships, add it as a first-class auth option behind the provider abstraction.
 
 ## Completed
