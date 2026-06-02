@@ -13,11 +13,30 @@ It exists because commercial reviewers (CodeRabbit, Greptile) resell LLM inferen
 ## Core Principles
 
 1. **Free forever, BYOK.** We never resell inference or meter usage. Users supply `PROWL_AI_KEY`. No rate limits originate from us.
-2. **Provider-agnostic.** Multi-provider abstraction — Claude (default), OpenAI, Gemini — selected via `PROWL_AI_PROVIDER`. Reuse the pattern in `Prowl-qa/prowl` at `src/generator/ai.ts` (raw `fetch`, no heavy SDKs; consistent env-var names).
-3. **Diff-focused, cost-lean MVP.** Review the PR diff (with context), not the whole codebase. Deliberately skip whole-repo embedding/vector-DB indexing and N-pass multi-agent pipelines in the MVP — that is exactly where commercial tools' (and our) costs balloon. Keep per-review cost in the pennies.
-4. **No silent truncation.** When config caps (`maxFiles`/`maxDiffBytes`) skip content, report it in the review rather than dropping it silently.
-5. **Match `prowl`'s engineering.** Same toolchain and conventions so the suite stays cohesive (see below).
-6. **Made for agents, controlled by humans.** Suite-wide framing; the reviewer should be safe to run on agent-generated PRs without runaway cost.
+2. **Provider-agnostic, with caching.** Multi-provider abstraction — Claude (default), OpenAI, Gemini — selected via `PROWL_AI_PROVIDER`. Reuse the pattern in `Prowl-qa/prowl` at `src/generator/ai.ts` (raw `fetch`, no heavy SDKs; consistent env-var names). Use **prompt caching** for stable content (system prompt, guidelines, fetched repo context, tool defs); only the diff is uncached.
+3. **Quality-first, cost-managed — NOT diff-only.** A single-pass, diff-only review is exactly the Claude Code / Codex experience we're trying to beat; do not ship that. The bug-catching quality comes from the differentiators below. Manage cost not by stripping them out, but via **prompt caching** + **risk-tiered** orchestration (fewer passes on small diffs). Per-review stays in cents.
+4. **Whole-repo context via AGENTIC retrieval, never a vector DB.** Give the review agent grep/read tools to pull callers, callees, and related files on demand. This is cheaper and more accurate than embeddings/RAG (the modern agentic-reviewer consensus) and avoids the indexing infrastructure that balloons cost.
+5. **No silent truncation.** When caps (`maxFiles`/`maxDiffBytes`/context fetch limits) skip content, report it in the review rather than dropping it silently.
+6. **Match `prowl`'s engineering.** Same toolchain and conventions so the suite stays cohesive (see below).
+7. **Made for agents, controlled by humans.** Suite-wide framing; safe to run on agent-generated PRs without runaway cost.
+
+## The Differentiators (the reason to build, not just tune Claude Code's review)
+
+These are first-class, not polish. Stripping them yields a tool no better than what already exists.
+
+1. **Agentic cross-file context** — the #1 lever. Catches broken callers, contract/interface violations, inconsistent patterns. (backlog #4)
+2. **Multi-pass specialized review + judge/dedup** — parallel lenses (correctness/security/perf/tests) merged and de-duplicated by a judge pass into one clean result. (backlog #5)
+3. **Linter/SAST grounding** — ESLint/Ruff/Semgrep/Gitleaks fed in as signals to catch deterministic issues and curb hallucination. (backlog #11)
+4. **False-positive verification** — a skeptical second pass + confidence scoring + severity threshold, so output is high-signal. (backlog #7)
+
+## Presentation Conventions (premium feel = free GitHub API features)
+
+- **One cohesive review**, not scattered comments: a single `POST /pulls/{n}/reviews` with a summary `body` + `comments[]`.
+- **Walkthrough summary**: plain-language summary, Impact + estimated-effort badges, grouped/layered changed-files overview, severity counts; optional **Mermaid** diagram for clear flows.
+- **Inline findings** carry a **severity badge** (Critical/Major/Minor/Trivial/Info) + a committable ```suggestion``` block when a safe fix exists.
+- **Update, don't duplicate**: on re-run, PATCH the prior bot review and resolve outdated threads (GraphQL `resolveReviewThread`); review only the delta on `synchronize`.
+- **Optional merge gate** via the Checks API (`conclusion` from max severity + line annotations).
+- Action token needs: `pull-requests: write`, `checks: write`, `contents: read`.
 
 ## Stack & Conventions (mirror `Prowl-qa/prowl`)
 
