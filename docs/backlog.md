@@ -57,13 +57,13 @@ When an item is completed, move it to `## Completed` with `(completed: YYYY-MM-D
 
 10. **Inline comments with committable suggestions (presentation)**
     As a reviewer, I want findings posted inline on exact lines with one-click fixes, so that it feels like CodeRabbit/Greptile and I can apply fixes instantly.
-    - Acceptance: a **single cohesive review** (`POST .../pulls/{n}/reviews`) with summary body + `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
+    - Acceptance: a **single cohesive published review** (`POST .../pulls/{n}/reviews`) with `event: COMMENT` (or an explicit submit-review step), summary body, and `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
     - Acceptance: each finding renders a **severity badge** + a committable GitHub `suggestion` block when a safe fix exists; findings outside the diff fall back to the summary.
 
 11. **GitHub Action wrapper + dogfood**
     As a developer, I want a drop-in Action, so that adding one workflow file + an API-key secret enables premium reviews on any repo with no hosting.
     - Acceptance: `action.yml` defines the Node action metadata (`inputs`, `outputs`, and `runs`) and invokes the full pipeline.
-    - Acceptance: sample `.github/workflows/prowl-review.yml` triggers on `pull_request` [opened, synchronize, ready_for_review, reopened] and declares `permissions: pull-requests: write, checks: write, contents: read`; uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
+    - Acceptance: sample `.github/workflows/prowl-review.yml` triggers on `pull_request` [opened, synchronize, ready_for_review, reopened], declares `permissions: pull-requests: write, checks: write, contents: read`, checks out the repository with `actions/checkout` before invoking `prowl-review`, and uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
     - Acceptance: dogfooded on a real code repo (e.g. `prowl`) — a PR with a deliberate cross-file bug surfaces it inline with a suggestion.
 
 12. **Review state persistence strategy**
