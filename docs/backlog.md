@@ -113,7 +113,7 @@ When an item is completed, move it to `## Completed` with `(completed: YYYY-MM-D
 
 22. **Update-not-duplicate + resolve outdated threads**
     As a developer, I want re-runs to update the existing review instead of stacking new ones, so that the PR stays clean across pushes.
-    - Acceptance: find the bot's prior review/summary by author and update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
+    - Acceptance: find the prior prowl-review summary by a prowl-specific marker or stored review id (with author as a secondary check only), then update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
 
 23. **Incremental re-review on new commits**
     As a developer, I want pushes to an open PR to review only the new changes without repeating prior findings, so that re-reviews are fast and cheap.

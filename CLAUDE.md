@@ -36,7 +36,7 @@ Cross-cutting parity work also tracked in the backlog: **multi-language** (tree-
 - **One cohesive published review**, not scattered comments: a single `POST /pulls/{n}/reviews` with `event: COMMENT`, a summary `body`, and `comments[]` (or an explicit submit-review step after creating a pending review).
 - **Walkthrough summary**: plain-language summary, Impact + estimated-effort badges, grouped/layered changed-files overview, severity counts; optional **Mermaid** diagram for clear flows.
 - **Inline findings** carry a **severity badge** (Critical/Major/Minor/Trivial/Info) + a committable ```suggestion``` block when a safe fix exists.
-- **Update, don't duplicate**: on re-run, update the prior bot review summary via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation, then resolve outdated threads with GraphQL `resolveReviewThread`; review only the delta on `synchronize`.
+- **Update, don't duplicate**: on re-run, identify the prior prowl-review summary by a prowl-specific marker or stored review id (not author alone), update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation, then resolve outdated threads with GraphQL `resolveReviewThread`; review only the delta on `synchronize`.
 - **Optional merge gate** via the Checks API (`conclusion` from max severity + line annotations).
 - Sample workflow token needs: `pull-requests: write`, `checks: write`, `contents: read`.
 
