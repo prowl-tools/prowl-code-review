@@ -6,6 +6,8 @@ Prioritized list of planned features, improvements, and technical debt for **`pr
 
 User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Each carries acceptance criteria.
 
+When an item is completed, move it to `## Completed` with `(completed: YYYY-MM-DD)` so done work is recorded without losing history.
+
 ## High Priority
 
 1. **TypeScript package scaffold matching `prowl`**
@@ -60,8 +62,8 @@ User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Ea
 
 11. **GitHub Action wrapper + dogfood**
     As a developer, I want a drop-in Action, so that adding one workflow file + an API-key secret enables premium reviews on any repo with no hosting.
-    - Acceptance: `action.yml` (Node action) triggers on `pull_request` [opened, synchronize, ready_for_review, reopened]; runs the full pipeline.
-    - Acceptance: declares `permissions: pull-requests: write, checks: write, contents: read`; uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
+    - Acceptance: `action.yml` defines the Node action metadata (`inputs`, `outputs`, and `runs`) and invokes the full pipeline.
+    - Acceptance: sample `.github/workflows/prowl-review.yml` triggers on `pull_request` [opened, synchronize, ready_for_review, reopened] and declares `permissions: pull-requests: write, checks: write, contents: read`; uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
     - Acceptance: dogfooded on a real code repo (e.g. `prowl`) — a PR with a deliberate cross-file bug surfaces it inline with a suggestion.
 
 12. **Review state persistence strategy**
@@ -111,7 +113,7 @@ User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Ea
 
 22. **Update-not-duplicate + resolve outdated threads**
     As a developer, I want re-runs to update the existing review instead of stacking new ones, so that the PR stays clean across pushes.
-    - Acceptance: find the bot's prior review/summary by author and PATCH it; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
+    - Acceptance: find the bot's prior review/summary by author and update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
 
 23. **Incremental re-review on new commits**
     As a developer, I want pushes to an open PR to review only the new changes without repeating prior findings, so that re-reviews are fast and cheap.
@@ -206,6 +208,7 @@ User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Ea
 
 45. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
     As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
+    - Acceptance: implementation is blocked until documented Legal/Compliance sign-off is obtained and recorded.
     - Acceptance: **OpenAI/Codex only.** Documented, **off by default**, enabled via an explicit flag; flagged as relying on Codex's subscription auth, against OpenAI's reverse-engineering clause, tolerated-but-not-sanctioned, liable to break/trigger enforcement; not recommended for automated org-wide CI.
     - Acceptance: **isolated behind the provider abstraction** so it can be removed cleanly if OpenAI blocks it; never the default; no equivalent path for Claude/Gemini.
 
