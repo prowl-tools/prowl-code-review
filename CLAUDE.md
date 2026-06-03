@@ -33,7 +33,7 @@ Cross-cutting parity work also tracked in the backlog: **multi-language** (tree-
 
 ## Presentation Conventions (premium feel = free GitHub API features)
 
-- **One cohesive review**, not scattered comments: a single `POST /pulls/{n}/reviews` with a summary `body` + `comments[]`.
+- **One cohesive published review**, not scattered comments: a single `POST /pulls/{n}/reviews` with `event: COMMENT`, a summary `body`, and `comments[]` (or an explicit submit-review step after creating a pending review).
 - **Walkthrough summary**: plain-language summary, Impact + estimated-effort badges, grouped/layered changed-files overview, severity counts; optional **Mermaid** diagram for clear flows.
 - **Inline findings** carry a **severity badge** (Critical/Major/Minor/Trivial/Info) + a committable ```suggestion``` block when a safe fix exists.
 - **Update, don't duplicate**: on re-run, update the prior bot review summary via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation, then resolve outdated threads with GraphQL `resolveReviewThread`; review only the delta on `synchronize`.
@@ -44,10 +44,10 @@ Cross-cutting parity work also tracked in the backlog: **multi-language** (tree-
 
 - **Language:** TypeScript, ESM (`"type": "module"`), strict `tsconfig`.
 - **CLI:** Commander. **Validation/schema:** Zod. **YAML:** `yaml`. **Build:** tsup (ESM+CJS). **Tests:** Vitest. **Lint:** ESLint + `@typescript-eslint`.
-- **GitHub integration:** `@actions/core` + `@actions/github` (Octokit) for diff fetch and posting reviews. Inline comments via REST `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with a `comments[]` array (`path` + `line` + `side`), mapped from diff hunk positions.
+- **GitHub integration:** `@actions/core` + `@actions/github` (Octokit) for diff fetch and posting reviews. Inline comments via REST `POST /repos/{owner}/{repo}/pulls/{n}/reviews` with `event: COMMENT` and a `comments[]` array (`path` + `line` + `side`), mapped from diff hunk positions.
 - **Action auth:** auto-provisioned `GITHUB_TOKEN` (needs `pull-requests: write`) for posting; `PROWL_AI_KEY` secret for the provider.
 - **Config:** `.prowl-review.yml`, Zod-validated (style of `prowl/src/config/schema.ts`).
-- **File naming:** kebab-case. **Package/command name:** `prowl-review`.
+- **File naming:** kebab-case, except tool-mandated root files such as `CLAUDE.md`. **Package/command name:** `prowl-review`.
 - **License:** Apache-2.0 (LICENSE + NOTICE), consistent with the suite.
 
 ## Definition of Done
