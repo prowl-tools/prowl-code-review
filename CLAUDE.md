@@ -36,9 +36,9 @@ Cross-cutting parity work also tracked in the backlog: **multi-language** (tree-
 - **One cohesive review**, not scattered comments: a single `POST /pulls/{n}/reviews` with a summary `body` + `comments[]`.
 - **Walkthrough summary**: plain-language summary, Impact + estimated-effort badges, grouped/layered changed-files overview, severity counts; optional **Mermaid** diagram for clear flows.
 - **Inline findings** carry a **severity badge** (Critical/Major/Minor/Trivial/Info) + a committable ```suggestion``` block when a safe fix exists.
-- **Update, don't duplicate**: on re-run, PATCH the prior bot review and resolve outdated threads (GraphQL `resolveReviewThread`); review only the delta on `synchronize`.
+- **Update, don't duplicate**: on re-run, update the prior bot review summary via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation, then resolve outdated threads with GraphQL `resolveReviewThread`; review only the delta on `synchronize`.
 - **Optional merge gate** via the Checks API (`conclusion` from max severity + line annotations).
-- Action token needs: `pull-requests: write`, `checks: write`, `contents: read`.
+- Sample workflow token needs: `pull-requests: write`, `checks: write`, `contents: read`.
 
 ## Stack & Conventions (mirror `Prowl-qa/prowl`)
 
@@ -74,7 +74,7 @@ When you discover new bugs, tech debt, or feature opportunities:
 - Add the item to the appropriate priority tier (High / Medium / Low)
 - Use the existing format: numbered, bold title, indented description (user-story form: *As a `<role>`, I want… so that…* with acceptance criteria)
 
-## Distribution (when we ship — see backlog items 14–15)
+## Distribution (when we ship — see backlog items 42-43)
 
 - **npm**: publish `prowl-review` (mirror `prowl`'s CI tag-triggered publish workflow).
 - **Homebrew**: add `Formula/prowl-review.rb` to `Prowl-qa/homebrew-tap` (pulls the npm tarball; pins `url` + `sha256`; `depends_on node@20`).
@@ -84,15 +84,15 @@ When you discover new bugs, tech debt, or feature opportunities:
 
 **GitHub Org**: [Prowl-qa](https://github.com/Prowl-qa)
 
-| Repo | Purpose | Local Path |
-|------|---------|------------|
-| `Prowl-qa/prowl-code-review` | AI code-review tool (this repo) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl-code-review` |
-| `Prowl-qa/prowl` | Core CLI QA tool (source of truth for toolchain + provider abstraction) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl` |
-| `Prowl-qa/prowl-docs` | Documentation site (Docusaurus) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl-docs` |
-| `Prowl-qa/prowl-web` | Marketing landing page (Next.js) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl-web` |
-| `Prowl-qa/prowl-hub` | Community hunt templates (Next.js) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl-hub` |
-| `Prowl-qa/prowl-infra-hub` | IaC playbooks hub (Next.js) | `~/Desktop/Current Projects/Prowl QA/Repositories/prowl-infra-hub` |
-| `Prowl-qa/homebrew-tap` | Homebrew formulae | `~/Desktop/Current Projects/Prowl QA/Repositories/homebrew-tap` |
+| Repo | Purpose |
+|------|---------|
+| `Prowl-qa/prowl-code-review` | AI code-review tool (this repo) |
+| `Prowl-qa/prowl` | Core CLI QA tool (source of truth for toolchain + provider abstraction) |
+| `Prowl-qa/prowl-docs` | Documentation site (Docusaurus) |
+| `Prowl-qa/prowl-web` | Marketing landing page (Next.js) |
+| `Prowl-qa/prowl-hub` | Community hunt templates |
+| `Prowl-qa/prowl-infra-hub` | IaC playbooks hub |
+| `Prowl-qa/homebrew-tap` | Homebrew formulae |
 
 ### Cross-Repo Guidelines
 - **`prowl`** is the reference for toolchain, lint/build config, and the LLM provider abstraction — reuse its patterns rather than inventing new ones.
@@ -101,7 +101,7 @@ When you discover new bugs, tech debt, or feature opportunities:
 
 ## Existing Workflows
 
-This repo currently has placeholder Anthropic workflows (`.github/workflows/claude-code-review.yml`, `claude.yml`) from `anthropics/claude-code-action`. Keep them as a dogfooding baseline during early milestones; replace `claude-code-review.yml` with our own `prowl-review` action once inline reviews land (backlog item 16).
+This repo currently has placeholder Anthropic workflows (`.github/workflows/claude-code-review.yml`, `claude.yml`) from `anthropics/claude-code-action`. Keep them as a dogfooding baseline during early milestones; replace `claude-code-review.yml` with our own `prowl-review` action once inline reviews land (backlog item 10).
 
 ## Access Policy
 
