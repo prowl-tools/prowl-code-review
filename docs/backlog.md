@@ -6,14 +6,9 @@ Prioritized list of planned features, improvements, and technical debt for **`pr
 
 User stories use **As a `<role>`, I want `<capability>`, so that `<value>`.** Each carries acceptance criteria.
 
-When an item is completed, move it to `## Completed` with `(completed: YYYY-MM-DD)` so done work is recorded without losing history.
+When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `(completed: YYYY-MM-DD)` and remove it here; keep the remaining items' numbers stable (don't renumber) so references stay valid.
 
 ## High Priority
-
-1. **TypeScript package scaffold matching `prowl`**
-   As a maintainer, I want a new TS package (`prowl-review`) wired with prowl's exact toolchain, so that the reviewer is consistent with the suite and easy to ship.
-   - Acceptance: `package.json` (name `prowl-review`, `bin`, scripts), `tsup.config.ts`, `tsconfig.json` (strict, ESM), `.eslintrc.cjs`, Vitest — copied/adapted from `prowl`.
-   - Acceptance: `npm run build` produces a runnable `dist/cli.js`; `npx prowl-review --help` prints commands. Apache-2.0 LICENSE + NOTICE present.
 
 2. **Multi-provider BYOK LLM abstraction + prompt caching**
    As a developer, I want to pick Claude, OpenAI, or Gemini via env vars with caching built in, so that I'm never vendor-locked and reviews stay cheap.
@@ -230,4 +225,6 @@ When an item is completed, move it to `## Completed` with `(completed: YYYY-MM-D
     As a maintainer tuning the reviewer, I want to inspect what a run actually did, so that I can diagnose odd reviews.
     - Acceptance: a verbose flag emits the assembled prompts, fetched-context list, raw findings (pre/post judge + verification), and token/cost breakdown — without leaking secrets (respects #15).
 
-## Completed
+---
+
+Completed items live in [`docs/resolved.md`](./resolved.md).
