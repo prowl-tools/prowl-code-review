@@ -54,7 +54,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "lint": "eslint .",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint . --ext .ts,.cjs",
     "test": "vitest run",
     "test:watch": "vitest"
   },
