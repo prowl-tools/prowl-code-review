@@ -5,6 +5,11 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Multi-provider BYOK LLM abstraction (`src/providers/`): Claude (default), OpenAI, and
+  Gemini behind one `complete()` interface, selected via `PROWL_AI_PROVIDER` / `PROWL_AI_KEY`
+  / `PROWL_AI_MODEL` (raw `fetch`, no heavy SDKs). Prompt caching for the stable `system`
+  prefix (Anthropic `cache_control`; OpenAI/Gemini automatic) with cache-aware token/usage
+  accounting. (backlog #2)
 - CI pipeline: `.github/workflows/ci.yml` runs `npm ci` → build → lint → test on every
   pull request and push to `main` (Node 20 matrix, npm dependency caching, concurrency
   cancellation). This is the repo's authoritative validation gate. (backlog #50)
