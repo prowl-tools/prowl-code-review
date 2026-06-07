@@ -1,0 +1,74 @@
+{
+  "name": "prowl-review",
+  "version": "0.1.0",
+  "description": "BYOK AI code review for pull requests — summary, inline comments, and chat, powered by your own LLM key (Claude/OpenAI/Gemini).",
+  "type": "module",
+  "license": "Apache-2.0",
+  "author": "Michael Tookes",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/prowl-tools/prowl-code-review.git"
+  },
+  "homepage": "https://prowl.tools",
+  "bugs": {
+    "url": "https://github.com/prowl-tools/prowl-code-review/issues"
+  },
+  "keywords": [
+    "code-review",
+    "ai",
+    "pull-request",
+    "github-action",
+    "byok",
+    "claude",
+    "openai",
+    "gemini",
+    "llm",
+    "cli"
+  ],
+  "main": "dist/index.cjs",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
+    }
+  },
+  "bin": {
+    "prowl-review": "dist/cli.js"
+  },
+  "files": [
+    "dist",
+    "LICENSE",
+    "README.md",
+    "NOTICE"
+  ],
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "scripts": {
+    "build": "tsup",
+    "prepublishOnly": "npm run build",
+    "lint": "eslint . --ext .ts,.cjs",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.1",
+    "@typescript-eslint/eslint-plugin": "^7.18.0",
+    "@typescript-eslint/parser": "^7.18.0",
+    "eslint": "^8.57.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.7.3",
+    "vitest": "^2.1.8"
+  }
+}

@@ -66,8 +66,8 @@ This project's backlog is tracked at: `docs/backlog.md`
 
 When you complete work that corresponds to a backlog item:
 - Read the backlog file and find the matching item
-- Move it to the `## Completed` section with the date: `(completed: YYYY-MM-DD)`
-- Re-number remaining items if needed
+- Move it to `docs/resolved.md` with the date: `(completed: YYYY-MM-DD)` and remove it from `docs/backlog.md`
+- Keep the remaining items' numbers stable (don't renumber) so references in commits/docs stay valid
 
 When you discover new bugs, tech debt, or feature opportunities:
 - Read the backlog file
