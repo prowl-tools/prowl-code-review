@@ -80,11 +80,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: redact obvious secrets (API keys, tokens, `.env` contents, private keys) from diffs and fetched context before they enter any prompt; reuse secret-detection patterns (e.g. Gitleaks rules).
     - Acceptance: known-sensitive files skipped by default; redactions are logged by count only — never the secret value.
 
-50. **CI pipeline (build/lint/test on every PR)**
-    As a maintainer, I want GitHub Actions to run the Definition-of-Done gates on every PR and push to `main`, so that regressions are caught before merge without relying on manual or AI review.
-    - Acceptance: `.github/workflows/ci.yml` runs `npm ci` → `npm run build` → `npm run lint` → `npm test` on `pull_request` and `push` to `main`; Node 20 (matrix-ready), dependency caching.
-    - Acceptance: serves as the repo's authoritative validation gate (replacing the Loop-specific `/validate-feature`); green CI is the intended required status check for merge. CD (tag-triggered publish) is covered by item #42.
-
 ## Medium Priority
 
 16. **Linter / SAST grounding**
