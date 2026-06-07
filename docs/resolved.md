@@ -7,3 +7,4 @@ Format: `- **Item title** (completed: YYYY-MM-DD) — short note / commit or PR 
 ---
 
 - **#1 TypeScript package scaffold matching `prowl`** (completed: 2026-06-07) — TS toolchain mirroring `prowl` (ESM, strict `tsconfig`, `tsup` dual-entry build, ESLint + `@typescript-eslint`, Vitest); Commander CLI (`prowl-review`) with `--version`/`--help` + a placeholder `review` command; Apache-2.0 `LICENSE` + `NOTICE`; `CHANGELOG` seeded. Build → `dist/cli.js`, lint clean, tests green. Branch `scaffold` (`d55ca2e`…`498d88a`).
+- **#50 CI pipeline (build/lint/test on every PR)** (completed: 2026-06-07) — `.github/workflows/ci.yml` runs `npm ci` → build → lint → test on every PR and push to `main` (Node 20 matrix, npm caching, concurrency cancellation, least-privilege perms). The repo's authoritative validation gate, superseding `/validate-feature` here. Branch `ci-pipeline` (`ab84c48`).

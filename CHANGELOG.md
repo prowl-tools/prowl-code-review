@@ -5,6 +5,9 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- CI pipeline: `.github/workflows/ci.yml` runs `npm ci` → build → lint → test on every
+  pull request and push to `main` (Node 20 matrix, npm dependency caching, concurrency
+  cancellation). This is the repo's authoritative validation gate. (backlog #50)
 - Initial TypeScript package scaffold mirroring `prowl`'s toolchain: ESM + strict
   `tsconfig`, `tsup` dual-entry build (CLI + library), ESLint + `@typescript-eslint`,
   and Vitest. Commander-based CLI (`prowl-review`) with a `--version`/`--help` surface
