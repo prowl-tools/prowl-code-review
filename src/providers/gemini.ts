@@ -24,6 +24,7 @@ interface GeminiResponse {
 export const geminiProvider: Provider = {
   name: "gemini",
 
+  /** Complete a prompt using the stable Gemini REST `generateContent` endpoint. */
   async complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult> {
     const body: Record<string, unknown> = {
       contents: [{ role: "user", parts: [{ text: request.prompt }] }],
@@ -37,7 +38,7 @@ export const geminiProvider: Provider = {
       body.systemInstruction = { parts: [{ text: request.system }] };
     }
 
-    const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
+    const url = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
       config.model
     )}:generateContent`;
 
