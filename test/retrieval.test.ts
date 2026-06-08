@@ -113,6 +113,7 @@ describe("gatherContext", () => {
     });
 
     expect(result.files.map((f) => f.path)).toEqual(["src/a.ts"]);
+    expect(result.reachedLimit).toBe(true);
     expect(result.notes.some((n) => n.includes("File budget reached"))).toBe(true);
   });
 
@@ -129,6 +130,7 @@ describe("gatherContext", () => {
       runCompletion: run
     });
 
+    expect(result.reachedLimit).toBe(true);
     expect(result.notes.some((n) => n.includes("more omitted"))).toBe(true);
   });
 });

@@ -132,7 +132,10 @@ describe("gemini completeWithTools", () => {
       candidates: [
         {
           content: {
-            parts: [{ text: "ok" }, { functionCall: { name: "read_file", args: { path: "a.ts" } } }]
+            parts: [
+              { text: "ok" },
+              { functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } } }
+            ]
           }
         }
       ],
@@ -147,7 +150,26 @@ describe("gemini completeWithTools", () => {
     const body = bodyOf(fn) as { tools: Array<{ functionDeclarations: unknown[] }> };
     expect(body.tools[0].functionDeclarations).toHaveLength(1);
     expect(result.stopReason).toBe("tool_use");
-    // Gemini has no call id; the function name is used as the correlation key.
-    expect(result.toolCalls).toEqual([{ id: "read_file", name: "read_file", input: { path: "a.ts" } }]);
+    expect(result.toolCalls).toEqual([{ id: "call_1", name: "read_file", input: { path: "a.ts" } }]);
+  });
+
+  it("echoes function-call ids in follow-up function responses", async () => {
+    const fn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
+    const messages: ToolMessage[] = [
+      { role: "user", text: "go" },
+      { role: "assistant", text: "", toolCalls: [{ id: "call_1", name: "read_file", input: { path: "a.ts" } }] },
+      { role: "tool", results: [{ callId: "call_1", content: "file body" }] }
+    ];
+
+    const result = await completeWithTools({ messages, tools: TOOLS }, config);
+
+    const body = bodyOf(fn) as { contents: Array<{ parts: unknown[] }> };
+    expect(body.contents[1].parts).toEqual([
+      { functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } } }
+    ]);
+    expect(body.contents[2].parts).toEqual([
+      { functionResponse: { id: "call_1", name: "read_file", response: { result: "file body" } } }
+    ]);
+    expect(result.stopReason).toBe("end");
   });
 });
