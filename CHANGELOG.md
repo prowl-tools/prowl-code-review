@@ -5,6 +5,12 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Structured walkthrough summary (`src/review/walkthrough.ts`): a pure markdown formatter
+  that renders the review summary body from ranked findings + the parsed diff — plain-language
+  summary, Impact + estimated-effort badges (derived or overridable), severity counts, a
+  changed-files overview grouped by directory with line deltas, blocking-findings highlights,
+  a skipped-files note (no silent truncation), and an optional Mermaid diagram. Carries a
+  stable marker for update-not-duplicate (#22). (backlog #9)
 - Multi-pass specialized review + judge/dedup (`src/review/`): parallel specialist passes
   (correctness, security, performance, tests) — each tightly scoped with an explicit
   "what NOT to flag" section and an optional per-specialist model — run with trusted
