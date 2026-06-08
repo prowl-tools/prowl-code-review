@@ -174,6 +174,18 @@ describe("parseDiff", () => {
     expect(files[0].oldPath).toBe("é\tfile.txt");
   });
 
+  it("preserves decoded diff-git paths with trailing spaces", () => {
+    const pathWithTrailingSpace = "trailing-space.txt ";
+    const quotedPath = `diff --git "a/${pathWithTrailingSpace}" "b/${pathWithTrailingSpace}"
+Binary files "a/${pathWithTrailingSpace}" and "b/${pathWithTrailingSpace}" differ
+`;
+
+    const { files } = parseDiff(quotedPath);
+
+    expect(files[0].path).toBe(pathWithTrailingSpace);
+    expect(files[0].binary).toBe(true);
+  });
+
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
     expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));

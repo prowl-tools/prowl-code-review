@@ -139,8 +139,8 @@ function parseDiffGitPaths(raw: string): { oldPath: string; newPath: string } | 
     return null;
   }
   return {
-    oldPath: normalizeDiffPath(first.value),
-    newPath: normalizeDiffPath(second.value)
+    oldPath: stripPrefix(first.value),
+    newPath: stripPrefix(second.value)
   };
 }
 
