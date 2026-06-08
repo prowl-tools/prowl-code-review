@@ -17,7 +17,7 @@ export const PROVIDER_NAMES: readonly ProviderName[] = ["anthropic", "openai", "
  */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
   anthropic: "claude-sonnet-4-6",
-  openai: "gpt-5.5",
+  openai: "gpt-5.2",
   gemini: "gemini-2.5-pro"
 };
 

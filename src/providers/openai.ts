@@ -23,6 +23,7 @@ interface OpenAiResponse {
 export const openaiProvider: Provider = {
   name: "openai",
 
+  /** Complete a prompt using OpenAI Chat Completions with stable-prefix caching. */
   async complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult> {
     const messages: Array<{ role: string; content: string }> = [];
     if (request.system) {

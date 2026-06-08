@@ -23,6 +23,7 @@ interface AnthropicResponse {
 export const anthropicProvider: Provider = {
   name: "anthropic",
 
+  /** Complete a prompt using Anthropic Messages and explicit system-block caching. */
   async complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult> {
     const body: Record<string, unknown> = {
       model: config.model,
@@ -64,12 +65,15 @@ export const anthropicProvider: Provider = {
       throw new Error("Anthropic API returned no text content");
     }
 
+    const inputTokens = data.usage?.input_tokens ?? 0;
+    const cacheWriteInputTokens = data.usage?.cache_creation_input_tokens ?? 0;
+
     return {
       text,
       provider: "anthropic",
       model: config.model,
       usage: {
-        inputTokens: data.usage?.input_tokens ?? 0,
+        inputTokens: inputTokens + cacheWriteInputTokens,
         outputTokens: data.usage?.output_tokens ?? 0,
         cachedInputTokens: data.usage?.cache_read_input_tokens ?? 0
       }

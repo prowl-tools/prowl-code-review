@@ -19,6 +19,7 @@ const PROVIDERS: Record<ProviderName, Provider> = {
   gemini: geminiProvider
 };
 
+/** Return whether a string is one of the supported provider names. */
 function isProviderName(value: string): value is ProviderName {
   return (PROVIDER_NAMES as readonly string[]).includes(value);
 }
