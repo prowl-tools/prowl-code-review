@@ -92,8 +92,9 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("**(root)/**");
   });
 
-  it("escapes untrusted paths before rendering Markdown", () => {
+  it("escapes untrusted review text before rendering Markdown", () => {
     const md = buildWalkthrough({
+      summary: "Looks fine.\n### Spoof\n<!-- hidden -->\n> quote",
       findings: [
         makeFinding("major", {
           file: "findings/`bad`\n### injected.md",
@@ -108,10 +109,13 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
     expect(md).toContain("``skip/`bad`\\n### skipped.md``");
     expect(md).toContain("Title \\*\\*break\\*\\*\\\\n\\#\\#\\# fake");
+    expect(md).toContain("Looks fine.\\\\n\\#\\#\\# Spoof\\\\n\\<\\!-- hidden --\\>\\\\n\\> quote");
     expect(md).not.toContain("`spoof`\n### fake.md");
     expect(md).not.toContain("`bad`\n### injected.md");
     expect(md).not.toContain("`bad`\n### skipped.md");
     expect(md).not.toContain("Title **break**\n### fake");
+    expect(md).not.toContain("Looks fine.\n### Spoof");
+    expect(md).not.toContain("<!-- hidden -->");
   });
 
   it("marks binary files instead of showing line deltas", () => {
