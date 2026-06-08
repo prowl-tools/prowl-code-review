@@ -15,16 +15,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    - Acceptance: language-agnostic parsing via tree-sitter grammars (TS/JS, Python, Go, Ruby, Java, etc.) feeding caller/definition lookup for #4.
    - Acceptance: per-language linter auto-selection in grounding (#16); graceful degradation for unsupported languages (still reviews via the LLM, just without AST-assisted context).
 
-6. **Multi-pass specialized review + judge/dedup pass**
-   As a reviewer, I want several focused passes (correctness, security, performance, tests) merged by a judge, so that diverse lenses catch more and a single clean result is produced.
-   - Acceptance: N specialist passes run in parallel, each with a tightly-scoped prompt; configurable set.
-   - Acceptance: each specialist prompt includes an explicit **"what NOT to flag"** negative scope (Cloudflare's biggest signal-to-noise lever), and a **per-specialist model tier** (cheaper models for specialists, top-tier for the judge).
-   - Acceptance: a **judge pass** dedups (hash of file+line+category), re-categorizes, drops nitpicks/speculation, ranks by severity; shared context written once and referenced (avoid N× token blow-up). Unit tests for dedup/merge.
-
-7. **Findings schema (severity + confidence) + review prompts**
-   As a developer, I want structured, severity- and confidence-tagged findings, so that output is consistent, filterable, and machine-mappable to comments.
-   - Acceptance: Zod schema — `file`, `line`/range, `severity` (Critical/Major/Minor/Trivial/Info), `confidence` (0–1), `category`, `title`, `body`, optional `suggestion`.
-   - Acceptance: specialist + judge prompts in `review/prompt.ts`, built from diff + fetched context; providers return validated findings (retry on malformed).
+7. **Findings structured-output hardening** *(schema + base prompts delivered with #6)*
+   As a maintainer, I want robust structured output from review passes, so that findings parse reliably even when a model returns malformed or empty JSON.
+   - Acceptance: retry a pass once on unparseable/empty output before giving up (today `parseFindings` just drops invalid entries).
+   - Acceptance: use providers' native structured-output / JSON mode where available, instead of prompt-instructed JSON.
 
 8. **False-positive verification pass**
    As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
