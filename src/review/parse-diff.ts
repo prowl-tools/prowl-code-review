@@ -1,5 +1,6 @@
 import type { DiffFile, DiffFileStatus, DiffHunk, DiffLine, ParsedDiff } from "./diff-types.js";
 
+/** Match a unified-diff hunk header and capture old/new ranges plus section text. */
 const HUNK_HEADER = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(.*)$/;
 
 /** Strip a leading `a/` or `b/` git path prefix. */
@@ -14,6 +15,13 @@ function stripPrefix(path: string): string {
 function byteSizeOfSplitLine(raw: string, index: number, lineCount: number): number {
   const newlineBytes = index < lineCount - 1 ? 1 : 0;
   return Buffer.byteLength(raw, "utf8") + newlineBytes;
+}
+
+/** Append the active file to the parsed output, if a file is currently open. */
+function pushCurrentFile(files: DiffFile[], current: DiffFile | null): void {
+  if (current) {
+    files.push(current);
+  }
 }
 
 /**
@@ -32,16 +40,10 @@ export function parseDiff(text: string): ParsedDiff {
   let oldLine = 0;
   let newLine = 0;
 
-  const pushFile = () => {
-    if (current) {
-      files.push(current);
-    }
-  };
-
   for (let index = 0; index < lines.length; index += 1) {
     const raw = lines[index];
     if (raw.startsWith("diff --git ")) {
-      pushFile();
+      pushCurrentFile(files, current);
       hunk = null;
       // `diff --git a/path b/path`
       const match = /^diff --git a\/(.+) b\/(.+)$/.exec(raw);
@@ -141,7 +143,7 @@ export function parseDiff(text: string): ParsedDiff {
     // Any other line inside a hunk (shouldn't occur in well-formed diffs) is ignored.
   }
 
-  pushFile();
+  pushCurrentFile(files, current);
 
   // Normalize: a deleted file's path is its old path.
   for (const file of files) {

@@ -6,12 +6,19 @@ import { getOctokit } from "@actions/github";
  * without depending on the full Octokit type.
  */
 export interface OctokitLike {
+  /** REST API namespaces used by prowl-review. */
   rest: {
+    /** Pull request endpoints used for metadata and raw diff retrieval. */
     pulls: {
+      /** Fetch PR metadata, or raw diff text when `mediaType.format` is `diff`. */
       get(params: {
+        /** Repository owner or organization. */
         owner: string;
+        /** Repository name without owner. */
         repo: string;
+        /** Pull request number. */
         pull_number: number;
+        /** Optional media format override for non-JSON responses. */
         mediaType?: { format: string };
       }): Promise<{ data: unknown }>;
     };

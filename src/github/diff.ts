@@ -42,14 +42,23 @@ export interface FetchedPullRequest {
 
 /** Shape of the parts of the PR payload we read. */
 interface RawPullRequest {
+  /** Pull request number. */
   number: number;
+  /** Pull request title. */
   title: string;
+  /** Pull request body text, if present. */
   body: string | null;
+  /** Base branch information. */
   base: { sha: string };
+  /** Head branch information. */
   head: { sha: string };
+  /** Whether the pull request is currently a draft. */
   draft?: boolean;
+  /** GitHub pull request state. */
   state: string;
+  /** Pull request author, if GitHub returns one. */
   user: { login: string } | null;
+  /** Number of changed files, omitted by some fixtures/mocks. */
   changed_files?: number;
 }
 

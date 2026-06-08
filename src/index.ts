@@ -4,6 +4,7 @@
  * The review engine grows here as modules land, so the same core can back the
  * CLI, the GitHub Action, and a future hosted app.
  */
+/** Package name exposed for consumers that need to identify this library. */
 export const PACKAGE_NAME = "prowl-review";
 
 // Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
