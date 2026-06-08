@@ -21,9 +21,11 @@ beforeAll(() => {
   outsideRoot = mkdtempSync(join(tmpdir(), "prowl-tools-outside-"));
   mkdirSync(join(root, "src"));
   mkdirSync(join(root, "node_modules"));
+  mkdirSync(join(root, "private"));
   writeFileSync(join(root, "src", "a.ts"), "export function foo() {}\ncallFoo();\n");
   writeFileSync(join(root, "src", "b.ts"), "import { foo } from './a';\nfoo();\n");
   writeFileSync(join(root, "node_modules", "ignored.ts"), "foo();\n");
+  writeFileSync(join(root, "private", "secret.txt"), "private\n");
   writeFileSync(join(root, "big.txt"), "x".repeat(1000));
   writeFileSync(join(root, "oversized-match.txt"), `oversized-only\n${"x".repeat(1000)}`);
   writeFileSync(join(root, "bin.dat"), Buffer.from([0x66, 0x6f, 0x6f, 0x00, 0x6f, 0x6f]));
@@ -74,6 +76,13 @@ describe("readRepoFile", () => {
     expect(() => readRepoFile(options, "src/leak.txt")).toThrow(/Symlinks are not allowed/);
     expect(() => readRepoFile(options, "linked/secret.txt")).toThrow(/Symlinks are not allowed/);
   });
+
+  it("rejects files under ignored path segments", () => {
+    expect(() => readRepoFile(options, "node_modules/ignored.ts")).toThrow(/ignored segment 'node_modules'/);
+    expect(() => readRepoFile({ ...options, ignore: ["private"] }, "private/secret.txt")).toThrow(
+      /ignored segment 'private'/
+    );
+  });
 });
 
 describe("listRepoFiles", () => {
@@ -90,6 +99,10 @@ describe("listRepoFiles", () => {
     expect(result.files).toHaveLength(2);
     expect(result.truncated).toBe(true);
     expect(listRepoFiles({ ...options, maxListedFiles: 2 })).toEqual(result.files);
+  });
+
+  it("rejects direct listings under ignored path segments", () => {
+    expect(() => listRepoFiles(options, "node_modules")).toThrow(/ignored segment 'node_modules'/);
   });
 });
 
@@ -124,6 +137,10 @@ describe("searchRepo", () => {
   it("skips files larger than the byte cap before searching", () => {
     const result = searchRepo(options, "oversized-only");
     expect(result.matches.some((m) => m.path === "oversized-match.txt")).toBe(false);
+  });
+
+  it("rejects direct searches under ignored path segments", () => {
+    expect(() => searchRepo(options, "foo", "node_modules")).toThrow(/ignored segment 'node_modules'/);
   });
 
   it("throws on an invalid regex", () => {

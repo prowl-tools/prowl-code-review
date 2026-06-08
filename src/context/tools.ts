@@ -111,6 +111,18 @@ function isIgnored(name: string, ignore: string[]): boolean {
   return ignore.includes(name);
 }
 
+/** Reject paths that include ignored directory/file segments. */
+function assertNotIgnoredPath(root: string, abs: string, requested: string, ignore: string[]): void {
+  const rel = relative(resolve(root), abs);
+  if (rel === "") {
+    return;
+  }
+  const ignored = rel.split(/[\\/]+/).find((part) => isIgnored(part, ignore));
+  if (ignored) {
+    throw new RepoAccessError(`Path includes ignored segment '${ignored}': ${requested}`);
+  }
+}
+
 function boundedCount(value: number | undefined, fallback: number): number {
   if (value === undefined || Number.isNaN(value)) {
     return fallback;
@@ -129,6 +141,7 @@ function walkRepoFiles(
   const ignore = options.ignore ?? DEFAULT_IGNORE;
   const maxFiles = boundedCount(options.maxListedFiles, DEFAULT_MAX_LISTED_FILES);
   const base = safeResolve(options.root, dir);
+  assertNotIgnoredPath(options.root, base, dir, ignore);
   assertNoSymlinkPath(options.root, base, dir);
   let visitedFiles = 0;
   let truncated = false;
@@ -289,7 +302,9 @@ function readFilePrefix(abs: string, maxBytes: number): Buffer {
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const ignore = options.ignore ?? DEFAULT_IGNORE;
   const abs = safeResolve(options.root, requestedPath);
+  assertNotIgnoredPath(options.root, abs, requestedPath, ignore);
   assertNoSymlinkPath(options.root, abs, requestedPath);
 
   let stat;
