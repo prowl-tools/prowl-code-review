@@ -85,14 +85,14 @@ export function parseDiff(text: string): ParsedDiff {
       current.binary = true;
       continue;
     }
-    if (raw.startsWith("--- ")) {
+    if (!hunk && raw.startsWith("--- ")) {
       const p = raw.slice(4).trim();
       if (p !== "/dev/null") {
         current.oldPath = current.oldPath ?? stripPrefix(p);
       }
       continue;
     }
-    if (raw.startsWith("+++ ")) {
+    if (!hunk && raw.startsWith("+++ ")) {
       const p = raw.slice(4).trim();
       if (p !== "/dev/null") {
         current.path = stripPrefix(p);

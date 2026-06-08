@@ -140,6 +140,25 @@ describe("parseDiff", () => {
     ]);
   });
 
+  it("parses hunk content that looks like file headers", () => {
+    const headerLikeContent = `diff --git a/header.txt b/header.txt
+--- a/header.txt
++++ b/header.txt
+@@ -1,2 +1,2 @@
+--- removed marker
++++ added marker
+`;
+
+    const { files } = parseDiff(headerLikeContent);
+
+    expect(files[0].path).toBe("header.txt");
+    expect(files[0].oldPath).toBe("header.txt");
+    expect(files[0].hunks[0].lines).toEqual([
+      { type: "del", content: "-- removed marker", oldLine: 1 },
+      { type: "add", content: "++ added marker", newLine: 1 }
+    ]);
+  });
+
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
     expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));
