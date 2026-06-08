@@ -18,6 +18,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 6. **Multi-pass specialized review + judge/dedup pass**
    As a reviewer, I want several focused passes (correctness, security, performance, tests) merged by a judge, so that diverse lenses catch more and a single clean result is produced.
    - Acceptance: N specialist passes run in parallel, each with a tightly-scoped prompt; configurable set.
+   - Acceptance: each specialist prompt includes an explicit **"what NOT to flag"** negative scope (Cloudflare's biggest signal-to-noise lever), and a **per-specialist model tier** (cheaper models for specialists, top-tier for the judge).
    - Acceptance: a **judge pass** dedups (hash of file+line+category), re-categorizes, drops nitpicks/speculation, ranks by severity; shared context written once and referenced (avoid N× token blow-up). Unit tests for dedup/merge.
 
 7. **Findings schema (severity + confidence) + review prompts**
@@ -64,6 +65,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: redact obvious secrets (API keys, tokens, `.env` contents, private keys) from diffs and fetched context before they enter any prompt; reuse secret-detection patterns (e.g. Gitleaks rules).
     - Acceptance: known-sensitive files skipped by default; redactions are logged by count only — never the secret value.
 
+51. **Custom / configurable specialist reviewers**
+    As a team, I want to define my own review lenses beyond the built-ins, so that `prowl-review` enforces my org's specific standards (e.g. an internal-RFC "compliance" pass) without me building the orchestration — the customization Cloudflare hard-coded for themselves, made generic and BYOK.
+    - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.
+    - Acceptance: built-in specialists (correctness/security/performance/tests) can be toggled on/off; custom reviewers compose with them.
+
 ## Medium Priority
 
 16. **Linter / SAST grounding**
@@ -73,6 +79,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 17. **LLM resilience: retry/backoff + partial-failure handling**
     As a developer, I want reviews to survive provider hiccups, so that a transient 429 or one failed pass doesn't kill the whole review.
     - Acceptance: exponential backoff + jitter on 429/5xx; a failed specialist pass degrades gracefully (judge proceeds with the rest) and is reported.
+    - Acceptance: per-model-family failback (fall back to an older generation on overload, not across providers); failback only on retryable errors (429/503); heartbeat progress logs so long model "thinking" isn't mistaken for a hung job.
 
 18. **Per-PR budget cap**
     As a developer, I want a max-spend ceiling per review, so that a huge PR can't quietly cost me real money.
@@ -93,6 +100,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 22. **Update-not-duplicate + resolve outdated threads**
     As a developer, I want re-runs to update the existing review instead of stacking new ones, so that the PR stays clean across pushes.
     - Acceptance: find the prior prowl-review summary by a prowl-specific marker or stored review id (with author as a secondary check only), then update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
+    - Acceptance: respect human replies on a finding — "won't fix"/"acknowledged" resolves the thread; "I disagree" makes the judge justify the finding or withdraw it (instead of blindly re-emitting it).
 
 23. **Incremental re-review on new commits**
     As a developer, I want pushes to an open PR to review only the new changes without repeating prior findings, so that re-reviews are fast and cheap.
@@ -125,6 +133,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
     - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` and a `LEARNED_PATTERNS.md` into the prompt; a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to learned-patterns (persisted per #12).
+    - Acceptance: support an optional **org-wide guidelines template** (a shared file or URL injected into every repo's prompts) in addition to per-repo files, so orgs can enforce house standards once.
 
 31. **Risk-tiered orchestration (cost control)**
     As a developer, I want small diffs to run fewer passes and large/complex ones more, so that cost scales with risk.
@@ -158,6 +167,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a user, I want clear docs on how `prowl-review` authenticates to each provider, so that I understand the cost model and avoid TOS/account-ban risk.
     - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store/proxy keys.
     - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see the Codex-subscription backend item) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
+
+52. **Approval rubric + break-glass override**
+    As a developer, I want a predictable severity→decision rubric and an escape hatch, so that the gate behaves consistently and never blocks me against my judgment.
+    - Acceptance: map findings to a GitHub review event — any Critical → request changes; only suggestions/none → comment or approve (configurable thresholds), wired to #24's check conclusion.
+    - Acceptance: a `@prowl-review break glass` (override) comment force-approves past a blocking finding and is recorded in the review for auditability (Cloudflare saw this used in ~0.6% of MRs — rare, but it keeps humans in control).
 
 ## Low Priority
 
@@ -209,6 +223,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 49. **Debug/verbose mode**
     As a maintainer tuning the reviewer, I want to inspect what a run actually did, so that I can diagnose odd reviews.
     - Acceptance: a verbose flag emits the assembled prompts, fetched-context list, raw findings (pre/post judge + verification), and token/cost breakdown — without leaking secrets (respects #15).
+    - Acceptance: structured **JSONL** run log (streamable, line-per-event) so a partial run is still readable if the process exits early.
 
 ---
 
