@@ -115,4 +115,20 @@ describe("gatherContext", () => {
     expect(result.files.map((f) => f.path)).toEqual(["src/a.ts"]);
     expect(result.notes.some((n) => n.includes("File budget reached"))).toBe(true);
   });
+
+  it("reports truncated file listings", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "list_files", input: {} }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root, maxListedFiles: 1 },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.notes.some((n) => n.includes("more omitted"))).toBe(true);
+  });
 });

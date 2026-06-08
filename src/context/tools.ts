@@ -17,6 +17,8 @@ export interface ToolkitOptions {
   maxFileBytes?: number;
   /** Max matches returned by a single search. Default 200. */
   maxMatches?: number;
+  /** Max files returned by list and visited by search. Default 2000. */
+  maxListedFiles?: number;
   /** Directory/segment names skipped during search/list. */
   ignore?: string[];
 }
@@ -33,6 +35,7 @@ export const DEFAULT_IGNORE = [
 
 const DEFAULT_MAX_FILE_BYTES = 64 * 1024;
 const DEFAULT_MAX_MATCHES = 200;
+const DEFAULT_MAX_LISTED_FILES = 2000;
 const MAX_SEARCH_PATTERN_LENGTH = 256;
 const MAX_BOUNDED_REPEAT = 100;
 
@@ -57,7 +60,13 @@ export interface SearchMatch {
 
 export interface SearchResult {
   matches: SearchMatch[];
-  /** True when more matches existed than the cap returned. */
+  /** True when more matches or files existed than the caps returned/searched. */
+  truncated: boolean;
+}
+
+export interface ListFilesResult {
+  files: string[];
+  /** True when more files existed than the cap returned. */
   truncated: boolean;
 }
 
@@ -100,6 +109,64 @@ function assertNoSymlinkPath(root: string, abs: string, requested: string): void
 
 function isIgnored(name: string, ignore: string[]): boolean {
   return ignore.includes(name);
+}
+
+function boundedCount(value: number | undefined, fallback: number): number {
+  if (value === undefined || Number.isNaN(value)) {
+    return fallback;
+  }
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+  return Math.max(0, Math.floor(value));
+}
+
+function walkRepoFiles(
+  options: ToolkitOptions,
+  dir: string,
+  visit: (file: string, abs: string) => boolean | void
+): { truncated: boolean } {
+  const ignore = options.ignore ?? DEFAULT_IGNORE;
+  const maxFiles = boundedCount(options.maxListedFiles, DEFAULT_MAX_LISTED_FILES);
+  const base = safeResolve(options.root, dir);
+  assertNoSymlinkPath(options.root, base, dir);
+  let visitedFiles = 0;
+  let truncated = false;
+
+  const walk = (absDir: string): boolean => {
+    let entries;
+    try {
+      entries = readdirSync(absDir, { withFileTypes: true });
+    } catch {
+      return true;
+    }
+
+    entries.sort((a, b) => a.name.localeCompare(b.name));
+    for (const entry of entries) {
+      if (isIgnored(entry.name, ignore)) {
+        continue;
+      }
+      const abs = join(absDir, entry.name);
+      if (entry.isDirectory()) {
+        if (!walk(abs)) {
+          return false;
+        }
+      } else if (entry.isFile()) {
+        if (visitedFiles >= maxFiles) {
+          truncated = true;
+          return false;
+        }
+        visitedFiles += 1;
+        if (visit(relative(options.root, abs), abs) === false) {
+          return false;
+        }
+      }
+    }
+    return true;
+  };
+
+  walk(base);
+  return { truncated };
 }
 
 /** Return a quantifier at `index`, marking unbounded or very large repeats as risky. */
@@ -247,34 +314,17 @@ export function readRepoFile(options: ToolkitOptions, requestedPath: string): Re
 }
 
 /** List repo files under a directory (relative paths), skipping ignored dirs. */
+export function listRepoFilesDetailed(options: ToolkitOptions, dir = "."): ListFilesResult {
+  const files: string[] = [];
+  const result = walkRepoFiles(options, dir, (file) => {
+    files.push(file);
+  });
+  return { files: files.sort(), truncated: result.truncated };
+}
+
+/** List repo files under a directory (relative paths), skipping ignored dirs. */
 export function listRepoFiles(options: ToolkitOptions, dir = "."): string[] {
-  const ignore = options.ignore ?? DEFAULT_IGNORE;
-  const base = safeResolve(options.root, dir);
-  assertNoSymlinkPath(options.root, base, dir);
-  const out: string[] = [];
-
-  const walk = (absDir: string) => {
-    let entries;
-    try {
-      entries = readdirSync(absDir, { withFileTypes: true });
-    } catch {
-      return;
-    }
-    for (const entry of entries) {
-      if (isIgnored(entry.name, ignore)) {
-        continue;
-      }
-      const abs = join(absDir, entry.name);
-      if (entry.isDirectory()) {
-        walk(abs);
-      } else if (entry.isFile()) {
-        out.push(relative(options.root, abs));
-      }
-    }
-  };
-
-  walk(base);
-  return out.sort();
+  return listRepoFilesDetailed(options, dir).files;
 }
 
 /**
@@ -305,25 +355,24 @@ export function searchRepo(
   const matches: SearchMatch[] = [];
   let truncated = false;
 
-  for (const file of listRepoFiles(options, searchDir)) {
+  const traversal = walkRepoFiles(options, searchDir, (file, abs) => {
     if (matches.length >= maxMatches) {
       truncated = true;
-      break;
+      return false;
     }
-    const abs = safeResolve(options.root, file);
     let buffer;
     try {
       assertNoSymlinkPath(options.root, abs, file);
       const stat = statSync(abs);
       if (!stat.isFile() || stat.size > maxFileBytes) {
-        continue;
+        return undefined;
       }
       buffer = readFileSync(abs);
     } catch {
-      continue;
+      return undefined;
     }
     if (buffer.includes(0)) {
-      continue; // skip binary files
+      return undefined; // skip binary files
     }
     const lines = buffer.toString("utf8").split("\n");
     for (let i = 0; i < lines.length; i += 1) {
@@ -331,10 +380,15 @@ export function searchRepo(
         matches.push({ path: file, line: i + 1, text: lines[i] });
         if (matches.length >= maxMatches) {
           truncated = true;
-          break;
+          return false;
         }
       }
     }
+    return undefined;
+  });
+
+  if (traversal.truncated) {
+    truncated = true;
   }
 
   return { matches, truncated };
