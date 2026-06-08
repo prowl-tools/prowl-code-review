@@ -31,7 +31,7 @@ async function completeOpenAi(
   const body: Record<string, unknown> = {
     model: config.model,
     messages,
-    max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS
+    max_completion_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS
   };
 
   if (request.temperature !== undefined) {

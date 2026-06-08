@@ -223,7 +223,8 @@ describe("openai provider", () => {
     expect(methodOf(fn)).toBe("POST");
     expect(headersOf(fn).Authorization).toBe("Bearer key");
     const body = bodyOf(fn);
-    expect(body.max_tokens).toBe(4096);
+    expect(body.max_tokens).toBeUndefined();
+    expect(body.max_completion_tokens).toBe(4096);
     expect(body.messages).toEqual([
       { role: "system", content: "guidelines" },
       { role: "user", content: "diff" }
