@@ -13,7 +13,7 @@ import {
 
 interface GeminiPart {
   text?: string;
-  functionCall?: { name: string; args?: Record<string, unknown> };
+  functionCall?: { id?: string; name: string; args?: Record<string, unknown> };
 }
 
 interface GeminiUsage {
@@ -52,11 +52,12 @@ function mapUsage(usage: GeminiUsage | undefined): TokenUsage {
 }
 
 /**
- * Serialize normalized tool messages to Gemini `contents`. Gemini has no call
- * ids and matches results to calls by function name (and order), so we treat
- * the normalized `callId` as the function name.
+ * Serialize normalized tool messages to Gemini `contents`. Gemini 3 returns
+ * function-call ids; older responses may omit them, so name is the fallback key.
  */
 function toGeminiContents(messages: ToolMessage[]): unknown[] {
+  const toolNamesById = new Map<string, string>();
+
   return messages.map((message) => {
     if (message.role === "user") {
       return { role: "user", parts: [{ text: message.text }] };
@@ -67,15 +68,29 @@ function toGeminiContents(messages: ToolMessage[]): unknown[] {
         parts.push({ text: message.text });
       }
       for (const call of message.toolCalls) {
-        parts.push({ functionCall: { name: call.name, args: call.input } });
+        toolNamesById.set(call.id, call.name);
+        parts.push({
+          functionCall: {
+            ...(call.id !== call.name ? { id: call.id } : {}),
+            name: call.name,
+            args: call.input
+          }
+        });
       }
       return { role: "model", parts };
     }
     return {
       role: "user",
-      parts: message.results.map((result) => ({
-        functionResponse: { name: result.callId, response: { result: result.content } }
-      }))
+      parts: message.results.map((result) => {
+        const name = toolNamesById.get(result.callId) ?? result.callId;
+        return {
+          functionResponse: {
+            ...(result.callId !== name ? { id: result.callId } : {}),
+            name,
+            response: { result: result.content }
+          }
+        };
+      })
     };
   });
 }
@@ -173,9 +188,8 @@ async function completeGeminiTools(
     if (part.text) {
       text += part.text;
     } else if (part.functionCall) {
-      // Gemini has no call id; use the function name as the correlation key.
       toolCalls.push({
-        id: part.functionCall.name,
+        id: part.functionCall.id ?? part.functionCall.name,
         name: part.functionCall.name,
         input: part.functionCall.args ?? {}
       });

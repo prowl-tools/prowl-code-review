@@ -109,6 +109,11 @@ export interface GatherContextParams {
   ) => Promise<ToolCompletionResult>;
 }
 
+interface ExecutedTool {
+  content: string;
+  reachedLimit: boolean;
+}
+
 function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   return {
     inputTokens: a.inputTokens + b.inputTokens,
@@ -131,22 +136,26 @@ function seedPrompt(changedPaths: string[]): string {
   ].join("\n");
 }
 
+function toolExecution(content: string, reachedLimit = false): ExecutedTool {
+  return { content, reachedLimit };
+}
+
 function executeTool(
   call: { name: string; input: Record<string, unknown> },
   options: ToolkitOptions,
   files: Map<string, RetrievedFile>,
   maxFiles: number,
   notes: string[]
-): string {
+): ExecutedTool {
   try {
     if (call.name === "read_file") {
       const path = typeof call.input.path === "string" ? call.input.path : "";
       if (!path) {
-        return "Error: read_file requires a 'path'.";
+        return toolExecution("Error: read_file requires a 'path'.");
       }
       if (!files.has(path) && files.size >= maxFiles) {
         notes.push(`File budget reached (${maxFiles}); skipped ${path}`);
-        return `File budget reached (${maxFiles}); not reading ${path}.`;
+        return toolExecution(`File budget reached (${maxFiles}); not reading ${path}.`, true);
       }
       const result = readRepoFile(options, path);
       files.set(result.path, {
@@ -157,13 +166,16 @@ function executeTool(
       if (result.truncated) {
         notes.push(`Truncated ${result.path} to ${result.bytes} bytes`);
       }
-      return result.truncated ? `${result.content}\n…[truncated]` : result.content;
+      return toolExecution(
+        result.truncated ? `${result.content}\n…[truncated]` : result.content,
+        result.truncated
+      );
     }
 
     if (call.name === "search_repo") {
       const pattern = typeof call.input.pattern === "string" ? call.input.pattern : "";
       if (!pattern) {
-        return "Error: search_repo requires a 'pattern'.";
+        return toolExecution("Error: search_repo requires a 'pattern'.");
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
       const result = searchRepo(options, pattern, dir);
@@ -171,7 +183,10 @@ function executeTool(
       if (result.truncated) {
         notes.push(`Search results truncated for '${pattern}' under ${dir}`);
       }
-      return (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : "");
+      return toolExecution(
+        (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : ""),
+        result.truncated
+      );
     }
 
     if (call.name === "list_files") {
@@ -181,14 +196,17 @@ function executeTool(
       if (result.truncated) {
         notes.push(`Listed first ${result.files.length} files under ${dir}; more omitted`);
       }
-      return body + (result.truncated ? "\n…[more files omitted]" : "");
+      return toolExecution(
+        body + (result.truncated ? "\n…[more files omitted]" : ""),
+        result.truncated
+      );
     }
 
-    return `Error: unknown tool '${call.name}'.`;
+    return toolExecution(`Error: unknown tool '${call.name}'.`);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     notes.push(`Tool ${call.name} error: ${message}`);
-    return `Error: ${message}`;
+    return toolExecution(`Error: ${message}`);
   }
 }
 
@@ -227,10 +245,13 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
 
     messages.push({ role: "assistant", text: result.text, toolCalls: result.toolCalls });
 
-    const results: ToolResult[] = result.toolCalls.map((call) => ({
-      callId: call.id,
-      content: executeTool(call, params.toolkit, files, maxFiles, notes)
-    }));
+    const results: ToolResult[] = result.toolCalls.map((call) => {
+      const executed = executeTool(call, params.toolkit, files, maxFiles, notes);
+      if (executed.reachedLimit) {
+        reachedLimit = true;
+      }
+      return { callId: call.id, content: executed.content };
+    });
     messages.push({ role: "tool", results });
   }
 
