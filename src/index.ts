@@ -106,6 +106,15 @@ export {
   type Specialist
 } from "./review/specialists.js";
 export {
+  buildWalkthrough,
+  severityCounts,
+  deriveImpact,
+  deriveEffort,
+  REVIEW_MARKER,
+  type WalkthroughInput,
+  type Impact
+} from "./review/walkthrough.js";
+export {
   runReview,
   type ReviewInput,
   type RunReviewOptions,
