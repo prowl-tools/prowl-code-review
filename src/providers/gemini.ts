@@ -3,16 +3,81 @@ import {
   type CompletionResult,
   type Provider,
   type ProviderConfig,
+  type TokenUsage,
+  type ToolCall,
+  type ToolCompletionRequest,
+  type ToolCompletionResult,
+  type ToolMessage,
   DEFAULT_MAX_TOKENS
 } from "./types.js";
 
+interface GeminiPart {
+  text?: string;
+  functionCall?: { name: string; args?: Record<string, unknown> };
+}
+
+interface GeminiUsage {
+  promptTokenCount?: number;
+  candidatesTokenCount?: number;
+  cachedContentTokenCount?: number;
+}
+
 interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: Array<{ text?: string }> } }>;
-  usageMetadata?: {
-    promptTokenCount?: number;
-    candidatesTokenCount?: number;
-    cachedContentTokenCount?: number;
+  candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+  usageMetadata?: GeminiUsage;
+}
+
+function endpoint(model: string): string {
+  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
+    model
+  )}:generateContent`;
+}
+
+function geminiHeaders(apiKey: string): Record<string, string> {
+  return {
+    "Content-Type": "application/json",
+    "x-goog-api-key": apiKey
   };
+}
+
+/** promptTokenCount includes cached tokens; report the uncached remainder. */
+function mapUsage(usage: GeminiUsage | undefined): TokenUsage {
+  const cachedInputTokens = usage?.cachedContentTokenCount ?? 0;
+  const promptTokens = usage?.promptTokenCount ?? 0;
+  return {
+    inputTokens: Math.max(promptTokens - cachedInputTokens, 0),
+    outputTokens: usage?.candidatesTokenCount ?? 0,
+    cachedInputTokens
+  };
+}
+
+/**
+ * Serialize normalized tool messages to Gemini `contents`. Gemini has no call
+ * ids and matches results to calls by function name (and order), so we treat
+ * the normalized `callId` as the function name.
+ */
+function toGeminiContents(messages: ToolMessage[]): unknown[] {
+  return messages.map((message) => {
+    if (message.role === "user") {
+      return { role: "user", parts: [{ text: message.text }] };
+    }
+    if (message.role === "assistant") {
+      const parts: unknown[] = [];
+      if (message.text) {
+        parts.push({ text: message.text });
+      }
+      for (const call of message.toolCalls) {
+        parts.push({ functionCall: { name: call.name, args: call.input } });
+      }
+      return { role: "model", parts };
+    }
+    return {
+      role: "user",
+      parts: message.results.map((result) => ({
+        functionResponse: { name: result.callId, response: { result: result.content } }
+      }))
+    };
+  });
 }
 
 /**
@@ -34,16 +99,9 @@ async function completeGemini(
     body.systemInstruction = { parts: [{ text: request.system }] };
   }
 
-  const url = `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
-    config.model
-  )}:generateContent`;
-
-  const response = await fetch(url, {
+  const response = await fetch(endpoint(config.model), {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "x-goog-api-key": config.apiKey
-    },
+    headers: geminiHeaders(config.apiKey),
     body: JSON.stringify(body)
   });
 
@@ -61,19 +119,76 @@ async function completeGemini(
     throw new Error("Gemini API returned no content");
   }
 
-  const cachedInputTokens = data.usageMetadata?.cachedContentTokenCount ?? 0;
-  const promptTokens = data.usageMetadata?.promptTokenCount ?? 0;
-
   return {
     text,
     provider: "gemini",
     model: config.model,
-    usage: {
-      // promptTokenCount includes cached tokens; report the uncached remainder.
-      inputTokens: Math.max(promptTokens - cachedInputTokens, 0),
-      outputTokens: data.usageMetadata?.candidatesTokenCount ?? 0,
-      cachedInputTokens
+    usage: mapUsage(data.usageMetadata)
+  };
+}
+
+/** Run one Gemini tool-use (function calling) turn. */
+async function completeGeminiTools(
+  request: ToolCompletionRequest,
+  config: ProviderConfig
+): Promise<ToolCompletionResult> {
+  const body: Record<string, unknown> = {
+    contents: toGeminiContents(request.messages),
+    tools: [
+      {
+        functionDeclarations: request.tools.map((tool) => ({
+          name: tool.name,
+          description: tool.description,
+          parameters: tool.parameters
+        }))
+      }
+    ],
+    generationConfig: {
+      maxOutputTokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+      ...(request.temperature !== undefined ? { temperature: request.temperature } : {})
     }
+  };
+
+  if (request.system) {
+    body.systemInstruction = { parts: [{ text: request.system }] };
+  }
+
+  const response = await fetch(endpoint(config.model), {
+    method: "POST",
+    headers: geminiHeaders(config.apiKey),
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Gemini API error (${response.status}): ${detail}`);
+  }
+
+  const data = (await response.json()) as GeminiResponse;
+  const parts = data.candidates?.[0]?.content?.parts ?? [];
+
+  let text = "";
+  const toolCalls: ToolCall[] = [];
+  for (const part of parts) {
+    if (part.text) {
+      text += part.text;
+    } else if (part.functionCall) {
+      // Gemini has no call id; use the function name as the correlation key.
+      toolCalls.push({
+        id: part.functionCall.name,
+        name: part.functionCall.name,
+        input: part.functionCall.args ?? {}
+      });
+    }
+  }
+
+  return {
+    text,
+    toolCalls,
+    stopReason: toolCalls.length > 0 ? "tool_use" : "end",
+    provider: "gemini",
+    model: config.model,
+    usage: mapUsage(data.usageMetadata)
   };
 }
 
@@ -85,5 +200,6 @@ async function completeGemini(
  */
 export const geminiProvider: Provider = {
   name: "gemini",
-  complete: completeGemini
+  complete: completeGemini,
+  completeWithTools: completeGeminiTools
 };
