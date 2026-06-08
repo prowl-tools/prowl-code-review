@@ -17,66 +17,73 @@ interface AnthropicResponse {
 }
 
 /**
+ * Complete a prompt using Anthropic Messages with explicit `cache_control` on
+ * the stable system block.
+ */
+async function completeAnthropic(
+  request: CompletionRequest,
+  config: ProviderConfig
+): Promise<CompletionResult> {
+  const body: Record<string, unknown> = {
+    model: config.model,
+    max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
+    messages: [{ role: "user", content: request.prompt }]
+  };
+
+  if (request.system) {
+    // Mark the system block ephemeral so it is cached and re-read cheaply on
+    // subsequent reviews of the same PR (only the diff in `prompt` is uncached).
+    body.system = [
+      { type: "text", text: request.system, cache_control: { type: "ephemeral" } }
+    ];
+  }
+
+  if (request.temperature !== undefined) {
+    body.temperature = request.temperature;
+  }
+
+  const response = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "x-api-key": config.apiKey,
+      "anthropic-version": "2023-06-01"
+    },
+    body: JSON.stringify(body)
+  });
+
+  if (!response.ok) {
+    const detail = await response.text();
+    throw new Error(`Anthropic API error (${response.status}): ${detail}`);
+  }
+
+  const data = (await response.json()) as AnthropicResponse;
+
+  const text = data.content.find((block) => block.type === "text")?.text;
+  if (!text) {
+    throw new Error("Anthropic API returned no text content");
+  }
+
+  const inputTokens = data.usage?.input_tokens ?? 0;
+  const cacheWriteInputTokens = data.usage?.cache_creation_input_tokens ?? 0;
+
+  return {
+    text,
+    provider: "anthropic",
+    model: config.model,
+    usage: {
+      inputTokens: inputTokens + cacheWriteInputTokens,
+      outputTokens: data.usage?.output_tokens ?? 0,
+      cachedInputTokens: data.usage?.cache_read_input_tokens ?? 0
+    }
+  };
+}
+
+/**
  * Anthropic (Claude) provider. Uses explicit `cache_control` on the system block
  * so the stable prompt prefix is cached (GA prompt caching — no beta header).
  */
 export const anthropicProvider: Provider = {
   name: "anthropic",
-
-  /** Complete a prompt using Anthropic Messages and explicit system-block caching. */
-  async complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult> {
-    const body: Record<string, unknown> = {
-      model: config.model,
-      max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
-      messages: [{ role: "user", content: request.prompt }]
-    };
-
-    if (request.system) {
-      // Mark the system block ephemeral so it is cached and re-read cheaply on
-      // subsequent reviews of the same PR (only the diff in `prompt` is uncached).
-      body.system = [
-        { type: "text", text: request.system, cache_control: { type: "ephemeral" } }
-      ];
-    }
-
-    if (request.temperature !== undefined) {
-      body.temperature = request.temperature;
-    }
-
-    const response = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "x-api-key": config.apiKey,
-        "anthropic-version": "2023-06-01"
-      },
-      body: JSON.stringify(body)
-    });
-
-    if (!response.ok) {
-      const detail = await response.text();
-      throw new Error(`Anthropic API error (${response.status}): ${detail}`);
-    }
-
-    const data = (await response.json()) as AnthropicResponse;
-
-    const text = data.content.find((block) => block.type === "text")?.text;
-    if (!text) {
-      throw new Error("Anthropic API returned no text content");
-    }
-
-    const inputTokens = data.usage?.input_tokens ?? 0;
-    const cacheWriteInputTokens = data.usage?.cache_creation_input_tokens ?? 0;
-
-    return {
-      text,
-      provider: "anthropic",
-      model: config.model,
-      usage: {
-        inputTokens: inputTokens + cacheWriteInputTokens,
-        outputTokens: data.usage?.output_tokens ?? 0,
-        cachedInputTokens: data.usage?.cache_read_input_tokens ?? 0
-      }
-    };
-  }
+  complete: completeAnthropic
 };
