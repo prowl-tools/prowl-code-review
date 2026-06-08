@@ -10,11 +10,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## High Priority
 
-4. **Agentic cross-file context retrieval (the #1 bug-catching lever)**
-   As a reviewer, I want the agent to pull in callers, callees, and related files of changed code on demand, so that it catches broken callers, contract/interface violations, and inconsistent patterns that diff-only review misses.
-   - Acceptance: the review agent has **read-file + grep/search tools** over the checked-out repo and decides what to fetch (agentic retrieval) — **no vector DB / embeddings**.
-   - Acceptance: for each changed export/function, the agent can locate and read its callers/definition sites; fetched context added to the (cached) prompt; bounded by config and reported.
-
 5. **Multi-language support**
    As a developer on any stack, I want context retrieval and linting to work beyond JS/TS, so that `prowl-review` is a real CodeRabbit replacement (and covers the Prowl suite's Python/YAML too).
    - Acceptance: language-agnostic parsing via tree-sitter grammars (TS/JS, Python, Go, Ruby, Java, etc.) feeding caller/definition lookup for #4.
