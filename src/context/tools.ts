@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 /**
@@ -207,6 +207,18 @@ function assertSafeSearchPattern(pattern: string): void {
   }
 }
 
+/** Read at most `maxBytes` bytes without buffering the rest of the file. */
+function readFilePrefix(abs: string, maxBytes: number): Buffer {
+  const buffer = Buffer.allocUnsafe(maxBytes);
+  const fd = openSync(abs, "r");
+  try {
+    const bytesRead = readSync(fd, buffer, 0, maxBytes, 0);
+    return buffer.subarray(0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
@@ -223,9 +235,8 @@ export function readRepoFile(options: ToolkitOptions, requestedPath: string): Re
     throw new RepoAccessError(`Not a file: ${requestedPath}`);
   }
 
-  const buffer = readFileSync(abs);
-  const truncated = buffer.length > maxBytes;
-  const slice = truncated ? buffer.subarray(0, maxBytes) : buffer;
+  const truncated = stat.size > maxBytes;
+  const slice = truncated ? readFilePrefix(abs, maxBytes) : readFileSync(abs);
 
   return {
     path: relative(options.root, abs) || requestedPath,
@@ -303,12 +314,16 @@ export function searchRepo(
     let buffer;
     try {
       assertNoSymlinkPath(options.root, abs, file);
+      const stat = statSync(abs);
+      if (!stat.isFile() || stat.size > maxFileBytes) {
+        continue;
+      }
       buffer = readFileSync(abs);
     } catch {
       continue;
     }
-    if (buffer.length > maxFileBytes || buffer.includes(0)) {
-      continue; // skip oversized or binary files
+    if (buffer.includes(0)) {
+      continue; // skip binary files
     }
     const lines = buffer.toString("utf8").split("\n");
     for (let i = 0; i < lines.length; i += 1) {

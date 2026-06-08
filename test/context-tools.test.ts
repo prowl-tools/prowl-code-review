@@ -24,6 +24,7 @@ beforeAll(() => {
   writeFileSync(join(root, "src", "b.ts"), "import { foo } from './a';\nfoo();\n");
   writeFileSync(join(root, "node_modules", "ignored.ts"), "foo();\n");
   writeFileSync(join(root, "big.txt"), "x".repeat(1000));
+  writeFileSync(join(root, "oversized-match.txt"), `oversized-only\n${"x".repeat(1000)}`);
   writeFileSync(join(root, "bin.dat"), Buffer.from([0x66, 0x6f, 0x6f, 0x00, 0x6f, 0x6f]));
   writeFileSync(join(outsideRoot, "secret.txt"), "outside secret\n");
   try {
@@ -104,6 +105,11 @@ describe("searchRepo", () => {
   it("skips binary files", () => {
     const result = searchRepo(options, "foo");
     expect(result.matches.some((m) => m.path === "bin.dat")).toBe(false);
+  });
+
+  it("skips files larger than the byte cap before searching", () => {
+    const result = searchRepo(options, "oversized-only");
+    expect(result.matches.some((m) => m.path === "oversized-match.txt")).toBe(false);
   });
 
   it("throws on an invalid regex", () => {
