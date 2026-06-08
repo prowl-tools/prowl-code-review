@@ -135,15 +135,26 @@ function parseUnquotedDiffGitPaths(input: string): { oldPath: string; newPath: s
     return null;
   }
 
-  const split = tail.indexOf(" b/", 2);
-  if (split === -1) {
-    return null;
+  let fallback: { oldPath: string; newPath: string } | null = null;
+  let searchFrom = 2;
+  while (searchFrom < tail.length) {
+    const split = tail.indexOf(" b/", searchFrom);
+    if (split === -1) {
+      break;
+    }
+
+    const candidate = {
+      oldPath: stripPrefix(tail.slice(0, split)),
+      newPath: stripPrefix(tail.slice(split + 1))
+    };
+    fallback = fallback ?? candidate;
+    if (candidate.oldPath === candidate.newPath) {
+      return candidate;
+    }
+    searchFrom = split + 1;
   }
 
-  return {
-    oldPath: stripPrefix(tail.slice(0, split)),
-    newPath: stripPrefix(tail.slice(split + 1))
-  };
+  return fallback;
 }
 
 /** Parse the old and new path tokens from a `diff --git` line. */

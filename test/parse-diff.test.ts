@@ -197,6 +197,18 @@ Binary files a/space file.bin and b/space file.bin differ
     expect(files[0].binary).toBe(true);
   });
 
+  it("preserves unquoted diff-git paths with embedded b components", () => {
+    const pathWithMarker = "foo b/bar.bin";
+    const diffWithEmbeddedMarker = `diff --git a/${pathWithMarker} b/${pathWithMarker}
+Binary files a/${pathWithMarker} and b/${pathWithMarker} differ
+`;
+
+    const { files } = parseDiff(diffWithEmbeddedMarker);
+
+    expect(files[0].path).toBe(pathWithMarker);
+    expect(files[0].binary).toBe(true);
+  });
+
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
     expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));
