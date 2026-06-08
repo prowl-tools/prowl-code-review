@@ -159,6 +159,21 @@ describe("parseDiff", () => {
     ]);
   });
 
+  it("decodes git-quoted paths before storing file paths", () => {
+    const quotedPath = String.raw`diff --git "a/\303\251\011file.txt" "b/\303\251\011file.txt"
+--- "a/\303\251\011file.txt"
++++ "b/\303\251\011file.txt"
+@@ -1 +1 @@
+-old
++new
+`;
+
+    const { files } = parseDiff(quotedPath);
+
+    expect(files[0].path).toBe("é\tfile.txt");
+    expect(files[0].oldPath).toBe("é\tfile.txt");
+  });
+
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
     expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));
