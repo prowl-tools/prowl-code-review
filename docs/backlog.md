@@ -10,11 +10,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## High Priority
 
-3. **Diff fetch + parsing with size guards**
-   As a developer, I want the tool to fetch a PR's diff and parse it into files/hunks/lines, so that reviews target real changed code and inline comments map to exact lines.
-   - Acceptance: `github/diff.ts` fetches PR diff + metadata via Octokit; `review/parse-diff.ts` maps hunks to `path` + new-side line numbers/ranges.
-   - Acceptance: config caps (`maxFiles`, `maxDiffBytes`) chunk/skip oversized diffs; skipped content reported, never silently dropped.
-
 4. **Agentic cross-file context retrieval (the #1 bug-catching lever)**
    As a reviewer, I want the agent to pull in callers, callees, and related files of changed code on demand, so that it catches broken callers, contract/interface violations, and inconsistent patterns that diff-only review misses.
    - Acceptance: the review agent has **read-file + grep/search tools** over the checked-out repo and decides what to fetch (agentic retrieval) — **no vector DB / embeddings**.
