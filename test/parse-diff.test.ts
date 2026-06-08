@@ -186,6 +186,17 @@ Binary files "a/${pathWithTrailingSpace}" and "b/${pathWithTrailingSpace}" diffe
     expect(files[0].binary).toBe(true);
   });
 
+  it("preserves unquoted diff-git paths with spaces", () => {
+    const diffWithSpaces = `diff --git a/space file.bin b/space file.bin
+Binary files a/space file.bin and b/space file.bin differ
+`;
+
+    const { files } = parseDiff(diffWithSpaces);
+
+    expect(files[0].path).toBe("space file.bin");
+    expect(files[0].binary).toBe(true);
+  });
+
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
     expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));

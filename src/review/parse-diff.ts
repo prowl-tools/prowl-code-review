@@ -128,13 +128,37 @@ function readGitPathToken(input: string, start: number): GitPathToken | null {
   return { value: input.slice(tokenStart, index), next: index };
 }
 
+/** Parse unquoted `diff --git` paths, including spaces inside path names. */
+function parseUnquotedDiffGitPaths(input: string): { oldPath: string; newPath: string } | null {
+  const tail = input.trimStart();
+  if (!tail.startsWith("a/")) {
+    return null;
+  }
+
+  const split = tail.indexOf(" b/", 2);
+  if (split === -1) {
+    return null;
+  }
+
+  return {
+    oldPath: stripPrefix(tail.slice(0, split)),
+    newPath: stripPrefix(tail.slice(split + 1))
+  };
+}
+
 /** Parse the old and new path tokens from a `diff --git` line. */
 function parseDiffGitPaths(raw: string): { oldPath: string; newPath: string } | null {
-  const first = readGitPathToken(raw.slice("diff --git ".length), 0);
+  const tail = raw.slice("diff --git ".length);
+  const unquoted = parseUnquotedDiffGitPaths(tail);
+  if (unquoted) {
+    return unquoted;
+  }
+
+  const first = readGitPathToken(tail, 0);
   if (!first) {
     return null;
   }
-  const second = readGitPathToken(raw.slice("diff --git ".length), first.next);
+  const second = readGitPathToken(tail, first.next);
   if (!second) {
     return null;
   }
