@@ -86,7 +86,7 @@ function escapeMarkdownText(value: string): string {
   for (const char of normalizeMarkdownText(value)) {
     escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
   }
-  return escaped;
+  return neutralizeMentions(escaped);
 }
 
 /** Escape untrusted paragraph text without over-escaping normal punctuation. */
@@ -101,7 +101,7 @@ function escapeMarkdownParagraph(value: string): string {
       isOrderedListDot(normalized, index);
     escaped += shouldEscape ? `\\${char}` : char;
   }
-  return escaped;
+  return neutralizeMentions(escaped);
 }
 
 /** Detect a leading ordered-list marker after trimming summary text. */
@@ -116,6 +116,11 @@ function isOrderedListDot(value: string, dotIndex: number): boolean {
     }
   }
   return true;
+}
+
+/** Render mention markers as entities so GitHub does not notify users or teams. */
+function neutralizeMentions(value: string): string {
+  return value.replaceAll("@", "&#64;");
 }
 
 /** Render untrusted text as an inline code span, even when it contains backticks. */
