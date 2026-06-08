@@ -27,6 +27,7 @@ beforeAll(() => {
   writeFileSync(join(root, "node_modules", "ignored.ts"), "foo();\n");
   writeFileSync(join(root, "private", "secret.txt"), "private\n");
   writeFileSync(join(root, "big.txt"), "x".repeat(1000));
+  writeFileSync(join(root, "long-line.txt"), `needle ${"a".repeat(2000)}\n`);
   writeFileSync(join(root, "oversized-match.txt"), `oversized-only\n${"x".repeat(1000)}`);
   writeFileSync(join(root, "bin.dat"), Buffer.from([0x66, 0x6f, 0x6f, 0x00, 0x6f, 0x6f]));
   writeFileSync(join(outsideRoot, "secret.txt"), "outside secret\n");
@@ -137,6 +138,19 @@ describe("searchRepo", () => {
   it("skips files larger than the byte cap before searching", () => {
     const result = searchRepo(options, "oversized-only");
     expect(result.matches.some((m) => m.path === "oversized-match.txt")).toBe(false);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("caps long search match text and reports truncation", () => {
+    const result = searchRepo(
+      { ...options, maxFileBytes: 5000, maxMatchTextBytes: 20 },
+      "needle"
+    );
+    const match = result.matches.find((m) => m.path === "long-line.txt");
+    expect(match?.text).toMatch(/^needle a+/);
+    expect(match?.text).toContain("...[truncated]");
+    expect(match?.text.length).toBeLessThan(40);
+    expect(result.truncated).toBe(true);
   });
 
   it("rejects direct searches under ignored path segments", () => {
