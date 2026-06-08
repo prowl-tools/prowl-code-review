@@ -60,6 +60,7 @@
     "test:watch": "vitest"
   },
   "dependencies": {
+    "@actions/github": "^6.0.1",
     "commander": "^12.1.0"
   },
   "devDependencies": {
