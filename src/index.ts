@@ -102,6 +102,7 @@ export {
   DEFAULT_SPECIALISTS,
   buildSharedSystem,
   buildSpecialistDirective,
+  buildSpecialistPrompt,
   type Specialist
 } from "./review/specialists.js";
 export {

@@ -7,11 +7,12 @@ All notable changes to Prowl Review will be documented in this file.
 ### Added
 - Multi-pass specialized review + judge/dedup (`src/review/`): parallel specialist passes
   (correctness, security, performance, tests) — each tightly scoped with an explicit
-  "what NOT to flag" section and an optional per-specialist model — run over one shared,
-  cache-friendly system block, then a deterministic judge dedupes (file+line+category),
-  thresholds by severity, and ranks. Includes the Zod findings schema (severity +
-  confidence) and tolerant JSON parsing. Specialist failures degrade gracefully and are
-  reported. (backlog #6; also delivers #7's findings schema + prompts)
+  "what NOT to flag" section and an optional per-specialist model — run with trusted
+  stable instructions in the shared system block and untrusted diff/context in the user
+  prompt, then a deterministic judge dedupes (file+line+category), thresholds by severity,
+  and ranks. Includes the Zod findings schema (severity + confidence) and tolerant JSON
+  parsing. Specialist failures degrade gracefully and are reported. (backlog #6; also
+  delivers #7's findings schema + prompts)
 - Agentic cross-file context retrieval (`src/context/`): a sandboxed repo-access toolkit
   (read-file, regex grep, list — confined to the repo root, bounded, binary/ignored-dir
   aware) plus a provider-agnostic tool-use loop (`gatherContext`) where the model decides
