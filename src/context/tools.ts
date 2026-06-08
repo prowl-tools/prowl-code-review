@@ -158,11 +158,14 @@ function walkRepoFiles(
   let visitedFiles = 0;
   let truncated = false;
 
-  const walk = (absDir: string): boolean => {
+  const walk = (absDir: string, isStartDir = false): boolean => {
     let entries;
     try {
       entries = readdirSync(absDir, { withFileTypes: true });
     } catch {
+      if (isStartDir) {
+        throw new RepoAccessError(`Directory not readable: ${dir}`);
+      }
       return true;
     }
 
@@ -190,7 +193,7 @@ function walkRepoFiles(
     return true;
   };
 
-  walk(base);
+  walk(base, true);
   return { truncated };
 }
 
