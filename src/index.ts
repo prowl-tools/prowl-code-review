@@ -1,10 +1,24 @@
 /**
  * prowl-review — programmatic (library) surface.
  *
- * The review engine (providers, github integration, review pipeline) will be
- * exported here as those modules land, so the same core can back the CLI, the
- * GitHub Action, and a future hosted app. For now this is an intentional
- * placeholder kept self-contained (no `package.json` import) so the type
- * declarations stay clean.
+ * The review engine grows here as modules land, so the same core can back the
+ * CLI, the GitHub Action, and a future hosted app.
  */
 export const PACKAGE_NAME = "prowl-review";
+
+// Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
+export {
+  complete,
+  getProvider,
+  resolveProviderConfig,
+  DEFAULT_MODELS,
+  DEFAULT_MAX_TOKENS,
+  PROVIDER_NAMES,
+  emptyUsage,
+  type Provider,
+  type ProviderName,
+  type ProviderConfig,
+  type CompletionRequest,
+  type CompletionResult,
+  type TokenUsage
+} from "./providers/index.js";
