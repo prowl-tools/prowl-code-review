@@ -55,7 +55,8 @@ const SKIP_LABELS: Record<SkipReason, string> = {
   maxDiffBytes: "skipped - diff size limit reached"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|>".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><".split(""));
 
 /** Replace control characters so untrusted paths cannot change Markdown structure. */
 function normalizeMarkdownText(value: string): string {
@@ -86,6 +87,35 @@ function escapeMarkdownText(value: string): string {
     escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
   }
   return escaped;
+}
+
+/** Escape untrusted paragraph text without over-escaping normal punctuation. */
+function escapeMarkdownParagraph(value: string): string {
+  const normalized = normalizeMarkdownText(value);
+  let escaped = "";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const char = normalized.charAt(index);
+    const shouldEscape =
+      MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
+      (index === 0 && char === "-") ||
+      isOrderedListDot(normalized, index);
+    escaped += shouldEscape ? `\\${char}` : char;
+  }
+  return escaped;
+}
+
+/** Detect a leading ordered-list marker after trimming summary text. */
+function isOrderedListDot(value: string, dotIndex: number): boolean {
+  if (dotIndex === 0 || value.charAt(dotIndex) !== "." || value.charAt(dotIndex + 1) !== " ") {
+    return false;
+  }
+  for (let index = 0; index < dotIndex; index += 1) {
+    const char = value.charAt(index);
+    if (char < "0" || char > "9") {
+      return false;
+    }
+  }
+  return true;
 }
 
 /** Render untrusted text as an inline code span, even when it contains backticks. */
@@ -240,6 +270,12 @@ function findingsSection(findings: Finding[]): string {
   return lines.join("\n");
 }
 
+/** Render caller-provided summaries as escaped text, preserving the fallback style. */
+function summarySection(summary: string | undefined): string {
+  const trimmed = summary?.trim();
+  return trimmed ? escapeMarkdownParagraph(trimmed) : "_Automated review of the changes in this pull request._";
+}
+
 /** Render the full walkthrough summary markdown for a review. */
 export function buildWalkthrough(input: WalkthroughInput): string {
   const counts = severityCounts(input.findings);
@@ -249,7 +285,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   const sections: string[] = [
     REVIEW_MARKER,
     "## 🦝 prowl-review",
-    input.summary?.trim() || "_Automated review of the changes in this pull request._",
+    summarySection(input.summary),
     `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
     changedFilesSection(input.files),
     findingsSection(input.findings)
