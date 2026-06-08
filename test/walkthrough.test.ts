@@ -154,4 +154,14 @@ describe("buildWalkthrough", () => {
     const without = buildWalkthrough({ findings: [], files });
     expect(without).not.toContain("```mermaid");
   });
+
+  it("uses a longer mermaid fence when the body contains backticks", () => {
+    const md = buildWalkthrough({
+      findings: [],
+      files,
+      mermaid: "graph TD; A-->B\n```\n### fake"
+    });
+
+    expect(md).toContain("````mermaid\ngraph TD; A-->B\n```\n### fake\n````");
+  });
 });

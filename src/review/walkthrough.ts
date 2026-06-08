@@ -130,6 +130,17 @@ function inlineCode(value: string): string {
   return `${fence}${padding}${normalized}${padding}${fence}`;
 }
 
+/** Render fenced code with a fence longer than any backtick run in the body. */
+function fencedCodeBlock(language: string, body: string): string {
+  const trimmed = body.trim();
+  const longestBacktickRun = Math.max(
+    0,
+    ...Array.from(trimmed.matchAll(/`+/g), (match) => match[0].length)
+  );
+  const fence = "`".repeat(Math.max(3, longestBacktickRun + 1));
+  return [`${fence}${language}`, trimmed, fence].join("\n");
+}
+
 /** Count added and deleted text lines for one parsed diff file. */
 function lineDelta(file: DiffFile): { additions: number; deletions: number } {
   let additions = 0;
@@ -296,7 +307,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   }
 
   if (input.mermaid?.trim()) {
-    sections.push(["### Diagram", "```mermaid", input.mermaid.trim(), "```"].join("\n"));
+    sections.push(["### Diagram", fencedCodeBlock("mermaid", input.mermaid)].join("\n"));
   }
 
   return sections.join("\n\n");
