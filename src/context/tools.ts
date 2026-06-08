@@ -146,6 +146,15 @@ function walkRepoFiles(
   const base = safeResolve(options.root, dir);
   assertNotIgnoredPath(options.root, base, dir, ignore);
   assertNoSymlinkPath(options.root, base, dir);
+  let baseStat;
+  try {
+    baseStat = statSync(base);
+  } catch {
+    throw new RepoAccessError(`Directory not found: ${dir}`);
+  }
+  if (!baseStat.isDirectory()) {
+    throw new RepoAccessError(`Not a directory: ${dir}`);
+  }
   let visitedFiles = 0;
   let truncated = false;
 

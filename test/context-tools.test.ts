@@ -105,6 +105,10 @@ describe("listRepoFiles", () => {
   it("rejects direct listings under ignored path segments", () => {
     expect(() => listRepoFiles(options, "node_modules")).toThrow(/ignored segment 'node_modules'/);
   });
+
+  it("reports missing listing directories", () => {
+    expect(() => listRepoFiles(options, "missing-dir")).toThrow(/Directory not found: missing-dir/);
+  });
 });
 
 describe("searchRepo", () => {
@@ -155,6 +159,10 @@ describe("searchRepo", () => {
 
   it("rejects direct searches under ignored path segments", () => {
     expect(() => searchRepo(options, "foo", "node_modules")).toThrow(/ignored segment 'node_modules'/);
+  });
+
+  it("reports missing search directories", () => {
+    expect(() => searchRepo(options, "foo", "missing-dir")).toThrow(/Directory not found: missing-dir/);
   });
 
   it("throws on an invalid regex", () => {
