@@ -11,16 +11,16 @@ import { type Finding, type Severity, parseFindings } from "./findings.js";
 import { judgeFindings, type JudgeResult } from "./judge.js";
 import {
   DEFAULT_SPECIALISTS,
+  buildSpecialistPrompt,
   buildSharedSystem,
-  buildSpecialistDirective,
   type Specialist
 } from "./specialists.js";
 
 /**
  * Multi-pass specialized review + judge/dedup (backlog #6).
  *
- * Runs each specialist as its own pass over a shared (cache-friendly) system
- * block, collects structured findings, then consolidates them with the
+ * Runs each specialist as its own pass with stable instructions in `system`
+ * and untrusted PR content in `prompt`, collects structured findings, then consolidates them with the
  * deterministic judge. Specialist failures degrade gracefully and are reported.
  */
 
@@ -82,10 +82,8 @@ export async function runReview(
   const baseConfig = options.config ?? resolveProviderConfig();
   const specialists = input.specialists ?? DEFAULT_SPECIALISTS;
 
-  // Shared, byte-identical across passes → cached once, re-read by each pass.
+  // Shared, byte-identical trusted instructions; untrusted PR content stays in prompt.
   const system = buildSharedSystem({
-    diff: input.diff,
-    context: input.context,
     guidelines: input.guidelines
   });
 
@@ -93,7 +91,14 @@ export async function runReview(
     specialists.map(async (specialist): Promise<{ report: SpecialistPassReport; findings: Finding[]; usage: TokenUsage }> => {
       const config = specialist.model ? { ...baseConfig, model: specialist.model } : baseConfig;
       try {
-        const result = await run({ system, prompt: buildSpecialistDirective(specialist) }, config);
+        const result = await run({
+          system,
+          prompt: buildSpecialistPrompt({
+            specialist,
+            diff: input.diff,
+            context: input.context
+          })
+        }, config);
         const findings = parseFindings(result.text).map((finding) => ({
           ...finding,
           category: finding.category || specialist.key
