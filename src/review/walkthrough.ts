@@ -55,8 +55,8 @@ const SKIP_LABELS: Record<SkipReason, string> = {
   maxDiffBytes: "skipped - diff size limit reached"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><".split(""));
-const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
 
 /** Replace control characters so untrusted paths cannot change Markdown structure. */
 function normalizeMarkdownText(value: string): string {
@@ -120,7 +120,7 @@ function isOrderedListDot(value: string, dotIndex: number): boolean {
 
 /** Render mention markers as entities so GitHub does not notify users or teams. */
 function neutralizeMentions(value: string): string {
-  return value.replaceAll("@", "&#64;");
+  return value.replaceAll("\\@", "&#64;").replaceAll("@", "&#64;");
 }
 
 /** Render untrusted text as an inline code span, even when it contains backticks. */
