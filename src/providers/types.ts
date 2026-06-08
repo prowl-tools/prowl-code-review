@@ -59,10 +59,72 @@ export interface CompletionResult {
   model: string;
 }
 
+// ---------------------------------------------------------------------------
+// Tool use (function calling) — used by agentic cross-file context retrieval.
+// A single normalized representation is serialized per provider so the loop
+// driver stays provider-agnostic.
+// ---------------------------------------------------------------------------
+
+/** A tool the model may call, described with a JSON-Schema input. */
+export interface ToolDefinition {
+  name: string;
+  description: string;
+  /** JSON Schema for the tool input object. */
+  parameters: Record<string, unknown>;
+}
+
+/** A model request to invoke a tool. */
+export interface ToolCall {
+  /** Provider-assigned id used to correlate the result. */
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+/** The result of executing a {@link ToolCall}, fed back to the model. */
+export interface ToolResult {
+  callId: string;
+  content: string;
+}
+
+/** One turn in a tool-use conversation, normalized across providers. */
+export type ToolMessage =
+  | { role: "user"; text: string }
+  | { role: "assistant"; text: string; toolCalls: ToolCall[] }
+  | { role: "tool"; results: ToolResult[] };
+
+export interface ToolCompletionRequest {
+  /** Stable, cacheable instruction/context. */
+  system?: string;
+  /** Conversation so far. */
+  messages: ToolMessage[];
+  /** Tools the model may call this turn. */
+  tools: ToolDefinition[];
+  maxTokens?: number;
+  temperature?: number;
+}
+
+export interface ToolCompletionResult {
+  /** Any assistant text emitted alongside tool calls. */
+  text: string;
+  /** Tool calls the model wants executed (empty when it is done). */
+  toolCalls: ToolCall[];
+  /** `tool_use` when the model wants tools run; `end` when it is finished. */
+  stopReason: "tool_use" | "end";
+  usage: TokenUsage;
+  provider: ProviderName;
+  model: string;
+}
+
 export interface Provider {
   readonly name: ProviderName;
   /** Run the provider-specific completion call and normalize token usage data. */
   complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult>;
+  /** Run one tool-use turn (function calling), normalized across providers. */
+  completeWithTools(
+    request: ToolCompletionRequest,
+    config: ProviderConfig
+  ): Promise<ToolCompletionResult>;
 }
 
 export const DEFAULT_MAX_TOKENS = 4096;
