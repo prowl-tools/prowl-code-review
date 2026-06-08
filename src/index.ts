@@ -79,3 +79,36 @@ export type {
   SkippedFile,
   SkipReason
 } from "./review/diff-types.js";
+
+// Multi-pass specialized review + judge/dedup.
+export {
+  FindingSchema,
+  parseFindings,
+  findingKey,
+  SEVERITIES,
+  SEVERITY_ORDER,
+  type Finding,
+  type Severity
+} from "./review/findings.js";
+export {
+  judgeFindings,
+  dedupeFindings,
+  rankFindings,
+  filterBySeverity,
+  type JudgeOptions,
+  type JudgeResult
+} from "./review/judge.js";
+export {
+  DEFAULT_SPECIALISTS,
+  buildSharedSystem,
+  buildSpecialistDirective,
+  buildSpecialistPrompt,
+  type Specialist
+} from "./review/specialists.js";
+export {
+  runReview,
+  type ReviewInput,
+  type RunReviewOptions,
+  type ReviewResult,
+  type SpecialistPassReport
+} from "./review/run-review.js";
