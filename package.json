@@ -61,7 +61,8 @@
   },
   "dependencies": {
     "@actions/github": "^6.0.1",
-    "commander": "^12.1.0"
+    "commander": "^12.1.0",
+    "zod": "^3.25.76"
   },
   "devDependencies": {
     "@types/node": "^22.13.1",
