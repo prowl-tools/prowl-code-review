@@ -97,7 +97,7 @@ describe("buildWalkthrough", () => {
       findings: [
         makeFinding("major", {
           file: "findings/`bad`\n### injected.md",
-          title: "Path spoof"
+          title: "Title **break**\n### fake"
         })
       ],
       files: [makeFile("src/`spoof`\n### fake.md", 1, 0)],
@@ -107,9 +107,11 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("``src/`spoof`\\n### fake.md``");
     expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
     expect(md).toContain("``skip/`bad`\\n### skipped.md``");
+    expect(md).toContain("Title \\*\\*break\\*\\*\\\\n\\#\\#\\# fake");
     expect(md).not.toContain("`spoof`\n### fake.md");
     expect(md).not.toContain("`bad`\n### injected.md");
     expect(md).not.toContain("`bad`\n### skipped.md");
+    expect(md).not.toContain("Title **break**\n### fake");
   });
 
   it("marks binary files instead of showing line deltas", () => {
