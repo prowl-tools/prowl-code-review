@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync, symlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -11,10 +11,13 @@ import {
 } from "../src/context/tools.js";
 
 let root: string;
+let outsideRoot: string;
+let symlinksCreated = false;
 let options: ToolkitOptions;
 
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "prowl-tools-"));
+  outsideRoot = mkdtempSync(join(tmpdir(), "prowl-tools-outside-"));
   mkdirSync(join(root, "src"));
   mkdirSync(join(root, "node_modules"));
   writeFileSync(join(root, "src", "a.ts"), "export function foo() {}\ncallFoo();\n");
@@ -22,11 +25,20 @@ beforeAll(() => {
   writeFileSync(join(root, "node_modules", "ignored.ts"), "foo();\n");
   writeFileSync(join(root, "big.txt"), "x".repeat(1000));
   writeFileSync(join(root, "bin.dat"), Buffer.from([0x66, 0x6f, 0x6f, 0x00, 0x6f, 0x6f]));
+  writeFileSync(join(outsideRoot, "secret.txt"), "outside secret\n");
+  try {
+    symlinkSync(join(outsideRoot, "secret.txt"), join(root, "src", "leak.txt"), "file");
+    symlinkSync(outsideRoot, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
+    symlinksCreated = true;
+  } catch {
+    symlinksCreated = false;
+  }
   options = { root, maxFileBytes: 500, maxMatches: 5 };
 });
 
 afterAll(() => {
   rmSync(root, { recursive: true, force: true });
+  rmSync(outsideRoot, { recursive: true, force: true });
 });
 
 describe("readRepoFile", () => {
@@ -52,6 +64,14 @@ describe("readRepoFile", () => {
     expect(() => readRepoFile(options, "../secret")).toThrow(/escapes repo root/);
     expect(() => readRepoFile(options, "/etc/passwd")).toThrow(/escapes repo root/);
   });
+
+  it("rejects symlinked files and symlinked directory components", () => {
+    if (!symlinksCreated) {
+      return;
+    }
+    expect(() => readRepoFile(options, "src/leak.txt")).toThrow(/Symlinks are not allowed/);
+    expect(() => readRepoFile(options, "linked/secret.txt")).toThrow(/Symlinks are not allowed/);
+  });
 });
 
 describe("listRepoFiles", () => {
@@ -60,6 +80,7 @@ describe("listRepoFiles", () => {
     expect(files).toContain("src/a.ts");
     expect(files).toContain("src/b.ts");
     expect(files.some((f) => f.includes("node_modules"))).toBe(false);
+    expect(files.some((f) => f.includes("leak.txt"))).toBe(false);
   });
 });
 
@@ -87,5 +108,9 @@ describe("searchRepo", () => {
 
   it("throws on an invalid regex", () => {
     expect(() => searchRepo(options, "(")).toThrow(/Invalid search pattern/);
+  });
+
+  it("rejects unsafe regex patterns before searching", () => {
+    expect(() => searchRepo(options, "(a+)+$")).toThrow(/Unsafe search pattern/);
   });
 });

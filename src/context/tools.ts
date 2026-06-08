@@ -1,4 +1,4 @@
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { lstatSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 
 /**
@@ -33,6 +33,8 @@ export const DEFAULT_IGNORE = [
 
 const DEFAULT_MAX_FILE_BYTES = 64 * 1024;
 const DEFAULT_MAX_MATCHES = 200;
+const MAX_SEARCH_PATTERN_LENGTH = 256;
+const MAX_BOUNDED_REPEAT = 100;
 
 /** Thrown when a requested path escapes the repo root or doesn't exist. */
 export class RepoAccessError extends Error {}
@@ -63,7 +65,7 @@ export interface SearchResult {
 function safeResolve(root: string, requested: string): string {
   const abs = resolve(root, requested);
   const rel = relative(root, abs);
-  if (rel === "" ) {
+  if (rel === "") {
     return abs; // the root itself
   }
   if (rel.startsWith("..") || isAbsolute(rel)) {
@@ -72,14 +74,144 @@ function safeResolve(root: string, requested: string): string {
   return abs;
 }
 
+/** Reject symlinked path components before an operation can follow them. */
+function assertNoSymlinkPath(root: string, abs: string, requested: string): void {
+  const rootAbs = resolve(root);
+  const rel = relative(rootAbs, abs);
+  if (rel === "") {
+    return;
+  }
+
+  let current = rootAbs;
+  for (const part of rel.split(/[\\/]+/)) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        throw new RepoAccessError(`Symlinks are not allowed: ${requested}`);
+      }
+    } catch (error) {
+      if (error instanceof RepoAccessError) {
+        throw error;
+      }
+      return;
+    }
+  }
+}
+
 function isIgnored(name: string, ignore: string[]): boolean {
   return ignore.includes(name);
+}
+
+/** Return a quantifier at `index`, marking unbounded or very large repeats as risky. */
+function quantifierAt(pattern: string, index: number): { end: number; unbounded: boolean } | undefined {
+  const char = pattern[index];
+  if (char === "*" || char === "+") {
+    return { end: index, unbounded: true };
+  }
+  if (char !== "{") {
+    return undefined;
+  }
+
+  const end = pattern.indexOf("}", index + 1);
+  if (end === -1) {
+    return undefined;
+  }
+
+  const body = pattern.slice(index + 1, end);
+  const match = /^(\d+)(?:,(\d*))?$/.exec(body);
+  if (!match) {
+    return undefined;
+  }
+
+  const lower = Number(match[1]);
+  const upper = match[2] === undefined ? lower : match[2] === "" ? Infinity : Number(match[2]);
+  return { end, unbounded: upper === Infinity || upper > MAX_BOUNDED_REPEAT || lower > MAX_BOUNDED_REPEAT };
+}
+
+/** Detect simple safe-regex-style red flags such as `(a+)+` and `(a|aa)+`. */
+function hasUnsafeQuantifiedGroup(pattern: string): boolean {
+  const stack: Array<{ hasAlternation: boolean; hasUnboundedQuantifier: boolean }> = [];
+  let escaped = false;
+  let inCharClass = false;
+
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (inCharClass) {
+      if (char === "]") {
+        inCharClass = false;
+      }
+      continue;
+    }
+    if (char === "[") {
+      inCharClass = true;
+      continue;
+    }
+    if (char === "(") {
+      stack.push({ hasAlternation: false, hasUnboundedQuantifier: false });
+      continue;
+    }
+    if (char === ")") {
+      const group = stack.pop();
+      if (!group) {
+        continue;
+      }
+      const outer = quantifierAt(pattern, i + 1);
+      if (outer?.unbounded && (group.hasAlternation || group.hasUnboundedQuantifier)) {
+        return true;
+      }
+      if (outer?.unbounded && stack.length > 0) {
+        stack[stack.length - 1].hasUnboundedQuantifier = true;
+      }
+      continue;
+    }
+    if (char === "|" && stack.length > 0) {
+      stack[stack.length - 1].hasAlternation = true;
+      continue;
+    }
+
+    const quantifier = quantifierAt(pattern, i);
+    if (quantifier) {
+      if (quantifier.unbounded && stack.length > 0) {
+        stack[stack.length - 1].hasUnboundedQuantifier = true;
+      }
+      i = quantifier.end;
+    }
+  }
+
+  return false;
+}
+
+/** Keep model-supplied search regexes in a low-complexity subset. */
+function assertSafeSearchPattern(pattern: string): void {
+  if (pattern.length > MAX_SEARCH_PATTERN_LENGTH) {
+    throw new RepoAccessError(
+      `Unsafe search pattern: exceeds ${MAX_SEARCH_PATTERN_LENGTH} characters`
+    );
+  }
+  if (/\\(?:[1-9]|k<[^>]+>)/.test(pattern)) {
+    throw new RepoAccessError("Unsafe search pattern: backreferences are not allowed");
+  }
+  if (/\(\?(?:[=!]|<[=!])/.test(pattern)) {
+    throw new RepoAccessError("Unsafe search pattern: lookarounds are not allowed");
+  }
+  if (hasUnsafeQuantifiedGroup(pattern)) {
+    throw new RepoAccessError("Unsafe search pattern: nested or ambiguous repetition is not allowed");
+  }
 }
 
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
   const abs = safeResolve(options.root, requestedPath);
+  assertNoSymlinkPath(options.root, abs, requestedPath);
 
   let stat;
   try {
@@ -107,6 +239,7 @@ export function readRepoFile(options: ToolkitOptions, requestedPath: string): Re
 export function listRepoFiles(options: ToolkitOptions, dir = "."): string[] {
   const ignore = options.ignore ?? DEFAULT_IGNORE;
   const base = safeResolve(options.root, dir);
+  assertNoSymlinkPath(options.root, base, dir);
   const out: string[] = [];
 
   const walk = (absDir: string) => {
@@ -142,14 +275,17 @@ export function searchRepo(
   pattern: string,
   searchDir = "."
 ): SearchResult {
-  const ignore = options.ignore ?? DEFAULT_IGNORE;
   const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
 
   let regex: RegExp;
   try {
+    assertSafeSearchPattern(pattern);
     regex = new RegExp(pattern);
   } catch (error) {
+    if (error instanceof RepoAccessError) {
+      throw error;
+    }
     throw new RepoAccessError(
       `Invalid search pattern: ${error instanceof Error ? error.message : String(error)}`
     );
@@ -163,9 +299,10 @@ export function searchRepo(
       truncated = true;
       break;
     }
-    const abs = join(options.root, file);
+    const abs = safeResolve(options.root, file);
     let buffer;
     try {
+      assertNoSymlinkPath(options.root, abs, file);
       buffer = readFileSync(abs);
     } catch {
       continue;
