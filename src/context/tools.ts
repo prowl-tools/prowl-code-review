@@ -19,6 +19,8 @@ export interface ToolkitOptions {
   maxMatches?: number;
   /** Max files returned by list and visited by search. Default 2000. */
   maxListedFiles?: number;
+  /** Max bytes returned for a single matching search line. Default 1024. */
+  maxMatchTextBytes?: number;
   /** Directory/segment names skipped during search/list. */
   ignore?: string[];
 }
@@ -36,6 +38,7 @@ export const DEFAULT_IGNORE = [
 const DEFAULT_MAX_FILE_BYTES = 64 * 1024;
 const DEFAULT_MAX_MATCHES = 200;
 const DEFAULT_MAX_LISTED_FILES = 2000;
+const DEFAULT_MAX_MATCH_TEXT_BYTES = 1024;
 const MAX_SEARCH_PATTERN_LENGTH = 256;
 const MAX_BOUNDED_REPEAT = 100;
 
@@ -60,7 +63,7 @@ export interface SearchMatch {
 
 export interface SearchResult {
   matches: SearchMatch[];
-  /** True when more matches or files existed than the caps returned/searched. */
+  /** True when more matches, files, or match text existed than the caps returned/searched. */
   truncated: boolean;
 }
 
@@ -299,6 +302,22 @@ function readFilePrefix(abs: string, maxBytes: number): Buffer {
   }
 }
 
+function truncateSearchMatchText(text: string, maxBytes: number): { text: string; truncated: boolean } {
+  if (maxBytes <= 0) {
+    return { text: "", truncated: text.length > 0 };
+  }
+  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
+    return { text, truncated: false };
+  }
+
+  let end = Math.min(text.length, maxBytes);
+  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > maxBytes) {
+    end -= 1;
+  }
+
+  return { text: `${text.slice(0, end)}...[truncated]`, truncated: true };
+}
+
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
@@ -353,6 +372,10 @@ export function searchRepo(
 ): SearchResult {
   const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const maxMatchTextBytes = boundedCount(
+    options.maxMatchTextBytes,
+    DEFAULT_MAX_MATCH_TEXT_BYTES
+  );
 
   let regex: RegExp;
   try {
@@ -379,7 +402,11 @@ export function searchRepo(
     try {
       assertNoSymlinkPath(options.root, abs, file);
       const stat = statSync(abs);
-      if (!stat.isFile() || stat.size > maxFileBytes) {
+      if (!stat.isFile()) {
+        return undefined;
+      }
+      if (stat.size > maxFileBytes) {
+        truncated = true;
         return undefined;
       }
       buffer = readFileSync(abs);
@@ -392,7 +419,11 @@ export function searchRepo(
     const lines = buffer.toString("utf8").split("\n");
     for (let i = 0; i < lines.length; i += 1) {
       if (regex.test(lines[i])) {
-        matches.push({ path: file, line: i + 1, text: lines[i] });
+        const matchText = truncateSearchMatchText(lines[i], maxMatchTextBytes);
+        if (matchText.truncated) {
+          truncated = true;
+        }
+        matches.push({ path: file, line: i + 1, text: matchText.text });
         if (matches.length >= maxMatches) {
           truncated = true;
           return false;
