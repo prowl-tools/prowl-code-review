@@ -61,6 +61,7 @@ export interface CompletionResult {
 
 export interface Provider {
   readonly name: ProviderName;
+  /** Run the provider-specific completion call and normalize token usage data. */
   complete(request: CompletionRequest, config: ProviderConfig): Promise<CompletionResult>;
 }
 
