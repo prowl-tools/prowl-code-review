@@ -10,6 +10,12 @@ function stripPrefix(path: string): string {
   return path;
 }
 
+/** Return the UTF-8 byte size for a split diff line and its separator, if any. */
+function byteSizeOfSplitLine(raw: string, index: number, lineCount: number): number {
+  const newlineBytes = index < lineCount - 1 ? 1 : 0;
+  return Buffer.byteLength(raw, "utf8") + newlineBytes;
+}
+
 /**
  * Parse a unified git diff (as returned by the GitHub API `format: "diff"`) into
  * a structured {@link ParsedDiff}. Pure and network-free.
@@ -32,7 +38,8 @@ export function parseDiff(text: string): ParsedDiff {
     }
   };
 
-  for (const raw of lines) {
+  for (let index = 0; index < lines.length; index += 1) {
+    const raw = lines[index];
     if (raw.startsWith("diff --git ")) {
       pushFile();
       hunk = null;
@@ -52,7 +59,7 @@ export function parseDiff(text: string): ParsedDiff {
       continue;
     }
 
-    current.byteSize += raw.length + 1; // include the newline we split on
+    current.byteSize += byteSizeOfSplitLine(raw, index, lines.length);
 
     if (raw.startsWith("new file mode")) {
       current.status = "added";

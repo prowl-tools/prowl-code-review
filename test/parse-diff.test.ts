@@ -142,7 +142,24 @@ describe("parseDiff", () => {
 
   it("records a byte size per file", () => {
     const { files } = parseDiff(ADDED);
-    expect(files[0].byteSize).toBeGreaterThan(0);
+    expect(files[0].byteSize).toBe(Buffer.byteLength(ADDED, "utf8"));
+  });
+
+  it("computes byteSize correctly when the final line has no trailing newline", () => {
+    const noTrailingNewline = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+new";
+
+    const { files } = parseDiff(noTrailingNewline);
+
+    expect(files[0].byteSize).toBe(Buffer.byteLength(noTrailingNewline, "utf8"));
+  });
+
+  it("computes byteSize using UTF-8 bytes for multibyte diff content", () => {
+    const multibyte = "diff --git a/a.txt b/a.txt\n--- a/a.txt\n+++ b/a.txt\n@@ -1 +1 @@\n-old\n+新しい🚀\n";
+
+    const { files } = parseDiff(multibyte);
+
+    expect(files[0].byteSize).toBe(Buffer.byteLength(multibyte, "utf8"));
+    expect(files[0].byteSize).toBeGreaterThan(multibyte.length);
   });
 
   it("returns no files for an empty diff", () => {

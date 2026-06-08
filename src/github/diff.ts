@@ -1,24 +1,40 @@
 import type { OctokitLike } from "./client.js";
 
+/** Repository and pull request number identifying a GitHub PR. */
 export interface PullRequestRef {
+  /** Repository owner or organization. */
   owner: string;
+  /** Repository name without owner. */
   repo: string;
+  /** Pull request number. */
   pull_number: number;
 }
 
+/** Pull request metadata required by the review pipeline. */
 export interface PullRequestMeta {
+  /** Pull request number. */
   number: number;
+  /** Pull request title. */
   title: string;
+  /** Pull request body text, if present. */
   body: string | null;
+  /** Base branch commit SHA. */
   baseSha: string;
+  /** Head branch commit SHA. */
   headSha: string;
+  /** Whether the pull request is currently a draft. */
   draft: boolean;
+  /** GitHub pull request state. */
   state: string;
+  /** GitHub login of the author, or null if unavailable. */
   author: string | null;
+  /** Number of files changed in the pull request. */
   changedFiles: number;
 }
 
+/** Fetched pull request metadata together with its raw unified diff. */
 export interface FetchedPullRequest {
+  /** Normalized pull request metadata. */
   meta: PullRequestMeta;
   /** Raw unified diff text (to be parsed with `parseDiff`). */
   diff: string;
