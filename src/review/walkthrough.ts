@@ -233,7 +233,9 @@ function findingsSection(findings: Finding[]): string {
   }
   const lines = ["### Findings"];
   for (const finding of blockers) {
-    lines.push(`- ${SEVERITY_BADGE[finding.severity]} **${finding.title}** — ${findingLocation(finding)}`);
+    lines.push(
+      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownText(finding.title)}** — ${findingLocation(finding)}`
+    );
   }
   return lines.join("\n");
 }
