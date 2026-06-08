@@ -1,8 +1,7 @@
 import type { DiffFile } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { SEVERITIES, SEVERITY_ORDER } from "./findings.js";
-import type { SkippedFile } from "./diff-types.js";
-import { describeSkipped } from "./size-guards.js";
+import type { SkipReason, SkippedFile } from "./diff-types.js";
 
 /**
  * Structured walkthrough summary (backlog #9) — a pure markdown formatter that
@@ -50,6 +49,58 @@ export interface WalkthroughInput {
   effort?: number;
 }
 
+const SKIP_LABELS: Record<SkipReason, string> = {
+  binary: "binary (not reviewable)",
+  maxFiles: "skipped - file limit reached",
+  maxDiffBytes: "skipped - diff size limit reached"
+};
+
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|>".split(""));
+
+/** Replace control characters so untrusted paths cannot change Markdown structure. */
+function normalizeMarkdownText(value: string): string {
+  let normalized = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      if (char === "\n") {
+        normalized += "\\n";
+      } else if (char === "\r") {
+        normalized += "\\r";
+      } else if (char === "\t") {
+        normalized += "\\t";
+      } else {
+        normalized += `\\x${code.toString(16).padStart(2, "0")}`;
+      }
+    } else {
+      normalized += char;
+    }
+  }
+  return normalized;
+}
+
+/** Escape Markdown metacharacters for plain text contexts such as headings. */
+function escapeMarkdownText(value: string): string {
+  let escaped = "";
+  for (const char of normalizeMarkdownText(value)) {
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+  }
+  return escaped;
+}
+
+/** Render untrusted text as an inline code span, even when it contains backticks. */
+function inlineCode(value: string): string {
+  const normalized = normalizeMarkdownText(value);
+  const longestBacktickRun = Math.max(
+    0,
+    ...Array.from(normalized.matchAll(/`+/g), (match) => match[0].length)
+  );
+  const fence = "`".repeat(longestBacktickRun + 1);
+  const padding = normalized.startsWith("`") || normalized.endsWith("`") ? " " : "";
+  return `${fence}${padding}${normalized}${padding}${fence}`;
+}
+
+/** Count added and deleted text lines for one parsed diff file. */
 function lineDelta(file: DiffFile): { additions: number; deletions: number } {
   let additions = 0;
   let deletions = 0;
@@ -65,6 +116,7 @@ function lineDelta(file: DiffFile): { additions: number; deletions: number } {
   return { additions, deletions };
 }
 
+/** Count all changed text lines across parsed diff files. */
 function totalChangedLines(files: DiffFile[]): number {
   return files.reduce((sum, file) => {
     const { additions, deletions } = lineDelta(file);
@@ -104,6 +156,7 @@ export function deriveEffort(files: DiffFile[]): number {
   return score;
 }
 
+/** Render a compact severity-count summary for the walkthrough header. */
 function severityCountLine(counts: Record<Severity, number>): string {
   const parts = SEVERITIES.filter((s) => counts[s] > 0).map(
     (s) => `${SEVERITY_BADGE[s]} ${counts[s]}`
@@ -111,11 +164,13 @@ function severityCountLine(counts: Record<Severity, number>): string {
   return parts.length > 0 ? parts.join(" · ") : "none";
 }
 
+/** Group files by top-level directory for scannable changed-file sections. */
 function topDir(path: string): string {
   const slash = path.indexOf("/");
   return slash === -1 ? "(root)" : path.slice(0, slash);
 }
 
+/** Render the grouped changed-file list with untrusted paths in safe code spans. */
 function changedFilesSection(files: DiffFile[]): string {
   if (files.length === 0) {
     return "### Changed files\n_None._";
@@ -130,18 +185,45 @@ function changedFilesSection(files: DiffFile[]): string {
 
   const lines: string[] = [`### Changed files (${files.length})`];
   for (const [dir, groupFiles] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
-    lines.push(`**${dir}/**`);
+    const label = dir === "(root)" ? "(root)/" : escapeMarkdownText(`${dir}/`);
+    lines.push(`**${label}**`);
     for (const file of groupFiles) {
       const { additions, deletions } = lineDelta(file);
       const delta = file.binary
         ? "binary"
         : [additions ? `+${additions}` : "", deletions ? `−${deletions}` : ""].filter(Boolean).join(" ") || "no line changes";
-      lines.push(`- \`${file.path}\` — ${file.status} (${delta})`);
+      lines.push(`- ${inlineCode(file.path)} — ${file.status} (${delta})`);
     }
   }
   return lines.join("\n");
 }
 
+/** Render skipped-file notes with untrusted paths in safe code spans. */
+function skippedFilesNote(skipped: SkippedFile[]): string {
+  if (skipped.length === 0) {
+    return "";
+  }
+
+  const byReason = new Map<SkipReason, string[]>();
+  for (const { path, reason } of skipped) {
+    const list = byReason.get(reason) ?? [];
+    list.push(inlineCode(path));
+    byReason.set(reason, list);
+  }
+
+  const parts: string[] = [];
+  for (const [reason, paths] of byReason) {
+    parts.push(`${SKIP_LABELS[reason]}: ${paths.join(", ")}`);
+  }
+  return parts.join("; ");
+}
+
+/** Render a finding's file/line location with a safe path code span. */
+function findingLocation(finding: Finding): string {
+  return inlineCode(finding.line ? `${finding.file}:${finding.line}` : finding.file);
+}
+
+/** Render only blocking findings in the summary; inline comments carry details. */
 function findingsSection(findings: Finding[]): string {
   const blockers = findings.filter(
     (f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER.major
@@ -151,8 +233,7 @@ function findingsSection(findings: Finding[]): string {
   }
   const lines = ["### Findings"];
   for (const finding of blockers) {
-    const where = finding.line ? `${finding.file}:${finding.line}` : finding.file;
-    lines.push(`- ${SEVERITY_BADGE[finding.severity]} **${finding.title}** — \`${where}\``);
+    lines.push(`- ${SEVERITY_BADGE[finding.severity]} **${finding.title}** — ${findingLocation(finding)}`);
   }
   return lines.join("\n");
 }
@@ -173,7 +254,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   ];
 
   if (input.skipped && input.skipped.length > 0) {
-    sections.push(`> ⚠️ **Not reviewed:** ${describeSkipped(input.skipped)}`);
+    sections.push(`> ⚠️ **Not reviewed:** ${skippedFilesNote(input.skipped)}`);
   }
 
   if (input.mermaid?.trim()) {
