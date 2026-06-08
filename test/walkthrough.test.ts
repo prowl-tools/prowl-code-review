@@ -92,6 +92,26 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("**(root)/**");
   });
 
+  it("escapes untrusted paths before rendering Markdown", () => {
+    const md = buildWalkthrough({
+      findings: [
+        makeFinding("major", {
+          file: "findings/`bad`\n### injected.md",
+          title: "Path spoof"
+        })
+      ],
+      files: [makeFile("src/`spoof`\n### fake.md", 1, 0)],
+      skipped: [{ path: "skip/`bad`\n### skipped.md", reason: "maxFiles" }]
+    });
+
+    expect(md).toContain("``src/`spoof`\\n### fake.md``");
+    expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
+    expect(md).toContain("``skip/`bad`\\n### skipped.md``");
+    expect(md).not.toContain("`spoof`\n### fake.md");
+    expect(md).not.toContain("`bad`\n### injected.md");
+    expect(md).not.toContain("`bad`\n### skipped.md");
+  });
+
   it("marks binary files instead of showing line deltas", () => {
     const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
     expect(md).toContain("`img.png` — modified (binary)");
