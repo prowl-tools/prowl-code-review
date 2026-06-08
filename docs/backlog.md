@@ -10,12 +10,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## High Priority
 
-2. **Multi-provider BYOK LLM abstraction + prompt caching**
-   As a developer, I want to pick Claude, OpenAI, or Gemini via env vars with caching built in, so that I'm never vendor-locked and reviews stay cheap.
-   - Acceptance: `providers/` exposes one interface; selection via `PROWL_AI_PROVIDER` (default `anthropic`) + `PROWL_AI_KEY`, mirroring `prowl/src/generator/ai.ts`. Sane default models (stronger for the judge, cheaper for specialist passes).
-   - Acceptance: **prompt caching** wired so stable content (system prompt, guidelines, fetched repo context, tool defs) is cached and only the diff is uncached; cache-aware token accounting.
-   - Acceptance: unit tests for provider selection, missing-key error, and cache-block construction (`fetch` mocked).
-
 3. **Diff fetch + parsing with size guards**
    As a developer, I want the tool to fetch a PR's diff and parse it into files/hunks/lines, so that reviews target real changed code and inline comments map to exact lines.
    - Acceptance: `github/diff.ts` fetches PR diff + metadata via Octokit; `review/parse-diff.ts` maps hunks to `path` + new-side line numbers/ranges.
