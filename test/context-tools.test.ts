@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   listRepoFiles,
+  listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
   RepoAccessError,
@@ -83,6 +84,13 @@ describe("listRepoFiles", () => {
     expect(files.some((f) => f.includes("node_modules"))).toBe(false);
     expect(files.some((f) => f.includes("leak.txt"))).toBe(false);
   });
+
+  it("caps returned files and reports truncation", () => {
+    const result = listRepoFilesDetailed({ ...options, maxListedFiles: 2 });
+    expect(result.files).toHaveLength(2);
+    expect(result.truncated).toBe(true);
+    expect(listRepoFiles({ ...options, maxListedFiles: 2 })).toEqual(result.files);
+  });
 });
 
 describe("searchRepo", () => {
@@ -99,6 +107,12 @@ describe("searchRepo", () => {
   it("caps matches and reports truncation", () => {
     const result = searchRepo({ ...options, maxMatches: 1 }, "foo");
     expect(result.matches).toHaveLength(1);
+    expect(result.truncated).toBe(true);
+  });
+
+  it("caps visited files and reports truncation", () => {
+    const result = searchRepo({ ...options, maxListedFiles: 1 }, "foo");
+    expect(result.matches.length).toBeLessThanOrEqual(options.maxMatches ?? 5);
     expect(result.truncated).toBe(true);
   });
 

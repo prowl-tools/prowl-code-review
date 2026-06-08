@@ -34,11 +34,13 @@ export {
 // Agentic cross-file context retrieval (sandboxed tools + tool-use loop).
 export {
   listRepoFiles,
+  listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
   RepoAccessError,
   DEFAULT_IGNORE,
   type ToolkitOptions,
+  type ListFilesResult,
   type ReadFileResult,
   type SearchMatch,
   type SearchResult

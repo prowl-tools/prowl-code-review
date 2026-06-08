@@ -11,7 +11,7 @@ import {
   type TokenUsage
 } from "../providers/index.js";
 import {
-  listRepoFiles,
+  listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
   type ToolkitOptions
@@ -168,12 +168,20 @@ function executeTool(
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
       const result = searchRepo(options, pattern, dir);
       const body = result.matches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      if (result.truncated) {
+        notes.push(`Search results truncated for '${pattern}' under ${dir}`);
+      }
       return (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : "");
     }
 
     if (call.name === "list_files") {
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
-      return listRepoFiles(options, dir).join("\n") || "(empty)";
+      const result = listRepoFilesDetailed(options, dir);
+      const body = result.files.join("\n") || "(empty)";
+      if (result.truncated) {
+        notes.push(`Listed first ${result.files.length} files under ${dir}; more omitted`);
+      }
+      return body + (result.truncated ? "\n…[more files omitted]" : "");
     }
 
     return `Error: unknown tool '${call.name}'.`;
