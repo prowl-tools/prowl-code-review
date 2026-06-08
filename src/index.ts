@@ -10,6 +10,7 @@ export const PACKAGE_NAME = "prowl-review";
 // Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
 export {
   complete,
+  completeWithTools,
   getProvider,
   resolveProviderConfig,
   DEFAULT_MODELS,
@@ -21,8 +22,38 @@ export {
   type ProviderConfig,
   type CompletionRequest,
   type CompletionResult,
-  type TokenUsage
+  type TokenUsage,
+  type ToolDefinition,
+  type ToolCall,
+  type ToolResult,
+  type ToolMessage,
+  type ToolCompletionRequest,
+  type ToolCompletionResult
 } from "./providers/index.js";
+
+// Agentic cross-file context retrieval (sandboxed tools + tool-use loop).
+export {
+  listRepoFiles,
+  listRepoFilesDetailed,
+  readRepoFile,
+  searchRepo,
+  RepoAccessError,
+  DEFAULT_IGNORE,
+  type ToolkitOptions,
+  type ListFilesResult,
+  type ReadFileResult,
+  type SearchMatch,
+  type SearchResult
+} from "./context/tools.js";
+export {
+  gatherContext,
+  REVIEW_TOOLS,
+  type GatherContextParams,
+  type GatheredContext,
+  type RetrievedFile,
+  type RetrievedToolOutput,
+  type RetrievalLimits
+} from "./context/retrieval.js";
 
 // GitHub PR diff + metadata fetch.
 export { createOctokit, type OctokitLike } from "./github/client.js";

@@ -7,6 +7,8 @@ import {
   type Provider,
   type ProviderConfig,
   type ProviderName,
+  type ToolCompletionRequest,
+  type ToolCompletionResult,
   DEFAULT_MODELS,
   PROVIDER_NAMES
 } from "./types.js";
@@ -68,4 +70,15 @@ export async function complete(
   config: ProviderConfig = resolveProviderConfig()
 ): Promise<CompletionResult> {
   return getProvider(config.provider).complete(request, config);
+}
+
+/**
+ * Run one tool-use turn against the configured (or supplied) provider. With no
+ * `config`, resolves it from the environment via {@link resolveProviderConfig}.
+ */
+export async function completeWithTools(
+  request: ToolCompletionRequest,
+  config: ProviderConfig = resolveProviderConfig()
+): Promise<ToolCompletionResult> {
+  return getProvider(config.provider).completeWithTools(request, config);
 }

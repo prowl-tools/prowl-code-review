@@ -5,6 +5,12 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Agentic cross-file context retrieval (`src/context/`): a sandboxed repo-access toolkit
+  (read-file, regex grep, list — confined to the repo root, bounded, binary/ignored-dir
+  aware) plus a provider-agnostic tool-use loop (`gatherContext`) where the model decides
+  what to fetch (callers/definitions/related files) — no vector DB. Tool-use (function
+  calling) is implemented for all three providers. Everything fetched, truncated, errored,
+  or limited is reported, never dropped silently. (backlog #4)
 - Diff fetch + parsing (`src/github/`, `src/review/`): fetch a PR's metadata and raw
   unified diff via Octokit (`@actions/github`), parse it into structured files/hunks/lines
   with old/new line numbers (the mapping inline comments will use), and apply `maxFiles`/
