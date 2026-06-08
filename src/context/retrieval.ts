@@ -78,9 +78,18 @@ export interface RetrievedFile {
   truncated: boolean;
 }
 
+export interface RetrievedToolOutput {
+  tool: "search_repo" | "list_files";
+  input: Record<string, string>;
+  content: string;
+  truncated: boolean;
+}
+
 export interface GatheredContext {
   /** Distinct files the agent read, in fetch order. */
   files: RetrievedFile[];
+  /** Bounded non-file tool outputs the agent used while gathering context. */
+  toolOutputs: RetrievedToolOutput[];
   /** Number of tool-use rounds executed. */
   rounds: number;
   /** Summed token usage across rounds. */
@@ -144,6 +153,7 @@ function executeTool(
   call: { name: string; input: Record<string, unknown> },
   options: ToolkitOptions,
   files: Map<string, RetrievedFile>,
+  toolOutputs: RetrievedToolOutput[],
   maxFiles: number,
   notes: string[]
 ): ExecutedTool {
@@ -180,26 +190,34 @@ function executeTool(
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
       const result = searchRepo(options, pattern, dir);
       const body = result.matches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const content = (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : "");
       if (result.truncated) {
         notes.push(`Search results truncated for '${pattern}' under ${dir}`);
       }
-      return toolExecution(
-        (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : ""),
-        result.truncated
-      );
+      toolOutputs.push({
+        tool: "search_repo",
+        input: { pattern, dir },
+        content,
+        truncated: result.truncated
+      });
+      return toolExecution(content, result.truncated);
     }
 
     if (call.name === "list_files") {
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
       const result = listRepoFilesDetailed(options, dir);
       const body = result.files.join("\n") || "(empty)";
+      const content = body + (result.truncated ? "\n…[more files omitted]" : "");
       if (result.truncated) {
         notes.push(`Listed first ${result.files.length} files under ${dir}; more omitted`);
       }
-      return toolExecution(
-        body + (result.truncated ? "\n…[more files omitted]" : ""),
-        result.truncated
-      );
+      toolOutputs.push({
+        tool: "list_files",
+        input: { dir },
+        content,
+        truncated: result.truncated
+      });
+      return toolExecution(content, result.truncated);
     }
 
     return toolExecution(`Error: unknown tool '${call.name}'.`);
@@ -218,6 +236,7 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
   const maxFiles = params.limits?.maxFiles ?? 20;
 
   const files = new Map<string, RetrievedFile>();
+  const toolOutputs: RetrievedToolOutput[] = [];
   const notes: string[] = [];
   const messages: ToolMessage[] = [{ role: "user", text: seedPrompt(params.changedPaths) }];
 
@@ -246,7 +265,7 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
     messages.push({ role: "assistant", text: result.text, toolCalls: result.toolCalls });
 
     const results: ToolResult[] = result.toolCalls.map((call) => {
-      const executed = executeTool(call, params.toolkit, files, maxFiles, notes);
+      const executed = executeTool(call, params.toolkit, files, toolOutputs, maxFiles, notes);
       if (executed.reachedLimit) {
         reachedLimit = true;
       }
@@ -255,5 +274,12 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
     messages.push({ role: "tool", results });
   }
 
-  return { files: [...files.values()], rounds, usage, reachedLimit, notes };
+  return {
+    files: [...files.values()],
+    toolOutputs,
+    rounds,
+    usage,
+    reachedLimit,
+    notes
+  };
 }
