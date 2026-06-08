@@ -51,6 +51,7 @@ export {
   type GatherContextParams,
   type GatheredContext,
   type RetrievedFile,
+  type RetrievedToolOutput,
   type RetrievalLimits
 } from "./context/retrieval.js";
 

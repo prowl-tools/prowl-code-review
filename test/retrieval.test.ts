@@ -133,4 +133,54 @@ describe("gatherContext", () => {
     expect(result.reachedLimit).toBe(true);
     expect(result.notes.some((n) => n.includes("more omitted"))).toBe(true);
   });
+
+  it("returns successful search outputs even when no file is read", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "export const" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.files).toEqual([]);
+    expect(result.notes).toEqual([]);
+    expect(result.toolOutputs).toEqual([
+      {
+        tool: "search_repo",
+        input: { pattern: "export const", dir: "." },
+        content: "src/a.ts:1: export const a = 1;\nsrc/b.ts:1: export const b = 2;",
+        truncated: false
+      }
+    ]);
+  });
+
+  it("returns successful file listing outputs even when no file is read", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "list_files", input: { dir: "src" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.files).toEqual([]);
+    expect(result.notes).toEqual([]);
+    expect(result.toolOutputs).toEqual([
+      {
+        tool: "list_files",
+        input: { dir: "src" },
+        content: "src/a.ts\nsrc/b.ts",
+        truncated: false
+      }
+    ]);
+  });
 });
