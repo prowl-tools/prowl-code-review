@@ -56,7 +56,7 @@ export function resolveProviderConfig(
     );
   }
 
-  const model = env.PROWL_AI_MODEL ?? DEFAULT_MODELS[raw];
+  const model = env.PROWL_AI_MODEL?.trim() || DEFAULT_MODELS[raw];
 
   return { provider: raw, model, apiKey };
 }

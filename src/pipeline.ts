@@ -71,6 +71,30 @@ export interface ReviewPullRequestResult {
   posted: boolean;
 }
 
+function truncateNote(value: string, maxLength = 500): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+function reviewPassNotes(reviewResult: ReviewResult): string[] {
+  const failures = reviewResult.passes.filter((pass) => !pass.ok);
+  if (failures.length === 0) {
+    return [];
+  }
+
+  const total = reviewResult.passes.length;
+  const coverage =
+    failures.length === total
+      ? "All review specialist passes failed; coverage is degraded."
+      : `${failures.length}/${total} review specialist passes failed; coverage is degraded.`;
+
+  return [
+    coverage,
+    ...failures.map((pass) =>
+      truncateNote(`Review pass "${pass.specialist}" failed: ${pass.error ?? "unknown error"}`)
+    )
+  ];
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -91,6 +115,7 @@ export async function reviewPullRequest(
 
   let context: string | undefined;
   let contextFiles = 0;
+  let contextNotes: string[] = [];
   if (!options.skipContext && options.toolkitRoot && guarded.files.length > 0) {
     const gathered = await gather({
       toolkit: { root: options.toolkitRoot },
@@ -99,6 +124,7 @@ export async function reviewPullRequest(
       limits: options.contextLimits
     });
     contextFiles = gathered.files.length;
+    contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
     if (gathered.files.length > 0) {
       context = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
     }
@@ -112,7 +138,8 @@ export async function reviewPullRequest(
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
     files: guarded.files,
-    skipped: guarded.skipped
+    skipped: guarded.skipped,
+    notes: [...contextNotes, ...reviewPassNotes(reviewResult)]
   });
 
   const payload = buildReviewPayload({

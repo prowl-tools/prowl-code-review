@@ -27,13 +27,14 @@ function finding(over: Partial<Finding> = {}): Finding {
   return { file: "src/a.ts", line: 2, severity: "major", category: "correctness", title: "Bug", body: "b", confidence: 0.7, ...over };
 }
 
-function reviewResult(findings: Finding[]): ReviewResult {
+function reviewResult(findings: Finding[], over: Partial<ReviewResult> = {}): ReviewResult {
   return {
     findings,
     raw: findings,
     passes: [],
     judge: { duplicatesRemoved: 0, belowThreshold: 0 },
-    usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
+    ...over
   };
 }
 
@@ -88,5 +89,40 @@ describe("reviewPullRequest", () => {
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipContext: true });
     expect(deps.gatherContext).not.toHaveBeenCalled();
     expect(deps.runReview.mock.calls[0][0].context).toBeUndefined();
+  });
+
+  it("surfaces context retrieval notes in the summary", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
+      rounds: 6,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      reachedLimit: true,
+      notes: ["Reached max tool rounds (6)."],
+      toolOutputs: []
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("Review notes");
+    expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
+  });
+
+  it("surfaces failed review passes so clean summaries are not misleading", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "provider rejected prompt" },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("_No blocking issues found._");
+    expect(result.payload.body).toContain("1/2 review specialist passes failed");
+    expect(result.payload.body).toContain("Review pass \"correctness\" failed: provider rejected prompt");
   });
 });
