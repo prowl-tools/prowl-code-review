@@ -21,6 +21,23 @@ export interface OctokitLike {
         /** Optional media format override for non-JSON responses. */
         mediaType?: { format: string };
       }): Promise<{ data: unknown }>;
+      /** Publish a review: a summary `body`, an `event`, and inline `comments`. */
+      createReview(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        body?: string;
+        event?: string;
+        commit_id?: string;
+        comments?: Array<{
+          path: string;
+          body: string;
+          line?: number;
+          side?: string;
+          start_line?: number;
+          start_side?: string;
+        }>;
+      }): Promise<{ data: unknown }>;
     };
   };
 }
