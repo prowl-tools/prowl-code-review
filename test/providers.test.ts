@@ -307,7 +307,7 @@ describe("gemini provider", () => {
 
     const result = await complete({ system: "guidelines", prompt: "diff" }, config);
 
-    expect(urlOf(fn)).toContain("/v1/models/gemini-x:generateContent");
+    expect(urlOf(fn)).toContain("/v1beta/models/gemini-x:generateContent");
     expect(methodOf(fn)).toBe("POST");
     expect(headersOf(fn)["x-goog-api-key"]).toBe("key");
     const body = bodyOf(fn);
