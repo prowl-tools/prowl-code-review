@@ -28,7 +28,10 @@ interface GeminiResponse {
 }
 
 function endpoint(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
+  // v1beta serves the current Gemini models (the 2.x line); v1 lags and 404s
+  // on them. The AI Studio (generativelanguage) API documents v1beta for
+  // generateContent.
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
   )}:generateContent`;
 }
