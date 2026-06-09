@@ -76,6 +76,7 @@ describe("runReview", () => {
     const systems = complete.mock.calls.map((call) => (call[0] as CompletionRequest).system);
     expect(new Set(systems).size).toBe(1);
     expect(systems[0]).toContain("be strict");
+    expect(systems[0]).toContain("conservative"); // high-signal directive (#55)
     expect(systems[0]).not.toContain("the diff");
     expect(systems[0]).not.toContain("the context");
 
