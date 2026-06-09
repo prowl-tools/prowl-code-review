@@ -153,6 +153,13 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: presentation surfaces a **consensus badge** (e.g. "🤝 agreed by N/M providers") in the walkthrough + inline comments — the granular insight.
     - Acceptance: **cost-guarded** — costs ~N× a single-provider review (caching helps within each provider, not across); respects the per-PR budget cap (#18) and risk-tiering (#31); docs state the multiplier. Complements false-positive verification (#8): cross-provider agreement is itself a verification signal.
 
+54. **Review comment presentation polish (visual design)**
+    As a developer reading a review, I want the comment to look premium and scannable (CodeRabbit/Greptile-grade), so that it's pleasant rather than a flat wall of text.
+    - Acceptance: use **collapsible `<details>`** for long/secondary sections (changed-files, review notes) so the summary stays short by default.
+    - Acceptance: use GitHub **alert blocks** (`> [!NOTE]` / `> [!WARNING]` / `> [!CAUTION]`) for impact + review-notes instead of plain emoji lines; render findings as a compact **table** (severity badge · location · title) rather than a flat list.
+    - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
+    - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
+
 ## Low Priority
 
 39. **Suggested-fix validation**
