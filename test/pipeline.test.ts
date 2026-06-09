@@ -157,7 +157,12 @@ diff --git a/src/a.ts b/src/a.ts
 `;
     deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
 
-    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      diffLimits: { maxFiles: 1 },
+      deps
+    });
 
     // .env is kept out of the review entirely and reported.
     expect(result.skipped).toContainEqual({ path: ".env", reason: "sensitive" });
@@ -165,6 +170,7 @@ diff --git a/src/a.ts b/src/a.ts
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
+    expect(diffInput).toContain("src/a.ts");
     expect(diffInput).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(diffInput).not.toContain("ghp_aaaa");
     expect(diffInput).toContain("[REDACTED");
