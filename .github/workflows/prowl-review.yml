@@ -1,0 +1,32 @@
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# Cancel a superseded review when new commits arrive on the same PR.
+concurrency:
+  group: prowl-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  checks: write
+  contents: read
+
+jobs:
+  review:
+    # Skip drafts; review once marked ready.
+    if: github.event.pull_request.draft == false
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+
+      - name: prowl-review
+        uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          # ai-provider: anthropic
+          # ai-model: claude-sonnet-4-6
+          # min-severity: major
