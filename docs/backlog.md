@@ -24,12 +24,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
    - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them; severity threshold + dedup applied before posting; counts of dropped findings logged.
 
-11. **GitHub Action wrapper + dogfood**
-    As a developer, I want a drop-in Action, so that adding one workflow file + an API-key secret enables premium reviews on any repo with no hosting.
-    - Acceptance: `action.yml` defines the Node action metadata (`inputs`, `outputs`, and `runs`) and invokes the full pipeline.
-    - Acceptance: sample `.github/workflows/prowl-review.yml` triggers on `pull_request` [opened, synchronize, ready_for_review, reopened], declares `permissions: pull-requests: write, checks: write, contents: read`, checks out the repository with `actions/checkout` before invoking `prowl-review`, and uses auto `GITHUB_TOKEN` + `PROWL_AI_KEY` secret.
-    - Acceptance: dogfooded on a real code repo (e.g. `prowl`) — a PR with a deliberate cross-file bug surfaces it inline with a suggestion.
-
 12. **Review state persistence strategy**
     As a maintainer, I want a defined place to persist per-PR state in a stateless Action, so that incremental review, update-not-duplicate, and learnings actually work.
     - Acceptance: decide and implement a store for last-reviewed SHA, already-posted findings, and learnings (e.g. a hidden marker comment and/or a `.prowl-review/` artifact); documented and reused by #22/#21/#30.

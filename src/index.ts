@@ -7,6 +7,15 @@
 /** Package name exposed for consumers that need to identify this library. */
 export const PACKAGE_NAME = "prowl-review";
 
+// End-to-end PR review pipeline (the integration entry point).
+export {
+  reviewPullRequest,
+  type ReviewPullRequestOptions,
+  type ReviewPullRequestResult,
+  type PipelineDeps
+} from "./pipeline.js";
+export { renderGuardedDiff } from "./review/render-diff.js";
+
 // Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
 export {
   complete,

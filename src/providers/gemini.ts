@@ -7,6 +7,8 @@ import {
   type ToolCall,
   type ToolCompletionRequest,
   type ToolCompletionResult,
+  type ToolProviderMetadata,
+  type GeminiToolMessagePart,
   type ToolMessage,
   DEFAULT_MAX_TOKENS
 } from "./types.js";
@@ -14,6 +16,8 @@ import {
 interface GeminiPart {
   text?: string;
   functionCall?: { id?: string; name: string; args?: Record<string, unknown> };
+  /** Gemini thinking signature that must be echoed back on the same ordered part. */
+  thoughtSignature?: string;
 }
 
 interface GeminiUsage {
@@ -28,7 +32,10 @@ interface GeminiResponse {
 }
 
 function endpoint(model: string): string {
-  return `https://generativelanguage.googleapis.com/v1/models/${encodeURIComponent(
+  // v1beta serves the current Gemini models (the 2.x line); v1 lags and 404s
+  // on them. The AI Studio (generativelanguage) API documents v1beta for
+  // generateContent.
+  return `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(
     model
   )}:generateContent`;
 }
@@ -63,20 +70,26 @@ function toGeminiContents(messages: ToolMessage[]): unknown[] {
       return { role: "user", parts: [{ text: message.text }] };
     }
     if (message.role === "assistant") {
-      const parts: unknown[] = [];
-      if (message.text) {
-        parts.push({ text: message.text });
-      }
-      for (const call of message.toolCalls) {
-        toolNamesById.set(call.id, call.name);
-        parts.push({
-          functionCall: {
-            ...(call.id !== call.name ? { id: call.id } : {}),
-            name: call.name,
-            args: call.input
-          }
-        });
-      }
+      const parts =
+        message.providerMetadata?.geminiParts
+          ? message.providerMetadata.geminiParts.map((part) => {
+              if (part.type === "text") {
+                return {
+                  text: part.text,
+                  ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {})
+                };
+              }
+              toolNamesById.set(part.id, part.name);
+              return {
+                functionCall: {
+                  ...(part.id !== part.name ? { id: part.id } : {}),
+                  name: part.name,
+                  args: part.input
+                },
+                ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {})
+              };
+            })
+          : normalizedGeminiAssistantParts(message.text, message.toolCalls, toolNamesById);
       return { role: "model", parts };
     }
     return {
@@ -93,6 +106,29 @@ function toGeminiContents(messages: ToolMessage[]): unknown[] {
       })
     };
   });
+}
+
+function normalizedGeminiAssistantParts(
+  text: string,
+  toolCalls: ToolCall[],
+  toolNamesById: Map<string, string>
+): unknown[] {
+  const parts: unknown[] = [];
+  if (text) {
+    parts.push({ text });
+  }
+  for (const call of toolCalls) {
+    toolNamesById.set(call.id, call.name);
+    parts.push({
+      functionCall: {
+        ...(call.id !== call.name ? { id: call.id } : {}),
+        name: call.name,
+        args: call.input
+      },
+      ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
+    });
+  }
+  return parts;
 }
 
 /**
@@ -121,8 +157,12 @@ async function completeGemini(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${detail}`);
+    const detail = (await response.text()) || "(no response body)";
+    const hint =
+      response.status === 404
+        ? ` — model "${config.model}" may be unavailable for this key; set PROWL_AI_MODEL / ai-model to a model your key supports.`
+        : "";
+    throw new Error(`Gemini API error (${response.status}): ${detail}${hint}`);
   }
 
   const data = (await response.json()) as GeminiResponse;
@@ -175,8 +215,12 @@ async function completeGeminiTools(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${detail}`);
+    const detail = (await response.text()) || "(no response body)";
+    const hint =
+      response.status === 404
+        ? ` — model "${config.model}" may be unavailable for this key; set PROWL_AI_MODEL / ai-model to a model your key supports.`
+        : "";
+    throw new Error(`Gemini API error (${response.status}): ${detail}${hint}`);
   }
 
   const data = (await response.json()) as GeminiResponse;
@@ -184,22 +228,37 @@ async function completeGeminiTools(
 
   let text = "";
   const toolCalls: ToolCall[] = [];
+  const geminiParts: GeminiToolMessagePart[] = [];
   for (const part of parts) {
-    if (part.text) {
+    if (part.text !== undefined) {
       text += part.text;
+      geminiParts.push({
+        type: "text",
+        text: part.text,
+        ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {})
+      });
     } else if (part.functionCall) {
-      toolCalls.push({
+      const toolCall = {
         id: part.functionCall.id ?? part.functionCall.name,
         name: part.functionCall.name,
-        input: part.functionCall.args ?? {}
+        input: part.functionCall.args ?? {},
+        ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {})
+      };
+      toolCalls.push(toolCall);
+      geminiParts.push({
+        type: "functionCall",
+        ...toolCall
       });
     }
   }
+  const providerMetadata: ToolProviderMetadata | undefined =
+    geminiParts.some((part) => part.thoughtSignature) ? { geminiParts } : undefined;
 
   return {
     text,
     toolCalls,
     stopReason: toolCalls.length > 0 ? "tool_use" : "end",
+    providerMetadata,
     provider: "gemini",
     model: config.model,
     usage: mapUsage(data.usageMetadata)

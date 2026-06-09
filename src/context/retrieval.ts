@@ -262,7 +262,12 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
       break;
     }
 
-    messages.push({ role: "assistant", text: result.text, toolCalls: result.toolCalls });
+    messages.push({
+      role: "assistant",
+      text: result.text,
+      toolCalls: result.toolCalls,
+      providerMetadata: result.providerMetadata
+    });
 
     const results: ToolResult[] = result.toolCalls.map((call) => {
       const executed = executeTool(call, params.toolkit, files, toolOutputs, maxFiles, notes);

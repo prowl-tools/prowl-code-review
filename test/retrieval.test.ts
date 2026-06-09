@@ -95,6 +95,38 @@ describe("gatherContext", () => {
     expect(result.notes.some((n) => n.includes("read_file error"))).toBe(true);
   });
 
+  it("preserves provider metadata on assistant tool turns", async () => {
+    const metadata = {
+      geminiParts: [
+        { type: "text" as const, text: "checking", thoughtSignature: "text-sig" },
+        {
+          type: "functionCall" as const,
+          id: "c1",
+          name: "read_file",
+          input: { path: "src/a.ts" },
+          thoughtSignature: "call-sig"
+        }
+      ]
+    };
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ...toolUse([{ id: "c1", name: "read_file", input: { path: "src/a.ts" } }]),
+        providerMetadata: metadata
+      })
+      .mockImplementationOnce(async (request) => {
+        expect(request.messages[1]).toMatchObject({ providerMetadata: metadata });
+        return end();
+      });
+
+    await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+  });
+
   it("enforces the file budget", async () => {
     const run = scripted([
       toolUse([

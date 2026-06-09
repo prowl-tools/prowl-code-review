@@ -1,0 +1,56 @@
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# Cancel a superseded review when new commits arrive on the same PR.
+concurrency:
+  group: prowl-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write
+  checks: write
+  contents: read
+
+jobs:
+  review:
+    # Skip drafts and forks; forked PRs do not receive provider secrets.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
+
+      - name: Check trusted action availability
+        id: trusted-action
+        shell: bash
+        run: |
+          if [ -f action.yml ] || [ -f action.yaml ] || [ -f Dockerfile ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Trusted base does not contain prowl-review yet; skipping bootstrap run."
+          fi
+
+      - name: Checkout PR head for context
+        if: steps.trusted-action.outputs.available == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          persist-credentials: false
+
+      - name: prowl-review
+        if: steps.trusted-action.outputs.available == 'true'
+        uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          ai-provider: gemini
+          workspace-path: ${{ github.workspace }}/pr-head
+          guidelines-path: ${{ github.workspace }}
+          # min-severity: major
