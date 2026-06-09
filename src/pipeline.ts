@@ -24,8 +24,9 @@ import type { Severity } from "./review/findings.js";
 import { isSensitiveFile, redactSecrets } from "./review/redact.js";
 
 /**
- * End-to-end PR review pipeline (backlog #11): fetch → parse → size-guard →
- * agentic context → multi-pass review + judge → walkthrough → publish.
+ * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
+ * filter → size-guard → agentic context → multi-pass review + judge →
+ * walkthrough → publish.
  *
  * Heavy stages are injectable so the orchestration is unit-testable without a
  * live provider or GitHub.
@@ -113,13 +114,15 @@ export async function reviewPullRequest(
 
   const { meta, diff } = await fetchPr(octokit, ref);
   const parsed = parseDiff(diff);
-  const guarded = applyDiffLimits(parsed, options.diffLimits);
-
-  // Keep sensitive files out of the review entirely; report them as skipped.
-  const reviewFiles = guarded.files.filter((file) => !isSensitiveFile(file.path));
-  const sensitiveSkipped: SkippedFile[] = guarded.files
+  // Keep sensitive files out of the review entirely and out of size budgets.
+  const safeParsed = {
+    files: parsed.files.filter((file) => !isSensitiveFile(file.path))
+  };
+  const sensitiveSkipped: SkippedFile[] = parsed.files
     .filter((file) => isSensitiveFile(file.path))
     .map((file) => ({ path: file.path, reason: "sensitive" }));
+  const guarded = applyDiffLimits(safeParsed, options.diffLimits);
+  const reviewFiles = guarded.files;
   const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped];
 
   // Redact secrets from anything that will reach the provider.
