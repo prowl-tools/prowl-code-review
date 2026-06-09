@@ -24,11 +24,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
    - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them; severity threshold + dedup applied before posting; counts of dropped findings logged.
 
-9. **Structured walkthrough summary (presentation)**
-   As a reviewer, I want a clean PR walkthrough comment, so that the review reads premium instead of a text wall.
-   - Acceptance: one summary body with plain-language summary, **Impact + estimated-effort** badges, grouped/layered changed-files overview, and severity counts.
-   - Acceptance: optional **Mermaid** sequence/flow diagram when the PR affects a clear flow (feature-flagged; degrade gracefully).
-
 10. **Inline comments with committable suggestions (presentation)**
     As a reviewer, I want findings posted inline on exact lines with one-click fixes, so that it feels like CodeRabbit/Greptile and I can apply fixes instantly.
     - Acceptance: a **single cohesive published review** (`POST .../pulls/{n}/reviews`) with `event: COMMENT` (or an explicit submit-review step), summary body, and `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
