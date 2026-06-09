@@ -26,7 +26,19 @@ jobs:
           ref: ${{ github.event.pull_request.base.sha }}
           persist-credentials: false
 
+      - name: Check trusted action availability
+        id: trusted-action
+        shell: bash
+        run: |
+          if [ -f action.yml ] || [ -f action.yaml ] || [ -f Dockerfile ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Trusted base does not contain prowl-review yet; skipping bootstrap run."
+          fi
+
       - name: prowl-review
+        if: steps.trusted-action.outputs.available == 'true'
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
