@@ -6,13 +6,21 @@ import {
 } from "./findings.js";
 
 /**
- * Deterministic judge pass (backlog #6): consolidate the specialists' raw
- * findings into one clean, ranked list — dedup identical issues, sort by
- * severity then confidence, and drop anything below a severity threshold.
+ * Deterministic judge pass (backlog #6) + high-signal defaults (backlog #55):
+ * consolidate the specialists' raw findings into one clean, ranked list — dedup
+ * identical issues, drop low-severity/low-confidence noise, rank, and cap the
+ * volume — so the default review is useful, not noisy.
  *
  * The skeptical "is this actually a bug?" LLM verification is a separate pass
  * (backlog #8); this layer is pure and fully testable.
  */
+
+/** Default floor: hide `trivial`/`info` unless the caller opts in. */
+export const DEFAULT_MIN_SEVERITY: Severity = "minor";
+/** Default confidence floor; non-critical findings below this are dropped. */
+export const DEFAULT_MIN_CONFIDENCE = 0.5;
+/** Default cap on the number of findings surfaced. */
+export const DEFAULT_MAX_FINDINGS = 25;
 
 /** Pick the stronger of two duplicate findings (higher severity, then confidence). */
 function preferred(a: Finding, b: Finding): Finding {
@@ -54,32 +62,57 @@ export function filterBySeverity(findings: Finding[], minSeverity: Severity): Fi
   return findings.filter((finding) => SEVERITY_ORDER[finding.severity] <= floor);
 }
 
+/** Drop non-critical findings below `minConfidence` (criticals always kept). */
+export function filterByConfidence(findings: Finding[], minConfidence: number): Finding[] {
+  return findings.filter(
+    (finding) => finding.severity === "critical" || finding.confidence >= minConfidence
+  );
+}
+
 export interface JudgeOptions {
-  /** Drop findings below this severity. Defaults to keeping everything (`info`). */
+  /** Drop findings below this severity. Default {@link DEFAULT_MIN_SEVERITY}. */
   minSeverity?: Severity;
+  /** Drop non-critical findings below this confidence. Default {@link DEFAULT_MIN_CONFIDENCE}. */
+  minConfidence?: number;
+  /** Cap the number of findings surfaced. Default {@link DEFAULT_MAX_FINDINGS}. */
+  maxFindings?: number;
 }
 
 export interface JudgeResult {
-  /** Consolidated, ranked findings. */
+  /** Consolidated, ranked, capped findings. */
   findings: Finding[];
   /** How many duplicates were collapsed. */
   duplicatesRemoved: number;
   /** How many findings were dropped by the severity threshold. */
   belowThreshold: number;
+  /** How many findings were dropped by the confidence floor. */
+  belowConfidence: number;
+  /** How many findings were dropped by the volume cap. */
+  capped: number;
 }
 
-/** Run the full deterministic judge: dedupe → threshold → rank. */
+/** Run the full deterministic judge: dedupe → severity → confidence → rank → cap. */
 export function judgeFindings(findings: Finding[], options: JudgeOptions = {}): JudgeResult {
   const deduped = dedupeFindings(findings);
   const duplicatesRemoved = findings.length - deduped.length;
 
-  const minSeverity = options.minSeverity ?? "info";
-  const kept = filterBySeverity(deduped, minSeverity);
-  const belowThreshold = deduped.length - kept.length;
+  const minSeverity = options.minSeverity ?? DEFAULT_MIN_SEVERITY;
+  const afterSeverity = filterBySeverity(deduped, minSeverity);
+  const belowThreshold = deduped.length - afterSeverity.length;
+
+  const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const afterConfidence = filterByConfidence(afterSeverity, minConfidence);
+  const belowConfidence = afterSeverity.length - afterConfidence.length;
+
+  const ranked = rankFindings(afterConfidence);
+  const maxFindings = options.maxFindings ?? DEFAULT_MAX_FINDINGS;
+  const capped = Math.max(0, ranked.length - maxFindings);
 
   return {
-    findings: rankFindings(kept),
+    findings: ranked.slice(0, maxFindings),
     duplicatesRemoved,
-    belowThreshold
+    belowThreshold,
+    belowConfidence,
+    capped
   };
 }

@@ -119,6 +119,10 @@ export {
   dedupeFindings,
   rankFindings,
   filterBySeverity,
+  filterByConfidence,
+  DEFAULT_MIN_SEVERITY,
+  DEFAULT_MIN_CONFIDENCE,
+  DEFAULT_MAX_FINDINGS,
   type JudgeOptions,
   type JudgeResult
 } from "./review/judge.js";
