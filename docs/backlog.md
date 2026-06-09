@@ -205,6 +205,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 47. **Phase 2 — Hosted GitHub App (install-once)**
     As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
     - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Deferred until the Action path is proven.
+    - Acceptance: register the GitHub App with the **raccoon avatar + display name** so reviews post under a branded `prowl-review[bot]` identity (CodeRabbit/Codex-style branding) instead of `github-actions[bot]` — a GitHub Action can't customize the bot avatar, so this branding only lands via the App.
 
 48. **Watch & adopt delegated-API OAuth if a provider ships it**
     As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
