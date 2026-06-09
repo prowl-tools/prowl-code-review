@@ -34,7 +34,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { name: "jwt", regex: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
   {
     name: "assignment",
-    regex: /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|database[_-]?url|db[_-]?url|connection[_-]?string)["']?\s*[:=]\s*["']?)([^\s"'`]{8,})(["']?)/gi,
+    regex: /((?:api[_-]?key|secret[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|database[_-]?url|db[_-]?url|connection[_-]?string)["']?\s*[:=]\s*["']?)([^\s"'`]{8,})(["']?)/gi,
     valueGroup: 2
   }
 ];
@@ -70,5 +70,6 @@ const SENSITIVE_FILE_PATTERNS: RegExp[] = [
 
 /** True when a path looks like a credential/secret file we should not read. */
 export function isSensitiveFile(path: string): boolean {
-  return SENSITIVE_FILE_PATTERNS.some((re) => re.test(path));
+  const normalizedPath = path.replace(/\\/g, "/");
+  return SENSITIVE_FILE_PATTERNS.some((re) => re.test(normalizedPath));
 }
