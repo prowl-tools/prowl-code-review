@@ -119,16 +119,21 @@ export async function reviewPullRequest(
   let contextFiles = 0;
   let contextNotes: string[] = [];
   if (!options.skipContext && options.toolkitRoot && guarded.files.length > 0) {
-    const gathered = await gather({
-      toolkit: { root: options.toolkitRoot },
-      changedPaths: guarded.files.map((file) => file.path),
-      config,
-      limits: options.contextLimits
-    });
-    contextFiles = gathered.files.length;
-    contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
-    if (gathered.files.length > 0) {
-      context = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
+    try {
+      const gathered = await gather({
+        toolkit: { root: options.toolkitRoot },
+        changedPaths: guarded.files.map((file) => file.path),
+        config,
+        limits: options.contextLimits
+      });
+      contextFiles = gathered.files.length;
+      contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
+      if (gathered.files.length > 0) {
+        context = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
   }
 
