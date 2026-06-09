@@ -172,4 +172,76 @@ describe("gemini completeWithTools", () => {
     ]);
     expect(result.stopReason).toBe("end");
   });
+
+  it("captures and echoes Gemini thought signatures across ordered parts", async () => {
+    // Parsing: Gemini can sign text parts alongside function-call parts.
+    const parseFn = mockFetch({
+      candidates: [
+        {
+          content: {
+            parts: [
+              { text: "checking", thoughtSignature: "text-sig" },
+              {
+                functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } },
+                thoughtSignature: "call-sig"
+              }
+            ]
+          }
+        }
+      ]
+    });
+    const parsed = await completeWithTools({ messages: [{ role: "user", text: "go" }], tools: TOOLS }, config);
+    expect(parseFn).toHaveBeenCalled();
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]).toMatchObject({
+      id: "call_1",
+      name: "read_file",
+      thoughtSignature: "call-sig"
+    });
+    expect(parsed.providerMetadata?.geminiParts).toEqual([
+      { type: "text", text: "checking", thoughtSignature: "text-sig" },
+      {
+        type: "functionCall",
+        id: "call_1",
+        name: "read_file",
+        input: { path: "a.ts" },
+        thoughtSignature: "call-sig"
+      }
+    ]);
+
+    // Serialization: every signed part is echoed back in Gemini's original order.
+    const echoFn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
+    await completeWithTools(
+      {
+        messages: [
+          { role: "user", text: "go" },
+          {
+            role: "assistant",
+            text: parsed.text,
+            toolCalls: parsed.toolCalls,
+            providerMetadata: parsed.providerMetadata
+          },
+          { role: "tool", results: [{ callId: "call_1", content: "body" }] }
+        ],
+        tools: TOOLS
+      },
+      config
+    );
+    const body = bodyOf(echoFn) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    expect(body.contents[1].parts).toEqual([
+      { text: "checking", thoughtSignature: "text-sig" },
+      {
+        functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } },
+        thoughtSignature: "call-sig"
+      }
+    ]);
+  });
+
+  it("adds a model-availability hint on tool-call 404 responses", async () => {
+    mockFetch({ error: "not found" }, false, 404);
+
+    await expect(
+      completeWithTools({ messages: [{ role: "user", text: "go" }], tools: TOOLS }, config)
+    ).rejects.toThrow(/model "gemini-x" may be unavailable/);
+  });
 });
