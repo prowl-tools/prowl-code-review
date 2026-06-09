@@ -14,6 +14,8 @@ beforeAll(() => {
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2;\n");
+  writeFileSync(join(root, ".env"), "API_KEY=AKIAIOSFODNN7EXAMPLE\n");
+  writeFileSync(join(root, "leaked.txt"), `const token = "ghp_${"a".repeat(36)}";\n`);
 });
 
 afterAll(() => {
@@ -214,5 +216,31 @@ describe("gatherContext", () => {
         truncated: false
       }
     ]);
+  });
+
+  it("refuses to read sensitive files into context", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "read_file", input: { path: ".env" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: [".env"], config, runCompletion: run });
+
+    expect(result.files).toEqual([]);
+    expect(result.notes.some((n) => n.includes("Refused to read sensitive file"))).toBe(true);
+  });
+
+  it("redacts secrets from fetched file content", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "read_file", input: { path: "leaked.txt" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["leaked.txt"], config, runCompletion: run });
+
+    const file = result.files.find((f) => f.path === "leaked.txt");
+    expect(file?.content).not.toContain("ghp_aaaa");
+    expect(file?.content).toContain("[REDACTED");
+    expect(result.notes.some((n) => n.includes("Redacted"))).toBe(true);
   });
 });
