@@ -43,13 +43,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.
     - Acceptance: built-in specialists (correctness/security/performance/tests) can be toggled on/off; custom reviewers compose with them.
 
-55. **High-signal review defaults (less noise out of the box)**
-    As a developer, I want the default review to surface only genuinely useful findings, so that comments are worth reading instead of a wall of low-value noise.
-    - Acceptance: tune the **default thresholds** — a default `minSeverity` that suppresses `trivial`/`info` from inline + summary unless explicitly enabled, plus a default **confidence floor** that drops low-confidence findings.
-    - Acceptance: a global "be conservative" directive in the specialist/judge prompts — prefer fewer, higher-confidence, genuinely-impactful findings; never restate the obvious, flag style nits, or raise speculative issues (reinforces each specialist's "what NOT to flag" from #6).
-    - Acceptance: a sensible **default cap** on findings volume (ties to #25); a clean PR yields a short "no blocking issues" comment with no padding.
-    - Acceptance: defaults are **measured against the eval harness (#13)** so recall isn't gutted while precision rises; complements the false-positive verification pass (#8). Document the rationale so users understand the defaults before overriding.
-
 ## Medium Priority
 
 16. **Linter / SAST grounding**
