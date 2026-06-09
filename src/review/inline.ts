@@ -10,29 +10,43 @@ import type { Finding, Severity } from "./findings.js";
  * so the caller can keep them in the summary (no silent drop).
  */
 
+/** GitHub diff side accepted by inline review comments. */
 export type ReviewSide = "RIGHT" | "LEFT";
+
+/** GitHub review event used when publishing the review payload. */
 export type ReviewEvent = "COMMENT" | "APPROVE" | "REQUEST_CHANGES";
 
+/** Inline comment payload accepted by GitHub's create-review endpoint. */
 export interface ReviewComment {
+  /** Repository-relative path to the commented file. */
   path: string;
   /** New-side line the comment anchors to (end line for a range). */
   line: number;
+  /** Diff side for `line`. */
   side: ReviewSide;
   /** Start line for a multi-line comment range. */
   start_line?: number;
+  /** Diff side for `start_line`. */
   start_side?: ReviewSide;
+  /** Markdown body for the inline review comment. */
   body: string;
 }
 
+/** Result of mapping findings into inline comments. */
 export interface InlineMapping {
+  /** Findings successfully anchored as GitHub inline review comments. */
   comments: ReviewComment[];
   /** Findings that couldn't be anchored to a changed line. */
   unmapped: Finding[];
 }
 
+/** Complete review payload ready to publish to GitHub. */
 export interface ReviewPayload {
+  /** Markdown summary body for the pull request review. */
   body: string;
+  /** Review event sent with the payload. */
   event: ReviewEvent;
+  /** Inline comments included in the review. */
   comments: ReviewComment[];
 }
 
@@ -44,21 +58,40 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   info: "⚪"
 };
 
-/** Build the set of commentable (new-side) line numbers per file from the diff. */
-function newSideLines(diff: ParsedDiff): Map<string, Set<number>> {
-  const map = new Map<string, Set<number>>();
+/**
+ * Build commentable new-side line numbers per file, preserving the hunk each
+ * line belongs to so multi-line ranges never cross GitHub diff hunks.
+ */
+function newSideLineHunks(diff: ParsedDiff): Map<string, Map<number, number>> {
+  const map = new Map<string, Map<number, number>>();
   for (const file of diff.files) {
-    const lines = new Set<number>();
-    for (const hunk of file.hunks) {
+    const lines = new Map<number, number>();
+    file.hunks.forEach((hunk, hunkIndex) => {
       for (const line of hunk.lines) {
         if (line.newLine !== undefined) {
-          lines.add(line.newLine);
+          lines.set(line.newLine, hunkIndex);
         }
       }
-    }
+    });
     map.set(file.path, lines);
   }
   return map;
+}
+
+/** Return true when every line in a range is present in the same diff hunk. */
+function sameHunkRange(lineHunks: Map<number, number>, start: number, end: number): boolean {
+  const hunkIndex = lineHunks.get(start);
+  if (hunkIndex === undefined || lineHunks.get(end) !== hunkIndex) {
+    return false;
+  }
+
+  for (let line = start; line <= end; line += 1) {
+    if (lineHunks.get(line) !== hunkIndex) {
+      return false;
+    }
+  }
+
+  return true;
 }
 
 /** Wrap suggested code in a ```suggestion fence longer than any backtick run in it. */
@@ -79,11 +112,12 @@ export function formatFindingComment(finding: Finding): string {
 
 /**
  * Map findings to inline review comments anchored on the diff. A finding maps
- * when its file + line is a new-side line in the diff; multi-line findings whose
- * `endLine` is also in the diff become a range. Everything else is `unmapped`.
+ * when its file + line is a new-side line in the diff; multi-line findings only
+ * become ranges when every line sits inside the same diff hunk. Everything else
+ * is `unmapped`.
  */
 export function buildInlineComments(findings: Finding[], diff: ParsedDiff): InlineMapping {
-  const lines = newSideLines(diff);
+  const lines = newSideLineHunks(diff);
   const comments: ReviewComment[] = [];
   const unmapped: Finding[] = [];
 
@@ -101,7 +135,11 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
       body: formatFindingComment(finding)
     };
 
-    if (finding.endLine !== undefined && finding.endLine > finding.line && fileLines.has(finding.endLine)) {
+    if (
+      finding.endLine !== undefined &&
+      finding.endLine > finding.line &&
+      sameHunkRange(fileLines, finding.line, finding.endLine)
+    ) {
       comment.start_line = finding.line;
       comment.start_side = "RIGHT";
       comment.line = finding.endLine;

@@ -60,6 +60,58 @@ describe("buildInlineComments", () => {
       side: "RIGHT"
     });
   });
+
+  it("keeps a multi-line finding single-line when it spans two diff hunks", () => {
+    const splitHunkDiff: ParsedDiff = {
+      files: [
+        {
+          path: "src/a.ts",
+          status: "modified",
+          binary: false,
+          byteSize: 0,
+          hunks: [
+            {
+              oldStart: 5,
+              oldLines: 2,
+              newStart: 5,
+              newLines: 2,
+              section: "",
+              lines: [
+                { type: "context", content: "a", oldLine: 5, newLine: 5 },
+                { type: "add", content: "b", newLine: 6 }
+              ]
+            },
+            {
+              oldStart: 50,
+              oldLines: 2,
+              newStart: 50,
+              newLines: 2,
+              section: "",
+              lines: [
+                { type: "context", content: "y", oldLine: 50, newLine: 50 },
+                { type: "add", content: "z", newLine: 51 }
+              ]
+            }
+          ]
+        }
+      ]
+    };
+
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, endLine: 51 })], splitHunkDiff);
+
+    expect(unmapped).toHaveLength(0);
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 6, side: "RIGHT" });
+    expect(comments[0]).not.toHaveProperty("start_line");
+    expect(comments[0]).not.toHaveProperty("start_side");
+  });
+
+  it("keeps a multi-line finding single-line when the range endpoint is missing from the hunk", () => {
+    const { comments } = buildInlineComments([f({ line: 5, endLine: 8 })], diff);
+
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 5, side: "RIGHT" });
+    expect(comments[0]).not.toHaveProperty("start_line");
+    expect(comments[0]).not.toHaveProperty("start_side");
+  });
 });
 
 describe("formatFindingComment", () => {
