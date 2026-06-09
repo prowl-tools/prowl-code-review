@@ -10,12 +10,12 @@ type Json = Record<string, unknown>;
 type FetchMock = ReturnType<typeof vi.fn>;
 
 /** Build a mock `fetch` returning the given JSON payload. */
-function mockFetch(payload: Json, ok = true, status = 200) {
+function mockFetch(payload: Json, ok = true, status = 200, responseText?: string) {
   const fn = vi.fn(async () => ({
     ok,
     status,
     json: async () => payload,
-    text: async () => JSON.stringify(payload)
+    text: async () => responseText ?? JSON.stringify(payload)
   }));
   vi.stubGlobal("fetch", fn);
   return fn;
@@ -103,6 +103,15 @@ describe("resolveProviderConfig", () => {
     const cfg = resolveProviderConfig({
       PROWL_AI_PROVIDER: "gemini",
       PROWL_AI_KEY: "k"
+    } as NodeJS.ProcessEnv);
+    expect(cfg.model).toBe(DEFAULT_MODELS.gemini);
+  });
+
+  it("treats an empty model override as unset", () => {
+    const cfg = resolveProviderConfig({
+      PROWL_AI_PROVIDER: "gemini",
+      PROWL_AI_KEY: "k",
+      PROWL_AI_MODEL: ""
     } as NodeJS.ProcessEnv);
     expect(cfg.model).toBe(DEFAULT_MODELS.gemini);
   });
@@ -355,5 +364,22 @@ describe("gemini provider", () => {
   it("throws on a non-ok response", async () => {
     mockFetch({ error: "bad" }, false, 403);
     await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/Gemini API error \(403\)/);
+  });
+
+  it("adds a model-availability hint on 404 responses", async () => {
+    mockFetch({ error: "not found" }, false, 404);
+    await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(
+      /model "gemini-x" may be unavailable/
+    );
+  });
+
+  it("uses a fallback detail when an error response body is empty", async () => {
+    mockFetch({}, false, 500, "");
+    await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/\(no response body\)/);
+  });
+
+  it("throws when a successful response contains no text content", async () => {
+    mockFetch({ candidates: [{ content: { parts: [{}] } }] });
+    await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/Gemini API returned no content/);
   });
 });

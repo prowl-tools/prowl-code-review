@@ -14,16 +14,20 @@ import { SEVERITIES, type Severity } from "../../review/findings.js";
  * just reports) the review.
  */
 
-function resolveRepo(flag?: string): { owner: string; repo: string } {
+export function resolveRepo(flag?: string): { owner: string; repo: string } {
   const value = flag ?? process.env.GITHUB_REPOSITORY;
-  if (!value || !value.includes("/")) {
+  if (!value) {
     throw new Error("Repository required: pass --repo <owner/repo> or set GITHUB_REPOSITORY.");
   }
-  const [owner, repo] = value.split("/");
+  const parts = value.split("/");
+  if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    throw new Error("Repository required: pass --repo <owner/repo> or set GITHUB_REPOSITORY.");
+  }
+  const [owner, repo] = parts;
   return { owner, repo };
 }
 
-function resolvePullNumber(flag?: string): number {
+export function resolvePullNumber(flag?: string): number {
   if (flag) {
     const parsed = Number(flag);
     if (!Number.isInteger(parsed) || parsed <= 0) {
@@ -49,7 +53,7 @@ function resolvePullNumber(flag?: string): number {
   throw new Error("Pull request number required: pass --pr <n> (or run on a pull_request event).");
 }
 
-function loadGuidelines(root: string): string | undefined {
+export function loadGuidelines(root: string): string | undefined {
   for (const name of ["REVIEW_GUIDELINES.md", "CLAUDE.md"]) {
     const path = join(root, name);
     if (existsSync(path)) {
@@ -63,7 +67,7 @@ function loadGuidelines(root: string): string | undefined {
   return undefined;
 }
 
-function parseMinSeverity(value: string | undefined): Severity | undefined {
+export function parseMinSeverity(value: string | undefined): Severity | undefined {
   if (!value) {
     return undefined;
   }

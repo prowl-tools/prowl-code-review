@@ -148,6 +148,19 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("huge.lock");
   });
 
+  it("renders review notes safely", () => {
+    const md = buildWalkthrough({
+      findings: [],
+      files,
+      notes: ["Reached limit @org/team\n### injected"]
+    });
+
+    expect(md).toContain("Review notes");
+    expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
+    expect(md).not.toContain("@org/team");
+    expect(md).not.toContain("\n### injected");
+  });
+
   it("renders a mermaid block only when provided", () => {
     const withDiagram = buildWalkthrough({ findings: [], files, mermaid: "graph TD; A-->B" });
     expect(withDiagram).toContain("```mermaid");

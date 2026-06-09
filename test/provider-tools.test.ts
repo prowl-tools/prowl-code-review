@@ -179,14 +179,24 @@ describe("gemini completeWithTools", () => {
       candidates: [
         {
           content: {
-            parts: [{ functionCall: { name: "read_file", args: { path: "a.ts" } }, thoughtSignature: "sig-123" }]
+            parts: [
+              {
+                functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } },
+                thoughtSignature: "sig-123"
+              }
+            ]
           }
         }
       ]
     });
     const parsed = await completeWithTools({ messages: [{ role: "user", text: "go" }], tools: TOOLS }, config);
     expect(parseFn).toHaveBeenCalled();
-    expect(parsed.toolCalls[0].thoughtSignature).toBe("sig-123");
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]).toMatchObject({
+      id: "call_1",
+      name: "read_file",
+      thoughtSignature: "sig-123"
+    });
 
     // Serialization: the signature is echoed back on the function-call part.
     const echoFn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
@@ -197,9 +207,9 @@ describe("gemini completeWithTools", () => {
           {
             role: "assistant",
             text: "",
-            toolCalls: [{ id: "read_file", name: "read_file", input: { path: "a.ts" }, thoughtSignature: "sig-123" }]
+            toolCalls: [{ id: "call_2", name: "read_file", input: { path: "a.ts" }, thoughtSignature: "sig-123" }]
           },
-          { role: "tool", results: [{ callId: "read_file", content: "body" }] }
+          { role: "tool", results: [{ callId: "call_2", content: "body" }] }
         ],
         tools: TOOLS
       },
@@ -207,5 +217,13 @@ describe("gemini completeWithTools", () => {
     );
     const body = bodyOf(echoFn) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
     expect(body.contents[1].parts[0]).toMatchObject({ thoughtSignature: "sig-123" });
+  });
+
+  it("adds a model-availability hint on tool-call 404 responses", async () => {
+    mockFetch({ error: "not found" }, false, 404);
+
+    await expect(
+      completeWithTools({ messages: [{ role: "user", text: "go" }], tools: TOOLS }, config)
+    ).rejects.toThrow(/model "gemini-x" may be unavailable/);
   });
 });

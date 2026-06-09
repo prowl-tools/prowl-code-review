@@ -30,11 +30,19 @@ inputs:
     required: false
     default: ${{ github.token }}
 
+outputs:
+  findings:
+    description: "Number of findings produced by the review."
+    value: ${{ steps.review.outputs.findings }}
+  posted:
+    description: "Whether the review was posted to GitHub."
+    value: ${{ steps.review.outputs.posted }}
+
 runs:
   using: "composite"
   steps:
     - name: Set up Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
       with:
         node-version: 20
 
@@ -44,6 +52,7 @@ runs:
       run: npm ci && npm run build
 
     - name: Run prowl-review
+      id: review
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}

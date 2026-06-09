@@ -16,17 +16,19 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts; review once marked ready.
-    if: github.event.pull_request.draft == false
+    # Skip drafts and forks; forked PRs do not receive provider secrets.
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout PR head
-        uses: actions/checkout@v4
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          persist-credentials: false
 
       - name: prowl-review
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
-          ai-model: gemini-3.5-flash
           # min-severity: major
