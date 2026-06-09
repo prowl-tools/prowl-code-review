@@ -5,6 +5,12 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Secret redaction before sending context to the provider (`src/review/redact.ts`): `redactSecrets`
+  strips obvious secrets (private keys, AWS/GitHub/LLM/Google/Slack tokens, JWTs, `.env`-style
+  assignments) — counting them, never logging the value — from the diff and from fetched context
+  before either reaches a prompt; `isSensitiveFile` keeps credential files (`.env`, `*.pem`,
+  `id_rsa`, `.npmrc`, …) out of the review entirely (reported as a `sensitive` skip) and refuses
+  to read them during agentic retrieval. (backlog #15)
 - End-to-end review pipeline + GitHub Action (`src/pipeline.ts`, `action.yml`): `reviewPullRequest`
   composes every stage — fetch → parse → size-guard → agentic context → multi-pass review +
   judge → walkthrough → publish — with heavy stages injectable for testing. A size-guarded diff
