@@ -151,6 +151,13 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: map findings to a GitHub review event — any Critical → request changes; only suggestions/none → comment or approve (configurable thresholds), wired to #24's check conclusion.
     - Acceptance: a `@prowl-review break glass` (override) comment force-approves past a blocking finding and is recorded in the review for auditability (Cloudflare saw this used in ~0.6% of MRs — rare, but it keeps humans in control).
 
+53. **Multi-provider ensemble review + cross-provider consensus**
+    As a developer with more than one provider key, I want the same changes reviewed by multiple providers at once with their findings consolidated, so that I get cross-model consensus and more granular, higher-confidence insight — a BYOK-only edge that resale-based reviewers (CodeRabbit/Greptile) can't offer.
+    - Acceptance: **opt-in, default off.** Per-provider keys (e.g. `PROWL_AI_KEY_ANTHROPIC`/`_OPENAI`/`_GEMINI`) + a configured provider list; an ensemble orchestrator runs `runReview` (the #6 pipeline) per available provider **in parallel** and pools the raw findings.
+    - Acceptance: the judge consolidates duplicates **across providers**, recording provenance (`sources: [...]`) and treating agreement as a confidence boost; single-provider findings are kept but marked.
+    - Acceptance: presentation surfaces a **consensus badge** (e.g. "🤝 agreed by N/M providers") in the walkthrough + inline comments — the granular insight.
+    - Acceptance: **cost-guarded** — costs ~N× a single-provider review (caching helps within each provider, not across); respects the per-PR budget cap (#18) and risk-tiering (#31); docs state the multiplier. Complements false-positive verification (#8): cross-provider agreement is itself a verification signal.
+
 ## Low Priority
 
 39. **Suggested-fix validation**
@@ -192,6 +199,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 47. **Phase 2 — Hosted GitHub App (install-once)**
     As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
     - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Deferred until the Action path is proven.
+    - Acceptance: register the GitHub App with the **raccoon avatar + display name** so reviews post under a branded `prowl-review[bot]` identity (CodeRabbit/Codex-style branding) instead of `github-actions[bot]` — a GitHub Action can't customize the bot avatar, so this branding only lands via the App.
 
 48. **Watch & adopt delegated-API OAuth if a provider ships it**
     As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
