@@ -70,7 +70,7 @@ export interface DiffLimits {
 }
 
 /** Reason a file was omitted from review input. */
-export type SkipReason = "maxFiles" | "maxDiffBytes" | "binary";
+export type SkipReason = "maxFiles" | "maxDiffBytes" | "binary" | "sensitive";
 
 /** File omitted from review input and the reason it was skipped. */
 export interface SkippedFile {
