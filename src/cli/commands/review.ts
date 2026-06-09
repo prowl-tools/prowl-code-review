@@ -81,9 +81,14 @@ export function parseMinSeverity(value: string | undefined): Severity | undefine
   return value as Severity;
 }
 
-/** Resolve the repository checkout used by context retrieval and guideline loading. */
+/** Resolve the repository checkout used by context retrieval. */
 export function resolveWorkspace(): string {
   return process.env.PROWL_WORKSPACE || process.env.GITHUB_WORKSPACE || process.cwd();
+}
+
+/** Resolve the trusted checkout used to load review guidelines. */
+export function resolveGuidelinesWorkspace(): string {
+  return process.env.PROWL_GUIDELINES_WORKSPACE || process.env.GITHUB_WORKSPACE || process.cwd();
 }
 
 interface ReviewCommandOptions {
@@ -114,6 +119,7 @@ export function buildReviewCommand(): Command {
       const { owner, repo } = resolveRepo(options.repo);
       const pullNumber = resolvePullNumber(options.pr);
       const root = resolveWorkspace();
+      const guidelinesRoot = resolveGuidelinesWorkspace();
 
       const octokit = createOctokit(token);
       const result = await reviewPullRequest(
@@ -123,7 +129,7 @@ export function buildReviewCommand(): Command {
           toolkitRoot: root,
           skipContext: options.context === false,
           minSeverity: parseMinSeverity(options.minSeverity),
-          guidelines: loadGuidelines(root),
+          guidelines: loadGuidelines(guidelinesRoot),
           dryRun: Boolean(options.dryRun)
         }
       );

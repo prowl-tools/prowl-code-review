@@ -52,4 +52,5 @@ jobs:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
           workspace-path: ${{ github.workspace }}/pr-head
+          guidelines-path: ${{ github.workspace }}
           # min-severity: major

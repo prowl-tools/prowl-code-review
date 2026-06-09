@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   loadGuidelines,
   parseMinSeverity,
+  resolveGuidelinesWorkspace,
   resolvePullNumber,
   resolveRepo,
   resolveWorkspace
@@ -96,5 +97,15 @@ describe("review command helpers", () => {
 
     process.env.PROWL_WORKSPACE = "";
     expect(resolveWorkspace()).toBe("/base");
+  });
+
+  it("keeps trusted guidelines separate from the context workspace", () => {
+    process.env.GITHUB_WORKSPACE = "/base";
+    process.env.PROWL_WORKSPACE = "/head";
+    process.env.PROWL_GUIDELINES_WORKSPACE = "/trusted-guidelines";
+    expect(resolveGuidelinesWorkspace()).toBe("/trusted-guidelines");
+
+    process.env.PROWL_GUIDELINES_WORKSPACE = "";
+    expect(resolveGuidelinesWorkspace()).toBe("/base");
   });
 });
