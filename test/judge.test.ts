@@ -3,7 +3,9 @@ import {
   dedupeFindings,
   rankFindings,
   filterBySeverity,
-  judgeFindings
+  filterByConfidence,
+  judgeFindings,
+  DEFAULT_MAX_FINDINGS
 } from "../src/review/judge.js";
 import type { Finding } from "../src/review/findings.js";
 
@@ -86,5 +88,42 @@ describe("judgeFindings", () => {
     expect(result.duplicatesRemoved).toBe(1);
     expect(result.belowThreshold).toBe(1);
     expect(result.findings.map((f) => f.severity)).toEqual(["critical", "major"]);
+  });
+});
+
+describe("filterByConfidence", () => {
+  it("drops non-critical findings below the floor but always keeps criticals", () => {
+    const kept = filterByConfidence(
+      [
+        finding({ severity: "major", confidence: 0.3, title: "low-major" }),
+        finding({ severity: "major", confidence: 0.8, title: "high-major" }),
+        finding({ severity: "critical", confidence: 0.1, title: "unsure-critical" })
+      ],
+      0.5
+    );
+    expect(kept.map((f) => f.title)).toEqual(["high-major", "unsure-critical"]);
+  });
+});
+
+describe("judgeFindings high-signal defaults (#55)", () => {
+  it("suppresses trivial/info and low-confidence findings by default", () => {
+    const result = judgeFindings([
+      finding({ file: "a.ts", severity: "trivial", confidence: 0.9 }), // dropped: severity
+      finding({ file: "b.ts", severity: "minor", confidence: 0.3 }), // dropped: confidence
+      finding({ file: "c.ts", severity: "minor", confidence: 0.8 }), // kept
+      finding({ file: "d.ts", severity: "critical", confidence: 0.2 }) // kept (critical exempt)
+    ]);
+    expect(result.belowThreshold).toBe(1);
+    expect(result.belowConfidence).toBe(1);
+    expect(result.findings.map((f) => f.file)).toEqual(["d.ts", "c.ts"]);
+  });
+
+  it("caps the number of findings and reports the overflow", () => {
+    const many = Array.from({ length: DEFAULT_MAX_FINDINGS + 5 }, (_, i) =>
+      finding({ file: `f${i}.ts`, severity: "major", confidence: 0.9 })
+    );
+    const result = judgeFindings(many);
+    expect(result.findings).toHaveLength(DEFAULT_MAX_FINDINGS);
+    expect(result.capped).toBe(5);
   });
 });

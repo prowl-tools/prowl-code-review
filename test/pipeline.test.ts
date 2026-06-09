@@ -32,7 +32,7 @@ function reviewResult(findings: Finding[], over: Partial<ReviewResult> = {}): Re
     findings,
     raw: findings,
     passes: [],
-    judge: { duplicatesRemoved: 0, belowThreshold: 0 },
+    judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
     usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     ...over
   };
@@ -208,5 +208,20 @@ new file mode 100644
     expect(diffInput).toContain("[REDACTED:private-key]");
     expect(diffInput).not.toContain("MIIsecretbytes");
     expect(diffInput).not.toContain("BEGIN RSA PRIVATE KEY");
+  });
+
+  it("surfaces high-signal suppression in the review notes", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 2, capped: 3 }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    // Note text is markdown-escaped in the walkthrough, so match escape-safe substrings.
+    expect(result.payload.body).toContain("Hid 2 low");
+    expect(result.payload.body).toContain("3 additional lower");
   });
 });
