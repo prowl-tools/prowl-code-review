@@ -86,9 +86,9 @@ export function resolveWorkspace(): string {
   return process.env.PROWL_WORKSPACE || process.env.GITHUB_WORKSPACE || process.cwd();
 }
 
-/** Resolve the trusted checkout used to load review guidelines. */
-export function resolveGuidelinesWorkspace(): string {
-  return process.env.PROWL_GUIDELINES_WORKSPACE || process.env.GITHUB_WORKSPACE || process.cwd();
+/** Resolve the explicit trusted checkout used to load review guidelines. */
+export function resolveGuidelinesWorkspace(): string | undefined {
+  return process.env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
 }
 
 interface ReviewCommandOptions {
@@ -120,6 +120,7 @@ export function buildReviewCommand(): Command {
       const pullNumber = resolvePullNumber(options.pr);
       const root = resolveWorkspace();
       const guidelinesRoot = resolveGuidelinesWorkspace();
+      const guidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
 
       const octokit = createOctokit(token);
       const result = await reviewPullRequest(
@@ -129,7 +130,7 @@ export function buildReviewCommand(): Command {
           toolkitRoot: root,
           skipContext: options.context === false,
           minSeverity: parseMinSeverity(options.minSeverity),
-          guidelines: loadGuidelines(guidelinesRoot),
+          guidelines,
           dryRun: Boolean(options.dryRun)
         }
       );

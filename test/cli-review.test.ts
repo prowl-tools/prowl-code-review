@@ -99,13 +99,16 @@ describe("review command helpers", () => {
     expect(resolveWorkspace()).toBe("/base");
   });
 
-  it("keeps trusted guidelines separate from the context workspace", () => {
+  it("keeps trusted guidelines explicit and separate from the context workspace", () => {
     process.env.GITHUB_WORKSPACE = "/base";
     process.env.PROWL_WORKSPACE = "/head";
     process.env.PROWL_GUIDELINES_WORKSPACE = "/trusted-guidelines";
     expect(resolveGuidelinesWorkspace()).toBe("/trusted-guidelines");
 
     process.env.PROWL_GUIDELINES_WORKSPACE = "";
-    expect(resolveGuidelinesWorkspace()).toBe("/base");
+    expect(resolveGuidelinesWorkspace()).toBeUndefined();
+
+    process.env.PROWL_GUIDELINES_WORKSPACE = "   ";
+    expect(resolveGuidelinesWorkspace()).toBeUndefined();
   });
 });

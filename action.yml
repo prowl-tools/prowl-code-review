@@ -30,7 +30,7 @@ inputs:
     required: false
     default: ""
   guidelines-path:
-    description: "Trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md."
+    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md; omitted disables guidelines."
     required: false
     default: ""
   github-token:
