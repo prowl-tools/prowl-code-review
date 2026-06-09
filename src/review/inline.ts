@@ -101,11 +101,16 @@ function suggestionBlock(code: string): string {
   return `${fence}suggestion\n${code.replace(/\n$/, "")}\n${fence}`;
 }
 
+/** Return true when a finding includes a non-empty committable suggestion. */
+function hasSuggestion(finding: Finding): boolean {
+  return Boolean(finding.suggestion?.trim());
+}
+
 /** Format one finding as an inline comment body (severity badge + optional fix). */
 export function formatFindingComment(finding: Finding): string {
   const parts = [`${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${finding.title}**`, "", finding.body];
-  if (finding.suggestion && finding.suggestion.trim()) {
-    parts.push("", suggestionBlock(finding.suggestion));
+  if (hasSuggestion(finding)) {
+    parts.push("", suggestionBlock(finding.suggestion ?? ""));
   }
   return parts.join("\n");
 }
@@ -166,6 +171,15 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
       continue;
     }
 
+    const endLine = finding.endLine;
+    const hasRange = endLine !== undefined && endLine > finding.line;
+    const canAnchorRange = hasRange ? sameHunkRange(fileLines, finding.line, endLine) : false;
+
+    if (hasRange && hasSuggestion(finding) && !canAnchorRange) {
+      unmapped.push(finding);
+      continue;
+    }
+
     const comment: ReviewComment = {
       path: finding.file,
       line: finding.line,
@@ -173,14 +187,10 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
       body: formatFindingComment(finding)
     };
 
-    if (
-      finding.endLine !== undefined &&
-      finding.endLine > finding.line &&
-      sameHunkRange(fileLines, finding.line, finding.endLine)
-    ) {
+    if (canAnchorRange && endLine !== undefined) {
       comment.start_line = finding.line;
       comment.start_side = "RIGHT";
-      comment.line = finding.endLine;
+      comment.line = endLine;
     }
 
     comments.push(comment);
