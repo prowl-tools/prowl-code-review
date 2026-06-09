@@ -197,9 +197,15 @@ function executeTool(
         return toolExecution("Error: search_repo requires a 'pattern'.");
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
-      const result = searchRepo(options, pattern, dir);
+      const result = searchRepo(options, pattern, dir, {
+        shouldSearchFile: (path) => !isSensitiveFile(path)
+      });
       const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
       const skippedSensitive = result.matches.length - safeMatches.length;
+      const skippedSensitiveFiles = result.skippedFiles ?? 0;
+      if (skippedSensitiveFiles > 0) {
+        notes.push(`Skipped ${skippedSensitiveFiles} sensitive file(s) during search`);
+      }
       if (skippedSensitive > 0) {
         notes.push(`Skipped ${skippedSensitive} search result(s) from sensitive file(s)`);
       }

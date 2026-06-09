@@ -25,6 +25,11 @@ export interface ToolkitOptions {
   ignore?: string[];
 }
 
+export interface SearchOptions {
+  /** Optional search-only predicate; false skips the file before search caps apply. */
+  shouldSearchFile?: (path: string) => boolean;
+}
+
 export const DEFAULT_IGNORE = [
   "node_modules",
   ".git",
@@ -65,6 +70,8 @@ export interface SearchResult {
   matches: SearchMatch[];
   /** True when more matches, files, or match text existed than the caps returned/searched. */
   truncated: boolean;
+  /** Number of files skipped by the search-only predicate before reading. */
+  skippedFiles?: number;
 }
 
 export interface ListFilesResult {
@@ -139,8 +146,9 @@ function boundedCount(value: number | undefined, fallback: number): number {
 function walkRepoFiles(
   options: ToolkitOptions,
   dir: string,
-  visit: (file: string, abs: string) => boolean | void
-): { truncated: boolean } {
+  visit: (file: string, abs: string) => boolean | void,
+  shouldVisitFile?: (file: string) => boolean
+): { truncated: boolean; skippedFiles: number } {
   const ignore = options.ignore ?? DEFAULT_IGNORE;
   const maxFiles = boundedCount(options.maxListedFiles, DEFAULT_MAX_LISTED_FILES);
   const base = safeResolve(options.root, dir);
@@ -156,6 +164,7 @@ function walkRepoFiles(
     throw new RepoAccessError(`Not a directory: ${dir}`);
   }
   let visitedFiles = 0;
+  let skippedFiles = 0;
   let truncated = false;
 
   const walk = (absDir: string, isStartDir = false): boolean => {
@@ -180,12 +189,17 @@ function walkRepoFiles(
           return false;
         }
       } else if (entry.isFile()) {
+        const file = relative(options.root, abs);
+        if (shouldVisitFile && !shouldVisitFile(file)) {
+          skippedFiles += 1;
+          continue;
+        }
         if (visitedFiles >= maxFiles) {
           truncated = true;
           return false;
         }
         visitedFiles += 1;
-        if (visit(relative(options.root, abs), abs) === false) {
+        if (visit(file, abs) === false) {
           return false;
         }
       }
@@ -194,7 +208,7 @@ function walkRepoFiles(
   };
 
   walk(base, true);
-  return { truncated };
+  return { truncated, skippedFiles };
 }
 
 /** Return a quantifier at `index`, marking unbounded or very large repeats as risky. */
@@ -380,7 +394,8 @@ export function listRepoFiles(options: ToolkitOptions, dir = "."): string[] {
 export function searchRepo(
   options: ToolkitOptions,
   pattern: string,
-  searchDir = "."
+  searchDir = ".",
+  searchOptions: SearchOptions = {}
 ): SearchResult {
   const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
   const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
@@ -443,11 +458,11 @@ export function searchRepo(
       }
     }
     return undefined;
-  });
+  }, searchOptions.shouldSearchFile);
 
   if (traversal.truncated) {
     truncated = true;
   }
 
-  return { matches, truncated };
+  return { matches, truncated, skippedFiles: traversal.skippedFiles };
 }

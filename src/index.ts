@@ -53,6 +53,7 @@ export {
   type ListFilesResult,
   type ReadFileResult,
   type SearchMatch,
+  type SearchOptions,
   type SearchResult
 } from "./context/tools.js";
 export {
