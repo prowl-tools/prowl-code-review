@@ -108,6 +108,20 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
   });
 
+  it("falls back to diff-only review when context retrieval fails", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockRejectedValue(new Error("provider timeout"));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(deps.runReview.mock.calls[0][0].context).toBeUndefined();
+    expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    expect(result.contextFiles).toBe(0);
+    expect(result.payload.body).toContain("Context retrieval failed");
+    expect(result.payload.body).toContain("provider timeout");
+  });
+
   it("surfaces failed review passes so clean summaries are not misleading", async () => {
     const deps = makeDeps();
     deps.runReview.mockResolvedValue(
