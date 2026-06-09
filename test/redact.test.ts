@@ -50,6 +50,19 @@ describe("redactSecrets", () => {
     expect(r.text).not.toContain("postgres://user:pass@host/db");
   });
 
+  it("redacts common secret key assignments", () => {
+    const r = redactSecrets("SECRET_KEY=django-insecure-super-secret-value");
+    expect(r.count).toBe(1);
+    expect(r.text).toBe("SECRET_KEY=[REDACTED:assignment]");
+    expect(r.text).not.toContain("django-insecure");
+  });
+
+  it("redacts prefixed secret key assignments", () => {
+    const r = redactSecrets(`STRIPE_SECRET_KEY=${"s".repeat(24)}`);
+    expect(r.count).toBe(1);
+    expect(r.text).toBe("STRIPE_SECRET_KEY=[REDACTED:assignment]");
+  });
+
   it("leaves ordinary code untouched", () => {
     const code = "const total = a + b; // running sum";
     const r = redactSecrets(code);
@@ -68,6 +81,12 @@ describe("isSensitiveFile", () => {
       "secrets.json",
       ".npmrc"
     ]) {
+      expect(isSensitiveFile(path), path).toBe(true);
+    }
+  });
+
+  it("flags credential/secret files with Windows separators", () => {
+    for (const path of ["config\\.env.production", "certs\\server.pem", "deploy\\id_ed25519"]) {
       expect(isSensitiveFile(path), path).toBe(true);
     }
   });
