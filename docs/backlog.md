@@ -38,11 +38,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: all PR content (diff, code, comments, titles, branch names) is treated as untrusted **data, not instructions**; the system prompt enforces this; detected injection attempts are ignored and may be surfaced as a finding.
     - Acceptance: the agentic retrieval tools (#4) are confined to the repo checkout — no reads outside the workspace, no network exfiltration; bot commands (#24) authorize only a known verb allowlist.
 
-15. **Secret redaction before sending context to the provider**
-    As a privacy-conscious user, I want secrets stripped from anything sent to the LLM, so that BYOK never leaks my credentials to the provider.
-    - Acceptance: redact obvious secrets (API keys, tokens, `.env` contents, private keys) from diffs and fetched context before they enter any prompt; reuse secret-detection patterns (e.g. Gitleaks rules).
-    - Acceptance: known-sensitive files skipped by default; redactions are logged by count only — never the secret value.
-
 51. **Custom / configurable specialist reviewers**
     As a team, I want to define my own review lenses beyond the built-ins, so that `prowl-review` enforces my org's specific standards (e.g. an internal-RFC "compliance" pass) without me building the orchestration — the customization Cloudflare hard-coded for themselves, made generic and BYOK.
     - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.
