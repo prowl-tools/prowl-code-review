@@ -154,6 +154,15 @@ diff --git a/src/a.ts b/src/a.ts
 @@ -1 +1,2 @@
  const a = 1;
 +const t = "ghp_${"a".repeat(36)}";
+diff --git a/.env b/config/example.txt
+similarity index 72%
+rename from .env
+rename to config/example.txt
+--- a/.env
++++ b/config/example.txt
+@@ -1 +1 @@
+-DATABASE_URL=postgres://user:pass@host/db
++DATABASE_URL=postgres://user:pass@host/db
 `;
     deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
 
@@ -166,10 +175,13 @@ diff --git a/src/a.ts b/src/a.ts
 
     // .env is kept out of the review entirely and reported.
     expect(result.skipped).toContainEqual({ path: ".env", reason: "sensitive" });
+    expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
     expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
+    expect(diffInput).not.toContain("config/example.txt");
+    expect(diffInput).not.toContain("postgres://user:pass@host/db");
     expect(diffInput).toContain("src/a.ts");
     expect(diffInput).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(diffInput).not.toContain("ghp_aaaa");
