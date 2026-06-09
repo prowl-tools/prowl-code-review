@@ -5,6 +5,12 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- High-signal review defaults (`src/review/judge.ts`, backlog #55): the judge now defaults to a
+  `minor` severity floor (hides `trivial`/`info`), a `0.5` confidence floor (drops low-confidence
+  non-critical findings; criticals always kept), and a 25-finding cap — all overridable. A global
+  "be conservative, high-signal" directive is added to the shared specialist prompt (prefer fewer,
+  higher-confidence findings; no nitpicks/restating/speculation). Whatever the floors hide is
+  surfaced in the review notes (no silent suppression). Makes the default review useful, not noisy.
 - Secret redaction before sending context to the provider (`src/review/redact.ts`): `redactSecrets`
   strips obvious secrets (private keys, AWS/GitHub/LLM/Google/Slack tokens, JWTs, `.env`-style
   assignments) — counting them, never logging the value — from the diff and from fetched context
