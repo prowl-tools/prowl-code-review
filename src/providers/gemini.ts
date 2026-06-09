@@ -124,8 +124,12 @@ async function completeGemini(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${detail}`);
+    const detail = (await response.text()) || "(no response body)";
+    const hint =
+      response.status === 404
+        ? ` — model "${config.model}" may be unavailable for this key; set PROWL_AI_MODEL / ai-model to a model your key supports.`
+        : "";
+    throw new Error(`Gemini API error (${response.status}): ${detail}${hint}`);
   }
 
   const data = (await response.json()) as GeminiResponse;
@@ -178,8 +182,12 @@ async function completeGeminiTools(
   });
 
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini API error (${response.status}): ${detail}`);
+    const detail = (await response.text()) || "(no response body)";
+    const hint =
+      response.status === 404
+        ? ` — model "${config.model}" may be unavailable for this key; set PROWL_AI_MODEL / ai-model to a model your key supports.`
+        : "";
+    throw new Error(`Gemini API error (${response.status}): ${detail}${hint}`);
   }
 
   const data = (await response.json()) as GeminiResponse;
