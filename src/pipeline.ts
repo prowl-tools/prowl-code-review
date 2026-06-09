@@ -8,7 +8,7 @@ import {
 import { submitReview as defaultSubmitReview } from "./github/review.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
-import type { DiffLimits, SkippedFile } from "./review/diff-types.js";
+import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
   gatherContext as defaultGatherContext,
@@ -21,10 +21,12 @@ import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
 import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
 import type { Severity } from "./review/findings.js";
+import { isSensitiveFile, redactSecrets } from "./review/redact.js";
 
 /**
- * End-to-end PR review pipeline (backlog #11): fetch → parse → size-guard →
- * agentic context → multi-pass review + judge → walkthrough → publish.
+ * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
+ * filter → size-guard → agentic context → multi-pass review + judge →
+ * walkthrough → publish.
  *
  * Heavy stages are injectable so the orchestration is unit-testable without a
  * live provider or GitHub.
@@ -97,6 +99,11 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
   ];
 }
 
+/** Treat both sides of a rename as sensitive-path evidence. */
+function isSensitiveDiffFile(file: DiffFile): boolean {
+  return isSensitiveFile(file.path) || (file.oldPath !== undefined && isSensitiveFile(file.oldPath));
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -112,24 +119,46 @@ export async function reviewPullRequest(
 
   const { meta, diff } = await fetchPr(octokit, ref);
   const parsed = parseDiff(diff);
-  const guarded = applyDiffLimits(parsed, options.diffLimits);
-  const diffText = renderGuardedDiff(guarded.files);
+  // Keep sensitive files out of the review entirely and out of size budgets.
+  const safeParsed = {
+    files: parsed.files.filter((file) => !isSensitiveDiffFile(file))
+  };
+  const sensitiveSkipped: SkippedFile[] = parsed.files
+    .filter((file) => isSensitiveDiffFile(file))
+    .map((file) => ({ path: file.path, reason: "sensitive" }));
+  const guarded = applyDiffLimits(safeParsed, options.diffLimits);
+  const reviewFiles = guarded.files;
+  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped];
+
+  // Redact secrets from anything that will reach the provider.
+  const redactionNotes: string[] = [];
+  const renderedDiff = renderGuardedDiff(reviewFiles);
+  const redactedDiff = redactSecrets(renderedDiff);
+  const diffText = redactedDiff.text;
+  if (redactedDiff.count > 0) {
+    redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
+  }
+  if (sensitiveSkipped.length > 0) {
+    redactionNotes.push(`Skipped ${sensitiveSkipped.length} sensitive file(s) — kept out of the prompt.`);
+  }
 
   let context: string | undefined;
   let contextFiles = 0;
   let contextNotes: string[] = [];
-  if (!options.skipContext && options.toolkitRoot && guarded.files.length > 0) {
+  if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
     try {
       const gathered = await gather({
         toolkit: { root: options.toolkitRoot },
-        changedPaths: guarded.files.map((file) => file.path),
+        changedPaths: reviewFiles.map((file) => file.path),
         config,
         limits: options.contextLimits
       });
       contextFiles = gathered.files.length;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
       if (gathered.files.length > 0) {
-        context = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
+        const joined = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
+        // Defense-in-depth: tool reads are already redacted, but redact again.
+        context = redactSecrets(joined).text;
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -144,14 +173,14 @@ export async function reviewPullRequest(
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
-    files: guarded.files,
-    skipped: guarded.skipped,
-    notes: [...contextNotes, ...reviewPassNotes(reviewResult)]
+    files: reviewFiles,
+    skipped,
+    notes: [...redactionNotes, ...contextNotes, ...reviewPassNotes(reviewResult)]
   });
 
   const payload = buildReviewPayload({
     findings: reviewResult.findings,
-    diff: { files: guarded.files },
+    diff: { files: reviewFiles },
     summaryBody,
     event: options.event
   });
@@ -162,5 +191,5 @@ export async function reviewPullRequest(
     posted = true;
   }
 
-  return { meta, payload, review: reviewResult, skipped: guarded.skipped, contextFiles, posted };
+  return { meta, payload, review: reviewResult, skipped, contextFiles, posted };
 }

@@ -38,11 +38,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: all PR content (diff, code, comments, titles, branch names) is treated as untrusted **data, not instructions**; the system prompt enforces this; detected injection attempts are ignored and may be surfaced as a finding.
     - Acceptance: the agentic retrieval tools (#4) are confined to the repo checkout — no reads outside the workspace, no network exfiltration; bot commands (#24) authorize only a known verb allowlist.
 
-15. **Secret redaction before sending context to the provider**
-    As a privacy-conscious user, I want secrets stripped from anything sent to the LLM, so that BYOK never leaks my credentials to the provider.
-    - Acceptance: redact obvious secrets (API keys, tokens, `.env` contents, private keys) from diffs and fetched context before they enter any prompt; reuse secret-detection patterns (e.g. Gitleaks rules).
-    - Acceptance: known-sensitive files skipped by default; redactions are logged by count only — never the secret value.
-
 51. **Custom / configurable specialist reviewers**
     As a team, I want to define my own review lenses beyond the built-ins, so that `prowl-review` enforces my org's specific standards (e.g. an internal-RFC "compliance" pass) without me building the orchestration — the customization Cloudflare hard-coded for themselves, made generic and BYOK.
     - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.
@@ -157,6 +152,13 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: the judge consolidates duplicates **across providers**, recording provenance (`sources: [...]`) and treating agreement as a confidence boost; single-provider findings are kept but marked.
     - Acceptance: presentation surfaces a **consensus badge** (e.g. "🤝 agreed by N/M providers") in the walkthrough + inline comments — the granular insight.
     - Acceptance: **cost-guarded** — costs ~N× a single-provider review (caching helps within each provider, not across); respects the per-PR budget cap (#18) and risk-tiering (#31); docs state the multiplier. Complements false-positive verification (#8): cross-provider agreement is itself a verification signal.
+
+54. **Review comment presentation polish (visual design)**
+    As a developer reading a review, I want the comment to look premium and scannable (CodeRabbit/Greptile-grade), so that it's pleasant rather than a flat wall of text.
+    - Acceptance: use **collapsible `<details>`** for long/secondary sections (changed-files, review notes) so the summary stays short by default.
+    - Acceptance: use GitHub **alert blocks** (`> [!NOTE]` / `> [!WARNING]` / `> [!CAUTION]`) for impact + review-notes instead of plain emoji lines; render findings as a compact **table** (severity badge · location · title) rather than a flat list.
+    - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
+    - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
 
 ## Low Priority
 

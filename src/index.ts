@@ -15,6 +15,7 @@ export {
   type PipelineDeps
 } from "./pipeline.js";
 export { renderGuardedDiff } from "./review/render-diff.js";
+export { redactSecrets, isSensitiveFile, type RedactionResult } from "./review/redact.js";
 
 // Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
 export {
@@ -52,6 +53,7 @@ export {
   type ListFilesResult,
   type ReadFileResult,
   type SearchMatch,
+  type SearchOptions,
   type SearchResult
 } from "./context/tools.js";
 export {

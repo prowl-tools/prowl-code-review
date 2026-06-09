@@ -139,4 +139,74 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("1/2 review specialist passes failed");
     expect(result.payload.body).toContain("Review pass \"correctness\" failed: provider rejected prompt");
   });
+
+  it("skips sensitive files and redacts secrets before review", async () => {
+    const deps = makeDeps();
+    const sensitiveDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const t = "ghp_${"a".repeat(36)}";
+diff --git a/.env b/config/example.txt
+similarity index 72%
+rename from .env
+rename to config/example.txt
+--- a/.env
++++ b/config/example.txt
+@@ -1 +1 @@
+-DATABASE_URL=postgres://user:pass@host/db
++DATABASE_URL=postgres://user:pass@host/db
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      diffLimits: { maxFiles: 1 },
+      deps
+    });
+
+    // .env is kept out of the review entirely and reported.
+    expect(result.skipped).toContainEqual({ path: ".env", reason: "sensitive" });
+    expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
+    expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
+
+    const diffInput = deps.runReview.mock.calls[0][0].diff;
+    expect(diffInput).not.toContain(".env");
+    expect(diffInput).not.toContain("config/example.txt");
+    expect(diffInput).not.toContain("postgres://user:pass@host/db");
+    expect(diffInput).toContain("src/a.ts");
+    expect(diffInput).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(diffInput).not.toContain("ghp_aaaa");
+    expect(diffInput).toContain("[REDACTED");
+    expect(result.payload.body).toContain("sensitive");
+  });
+
+  it("redacts private key blocks after rendering annotated diffs", async () => {
+    const deps = makeDeps();
+    const privateKeyDiff = `diff --git a/README.md b/README.md
+new file mode 100644
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,3 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIIsecretbytes
++-----END RSA PRIVATE KEY-----
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: privateKeyDiff });
+
+    await reviewPullRequest(octokit, ref, { config, deps, skipContext: true });
+
+    const diffInput = deps.runReview.mock.calls[0][0].diff;
+    expect(diffInput).toContain("[REDACTED:private-key]");
+    expect(diffInput).not.toContain("MIIsecretbytes");
+    expect(diffInput).not.toContain("BEGIN RSA PRIVATE KEY");
+  });
 });
