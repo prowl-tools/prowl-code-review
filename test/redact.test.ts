@@ -92,6 +92,8 @@ describe("isSensitiveFile", () => {
       "deploy/id_rsa",
       "certs/server.pem",
       "secrets.json",
+      "secrets/prod.yaml",
+      "credentials/aws.json",
       ".npmrc"
     ]) {
       expect(isSensitiveFile(path), path).toBe(true);
@@ -99,13 +101,26 @@ describe("isSensitiveFile", () => {
   });
 
   it("flags credential/secret files with Windows separators", () => {
-    for (const path of ["config\\.env.production", "certs\\server.pem", "deploy\\id_ed25519"]) {
+    for (const path of [
+      "config\\.env.production",
+      "certs\\server.pem",
+      "deploy\\id_ed25519",
+      "secrets\\prod.yaml",
+      "credentials\\aws.json"
+    ]) {
       expect(isSensitiveFile(path), path).toBe(true);
     }
   });
 
   it("does not flag ordinary source files", () => {
-    for (const path of ["src/a.ts", "README.md", "package.json", "docs/env-setup.md"]) {
+    for (const path of [
+      "src/a.ts",
+      "README.md",
+      "package.json",
+      "docs/env-setup.md",
+      "src/secrets-helper.ts",
+      "src/credentials-form.ts"
+    ]) {
       expect(isSensitiveFile(path), path).toBe(false);
     }
   });

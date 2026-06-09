@@ -66,7 +66,7 @@ const SENSITIVE_FILE_PATTERNS: RegExp[] = [
   /\.(pem|key|p12|pfx|keystore|jks|ppk)$/i,
   /(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)(\.|$)/i,
   /(^|[\\/])\.(npmrc|netrc|pgpass|htpasswd)$/i,
-  /(^|[\\/])(credentials|secrets)(\.[^\\/]*)?$/i
+  /(^|[\\/])(credentials|secrets)(?:[\\/]|(?:\.[^\\/]*)?$|$)/i
 ];
 
 /** True when a path looks like a credential/secret file we should not read. */
