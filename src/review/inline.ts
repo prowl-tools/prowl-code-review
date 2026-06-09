@@ -110,6 +110,44 @@ export function formatFindingComment(finding: Finding): string {
   return parts.join("\n");
 }
 
+/** Format the most specific location available for a finding. */
+function findingLocation(finding: Finding): string {
+  if (finding.line === undefined) {
+    return finding.file;
+  }
+  if (finding.endLine !== undefined && finding.endLine > finding.line) {
+    return `${finding.file}:${finding.line}-${finding.endLine}`;
+  }
+  return `${finding.file}:${finding.line}`;
+}
+
+/** Format a finding that could not be emitted as an inline GitHub comment. */
+function formatUnmappedFinding(finding: Finding): string {
+  return [`### ${findingLocation(finding)}`, "", formatFindingComment(finding)].join("\n");
+}
+
+/** Build the fallback review-body section for findings outside changed diff lines. */
+function formatUnmappedFindings(findings: Finding[]): string {
+  if (findings.length === 0) {
+    return "";
+  }
+
+  const entries = findings.map(formatUnmappedFinding).join("\n\n");
+  return [
+    "## Unmapped findings",
+    "",
+    "These findings could not be anchored to changed diff lines, so they are included here instead.",
+    "",
+    entries
+  ].join("\n");
+}
+
+/** Append unmapped findings to the review body without changing inline comments. */
+function withUnmappedFindings(summaryBody: string, unmapped: Finding[]): string {
+  const section = formatUnmappedFindings(unmapped);
+  return [summaryBody.trimEnd(), section].filter(Boolean).join("\n\n");
+}
+
 /**
  * Map findings to inline review comments anchored on the diff. A finding maps
  * when its file + line is a new-side line in the diff; multi-line findings only
@@ -154,7 +192,7 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
 /**
  * Assemble the single published review: the walkthrough `summaryBody` plus
  * inline comments for the findings that anchor to the diff. Unmapped findings
- * remain represented in the summary (which lists blockers by file:line).
+ * are appended to the body with full detail so non-inline findings are not lost.
  */
 export function buildReviewPayload(input: {
   findings: Finding[];
@@ -162,9 +200,9 @@ export function buildReviewPayload(input: {
   summaryBody: string;
   event?: ReviewEvent;
 }): ReviewPayload {
-  const { comments } = buildInlineComments(input.findings, input.diff);
+  const { comments, unmapped } = buildInlineComments(input.findings, input.diff);
   return {
-    body: input.summaryBody,
+    body: withUnmappedFindings(input.summaryBody, unmapped),
     event: input.event ?? "COMMENT",
     comments
   };
