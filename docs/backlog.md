@@ -24,11 +24,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
    - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them; severity threshold + dedup applied before posting; counts of dropped findings logged.
 
-10. **Inline comments with committable suggestions (presentation)**
-    As a reviewer, I want findings posted inline on exact lines with one-click fixes, so that it feels like CodeRabbit/Greptile and I can apply fixes instantly.
-    - Acceptance: a **single cohesive published review** (`POST .../pulls/{n}/reviews`) with `event: COMMENT` (or an explicit submit-review step), summary body, and `comments[]` mapped to `path`/`line`/`side` (multi-line ranges supported).
-    - Acceptance: each finding renders a **severity badge** + a committable GitHub `suggestion` block when a safe fix exists; findings outside the diff fall back to the summary.
-
 11. **GitHub Action wrapper + dogfood**
     As a developer, I want a drop-in Action, so that adding one workflow file + an API-key secret enables premium reviews on any repo with no hosting.
     - Acceptance: `action.yml` defines the Node action metadata (`inputs`, `outputs`, and `runs`) and invokes the full pipeline.
