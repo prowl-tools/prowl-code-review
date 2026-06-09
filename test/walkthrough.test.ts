@@ -64,7 +64,7 @@ describe("buildWalkthrough", () => {
   it("includes the marker, header, and provided summary", () => {
     const md = buildWalkthrough({ findings: [], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
-    expect(md).toContain("## 🦝 prowl-review");
+    expect(md).toContain("## prowl-review");
     expect(md).toContain("Adds caching to auth.");
   });
 

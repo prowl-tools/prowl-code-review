@@ -300,7 +300,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
 
   const sections: string[] = [
     REVIEW_MARKER,
-    "## 🦝 prowl-review",
+    "## prowl-review",
     summarySection(input.summary),
     `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
     changedFilesSection(input.files),
