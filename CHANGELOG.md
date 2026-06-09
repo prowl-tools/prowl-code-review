@@ -5,6 +5,12 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Inline comments + committable suggestions (`src/review/inline.ts`, `src/github/review.ts`):
+  map ranked findings to GitHub review comments anchored on exact new-side diff lines
+  (multi-line ranges supported), each with a severity badge and a committable `suggestion`
+  block when a fix exists; findings that don't land on a changed line stay in the summary
+  (no silent drop). `submitReview` publishes one cohesive review (`POST /pulls/{n}/reviews`)
+  with the walkthrough body + `comments[]`. (backlog #10)
 - Structured walkthrough summary (`src/review/walkthrough.ts`): a pure markdown formatter
   that renders the review summary body from ranked findings + the parsed diff — plain-language
   summary, Impact + estimated-effort badges (derived or overridable), severity counts, a
