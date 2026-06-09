@@ -24,7 +24,7 @@ interface SecretPattern {
 // Conservative, high-signal patterns (Gitleaks-inspired). Order matters: specific
 // token shapes first, then the generic key=value assignment catch-all.
 const SECRET_PATTERNS: SecretPattern[] = [
-  { name: "private-key", regex: /-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?-----END[ A-Z]*PRIVATE KEY-----/g },
+  { name: "private-key", regex: /(?:[ 0-9]{6} [+\- ])?-----BEGIN[ A-Z]*PRIVATE KEY-----[\s\S]*?(?:[ 0-9]{6} [+\- ])?-----END[ A-Z]*PRIVATE KEY-----/g },
   { name: "aws-access-key", regex: /\bAKIA[0-9A-Z]{16}\b/g },
   { name: "github-token", regex: /\bgh[pousr]_[A-Za-z0-9]{36,}\b/g },
   { name: "github-pat", regex: /\bgithub_pat_[A-Za-z0-9_]{20,}\b/g },
@@ -60,16 +60,16 @@ export function redactSecrets(text: string): RedactionResult {
 }
 
 // Files whose contents are sensitive by nature — never read into a prompt.
+// Repo paths may be POSIX or Windows-style depending on the local checkout.
 const SENSITIVE_FILE_PATTERNS: RegExp[] = [
-  /(^|\/)\.env(\.[^/]*)?$/i,
+  /(^|[\\/])\.env(\.[^\\/]*)?$/i,
   /\.(pem|key|p12|pfx|keystore|jks|ppk)$/i,
-  /(^|\/)id_(rsa|dsa|ecdsa|ed25519)(\.|$)/i,
-  /(^|\/)\.(npmrc|netrc|pgpass|htpasswd)$/i,
-  /(^|\/)(credentials|secrets)(\.[^/]*)?$/i
+  /(^|[\\/])id_(rsa|dsa|ecdsa|ed25519)(\.|$)/i,
+  /(^|[\\/])\.(npmrc|netrc|pgpass|htpasswd)$/i,
+  /(^|[\\/])(credentials|secrets)(\.[^\\/]*)?$/i
 ];
 
 /** True when a path looks like a credential/secret file we should not read. */
 export function isSensitiveFile(path: string): boolean {
-  const normalizedPath = path.replace(/\\/g, "/");
-  return SENSITIVE_FILE_PATTERNS.some((re) => re.test(normalizedPath));
+  return SENSITIVE_FILE_PATTERNS.some((re) => re.test(path));
 }
