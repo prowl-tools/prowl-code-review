@@ -120,6 +120,14 @@ describe("buildInlineComments", () => {
     expect(unmapped).toHaveLength(1);
     expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 5, endLine: 8, suggestion: "first\nsecond" });
   });
+
+  it("leaves a multi-line suggestion unmapped when no range is provided", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\nsecond" })], diff);
+
+    expect(comments).toHaveLength(0);
+    expect(unmapped).toHaveLength(1);
+    expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 6, suggestion: "first\nsecond" });
+  });
 });
 
 describe("formatFindingComment", () => {
@@ -128,6 +136,14 @@ describe("formatFindingComment", () => {
     expect(body).toContain("🔴");
     expect(body).toContain("[critical] SQLi");
     expect(body).toContain("Body");
+  });
+
+  it("escapes markdown and neutralizes mentions in finding text", () => {
+    const body = formatFindingComment(f({ title: "Ping @team *now*", body: "1. @team <script> *bold*" }));
+
+    expect(body).toContain("Ping &#64;team \\*now\\*");
+    expect(body).toContain("1\\. &#64;team \\<script\\> \\*bold\\*");
+    expect(body).not.toContain("@team");
   });
 
   it("includes a committable suggestion block when a fix exists", () => {
@@ -172,7 +188,7 @@ describe("buildReviewPayload", () => {
 
     expect(payload.comments).toHaveLength(1);
     expect(payload.body).toContain("## walkthrough\n\n## Unmapped findings");
-    expect(payload.body).toContain("src/a.ts:99");
+    expect(payload.body).toContain("src/a\\.ts:99");
     expect(payload.body).toContain("[minor] Unmapped issue");
     expect(payload.body).toContain("Needs context outside the diff.");
     expect(payload.body).toContain("```suggestion");

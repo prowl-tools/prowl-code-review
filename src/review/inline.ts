@@ -58,6 +58,9 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   info: "⚪"
 };
 
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
+
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
  * line belongs to so multi-line ranges never cross GitHub diff hunks.
@@ -94,6 +97,71 @@ function sameHunkRange(lineHunks: Map<number, number>, start: number, end: numbe
   return true;
 }
 
+/** Replace control characters so untrusted finding text cannot alter Markdown. */
+function normalizeMarkdownText(value: string): string {
+  let normalized = "";
+  for (const char of value) {
+    const code = char.charCodeAt(0);
+    if (code <= 0x1f || code === 0x7f) {
+      if (char === "\n") {
+        normalized += "\\n";
+      } else if (char === "\r") {
+        normalized += "\\r";
+      } else if (char === "\t") {
+        normalized += "\\t";
+      } else {
+        normalized += `\\x${code.toString(16).padStart(2, "0")}`;
+      }
+    } else {
+      normalized += char;
+    }
+  }
+  return normalized;
+}
+
+/** Render mention markers as entities so GitHub does not notify users or teams. */
+function neutralizeMentions(value: string): string {
+  return value.replaceAll("\\@", "&#64;").replaceAll("@", "&#64;");
+}
+
+/** Detect an ordered-list marker that would alter Markdown paragraph structure. */
+function isOrderedListDot(value: string, dotIndex: number): boolean {
+  if (dotIndex === 0 || value.charAt(dotIndex) !== "." || value.charAt(dotIndex + 1) !== " ") {
+    return false;
+  }
+  for (let index = 0; index < dotIndex; index += 1) {
+    const char = value.charAt(index);
+    if (char < "0" || char > "9") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Escape Markdown metacharacters for plain text contexts such as headings. */
+function escapeMarkdownText(value: string): string {
+  let escaped = "";
+  for (const char of normalizeMarkdownText(value)) {
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+  }
+  return neutralizeMentions(escaped);
+}
+
+/** Escape untrusted paragraph text without over-escaping normal punctuation. */
+function escapeMarkdownParagraph(value: string): string {
+  const normalized = normalizeMarkdownText(value);
+  let escaped = "";
+  for (let index = 0; index < normalized.length; index += 1) {
+    const char = normalized.charAt(index);
+    const shouldEscape =
+      MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
+      (index === 0 && char === "-") ||
+      isOrderedListDot(normalized, index);
+    escaped += shouldEscape ? `\\${char}` : char;
+  }
+  return neutralizeMentions(escaped);
+}
+
 /** Wrap suggested code in a ```suggestion fence longer than any backtick run in it. */
 function suggestionBlock(code: string): string {
   const longestRun = Math.max(0, ...Array.from(code.matchAll(/`+/g), (m) => m[0].length));
@@ -106,9 +174,19 @@ function hasSuggestion(finding: Finding): boolean {
   return Boolean(finding.suggestion?.trim());
 }
 
+/** Return true when a suggestion would replace more than one line. */
+function hasMultiLineSuggestion(finding: Finding): boolean {
+  const suggestion = finding.suggestion?.replaceAll("\r\n", "\n").replace(/\n+$/, "") ?? "";
+  return suggestion.includes("\n");
+}
+
 /** Format one finding as an inline comment body (severity badge + optional fix). */
 export function formatFindingComment(finding: Finding): string {
-  const parts = [`${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${finding.title}**`, "", finding.body];
+  const parts = [
+    `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
+    "",
+    escapeMarkdownParagraph(finding.body)
+  ];
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
   }
@@ -128,7 +206,7 @@ function findingLocation(finding: Finding): string {
 
 /** Format a finding that could not be emitted as an inline GitHub comment. */
 function formatUnmappedFinding(finding: Finding): string {
-  return [`### ${findingLocation(finding)}`, "", formatFindingComment(finding)].join("\n");
+  return [`### ${escapeMarkdownText(findingLocation(finding))}`, "", formatFindingComment(finding)].join("\n");
 }
 
 /** Build the fallback review-body section for findings outside changed diff lines. */
@@ -175,7 +253,7 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
     const hasRange = endLine !== undefined && endLine > finding.line;
     const canAnchorRange = hasRange ? sameHunkRange(fileLines, finding.line, endLine) : false;
 
-    if (hasRange && hasSuggestion(finding) && !canAnchorRange) {
+    if (hasSuggestion(finding) && !canAnchorRange && (hasRange || hasMultiLineSuggestion(finding))) {
       unmapped.push(finding);
       continue;
     }
