@@ -8,7 +8,7 @@ import {
 import { submitReview as defaultSubmitReview } from "./github/review.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
-import type { DiffLimits, SkippedFile } from "./review/diff-types.js";
+import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
   gatherContext as defaultGatherContext,
@@ -99,6 +99,11 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
   ];
 }
 
+/** Treat both sides of a rename as sensitive-path evidence. */
+function isSensitiveDiffFile(file: DiffFile): boolean {
+  return isSensitiveFile(file.path) || (file.oldPath !== undefined && isSensitiveFile(file.oldPath));
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -116,10 +121,10 @@ export async function reviewPullRequest(
   const parsed = parseDiff(diff);
   // Keep sensitive files out of the review entirely and out of size budgets.
   const safeParsed = {
-    files: parsed.files.filter((file) => !isSensitiveFile(file.path))
+    files: parsed.files.filter((file) => !isSensitiveDiffFile(file))
   };
   const sensitiveSkipped: SkippedFile[] = parsed.files
-    .filter((file) => isSensitiveFile(file.path))
+    .filter((file) => isSensitiveDiffFile(file))
     .map((file) => ({ path: file.path, reason: "sensitive" }));
   const guarded = applyDiffLimits(safeParsed, options.diffLimits);
   const reviewFiles = guarded.files;
