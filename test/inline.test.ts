@@ -112,6 +112,14 @@ describe("buildInlineComments", () => {
     expect(comments[0]).not.toHaveProperty("start_line");
     expect(comments[0]).not.toHaveProperty("start_side");
   });
+
+  it("leaves a multi-line suggestion unmapped when the full range cannot anchor", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 5, endLine: 8, suggestion: "first\nsecond" })], diff);
+
+    expect(comments).toHaveLength(0);
+    expect(unmapped).toHaveLength(1);
+    expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 5, endLine: 8, suggestion: "first\nsecond" });
+  });
 });
 
 describe("formatFindingComment", () => {
