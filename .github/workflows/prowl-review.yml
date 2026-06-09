@@ -37,10 +37,19 @@ jobs:
             echo "Trusted base does not contain prowl-review yet; skipping bootstrap run."
           fi
 
+      - name: Checkout PR head for context
+        if: steps.trusted-action.outputs.available == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          persist-credentials: false
+
       - name: prowl-review
         if: steps.trusted-action.outputs.available == 'true'
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
+          workspace-path: ${{ github.workspace }}/pr-head
           # min-severity: major

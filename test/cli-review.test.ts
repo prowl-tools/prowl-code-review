@@ -6,7 +6,8 @@ import {
   loadGuidelines,
   parseMinSeverity,
   resolvePullNumber,
-  resolveRepo
+  resolveRepo,
+  resolveWorkspace
 } from "../src/cli/commands/review.js";
 
 const ORIGINAL_ENV = process.env;
@@ -86,5 +87,14 @@ describe("review command helpers", () => {
     expect(parseMinSeverity(undefined)).toBeUndefined();
     expect(parseMinSeverity("major")).toBe("major");
     expect(() => parseMinSeverity("urgent")).toThrow(/Invalid --min-severity/);
+  });
+
+  it("prefers the explicit action workspace over the GitHub default", () => {
+    process.env.GITHUB_WORKSPACE = "/base";
+    process.env.PROWL_WORKSPACE = "/head";
+    expect(resolveWorkspace()).toBe("/head");
+
+    process.env.PROWL_WORKSPACE = "";
+    expect(resolveWorkspace()).toBe("/base");
   });
 });
