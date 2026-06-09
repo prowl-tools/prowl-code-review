@@ -34,7 +34,7 @@ const SECRET_PATTERNS: SecretPattern[] = [
   { name: "jwt", regex: /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/g },
   {
     name: "assignment",
-    regex: /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret)["']?\s*[:=]\s*["']?)([A-Za-z0-9_\-/+=.]{8,})(["']?)/gi,
+    regex: /((?:api[_-]?key|secret|token|password|passwd|access[_-]?key|client[_-]?secret|database[_-]?url|db[_-]?url|connection[_-]?string)["']?\s*[:=]\s*["']?)([^\s"'`]{8,})(["']?)/gi,
     valueGroup: 2
   }
 ];
