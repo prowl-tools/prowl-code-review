@@ -173,16 +173,17 @@ describe("gemini completeWithTools", () => {
     expect(result.stopReason).toBe("end");
   });
 
-  it("captures and echoes Gemini 3.x thought signatures across turns", async () => {
-    // Parsing: a function call carrying a thought signature.
+  it("captures and echoes Gemini thought signatures across ordered parts", async () => {
+    // Parsing: Gemini can sign text parts alongside function-call parts.
     const parseFn = mockFetch({
       candidates: [
         {
           content: {
             parts: [
+              { text: "checking", thoughtSignature: "text-sig" },
               {
                 functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } },
-                thoughtSignature: "sig-123"
+                thoughtSignature: "call-sig"
               }
             ]
           }
@@ -195,10 +196,20 @@ describe("gemini completeWithTools", () => {
     expect(parsed.toolCalls[0]).toMatchObject({
       id: "call_1",
       name: "read_file",
-      thoughtSignature: "sig-123"
+      thoughtSignature: "call-sig"
     });
+    expect(parsed.providerMetadata?.geminiParts).toEqual([
+      { type: "text", text: "checking", thoughtSignature: "text-sig" },
+      {
+        type: "functionCall",
+        id: "call_1",
+        name: "read_file",
+        input: { path: "a.ts" },
+        thoughtSignature: "call-sig"
+      }
+    ]);
 
-    // Serialization: the signature is echoed back on the function-call part.
+    // Serialization: every signed part is echoed back in Gemini's original order.
     const echoFn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
     await completeWithTools(
       {
@@ -206,17 +217,24 @@ describe("gemini completeWithTools", () => {
           { role: "user", text: "go" },
           {
             role: "assistant",
-            text: "",
-            toolCalls: [{ id: "call_2", name: "read_file", input: { path: "a.ts" }, thoughtSignature: "sig-123" }]
+            text: parsed.text,
+            toolCalls: parsed.toolCalls,
+            providerMetadata: parsed.providerMetadata
           },
-          { role: "tool", results: [{ callId: "call_2", content: "body" }] }
+          { role: "tool", results: [{ callId: "call_1", content: "body" }] }
         ],
         tools: TOOLS
       },
       config
     );
     const body = bodyOf(echoFn) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
-    expect(body.contents[1].parts[0]).toMatchObject({ thoughtSignature: "sig-123" });
+    expect(body.contents[1].parts).toEqual([
+      { text: "checking", thoughtSignature: "text-sig" },
+      {
+        functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } },
+        thoughtSignature: "call-sig"
+      }
+    ]);
   });
 
   it("adds a model-availability hint on tool-call 404 responses", async () => {

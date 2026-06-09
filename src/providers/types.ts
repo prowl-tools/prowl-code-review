@@ -93,10 +93,25 @@ export interface ToolResult {
   content: string;
 }
 
+export type GeminiToolMessagePart =
+  | { type: "text"; text: string; thoughtSignature?: string }
+  | {
+      type: "functionCall";
+      id: string;
+      name: string;
+      input: Record<string, unknown>;
+      thoughtSignature?: string;
+    };
+
+export interface ToolProviderMetadata {
+  /** Ordered Gemini parts to preserve opaque thinking signatures across turns. */
+  geminiParts?: GeminiToolMessagePart[];
+}
+
 /** One turn in a tool-use conversation, normalized across providers. */
 export type ToolMessage =
   | { role: "user"; text: string }
-  | { role: "assistant"; text: string; toolCalls: ToolCall[] }
+  | { role: "assistant"; text: string; toolCalls: ToolCall[]; providerMetadata?: ToolProviderMetadata }
   | { role: "tool"; results: ToolResult[] };
 
 export interface ToolCompletionRequest {
@@ -117,6 +132,8 @@ export interface ToolCompletionResult {
   toolCalls: ToolCall[];
   /** `tool_use` when the model wants tools run; `end` when it is finished. */
   stopReason: "tool_use" | "end";
+  /** Provider-specific state that must round-trip with the next assistant turn. */
+  providerMetadata?: ToolProviderMetadata;
   usage: TokenUsage;
   provider: ProviderName;
   model: string;
