@@ -36,6 +36,20 @@ describe("redactSecrets", () => {
     expect(r.text).toContain("[REDACTED:assignment]");
   });
 
+  it("redacts full URL-valued secret assignments", () => {
+    const r = redactSecrets("PASSWORD=postgres://user:pass@host/db");
+    expect(r.count).toBe(1);
+    expect(r.text).toBe("PASSWORD=[REDACTED:assignment]");
+    expect(r.text).not.toContain("://user:pass");
+  });
+
+  it("redacts database URL assignments", () => {
+    const r = redactSecrets('DATABASE_URL="postgres://user:pass@host/db"');
+    expect(r.count).toBe(1);
+    expect(r.text).toBe('DATABASE_URL="[REDACTED:assignment]"');
+    expect(r.text).not.toContain("postgres://user:pass@host/db");
+  });
+
   it("leaves ordinary code untouched", () => {
     const code = "const total = a + b; // running sum";
     const r = redactSecrets(code);
