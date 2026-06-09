@@ -173,7 +173,7 @@ describe("gatherContext", () => {
 
   it("returns successful search outputs even when no file is read", async () => {
     const run = scripted([
-      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "export const" } }]),
+      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "export const", dir: "src" } }]),
       end()
     ]);
 
@@ -189,7 +189,7 @@ describe("gatherContext", () => {
     expect(result.toolOutputs).toEqual([
       {
         tool: "search_repo",
-        input: { pattern: "export const", dir: "." },
+        input: { pattern: "export const", dir: "src" },
         content: "src/a.ts:1: export const a = 1;\nsrc/b.ts:1: export const b = 2;",
         truncated: false
       }
@@ -212,7 +212,26 @@ describe("gatherContext", () => {
     expect(result.toolOutputs[0]?.content).toContain("src/a.ts");
     expect(result.toolOutputs[0]?.content).not.toContain(".env");
     expect(result.toolOutputs[0]?.content).not.toContain("postgres://user:pass@host/db");
-    expect(result.notes.some((n) => n.includes("search result") && n.includes("sensitive"))).toBe(true);
+    expect(result.notes.some((n) => n.includes("sensitive file") && n.includes("search"))).toBe(true);
+  });
+
+  it("does not count sensitive search files against the match cap", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "DATABASE_URL|export const" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root, maxMatches: 1 },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.toolOutputs[0]?.content).toContain("src/a.ts");
+    expect(result.toolOutputs[0]?.content).not.toContain(".env");
+    expect(result.toolOutputs[0]?.content).not.toContain("postgres://user:pass@host/db");
+    expect(result.notes.some((n) => n.includes("sensitive file") && n.includes("search"))).toBe(true);
   });
 
   it("returns successful file listing outputs even when no file is read", async () => {
