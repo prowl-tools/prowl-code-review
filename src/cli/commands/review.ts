@@ -14,6 +14,7 @@ import { SEVERITIES, type Severity } from "../../review/findings.js";
  * just reports) the review.
  */
 
+/** Resolve and validate the target repository from a flag or GitHub Actions env. */
 export function resolveRepo(flag?: string): { owner: string; repo: string } {
   const value = flag ?? process.env.GITHUB_REPOSITORY;
   if (!value) {
@@ -27,6 +28,7 @@ export function resolveRepo(flag?: string): { owner: string; repo: string } {
   return { owner, repo };
 }
 
+/** Resolve and validate the pull request number from a flag or event payload. */
 export function resolvePullNumber(flag?: string): number {
   if (flag) {
     const parsed = Number(flag);
@@ -53,6 +55,7 @@ export function resolvePullNumber(flag?: string): number {
   throw new Error("Pull request number required: pass --pr <n> (or run on a pull_request event).");
 }
 
+/** Load optional review guidelines from the repository root, preferring REVIEW_GUIDELINES.md. */
 export function loadGuidelines(root: string): string | undefined {
   for (const name of ["REVIEW_GUIDELINES.md", "CLAUDE.md"]) {
     const path = join(root, name);
@@ -67,6 +70,7 @@ export function loadGuidelines(root: string): string | undefined {
   return undefined;
 }
 
+/** Parse an optional severity threshold for filtering findings. */
 export function parseMinSeverity(value: string | undefined): Severity | undefined {
   if (!value) {
     return undefined;
@@ -85,6 +89,7 @@ interface ReviewCommandOptions {
   dryRun?: boolean;
 }
 
+/** Build the `review` CLI command wired to the end-to-end GitHub review pipeline. */
 export function buildReviewCommand(): Command {
   const command = new Command("review");
 
