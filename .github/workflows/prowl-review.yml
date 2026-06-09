@@ -28,5 +28,5 @@ jobs:
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
-          # ai-model: gemini-2.5-pro   # uncomment/adjust if your key lacks the default model
+          ai-model: gemini-3.5-flash
           # min-severity: major
