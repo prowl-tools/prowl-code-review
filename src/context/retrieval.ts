@@ -16,6 +16,7 @@ import {
   searchRepo,
   type ToolkitOptions
 } from "./tools.js";
+import { isSensitiveFile, redactSecrets } from "../review/redact.js";
 
 /**
  * Agentic cross-file context retrieval (backlog #4, the #1 bug-catching lever).
@@ -163,21 +164,29 @@ function executeTool(
       if (!path) {
         return toolExecution("Error: read_file requires a 'path'.");
       }
+      if (isSensitiveFile(path)) {
+        notes.push(`Refused to read sensitive file ${path} (kept out of context)`);
+        return toolExecution(`Refused to read sensitive file: ${path}.`, true);
+      }
       if (!files.has(path) && files.size >= maxFiles) {
         notes.push(`File budget reached (${maxFiles}); skipped ${path}`);
         return toolExecution(`File budget reached (${maxFiles}); not reading ${path}.`, true);
       }
       const result = readRepoFile(options, path);
+      const { text: safeContent, count: redactions } = redactSecrets(result.content);
+      if (redactions > 0) {
+        notes.push(`Redacted ${redactions} secret(s) from ${result.path}`);
+      }
       files.set(result.path, {
         path: result.path,
-        content: result.content,
+        content: safeContent,
         truncated: result.truncated
       });
       if (result.truncated) {
         notes.push(`Truncated ${result.path} to ${result.bytes} bytes`);
       }
       return toolExecution(
-        result.truncated ? `${result.content}\n…[truncated]` : result.content,
+        result.truncated ? `${safeContent}\n…[truncated]` : safeContent,
         result.truncated
       );
     }
@@ -188,8 +197,23 @@ function executeTool(
         return toolExecution("Error: search_repo requires a 'pattern'.");
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
-      const result = searchRepo(options, pattern, dir);
-      const body = result.matches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const result = searchRepo(options, pattern, dir, {
+        shouldSearchFile: (path) => !isSensitiveFile(path)
+      });
+      const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
+      const skippedSensitive = result.matches.length - safeMatches.length;
+      const skippedSensitiveFiles = result.skippedFiles ?? 0;
+      if (skippedSensitiveFiles > 0) {
+        notes.push(`Skipped ${skippedSensitiveFiles} sensitive file(s) during search`);
+      }
+      if (skippedSensitive > 0) {
+        notes.push(`Skipped ${skippedSensitive} search result(s) from sensitive file(s)`);
+      }
+      const rawBody = safeMatches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const { text: body, count: redactions } = redactSecrets(rawBody);
+      if (redactions > 0) {
+        notes.push(`Redacted ${redactions} secret(s) from search results`);
+      }
       const content = (body || "(no matches)") + (result.truncated ? "\n…[more matches omitted]" : "");
       if (result.truncated) {
         notes.push(`Search results truncated for '${pattern}' under ${dir}`);

@@ -128,6 +128,17 @@ describe("searchRepo", () => {
     expect(result.truncated).toBe(true);
   });
 
+  it("applies the search file predicate before the match cap", () => {
+    const result = searchRepo({ ...options, maxMatches: 1 }, "private|foo", ".", {
+      shouldSearchFile: (path) => path !== "private/secret.txt"
+    });
+
+    expect(result.matches).toHaveLength(1);
+    expect(result.matches[0]?.path).toBe("src/a.ts");
+    expect(result.skippedFiles).toBe(1);
+    expect(result.truncated).toBe(true);
+  });
+
   it("caps visited files and reports truncation", () => {
     const result = searchRepo({ ...options, maxListedFiles: 1 }, "foo");
     expect(result.matches.length).toBeLessThanOrEqual(options.maxMatches ?? 5);

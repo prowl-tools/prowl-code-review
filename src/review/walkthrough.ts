@@ -54,7 +54,8 @@ export interface WalkthroughInput {
 const SKIP_LABELS: Record<SkipReason, string> = {
   binary: "binary (not reviewable)",
   maxFiles: "skipped - file limit reached",
-  maxDiffBytes: "skipped - diff size limit reached"
+  maxDiffBytes: "skipped - diff size limit reached",
+  sensitive: "sensitive - kept out of the prompt"
 };
 
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
