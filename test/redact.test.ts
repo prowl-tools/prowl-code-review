@@ -28,6 +28,19 @@ describe("redactSecrets", () => {
     expect(r.text).not.toContain("MIIsecretbytes");
   });
 
+  it("redacts private key blocks after diff annotation", () => {
+    const annotated = [
+      "    10 +-----BEGIN RSA PRIVATE KEY-----",
+      "    11 +MIIsecretbytes",
+      "    12 +-----END RSA PRIVATE KEY-----"
+    ].join("\n");
+    const r = redactSecrets(annotated);
+    expect(r.count).toBe(1);
+    expect(r.text).toContain("[REDACTED:private-key]");
+    expect(r.text).not.toContain("MIIsecretbytes");
+    expect(r.text).not.toContain("BEGIN RSA PRIVATE KEY");
+  });
+
   it("redacts the value of a secret assignment but keeps the key name", () => {
     const r = redactSecrets('DB_PASSWORD="hunter2supersecret"');
     expect(r.count).toBe(1);

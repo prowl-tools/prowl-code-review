@@ -188,4 +188,25 @@ rename to config/example.txt
     expect(diffInput).toContain("[REDACTED");
     expect(result.payload.body).toContain("sensitive");
   });
+
+  it("redacts private key blocks after rendering annotated diffs", async () => {
+    const deps = makeDeps();
+    const privateKeyDiff = `diff --git a/README.md b/README.md
+new file mode 100644
+--- /dev/null
++++ b/README.md
+@@ -0,0 +1,3 @@
++-----BEGIN RSA PRIVATE KEY-----
++MIIsecretbytes
++-----END RSA PRIVATE KEY-----
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: privateKeyDiff });
+
+    await reviewPullRequest(octokit, ref, { config, deps, skipContext: true });
+
+    const diffInput = deps.runReview.mock.calls[0][0].diff;
+    expect(diffInput).toContain("[REDACTED:private-key]");
+    expect(diffInput).not.toContain("MIIsecretbytes");
+    expect(diffInput).not.toContain("BEGIN RSA PRIVATE KEY");
+  });
 });
