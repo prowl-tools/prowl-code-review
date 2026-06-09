@@ -27,6 +27,6 @@ jobs:
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
-          # ai-provider: anthropic
-          # ai-model: claude-sonnet-4-6
+          ai-provider: gemini
+          # ai-model: gemini-2.5-pro   # uncomment/adjust if your key lacks the default model
           # min-severity: major
