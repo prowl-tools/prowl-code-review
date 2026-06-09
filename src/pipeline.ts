@@ -132,7 +132,8 @@ export async function reviewPullRequest(
 
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
-  const redactedDiff = redactSecrets(renderGuardedDiff(reviewFiles));
+  const renderedDiff = renderGuardedDiff(reviewFiles);
+  const redactedDiff = redactSecrets(renderedDiff);
   const diffText = redactedDiff.text;
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
