@@ -1,0 +1,168 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildWalkthrough,
+  severityCounts,
+  deriveImpact,
+  deriveEffort,
+  REVIEW_MARKER
+} from "../src/review/walkthrough.js";
+import type { DiffFile } from "../src/review/diff-types.js";
+import type { Finding, Severity } from "../src/review/findings.js";
+
+function makeFile(path: string, adds: number, dels: number, opts: Partial<DiffFile> = {}): DiffFile {
+  const lines = [
+    ...Array.from({ length: adds }, (_, i) => ({ type: "add" as const, content: "x", newLine: i + 1 })),
+    ...Array.from({ length: dels }, (_, i) => ({ type: "del" as const, content: "y", oldLine: i + 1 }))
+  ];
+  return {
+    path,
+    status: "modified",
+    binary: false,
+    byteSize: 0,
+    hunks: [{ oldStart: 1, oldLines: dels, newStart: 1, newLines: adds, section: "", lines }],
+    ...opts
+  };
+}
+
+function makeFinding(severity: Severity, over: Partial<Finding> = {}): Finding {
+  return { file: "src/a.ts", line: 5, severity, category: "correctness", title: "Issue", body: "b", confidence: 0.5, ...over };
+}
+
+describe("severityCounts", () => {
+  it("counts by severity including zeros", () => {
+    const counts = severityCounts([makeFinding("critical"), makeFinding("critical"), makeFinding("minor")]);
+    expect(counts.critical).toBe(2);
+    expect(counts.minor).toBe(1);
+    expect(counts.info).toBe(0);
+  });
+});
+
+describe("deriveImpact", () => {
+  it("is high when any critical finding exists", () => {
+    expect(deriveImpact([makeFinding("critical")], [])).toBe("high");
+  });
+  it("is medium for a major finding or a large diff", () => {
+    expect(deriveImpact([makeFinding("major")], [])).toBe("medium");
+    expect(deriveImpact([], [makeFile("a.ts", 500, 0)])).toBe("medium");
+  });
+  it("is low otherwise", () => {
+    expect(deriveImpact([makeFinding("minor")], [makeFile("a.ts", 3, 1)])).toBe("low");
+  });
+});
+
+describe("deriveEffort", () => {
+  it("scales with change size", () => {
+    expect(deriveEffort([makeFile("a.ts", 2, 0)])).toBe(1);
+    expect(deriveEffort([makeFile("a.ts", 100, 0)])).toBe(3);
+    expect(deriveEffort([makeFile("a.ts", 700, 0)])).toBe(5);
+  });
+});
+
+describe("buildWalkthrough", () => {
+  const files = [makeFile("src/a.ts", 12, 3), makeFile("README.md", 2, 1)];
+
+  it("includes the marker, header, and provided summary", () => {
+    const md = buildWalkthrough({ findings: [], files, summary: "Adds caching to auth." });
+    expect(md.startsWith(REVIEW_MARKER)).toBe(true);
+    expect(md).toContain("## 🦝 prowl-review");
+    expect(md).toContain("Adds caching to auth.");
+  });
+
+  it("falls back to a default summary when none is given", () => {
+    const md = buildWalkthrough({ findings: [], files });
+    expect(md).toContain("Automated review of the changes");
+  });
+
+  it("renders impact/effort/severity badges from findings", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("critical"), makeFinding("major", { file: "src/b.ts" })],
+      files
+    });
+    expect(md).toContain("**Impact:** 🔴 High");
+    expect(md).toMatch(/Estimated effort:\*\* \d\/5/);
+    expect(md).toContain("🔴 1");
+    expect(md).toContain("🟠 1");
+  });
+
+  it("groups changed files by top directory with line deltas", () => {
+    const md = buildWalkthrough({ findings: [], files });
+    expect(md).toContain("### Changed files (2)");
+    expect(md).toContain("**src/**");
+    expect(md).toContain("`src/a.ts` — modified (+12 −3)");
+    expect(md).toContain("**(root)/**");
+  });
+
+  it("escapes untrusted review text before rendering Markdown", () => {
+    const md = buildWalkthrough({
+      summary: "Looks fine @org/team.\n### Spoof\n<!-- hidden -->\n> quote",
+      findings: [
+        makeFinding("major", {
+          file: "findings/`bad`\n### injected.md",
+          title: "Title **break**\n### fake @org/team"
+        })
+      ],
+      files: [makeFile("src/`spoof`\n### fake.md", 1, 0)],
+      skipped: [{ path: "skip/`bad`\n### skipped.md", reason: "maxFiles" }]
+    });
+
+    expect(md).toContain("``src/`spoof`\\n### fake.md``");
+    expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
+    expect(md).toContain("``skip/`bad`\\n### skipped.md``");
+    expect(md).toContain("Title \\*\\*break\\*\\*\\\\n\\#\\#\\# fake &#64;org/team");
+    expect(md).toContain("Looks fine &#64;org/team.\\\\n\\#\\#\\# Spoof\\\\n\\<\\!-- hidden --\\>\\\\n\\> quote");
+    expect(md).not.toContain("`spoof`\n### fake.md");
+    expect(md).not.toContain("`bad`\n### injected.md");
+    expect(md).not.toContain("`bad`\n### skipped.md");
+    expect(md).not.toContain("Title **break**\n### fake @org/team");
+    expect(md).not.toContain("Looks fine @org/team.\n### Spoof");
+    expect(md).not.toContain("<!-- hidden -->");
+    expect(md).not.toContain("@org/team");
+  });
+
+  it("marks binary files instead of showing line deltas", () => {
+    const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
+    expect(md).toContain("`img.png` — modified (binary)");
+  });
+
+  it("lists blocking findings but not minor/info ones", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("minor", { title: "nit" })],
+      files
+    });
+    expect(md).toContain("**SQLi**");
+    expect(md).not.toContain("nit");
+  });
+
+  it("notes findings-free reviews", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("minor")], files });
+    expect(md).toContain("_No blocking issues found._");
+  });
+
+  it("reports skipped files (no silent truncation)", () => {
+    const md = buildWalkthrough({
+      findings: [],
+      files,
+      skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
+    });
+    expect(md).toContain("Not reviewed");
+    expect(md).toContain("huge.lock");
+  });
+
+  it("renders a mermaid block only when provided", () => {
+    const withDiagram = buildWalkthrough({ findings: [], files, mermaid: "graph TD; A-->B" });
+    expect(withDiagram).toContain("```mermaid");
+    expect(withDiagram).toContain("A-->B");
+    const without = buildWalkthrough({ findings: [], files });
+    expect(without).not.toContain("```mermaid");
+  });
+
+  it("uses a longer mermaid fence when the body contains backticks", () => {
+    const md = buildWalkthrough({
+      findings: [],
+      files,
+      mermaid: "graph TD; A-->B\n```\n### fake"
+    });
+
+    expect(md).toContain("````mermaid\ngraph TD; A-->B\n```\n### fake\n````");
+  });
+});
