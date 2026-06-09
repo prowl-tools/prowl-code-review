@@ -146,6 +146,31 @@ describe("buildReviewPayload", () => {
     expect(payload.comments).toHaveLength(1);
   });
 
+  it("appends unmapped findings to the review body with details and suggestions", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6 }),
+        f({
+          line: 99,
+          severity: "minor",
+          title: "Unmapped issue",
+          body: "Needs context outside the diff.",
+          suggestion: "const fixed = true;"
+        })
+      ],
+      diff,
+      summaryBody: "## walkthrough\n"
+    });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.body).toContain("## walkthrough\n\n## Unmapped findings");
+    expect(payload.body).toContain("src/a.ts:99");
+    expect(payload.body).toContain("[minor] Unmapped issue");
+    expect(payload.body).toContain("Needs context outside the diff.");
+    expect(payload.body).toContain("```suggestion");
+    expect(payload.body).toContain("const fixed = true;");
+  });
+
   it("respects an explicit event", () => {
     const payload = buildReviewPayload({ findings: [], diff, summaryBody: "x", event: "REQUEST_CHANGES" });
     expect(payload.event).toBe("REQUEST_CHANGES");
