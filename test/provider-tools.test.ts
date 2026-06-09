@@ -172,4 +172,40 @@ describe("gemini completeWithTools", () => {
     ]);
     expect(result.stopReason).toBe("end");
   });
+
+  it("captures and echoes Gemini 3.x thought signatures across turns", async () => {
+    // Parsing: a function call carrying a thought signature.
+    const parseFn = mockFetch({
+      candidates: [
+        {
+          content: {
+            parts: [{ functionCall: { name: "read_file", args: { path: "a.ts" } }, thoughtSignature: "sig-123" }]
+          }
+        }
+      ]
+    });
+    const parsed = await completeWithTools({ messages: [{ role: "user", text: "go" }], tools: TOOLS }, config);
+    expect(parseFn).toHaveBeenCalled();
+    expect(parsed.toolCalls[0].thoughtSignature).toBe("sig-123");
+
+    // Serialization: the signature is echoed back on the function-call part.
+    const echoFn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
+    await completeWithTools(
+      {
+        messages: [
+          { role: "user", text: "go" },
+          {
+            role: "assistant",
+            text: "",
+            toolCalls: [{ id: "read_file", name: "read_file", input: { path: "a.ts" }, thoughtSignature: "sig-123" }]
+          },
+          { role: "tool", results: [{ callId: "read_file", content: "body" }] }
+        ],
+        tools: TOOLS
+      },
+      config
+    );
+    const body = bodyOf(echoFn) as { contents: Array<{ parts: Array<Record<string, unknown>> }> };
+    expect(body.contents[1].parts[0]).toMatchObject({ thoughtSignature: "sig-123" });
+  });
 });

@@ -79,6 +79,12 @@ export interface ToolCall {
   id: string;
   name: string;
   input: Record<string, unknown>;
+  /**
+   * Opaque Gemini "thought signature" returned on a function call. Gemini 3.x
+   * requires it to be echoed back on the same call in later turns, so it must
+   * round-trip through the conversation. Unused by other providers.
+   */
+  thoughtSignature?: string;
 }
 
 /** The result of executing a {@link ToolCall}, fed back to the model. */
