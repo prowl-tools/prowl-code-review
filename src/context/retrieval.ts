@@ -198,7 +198,12 @@ function executeTool(
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
       const result = searchRepo(options, pattern, dir);
-      const rawBody = result.matches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
+      const skippedSensitive = result.matches.length - safeMatches.length;
+      if (skippedSensitive > 0) {
+        notes.push(`Skipped ${skippedSensitive} search result(s) from sensitive file(s)`);
+      }
+      const rawBody = safeMatches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
       const { text: body, count: redactions } = redactSecrets(rawBody);
       if (redactions > 0) {
         notes.push(`Redacted ${redactions} secret(s) from search results`);

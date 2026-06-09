@@ -1,4 +1,4 @@
-import type { DiffLimits, GuardedDiff, ParsedDiff, SkippedFile } from "./diff-types.js";
+import type { DiffLimits, GuardedDiff, ParsedDiff, SkipReason, SkippedFile } from "./diff-types.js";
 
 /**
  * Apply size caps to a parsed diff, returning the files to review plus an
@@ -48,21 +48,21 @@ export function describeSkipped(skipped: SkippedFile[]): string {
   if (skipped.length === 0) {
     return "";
   }
-  const byReason = new Map<string, string[]>();
+  const byReason = new Map<SkipReason, string[]>();
   for (const { path, reason } of skipped) {
     const list = byReason.get(reason) ?? [];
     list.push(path);
     byReason.set(reason, list);
   }
-  const labels: Record<string, string> = {
+  const labels: Record<SkipReason, string> = {
     binary: "binary (not reviewable)",
-    maxFiles: "skipped — file limit reached",
-    maxDiffBytes: "skipped — diff size limit reached",
-    sensitive: "sensitive — kept out of the prompt"
+    maxFiles: "skipped - file limit reached",
+    maxDiffBytes: "skipped - diff size limit reached",
+    sensitive: "sensitive - kept out of the prompt"
   };
   const parts: string[] = [];
   for (const [reason, paths] of byReason) {
-    parts.push(`${labels[reason] ?? reason}: ${paths.join(", ")}`);
+    parts.push(`${labels[reason]}: ${paths.join(", ")}`);
   }
   return parts.join("; ");
 }

@@ -14,7 +14,10 @@ beforeAll(() => {
   mkdirSync(join(root, "src"));
   writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2;\n");
-  writeFileSync(join(root, ".env"), "API_KEY=AKIAIOSFODNN7EXAMPLE\n");
+  writeFileSync(
+    join(root, ".env"),
+    "API_KEY=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://user:pass@host/db\n"
+  );
   writeFileSync(join(root, "leaked.txt"), `const token = "ghp_${"a".repeat(36)}";\n`);
 });
 
@@ -191,6 +194,25 @@ describe("gatherContext", () => {
         truncated: false
       }
     ]);
+  });
+
+  it("omits search matches from sensitive files before exposing tool output", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "DATABASE_URL|export const" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.toolOutputs[0]?.content).toContain("src/a.ts");
+    expect(result.toolOutputs[0]?.content).not.toContain(".env");
+    expect(result.toolOutputs[0]?.content).not.toContain("postgres://user:pass@host/db");
+    expect(result.notes.some((n) => n.includes("search result") && n.includes("sensitive"))).toBe(true);
   });
 
   it("returns successful file listing outputs even when no file is read", async () => {
