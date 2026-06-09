@@ -14,6 +14,8 @@ import {
 interface GeminiPart {
   text?: string;
   functionCall?: { id?: string; name: string; args?: Record<string, unknown> };
+  /** Gemini 3.x signature that must be echoed back on the function call. */
+  thoughtSignature?: string;
 }
 
 interface GeminiUsage {
@@ -77,7 +79,9 @@ function toGeminiContents(messages: ToolMessage[]): unknown[] {
             ...(call.id !== call.name ? { id: call.id } : {}),
             name: call.name,
             args: call.input
-          }
+          },
+          // Echo the signature back so Gemini 3.x accepts the follow-up turn.
+          ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
         });
       }
       return { role: "model", parts };
@@ -202,7 +206,8 @@ async function completeGeminiTools(
       toolCalls.push({
         id: part.functionCall.id ?? part.functionCall.name,
         name: part.functionCall.name,
-        input: part.functionCall.args ?? {}
+        input: part.functionCall.args ?? {},
+        ...(part.thoughtSignature ? { thoughtSignature: part.thoughtSignature } : {})
       });
     }
   }
