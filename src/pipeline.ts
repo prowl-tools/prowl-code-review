@@ -71,10 +71,12 @@ export interface ReviewPullRequestResult {
   posted: boolean;
 }
 
+/** Keep operational review notes compact enough for a readable summary. */
 function truncateNote(value: string, maxLength = 500): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
+/** Convert failed specialist passes into reviewer-visible coverage notes. */
 function reviewPassNotes(reviewResult: ReviewResult): string[] {
   const failures = reviewResult.passes.filter((pass) => !pass.ok);
   if (failures.length === 0) {
