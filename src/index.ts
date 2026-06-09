@@ -63,6 +63,19 @@ export {
   type PullRequestMeta,
   type FetchedPullRequest
 } from "./github/diff.js";
+export { submitReview } from "./github/review.js";
+
+// Inline comments + committable suggestions (the published review).
+export {
+  buildInlineComments,
+  buildReviewPayload,
+  formatFindingComment,
+  type ReviewComment,
+  type ReviewEvent,
+  type ReviewSide,
+  type ReviewPayload,
+  type InlineMapping
+} from "./review/inline.js";
 
 // Unified-diff parsing + size guards.
 export { parseDiff } from "./review/parse-diff.js";

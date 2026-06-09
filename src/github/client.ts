@@ -1,4 +1,5 @@
 import { getOctokit } from "@actions/github";
+import type { ReviewEvent, ReviewSide } from "../review/inline.js";
 
 /**
  * Minimal structural view of the Octokit REST methods prowl-review uses.
@@ -20,6 +21,23 @@ export interface OctokitLike {
         pull_number: number;
         /** Optional media format override for non-JSON responses. */
         mediaType?: { format: string };
+      }): Promise<{ data: unknown }>;
+      /** Publish a review: a summary `body`, an `event`, and inline `comments`. */
+      createReview(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        body?: string;
+        event?: ReviewEvent;
+        commit_id?: string;
+        comments?: Array<{
+          path: string;
+          body: string;
+          line?: number;
+          side?: ReviewSide;
+          start_line?: number;
+          start_side?: ReviewSide;
+        }>;
       }): Promise<{ data: unknown }>;
     };
   };
