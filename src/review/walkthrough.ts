@@ -43,6 +43,8 @@ export interface WalkthroughInput {
   skipped?: SkippedFile[];
   /** Optional Mermaid diagram body; rendered only when provided. */
   mermaid?: string;
+  /** Review coverage or retrieval notes that should not be hidden. */
+  notes?: string[];
   /** Override the derived impact. */
   impact?: Impact;
   /** Override the derived effort (1–5). */
@@ -292,6 +294,18 @@ function summarySection(summary: string | undefined): string {
   return trimmed ? escapeMarkdownParagraph(trimmed) : "_Automated review of the changes in this pull request._";
 }
 
+/** Render reviewer-visible operational notes without allowing Markdown injection. */
+function notesSection(notes: string[] | undefined): string {
+  const visible = notes?.map((note) => note.trim()).filter(Boolean) ?? [];
+  if (visible.length === 0) {
+    return "";
+  }
+  return [
+    "> ⚠️ **Review notes**",
+    ...visible.map((note) => `> - ${escapeMarkdownParagraph(note)}`)
+  ].join("\n");
+}
+
 /** Render the full walkthrough summary markdown for a review. */
 export function buildWalkthrough(input: WalkthroughInput): string {
   const counts = severityCounts(input.findings);
@@ -300,7 +314,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
 
   const sections: string[] = [
     REVIEW_MARKER,
-    "## 🦝 prowl-review",
+    "## prowl-review",
     summarySection(input.summary),
     `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
     changedFilesSection(input.files),
@@ -309,6 +323,11 @@ export function buildWalkthrough(input: WalkthroughInput): string {
 
   if (input.skipped && input.skipped.length > 0) {
     sections.push(`> ⚠️ **Not reviewed:** ${skippedFilesNote(input.skipped)}`);
+  }
+
+  const notes = notesSection(input.notes);
+  if (notes) {
+    sections.push(notes);
   }
 
   if (input.mermaid?.trim()) {

@@ -64,7 +64,7 @@ describe("buildWalkthrough", () => {
   it("includes the marker, header, and provided summary", () => {
     const md = buildWalkthrough({ findings: [], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
-    expect(md).toContain("## 🦝 prowl-review");
+    expect(md).toContain("## prowl-review");
     expect(md).toContain("Adds caching to auth.");
   });
 
@@ -146,6 +146,19 @@ describe("buildWalkthrough", () => {
     });
     expect(md).toContain("Not reviewed");
     expect(md).toContain("huge.lock");
+  });
+
+  it("renders review notes safely", () => {
+    const md = buildWalkthrough({
+      findings: [],
+      files,
+      notes: ["Reached limit @org/team\n### injected"]
+    });
+
+    expect(md).toContain("Review notes");
+    expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
+    expect(md).not.toContain("@org/team");
+    expect(md).not.toContain("\n### injected");
   });
 
   it("renders a mermaid block only when provided", () => {

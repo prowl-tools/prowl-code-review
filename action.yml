@@ -1,0 +1,78 @@
+name: "prowl-review"
+description: "BYOK AI code review for pull requests — multi-pass review, cross-file context, inline suggestions."
+author: "Genkei Labs"
+branding:
+  icon: "eye"
+  color: "purple"
+
+inputs:
+  ai-key:
+    description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret."
+    required: true
+  ai-provider:
+    description: "LLM provider: anthropic (default) | openai | gemini."
+    required: false
+    default: "anthropic"
+  ai-model:
+    description: "Optional model override (per-provider default otherwise)."
+    required: false
+    default: ""
+  min-severity:
+    description: "Drop findings below this severity (critical|major|minor|trivial|info)."
+    required: false
+    default: ""
+  dry-run:
+    description: "Build the review but do not publish it."
+    required: false
+    default: "false"
+  workspace-path:
+    description: "Repository checkout used for context lookup (defaults to GITHUB_WORKSPACE)."
+    required: false
+    default: ""
+  guidelines-path:
+    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md; omitted disables guidelines."
+    required: false
+    default: ""
+  github-token:
+    description: "Token used to post the review (needs pull-requests: write)."
+    required: false
+    default: ${{ github.token }}
+
+outputs:
+  findings:
+    description: "Number of findings produced by the review."
+    value: ${{ steps.review.outputs.findings }}
+  posted:
+    description: "Whether the review was posted to GitHub."
+    value: ${{ steps.review.outputs.posted }}
+
+runs:
+  using: "composite"
+  steps:
+    - name: Set up Node.js
+      uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+      with:
+        node-version: 20
+
+    - name: Install & build prowl-review
+      shell: bash
+      working-directory: ${{ github.action_path }}
+      run: npm ci && npm run build
+
+    - name: Run prowl-review
+      id: review
+      shell: bash
+      env:
+        GITHUB_TOKEN: ${{ inputs.github-token }}
+        PROWL_AI_KEY: ${{ inputs.ai-key }}
+        PROWL_AI_PROVIDER: ${{ inputs.ai-provider }}
+        PROWL_AI_MODEL: ${{ inputs.ai-model }}
+        PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
+        PROWL_DRY_RUN: ${{ inputs.dry-run }}
+        PROWL_WORKSPACE: ${{ inputs.workspace-path }}
+        PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
+      run: |
+        ARGS=()
+        [ -n "$PROWL_MIN_SEVERITY" ] && ARGS+=(--min-severity "$PROWL_MIN_SEVERITY")
+        [ "$PROWL_DRY_RUN" = "true" ] && ARGS+=(--dry-run)
+        node "$GITHUB_ACTION_PATH/dist/cli.js" review "${ARGS[@]}"

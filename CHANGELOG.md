@@ -5,6 +5,13 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- End-to-end review pipeline + GitHub Action (`src/pipeline.ts`, `action.yml`): `reviewPullRequest`
+  composes every stage — fetch → parse → size-guard → agentic context → multi-pass review +
+  judge → walkthrough → publish — with heavy stages injectable for testing. A size-guarded diff
+  renderer annotates changed lines with new-side numbers for clean inline mapping. The `review`
+  CLI command is the Action entry point (token/PR/repo from flags or the GitHub event; `--dry-run`,
+  `--min-severity`, `--no-context`). Ships a composite `action.yml` + a sample `prowl-review.yml`
+  workflow (skips drafts, cancels superseded runs). (backlog #11)
 - Inline comments + committable suggestions (`src/review/inline.ts`, `src/github/review.ts`):
   map ranked findings to GitHub review comments anchored on exact new-side diff lines
   (multi-line ranges supported), each with a severity badge and a committable `suggestion`

@@ -12,7 +12,7 @@ function mockOctokit() {
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
 
 const payload: ReviewPayload = {
-  body: "## 🦝 prowl-review",
+  body: "## prowl-review",
   event: "COMMENT",
   comments: [{ path: "src/a.ts", line: 6, side: "RIGHT", body: "issue" }]
 };
@@ -27,7 +27,7 @@ describe("submitReview", () => {
       owner: "prowl-tools",
       repo: "prowl-code-review",
       pull_number: 12,
-      body: "## 🦝 prowl-review",
+      body: "## prowl-review",
       event: "COMMENT",
       commit_id: "head-sha",
       comments: payload.comments
