@@ -81,6 +81,11 @@ export function parseMinSeverity(value: string | undefined): Severity | undefine
   return value as Severity;
 }
 
+/** Resolve the repository checkout used by context retrieval and guideline loading. */
+export function resolveWorkspace(): string {
+  return process.env.PROWL_WORKSPACE || process.env.GITHUB_WORKSPACE || process.cwd();
+}
+
 interface ReviewCommandOptions {
   pr?: string;
   repo?: string;
@@ -108,7 +113,7 @@ export function buildReviewCommand(): Command {
 
       const { owner, repo } = resolveRepo(options.repo);
       const pullNumber = resolvePullNumber(options.pr);
-      const root = process.env.GITHUB_WORKSPACE ?? process.cwd();
+      const root = resolveWorkspace();
 
       const octokit = createOctokit(token);
       const result = await reviewPullRequest(

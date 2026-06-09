@@ -25,6 +25,10 @@ inputs:
     description: "Build the review but do not publish it."
     required: false
     default: "false"
+  workspace-path:
+    description: "Repository checkout used for context lookup (defaults to GITHUB_WORKSPACE)."
+    required: false
+    default: ""
   github-token:
     description: "Token used to post the review (needs pull-requests: write)."
     required: false
@@ -61,6 +65,7 @@ runs:
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
+        PROWL_WORKSPACE: ${{ inputs.workspace-path }}
       run: |
         ARGS=()
         [ -n "$PROWL_MIN_SEVERITY" ] && ARGS+=(--min-severity "$PROWL_MIN_SEVERITY")
