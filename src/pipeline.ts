@@ -56,6 +56,10 @@ export interface ReviewPullRequestOptions {
   minConfidence?: number;
   /** Cap the number of findings surfaced (default 25, #55). */
   maxFindings?: number;
+  /** Run the skeptical false-positive verification pass (default true, #8). */
+  verify?: boolean;
+  /** Findings at/above this confidence skip verification (default 0.8, #8). */
+  verifyConfidence?: number;
   guidelines?: string;
   event?: ReviewEvent;
   /** Skip agentic cross-file context retrieval (e.g. fork PRs / cost control). */
@@ -101,6 +105,30 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
       truncateNote(`Review pass "${pass.specialist}" failed: ${pass.error ?? "unknown error"}`)
     )
   ];
+}
+
+/** Surface what the skeptical verification pass changed, so it isn't silent (#8). */
+function verificationNotes(reviewResult: ReviewResult): string[] {
+  const notes: string[] = [];
+  const { droppedFalsePositive, demoted, unverified, ok, error } = reviewResult.verification;
+  if (!ok) {
+    notes.push(
+      truncateNote(
+        `False-positive verification failed; low-confidence findings kept unverified: ${error ?? "unknown error"}`
+      )
+    );
+    return notes;
+  }
+  if (droppedFalsePositive > 0) {
+    notes.push(`Dropped ${droppedFalsePositive} finding(s) as likely false positive(s) on verification.`);
+  }
+  if (demoted > 0) {
+    notes.push(`Lowered confidence on ${demoted} finding(s) after skeptical verification.`);
+  }
+  if (unverified > 0) {
+    notes.push(`${unverified} low-confidence finding(s) could not be verified and were kept as-is.`);
+  }
+  return notes;
 }
 
 /** Surface what the high-signal defaults hid, so suppression isn't silent (#55). */
@@ -192,7 +220,9 @@ export async function reviewPullRequest(
       config,
       minSeverity: options.minSeverity,
       minConfidence: options.minConfidence,
-      maxFindings: options.maxFindings
+      maxFindings: options.maxFindings,
+      verify: options.verify,
+      verifyConfidence: options.verifyConfidence
     }
   );
 
@@ -203,6 +233,7 @@ export async function reviewPullRequest(
     notes: [
       ...redactionNotes,
       ...contextNotes,
+      ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
       ...reviewPassNotes(reviewResult)
     ]

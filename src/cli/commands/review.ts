@@ -96,6 +96,7 @@ interface ReviewCommandOptions {
   repo?: string;
   minSeverity?: string;
   context?: boolean;
+  verify?: boolean;
   dryRun?: boolean;
 }
 
@@ -109,6 +110,7 @@ export function buildReviewCommand(): Command {
     .option("--repo <owner/repo>", "repository (defaults to GITHUB_REPOSITORY)")
     .option("--min-severity <severity>", `drop findings below this severity (${SEVERITIES.join("|")})`)
     .option("--no-context", "skip agentic cross-file context retrieval")
+    .option("--no-verify", "skip the skeptical false-positive verification pass")
     .option("--dry-run", "build the review but do not publish it")
     .action(async (options: ReviewCommandOptions) => {
       const token = process.env.GITHUB_TOKEN;
@@ -129,6 +131,7 @@ export function buildReviewCommand(): Command {
         {
           toolkitRoot: root,
           skipContext: options.context === false,
+          verify: options.verify !== false,
           minSeverity: parseMinSeverity(options.minSeverity),
           guidelines,
           dryRun: Boolean(options.dryRun)

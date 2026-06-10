@@ -5,6 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- False-positive verification pass (`src/review/verify.ts`, backlog #8): before the judge, every
+  *low-confidence* finding (below `0.8`, configurable) is re-checked by a single skeptical
+  "is this ACTUALLY a bug?" call that can drop outright false positives or move confidence up/down;
+  confirmed bugs survive, demoted ones fall to the judge's confidence floor. The pass is
+  risk-tiered — high-confidence findings are trusted and skip the call, so zero uncertain findings
+  means zero extra cost. Wired through `runReview`/`reviewPullRequest` (default on; `--no-verify`
+  to skip) with the drop/demote/unverified counts — and any verifier failure — surfaced in the
+  review notes (no silent drops; a failed call keeps candidates unchanged). (backlog #8)
 - High-signal review defaults (`src/review/judge.ts`, backlog #55): the judge now defaults to a
   `minor` severity floor (hides `trivial`/`info`), a `0.5` confidence floor (drops low-confidence
   non-critical findings; criticals always kept), and a 25-finding cap — all overridable. A global
