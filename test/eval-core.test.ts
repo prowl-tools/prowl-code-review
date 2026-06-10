@@ -1,8 +1,12 @@
 import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
 import { matchesBug, scoreCase, erroredCase } from "../src/eval/match.js";
 import { aggregate, precision, recall, f1Score } from "../src/eval/metrics.js";
+import { promptFingerprint } from "../src/eval/version.js";
 import { BenchmarkCaseSchema, type ExpectedBug } from "../src/eval/types.js";
 import type { Finding } from "../src/review/findings.js";
+import { buildSharedSystem, buildSpecialistDirective, DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
+import { buildVerifySystem } from "../src/review/verify.js";
 
 function finding(over: Partial<Finding> = {}): Finding {
   return {
@@ -130,6 +134,21 @@ describe("aggregate", () => {
     expect(metrics.recall).toBe(1);
     expect(metrics.f1).toBe(1);
     expect(metrics.cleanFalseAlarmRate).toBe(0);
+  });
+});
+
+describe("promptFingerprint", () => {
+  it("hashes the rendered specialist directives", () => {
+    const material = JSON.stringify({
+      shared: buildSharedSystem({}),
+      specialists: DEFAULT_SPECIALISTS.map((specialist) => ({
+        key: specialist.key,
+        model: specialist.model ?? null,
+        directive: buildSpecialistDirective(specialist)
+      })),
+      verify: buildVerifySystem()
+    });
+    expect(promptFingerprint()).toBe(createHash("sha256").update(material).digest("hex").slice(0, 12));
   });
 });
 

@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { buildSharedSystem, DEFAULT_SPECIALISTS } from "../review/specialists.js";
+import { buildSharedSystem, buildSpecialistDirective, DEFAULT_SPECIALISTS } from "../review/specialists.js";
 import { buildVerifySystem } from "../review/verify.js";
 
 /**
@@ -19,8 +19,8 @@ export function promptFingerprint(): string {
     shared: buildSharedSystem({}),
     specialists: DEFAULT_SPECIALISTS.map((specialist) => ({
       key: specialist.key,
-      focus: specialist.focus,
-      avoid: specialist.avoid
+      model: specialist.model ?? null,
+      directive: buildSpecialistDirective(specialist)
     })),
     verify: buildVerifySystem()
   });
