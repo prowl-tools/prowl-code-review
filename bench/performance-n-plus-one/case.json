@@ -1,0 +1,14 @@
+{
+  "description": "Order totals fetched with one query per id inside a loop (N+1).",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "src/api/orders.ts",
+      "line": 8,
+      "endLine": 10,
+      "category": "performance",
+      "severity": "major",
+      "note": "A per-iteration query replaces the single batched fetch — classic N+1."
+    }
+  ]
+}
