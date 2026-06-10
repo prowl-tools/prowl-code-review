@@ -1,0 +1,14 @@
+{
+  "description": "New test exercises a function but makes no assertion.",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "test/parse.test.ts",
+      "line": 13,
+      "endLine": 16,
+      "category": "tests",
+      "severity": "minor",
+      "note": "The 'handles negative amounts' test calls parseAmount but asserts nothing, so it can never fail."
+    }
+  ]
+}

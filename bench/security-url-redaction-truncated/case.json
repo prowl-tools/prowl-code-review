@@ -1,0 +1,13 @@
+{
+  "description": "Secret-redaction regex value class stops at ':' so URL/connection-string values leak.",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "src/redact.ts",
+      "line": 3,
+      "category": "security",
+      "severity": "major",
+      "note": "The value class [^\\s:]+ stops at the first ':', so values like postgres://user:pass@host are only partially redacted (real bug from PR #15, fixed in 3d27e13)."
+    }
+  ]
+}

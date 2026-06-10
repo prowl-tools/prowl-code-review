@@ -11,6 +11,11 @@ All notable changes to Prowl Review will be documented in this file.
   review. (backlog #54)
 
 ### Added
+- Expanded the quality benchmark (`bench/`, backlog #13): added a real confirmed bug from a prior
+  PR (secret-redaction regex truncating URL/connection-string values, #15) plus coverage the seed
+  set lacked — a `tests` case (a test that asserts nothing), a second `correctness` case (a dropped
+  `await`), and a second `clean` case (extract-constant refactor). All use neutral comments (no
+  answer leakage, per the methodology fix Codex flagged on the harness PR).
 - Quality eval harness (`src/eval/`, `bench/`, backlog #13): scores the reviewer against an
   in-repo benchmark of PRs-with-known-bugs + clean PRs so quality is measured, not guessed.
   Each case (a stored unified diff labelled `bug`/`clean`) runs through the real pipeline
