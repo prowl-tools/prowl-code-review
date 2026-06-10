@@ -6,7 +6,7 @@ diff --git a/src/api/orders.ts b/src/api/orders.ts
    const totals: number[] = [];
 -  const rows = await db.query("SELECT id, total FROM orders WHERE id = ANY($1)", [orderIds]);
 -  return rows.map((r) => r.total);
-+  // N+1: a separate query per order id inside the loop.
++  // Load totals for each requested order.
 +  for (const id of orderIds) {
 +    const row = await db.queryOne("SELECT total FROM orders WHERE id = $1", [id]);
 +    totals.push(row.total);

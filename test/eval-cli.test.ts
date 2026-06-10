@@ -3,7 +3,8 @@ import {
   resolveBenchDir,
   parseLineWindow,
   parseThreshold,
-  evaluateThresholds
+  evaluateThresholds,
+  evaluateGate
 } from "../src/cli/commands/eval.js";
 import { renderReportMarkdown, renderReportJson } from "../src/eval/report.js";
 import type { EvalMetrics, EvalReport } from "../src/eval/types.js";
@@ -67,6 +68,13 @@ describe("eval command helpers", () => {
     expect(failures[0]).toMatch(/precision/);
     expect(failures[1]).toMatch(/recall/);
     expect(failures[2]).toMatch(/F1/);
+  });
+
+  it("fails the gate when benchmark cases errored", () => {
+    const report = { metrics: metrics({ precision: 1, recall: 1, f1: 1 }), errored: 2 };
+    expect(evaluateGate(report, { precision: 0.9, recall: 0.9, f1: 0.9 })).toEqual([
+      "2 benchmark cases errored"
+    ]);
   });
 });
 

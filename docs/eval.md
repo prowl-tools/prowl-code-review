@@ -20,7 +20,7 @@ judge → false-positive verification) and scores the findings:
 
 A finding covers a defect when it's on the same file and within ±`lineWindow`
 lines (default 3); `--require-category` additionally demands a category match.
-Recall and precision are kept as separate notions on purpose, so several
+Recall and precision are kept as separate notions deliberately, so several
 findings landing on one bug don't distort either number.
 
 Every report is stamped with the **provider/model** and a **prompt fingerprint**

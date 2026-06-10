@@ -11,7 +11,7 @@ and needs no network — only the LLM call the reviewer itself makes.
 
 One sub-directory per case:
 
-```
+```text
 bench/<case-id>/
   case.json      # metadata + expected defects (required)
   input.diff     # the unified diff under review (required)

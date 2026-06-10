@@ -20,16 +20,44 @@ import { BenchmarkCaseSchema, CASE_KINDS, ExpectedBugSchema, type BenchmarkCase 
  */
 
 /** The metadata stored in each case's `case.json` (diff/context come from files). */
-const CaseMetaSchema = z.object({
-  /** Optional explicit id; defaults to the directory name. */
-  id: z.string().min(1).optional(),
-  description: z.string().min(1),
-  kind: z.enum(CASE_KINDS),
-  expected: z.array(ExpectedBugSchema).default([])
-});
+const CaseMetaSchema = z
+  .object({
+    /** Optional explicit id; defaults to the directory name. */
+    id: z.string().min(1).optional(),
+    description: z.string().min(1),
+    kind: z.enum(CASE_KINDS),
+    expected: z.array(ExpectedBugSchema).default([])
+  })
+  .superRefine((value, ctx) => {
+    if (value.kind === "bug" && value.expected.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "bug case must list at least one expected defect",
+        path: ["expected"]
+      });
+    }
+    if (value.kind === "clean" && value.expected.length > 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "clean case must not list expected defects",
+        path: ["expected"]
+      });
+    }
+  });
 
+/** Read an optional text fixture file when the case provides it. */
 function readIfPresent(path: string): string | undefined {
   return existsSync(path) ? readFileSync(path, "utf8") : undefined;
+}
+
+/** Summarize Zod issues without dropping their field paths. */
+function summarizeZodError(error: z.ZodError): string {
+  return error.issues
+    .map((issue) => {
+      const path = issue.path.length > 0 ? `${issue.path.join(".")}: ` : "";
+      return `${path}${issue.message}`;
+    })
+    .join("; ");
 }
 
 /** Load and validate a single case directory. */
@@ -44,7 +72,15 @@ export function loadCase(caseDir: string, id: string): BenchmarkCase {
   } catch (error) {
     throw new Error(`Benchmark case "${id}" has invalid case.json: ${error instanceof Error ? error.message : error}`);
   }
-  const meta = CaseMetaSchema.parse(rawMeta);
+  let meta: z.infer<typeof CaseMetaSchema>;
+  try {
+    meta = CaseMetaSchema.parse(rawMeta);
+  } catch (error) {
+    if (error instanceof z.ZodError) {
+      throw new Error(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`);
+    }
+    throw error;
+  }
 
   const diff = readIfPresent(join(caseDir, "input.diff"));
   if (!diff) {
