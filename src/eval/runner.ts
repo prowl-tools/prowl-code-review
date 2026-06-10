@@ -20,6 +20,7 @@ import {
   type BenchmarkCase,
   type CaseResult,
   type EvalReport,
+  type EvalReviewSettings,
   type MatchOptions
 } from "./types.js";
 
@@ -68,6 +69,26 @@ function failedPassMessage(result: ReviewResult): string {
   return `All review specialist passes failed: ${failures.join("; ")}`;
 }
 
+/** Fill in review defaults so report metadata fully describes the run. */
+function normalizeReviewSettings(review?: ReviewKnobs): EvalReviewSettings {
+  const settings: EvalReviewSettings = {
+    verify: review?.verify ?? true
+  };
+  if (review?.minSeverity !== undefined) {
+    settings.minSeverity = review.minSeverity;
+  }
+  if (review?.minConfidence !== undefined) {
+    settings.minConfidence = review.minConfidence;
+  }
+  if (review?.maxFindings !== undefined) {
+    settings.maxFindings = review.maxFindings;
+  }
+  if (review?.verifyConfidence !== undefined) {
+    settings.verifyConfidence = review.verifyConfidence;
+  }
+  return settings;
+}
+
 /** Run the full benchmark and return a scored, stamped report. */
 export async function runBenchmark(
   cases: BenchmarkCase[],
@@ -79,6 +100,7 @@ export async function runBenchmark(
     lineWindow: options.match?.lineWindow ?? DEFAULT_LINE_WINDOW,
     requireCategory: options.match?.requireCategory ?? false
   };
+  const reviewSettings = normalizeReviewSettings(options.review);
 
   const results: CaseResult[] = [];
   for (const benchmarkCase of cases) {
@@ -93,7 +115,7 @@ export async function runBenchmark(
           context: benchmarkCase.context,
           guidelines: benchmarkCase.guidelines
         },
-        { config, complete: options.complete, ...options.review }
+        { config, complete: options.complete, ...reviewSettings }
       );
       if (allSpecialistPassesFailed(result)) {
         results.push(erroredCase(benchmarkCase.id, benchmarkCase.kind, failedPassMessage(result)));
@@ -114,6 +136,7 @@ export async function runBenchmark(
     model: config.model,
     promptFingerprint: promptFingerprint(),
     match,
+    review: reviewSettings,
     metrics: aggregate(results),
     cases: results,
     errored: results.filter((result) => result.errored).length

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { SEVERITIES } from "../review/findings.js";
+import { SEVERITIES, type Severity } from "../review/findings.js";
 
 /**
  * Quality eval harness types (backlog #13).
@@ -147,6 +147,20 @@ export interface EvalMetrics {
   bugCases: number;
 }
 
+/** Review-pipeline settings that affect which findings survive into scoring. */
+export interface EvalReviewSettings {
+  /** Whether the false-positive verification pass ran. */
+  verify: boolean;
+  /** Optional minimum severity floor mirrored from the review command. */
+  minSeverity?: Severity;
+  /** Optional confidence floor for non-critical findings. */
+  minConfidence?: number;
+  /** Optional cap on surfaced findings. */
+  maxFindings?: number;
+  /** Optional confidence threshold above which findings skip verification. */
+  verifyConfidence?: number;
+}
+
 /** A full benchmark run, stamped for reproducibility. */
 export interface EvalReport {
   /** Provider that produced the reviews. */
@@ -157,6 +171,8 @@ export interface EvalReport {
   promptFingerprint: string;
   /** Matching configuration used. */
   match: Required<MatchOptions>;
+  /** Review settings that affect finding filtering and verification. */
+  review: EvalReviewSettings;
   metrics: EvalMetrics;
   cases: CaseResult[];
   /** Cases excluded from metrics because their review pass errored. */

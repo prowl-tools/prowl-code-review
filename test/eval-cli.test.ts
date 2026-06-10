@@ -1,13 +1,14 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   resolveBenchDir,
   parseLineWindow,
   parseThreshold,
   evaluateThresholds,
-  evaluateGate
+  evaluateGate,
+  runEvalCommand
 } from "../src/cli/commands/eval.js";
 import { renderReportMarkdown, renderReportJson } from "../src/eval/report.js";
-import type { EvalMetrics, EvalReport } from "../src/eval/types.js";
+import type { BenchmarkCase, EvalMetrics, EvalReport } from "../src/eval/types.js";
 
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
@@ -29,6 +30,28 @@ function metrics(over: Partial<EvalMetrics> = {}): EvalMetrics {
     cleanFalseAlarmRate: 0.5,
     cleanCases: 2,
     bugCases: 4,
+    ...over
+  };
+}
+
+const benchmarkCase: BenchmarkCase = {
+  id: "clean",
+  description: "d",
+  kind: "clean",
+  diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n x\n+y",
+  expected: []
+};
+
+function report(over: Partial<EvalReport> = {}): EvalReport {
+  return {
+    provider: "anthropic",
+    model: "claude-x",
+    promptFingerprint: "abc123def456",
+    match: { lineWindow: 3, requireCategory: false },
+    review: { verify: true },
+    metrics: metrics({ precision: 0.75, recall: 0.6, f1: 0.667 }),
+    cases: [],
+    errored: 0,
     ...over
   };
 }
@@ -101,13 +124,72 @@ describe("eval command helpers", () => {
   });
 });
 
+describe("eval command action", () => {
+  it("loads cases, runs the benchmark with parsed options, writes JSON, and fails the gate", async () => {
+    const benchmarkReport = report();
+    const load = vi.fn(() => [benchmarkCase]);
+    const run = vi.fn(async () => benchmarkReport);
+    const write = vi.fn();
+    const logs: string[] = [];
+    const errors: string[] = [];
+    const exitCodes: number[] = [];
+
+    await runEvalCommand(
+      {
+        bench: "/tmp/bench",
+        json: "/tmp/report.json",
+        lineWindow: "5",
+        requireCategory: true,
+        verify: false,
+        minSeverity: "major",
+        minPrecision: "0.9"
+      },
+      {
+        loadBenchmark: load,
+        runBenchmark: run,
+        writeFileSync: write,
+        log: (message) => logs.push(message),
+        error: (message) => errors.push(message),
+        setExitCode: (code) => exitCodes.push(code)
+      }
+    );
+
+    expect(load).toHaveBeenCalledWith("/tmp/bench");
+    expect(run).toHaveBeenCalledWith([benchmarkCase], {
+      match: { lineWindow: 5, requireCategory: true },
+      review: { verify: false, minSeverity: "major" }
+    });
+    expect(write).toHaveBeenCalledWith("/tmp/report.json", renderReportJson(benchmarkReport));
+    expect(logs[0]).toContain("# prowl-review quality eval");
+    expect(errors).toEqual(["\nEval gate failed: precision 75.0% < min 90.0%"]);
+    expect(exitCodes).toEqual([1]);
+  });
+
+  it("validates thresholds before loading benchmark cases", async () => {
+    const load = vi.fn(() => [benchmarkCase]);
+    const run = vi.fn(async () => report());
+
+    await expect(
+      runEvalCommand(
+        { bench: "/tmp/bench", minRecall: "80" },
+        { loadBenchmark: load, runBenchmark: run }
+      )
+    ).rejects.toThrow(/Invalid --min-recall/);
+
+    expect(load).not.toHaveBeenCalled();
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it("throws when the benchmark directory contains no cases", async () => {
+    await expect(
+      runEvalCommand({ bench: "/tmp/empty" }, { loadBenchmark: vi.fn(() => []) })
+    ).rejects.toThrow(/No benchmark cases found in \/tmp\/empty/);
+  });
+});
+
 describe("report rendering", () => {
-  const report: EvalReport = {
-    provider: "anthropic",
-    model: "claude-x",
-    promptFingerprint: "abc123def456",
-    match: { lineWindow: 3, requireCategory: false },
-    metrics: metrics({ precision: 0.75, recall: 0.6, f1: 0.667 }),
+  const renderedReport = report({
+    review: { verify: false, minSeverity: "major" },
     cases: [
       {
         id: "bug-hit",
@@ -145,12 +227,13 @@ describe("report rendering", () => {
       }
     ],
     errored: 1
-  };
+  });
 
   it("renders a markdown summary with metrics, fingerprint, and per-case rows", () => {
-    const md = renderReportMarkdown(report);
+    const md = renderReportMarkdown(renderedReport);
     expect(md).toContain("anthropic / claude-x");
     expect(md).toContain("`abc123def456`");
+    expect(md).toContain("verification off, min severity major");
     expect(md).toContain("Precision | 75.0%");
     expect(md).toContain("Recall | 60.0%");
     expect(md).toContain("| bug-hit | bug |");
@@ -160,8 +243,9 @@ describe("report rendering", () => {
   });
 
   it("round-trips JSON", () => {
-    const parsed = JSON.parse(renderReportJson(report));
+    const parsed = JSON.parse(renderReportJson(renderedReport));
     expect(parsed.promptFingerprint).toBe("abc123def456");
+    expect(parsed.review).toEqual({ verify: false, minSeverity: "major" });
     expect(parsed.cases).toHaveLength(3);
   });
 });

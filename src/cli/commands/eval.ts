@@ -76,7 +76,7 @@ export function evaluateGate(report: Pick<EvalReport, "metrics" | "errored">, th
   return failures;
 }
 
-interface EvalCommandOptions {
+export interface EvalCommandOptions {
   bench?: string;
   json?: string;
   lineWindow?: string;
@@ -86,6 +86,61 @@ interface EvalCommandOptions {
   minPrecision?: string;
   minRecall?: string;
   minF1?: string;
+}
+
+export interface EvalCommandDeps {
+  loadBenchmark?: typeof loadBenchmark;
+  runBenchmark?: typeof runBenchmark;
+  writeFileSync?: (path: string, data: string) => void;
+  log?: (message: string) => void;
+  error?: (message: string) => void;
+  setExitCode?: (code: number) => void;
+}
+
+/** Execute the eval command action with injectable edges for focused tests. */
+export async function runEvalCommand(options: EvalCommandOptions, deps: EvalCommandDeps = {}): Promise<void> {
+  const thresholds = {
+    precision: parseThreshold(options.minPrecision, "--min-precision"),
+    recall: parseThreshold(options.minRecall, "--min-recall"),
+    f1: parseThreshold(options.minF1, "--min-f1")
+  };
+  const match = {
+    lineWindow: parseLineWindow(options.lineWindow),
+    requireCategory: Boolean(options.requireCategory)
+  };
+  const review: ReviewKnobs = {
+    verify: options.verify !== false,
+    minSeverity: parseMinSeverity(options.minSeverity)
+  };
+  const load = deps.loadBenchmark ?? loadBenchmark;
+  const run = deps.runBenchmark ?? runBenchmark;
+  const write = deps.writeFileSync ?? writeFileSync;
+  const log = deps.log ?? console.log;
+  const error = deps.error ?? console.error;
+  const setExitCode = deps.setExitCode ?? ((code: number) => {
+    process.exitCode = code;
+  });
+
+  const benchDir = resolveBenchDir(options.bench);
+  const cases = load(benchDir);
+  if (cases.length === 0) {
+    throw new Error(`No benchmark cases found in ${benchDir}.`);
+  }
+
+  const report = await run(cases, { match, review });
+  log(renderReportMarkdown(report));
+
+  if (options.json) {
+    const jsonPath = isAbsolute(options.json) ? options.json : resolve(process.cwd(), options.json);
+    write(jsonPath, renderReportJson(report));
+    log(`\nWrote JSON report to ${jsonPath}`);
+  }
+
+  const failures = evaluateGate(report, thresholds);
+  if (failures.length > 0) {
+    error(`\nEval gate failed: ${failures.join("; ")}`);
+    setExitCode(1);
+  }
 }
 
 /** Build the `eval` CLI command wired to the quality benchmark harness. */
@@ -103,44 +158,7 @@ export function buildEvalCommand(): Command {
     .option("--min-precision <n>", "fail if precision is below this 0–1 threshold")
     .option("--min-recall <n>", "fail if recall is below this 0–1 threshold")
     .option("--min-f1 <n>", "fail if F1 is below this 0–1 threshold")
-    .action(async (options: EvalCommandOptions) => {
-      const benchDir = resolveBenchDir(options.bench);
-      const cases = loadBenchmark(benchDir);
-      if (cases.length === 0) {
-        throw new Error(`No benchmark cases found in ${benchDir}.`);
-      }
-
-      const review: ReviewKnobs = {
-        verify: options.verify !== false,
-        minSeverity: parseMinSeverity(options.minSeverity)
-      };
-
-      const report = await runBenchmark(cases, {
-        match: {
-          lineWindow: parseLineWindow(options.lineWindow),
-          requireCategory: Boolean(options.requireCategory)
-        },
-        review
-      });
-
-      console.log(renderReportMarkdown(report));
-
-      if (options.json) {
-        const jsonPath = isAbsolute(options.json) ? options.json : resolve(process.cwd(), options.json);
-        writeFileSync(jsonPath, renderReportJson(report));
-        console.log(`\nWrote JSON report to ${jsonPath}`);
-      }
-
-      const failures = evaluateGate(report, {
-        precision: parseThreshold(options.minPrecision, "--min-precision"),
-        recall: parseThreshold(options.minRecall, "--min-recall"),
-        f1: parseThreshold(options.minF1, "--min-f1")
-      });
-      if (failures.length > 0) {
-        console.error(`\nEval gate failed: ${failures.join("; ")}`);
-        process.exitCode = 1;
-      }
-    });
+    .action((options: EvalCommandOptions) => runEvalCommand(options));
 
   return command;
 }

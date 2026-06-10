@@ -81,6 +81,54 @@ describe("loadBenchmark", () => {
     }
   });
 
+  it("throws when the benchmark path is missing or not a directory", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      expect(() => loadBenchmark(join(root, "missing"))).toThrow(/Benchmark directory not found/);
+
+      const filePath = join(root, "file");
+      writeFileSync(filePath, "not a directory");
+      expect(() => loadBenchmark(filePath)).toThrow(/Benchmark directory not found/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when case.json is missing", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      const dir = join(root, "nometa");
+      mkdirSync(dir);
+      expect(() => loadCase(dir, "nometa")).toThrow(/missing case\.json/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when case.json contains malformed JSON", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      const dir = join(root, "badjson");
+      mkdirSync(dir);
+      writeFileSync(join(dir, "case.json"), "{not json");
+      writeFileSync(join(dir, "input.diff"), "diff --git a/x b/x\n+y");
+      expect(() => loadCase(dir, "badjson")).toThrow(/badjson.*invalid case\.json/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("throws when two case directories declare the same id", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      writeCase(root, "a", { id: "same", description: "d", kind: "clean" }, "diff --git a/a b/a\n+y");
+      writeCase(root, "b", { id: "same", description: "d", kind: "clean" }, "diff --git a/b b/b\n+y");
+      expect(() => loadBenchmark(root)).toThrow(/Duplicate benchmark case id: same/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("rejects a clean case that lists expected defects", () => {
     const root = mkdtempSync(join(tmpdir(), "bench-"));
     try {
@@ -168,6 +216,7 @@ describe("runBenchmark", () => {
     expect(report.model).toBe("test-model");
     expect(report.promptFingerprint).toMatch(/^[0-9a-f]{12}$/);
     expect(report.match.lineWindow).toBe(3);
+    expect(report.review).toEqual({ verify: true });
 
     expect(report.metrics.recall).toBe(1); // bug covered
     expect(report.metrics.coveredBugs).toBe(1);
@@ -272,12 +321,13 @@ describe("runBenchmark", () => {
       };
     });
 
-    await runBenchmark(cases, {
+    const report = await runBenchmark(cases, {
       config,
       complete,
       runReview: review,
       review: { verify: false, minSeverity: "major" }
     });
     expect(review).toHaveBeenCalledTimes(1);
+    expect(report.review).toEqual({ verify: false, minSeverity: "major" });
   });
 });
