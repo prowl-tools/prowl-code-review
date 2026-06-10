@@ -32,6 +32,7 @@ function reviewResult(findings: Finding[], over: Partial<ReviewResult> = {}): Re
     findings,
     raw: findings,
     passes: [],
+    verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
     judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
     usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
     ...over
@@ -225,5 +226,42 @@ new file mode 100644
     expect(result.payload.body).toContain("severity floor");
     expect(result.payload.body).toContain("Hid 2 low");
     expect(result.payload.body).toContain("3 additional lower");
+  });
+
+  it("surfaces verification outcomes in the review notes", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        verification: { verified: 4, droppedFalsePositive: 2, demoted: 1, unverified: 1, ok: true }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("Dropped 2 finding");
+    expect(result.payload.body).toContain("false positive");
+    expect(result.payload.body).toContain("Lowered confidence on 1 finding");
+    expect(result.payload.body).toContain("could not be verified");
+  });
+
+  it("reports a verification failure in the review notes", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        verification: {
+          verified: 0,
+          droppedFalsePositive: 0,
+          demoted: 0,
+          unverified: 2,
+          ok: false,
+          error: "verifier down"
+        }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("verification failed");
+    expect(result.payload.body).toContain("verifier down");
   });
 });

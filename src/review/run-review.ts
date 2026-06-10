@@ -9,6 +9,7 @@ import {
 } from "../providers/index.js";
 import { type Finding, type Severity, parseFindings } from "./findings.js";
 import { judgeFindings, type JudgeResult } from "./judge.js";
+import { verifyFindings, type VerifyResult } from "./verify.js";
 import {
   DEFAULT_SPECIALISTS,
   buildSpecialistPrompt,
@@ -17,11 +18,14 @@ import {
 } from "./specialists.js";
 
 /**
- * Multi-pass specialized review + judge/dedup (backlog #6).
+ * Multi-pass specialized review + judge/dedup (backlog #6) + false-positive
+ * verification (backlog #8).
  *
  * Runs each specialist as its own pass with stable instructions in `system`
- * and untrusted PR content in `prompt`, collects structured findings, then consolidates them with the
- * deterministic judge. Specialist failures degrade gracefully and are reported.
+ * and untrusted PR content in `prompt`, collects structured findings, re-checks
+ * the low-confidence ones with a skeptical verification pass, then consolidates
+ * what survives with the deterministic judge. Specialist failures degrade
+ * gracefully and are reported.
  */
 
 export interface ReviewInput {
@@ -44,6 +48,10 @@ export interface RunReviewOptions {
   minConfidence?: number;
   /** Cap the number of findings surfaced. Default 25 (#55). */
   maxFindings?: number;
+  /** Run the skeptical false-positive verification pass. Default `true` (#8). */
+  verify?: boolean;
+  /** Findings at/above this confidence skip verification. Default 0.8 (#8). */
+  verifyConfidence?: number;
   /** Injectable completion (defaults to the provider dispatcher). */
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
 }
@@ -63,9 +71,11 @@ export interface ReviewResult {
   raw: Finding[];
   /** Per-specialist outcome (count, ok/failed). */
   passes: SpecialistPassReport[];
+  /** False-positive verification bookkeeping (#8). */
+  verification: Omit<VerifyResult, "findings" | "usage">;
   /** Judge bookkeeping (dedup/threshold counts). */
   judge: Omit<JudgeResult, "findings">;
-  /** Summed token usage across passes. */
+  /** Summed token usage across passes (specialists + verification). */
   usage: TokenUsage;
 }
 
@@ -128,8 +138,37 @@ export async function runReview(
   );
 
   const raw = outcomes.flatMap((outcome) => outcome.findings);
-  const usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
-  const { findings, ...judge } = judgeFindings(raw, {
+  let usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
+
+  // Skeptical false-positive pass (#8): re-check low-confidence findings before
+  // the judge so confirmed bugs survive and false positives are dropped.
+  const verification =
+    options.verify === false
+      ? {
+          findings: raw,
+          verified: 0,
+          droppedFalsePositive: 0,
+          demoted: 0,
+          unverified: 0,
+          ok: true,
+          usage: emptyUsage()
+        }
+      : await verifyFindings(
+          raw,
+          { diff: input.diff, context: input.context },
+          { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
+        );
+  usage = addUsage(usage, verification.usage);
+  const verificationReport = {
+    verified: verification.verified,
+    droppedFalsePositive: verification.droppedFalsePositive,
+    demoted: verification.demoted,
+    unverified: verification.unverified,
+    ok: verification.ok,
+    error: verification.error
+  };
+
+  const { findings, ...judge } = judgeFindings(verification.findings, {
     minSeverity: options.minSeverity,
     minConfidence: options.minConfidence,
     maxFindings: options.maxFindings
@@ -139,6 +178,7 @@ export async function runReview(
     findings,
     raw,
     passes: outcomes.map((outcome) => outcome.report),
+    verification: verificationReport,
     judge,
     usage
   };
