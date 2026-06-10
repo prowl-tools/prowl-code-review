@@ -41,6 +41,8 @@ const GEMINI_MAX_OUTPUT_TOKENS = 8192;
 
 /** Cap thinking so the remainder of the budget is guaranteed for the answer. */
 const GEMINI_THINKING_BUDGET = 2048;
+const GEMINI_PRO_MIN_THINKING_BUDGET = 128;
+const GEMINI_FLASH_LITE_MIN_THINKING_BUDGET = 512;
 
 /**
  * Reviewing vulnerability/secret code (SQL injection, leaked keys, …) is the job;
@@ -64,6 +66,17 @@ function supportsThinkingLevel(model: string): boolean {
   return /gemini-[3-9]/i.test(model);
 }
 
+function validThinkingBudget(model: string, maxOutputTokens: number): number | undefined {
+  const budget = Math.min(GEMINI_THINKING_BUDGET, Math.max(maxOutputTokens - 1, 0));
+  if (/gemini-2\.5-pro/i.test(model)) {
+    return budget >= GEMINI_PRO_MIN_THINKING_BUDGET ? budget : undefined;
+  }
+  if (/gemini-2\.5-flash-lite/i.test(model)) {
+    return budget >= GEMINI_FLASH_LITE_MIN_THINKING_BUDGET ? budget : 0;
+  }
+  return budget;
+}
+
 /**
  * Build `generationConfig` shared by the text and tool paths: a larger output
  * budget plus a bounded thinking budget on models that support it.
@@ -79,9 +92,10 @@ function buildGenerationConfig(
     ...(temperature !== undefined ? { temperature } : {})
   };
   if (supportsThinkingBudget(model)) {
-    generationConfig.thinkingConfig = {
-      thinkingBudget: Math.min(GEMINI_THINKING_BUDGET, Math.max(maxOutputTokens - 1, 0))
-    };
+    const thinkingBudget = validThinkingBudget(model, maxOutputTokens);
+    if (thinkingBudget !== undefined) {
+      generationConfig.thinkingConfig = { thinkingBudget };
+    }
   } else if (supportsThinkingLevel(model)) {
     generationConfig.thinkingConfig = { thinkingLevel: "high" };
   }
