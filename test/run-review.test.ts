@@ -43,7 +43,7 @@ describe("runReview", () => {
     const complete = fakeComplete();
     const result = await runReview(
       { diff: "diff --git a/a.ts b/a.ts\n+bad();", context: "ctx", guidelines: "be strict" },
-      { config, complete }
+      { config, complete, verify: false }
     );
 
     // One pass per default specialist.
@@ -71,7 +71,10 @@ describe("runReview", () => {
 
   it("keeps untrusted diff and context out of the shared system block", async () => {
     const complete = fakeComplete();
-    await runReview({ diff: "the diff", context: "the context", guidelines: "be strict" }, { config, complete });
+    await runReview(
+      { diff: "the diff", context: "the context", guidelines: "be strict" },
+      { config, complete, verify: false }
+    );
 
     const systems = complete.mock.calls.map((call) => (call[0] as CompletionRequest).system);
     expect(new Set(systems).size).toBe(1);
@@ -96,9 +99,61 @@ describe("runReview", () => {
         ])
       )
     );
-    const result = await runReview({ diff: "d" }, { config, complete, minSeverity: "major" });
+    const result = await runReview({ diff: "d" }, { config, complete, minSeverity: "major", verify: false });
     expect(result.raw.length).toBeGreaterThan(0);
     expect(result.findings).toHaveLength(0); // all below threshold
     expect(result.judge.belowThreshold).toBeGreaterThan(0);
+  });
+
+  it("runs the verification pass on low-confidence findings and drops false positives", async () => {
+    // One specialist emits a high-confidence keeper and a low-confidence suspect.
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      const prompt = request.prompt;
+      if (request.system?.includes("false-positive verifier")) {
+        // Verifier sees a single candidate (the 0.4 suspect) → call it a false positive.
+        return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+      }
+      if (prompt.includes("Correctness reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "real", body: "x", confidence: 0.95 },
+            { file: "b.ts", line: 2, severity: "major", category: "correctness", title: "bogus", body: "y", confidence: 0.4 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview({ diff: "d" }, { config, complete });
+
+    // Verifier saw exactly the one sub-threshold finding and dropped it.
+    expect(result.verification.verified).toBe(1);
+    expect(result.verification.droppedFalsePositive).toBe(1);
+    expect(result.raw).toHaveLength(2); // raw is pre-verification
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe("real");
+  });
+
+  it("keeps findings when the verification call fails (no silent drop)", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.system?.includes("false-positive verifier")) {
+        throw new Error("verifier down");
+      }
+      if (request.prompt.includes("Correctness reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "suspect", body: "x", confidence: 0.6 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview({ diff: "d" }, { config, complete });
+
+    expect(result.verification.ok).toBe(false);
+    expect(result.verification.error).toMatch(/verifier down/);
+    expect(result.findings).toHaveLength(1); // kept despite the failure
+    expect(result.findings[0].title).toBe("suspect");
   });
 });
