@@ -414,6 +414,45 @@ rename to config/example.txt
     expect(report.metrics.cleanCases).toBe(0); // excluded
   });
 
+  it("marks a case errored when one specialist pass fails", async () => {
+    const cases = [
+      {
+        id: "partial-failed",
+        description: "d",
+        kind: "bug" as const,
+        diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n x\n+y",
+        expected: [{ file: "a.ts", line: 2, note: "n" }]
+      }
+    ];
+    const review = vi.fn(async (): Promise<ReviewResult> => ({
+      findings: [
+        {
+          file: "a.ts",
+          line: 2,
+          severity: "major",
+          category: "security",
+          title: "t",
+          body: "b",
+          confidence: 0.6
+        }
+      ],
+      raw: [],
+      passes: [
+        { specialist: "correctness", findings: 1, ok: true },
+        { specialist: "security", findings: 0, ok: false, error: "rate limited" }
+      ],
+      verification: { verified: 1, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+
+    const report = await runBenchmark(cases, { config, runReview: review });
+    expect(report.errored).toBe(1);
+    expect(report.cases[0].errored).toBe(true);
+    expect(report.cases[0].error).toBe("Review specialist pass failed: security: rate limited");
+    expect(report.metrics.bugCases).toBe(0); // excluded
+  });
+
   it("marks a case errored when verification fails", async () => {
     const cases = [
       {

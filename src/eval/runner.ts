@@ -68,9 +68,9 @@ export interface RunBenchmarkOptions {
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
 }
 
-/** True when the review pipeline returned normally but no specialist pass succeeded. */
-function allSpecialistPassesFailed(result: ReviewResult): boolean {
-  return result.passes.length > 0 && result.passes.every((pass) => !pass.ok);
+/** True when the review pipeline returned normally but at least one specialist failed. */
+function hasSpecialistPassFailure(result: ReviewResult): boolean {
+  return result.passes.some((pass) => !pass.ok);
 }
 
 /** Build a compact error message from failed specialist passes. */
@@ -78,7 +78,13 @@ function failedPassMessage(result: ReviewResult): string {
   const failures = result.passes
     .filter((pass) => !pass.ok)
     .map((pass) => `${pass.specialist}${pass.error ? `: ${pass.error}` : ""}`);
-  return `All review specialist passes failed: ${failures.join("; ")}`;
+  const prefix =
+    failures.length === result.passes.length
+      ? "All review specialist passes failed"
+      : failures.length === 1
+        ? "Review specialist pass failed"
+        : "Review specialist passes failed";
+  return `${prefix}: ${failures.join("; ")}`;
 }
 
 /** Build a compact error message when the verification pass did not run cleanly. */
@@ -146,7 +152,7 @@ export async function runBenchmark(
         },
         { config, complete: options.complete, ...reviewSettings }
       );
-      if (allSpecialistPassesFailed(result)) {
+      if (hasSpecialistPassFailure(result)) {
         results.push(erroredCase(benchmarkCase.id, benchmarkCase.kind, failedPassMessage(result)));
         continue;
       }
