@@ -30,6 +30,26 @@ function caseRow(result: CaseResult): string {
   return `| ${result.id} | ${result.kind} | ${recall} | ${result.findings} | ${result.falsePositives} | ${status} |`;
 }
 
+/** Render review settings that affect scoring and reproducibility. */
+function reviewSettings(report: EvalReport): string {
+  const settings = [
+    report.review.verify ? "verification on" : "verification off"
+  ];
+  if (report.review.minSeverity) {
+    settings.push(`min severity ${report.review.minSeverity}`);
+  }
+  if (report.review.minConfidence !== undefined) {
+    settings.push(`min confidence ${report.review.minConfidence}`);
+  }
+  if (report.review.maxFindings !== undefined) {
+    settings.push(`max findings ${report.review.maxFindings}`);
+  }
+  if (report.review.verifyConfidence !== undefined) {
+    settings.push(`verify confidence ${report.review.verifyConfidence}`);
+  }
+  return settings.join(", ");
+}
+
 /** Render the report as a markdown summary. */
 export function renderReportMarkdown(report: EvalReport): string {
   const m = report.metrics;
@@ -39,6 +59,7 @@ export function renderReportMarkdown(report: EvalReport): string {
     `**Provider/model:** ${report.provider} / ${report.model}`,
     `**Prompt fingerprint:** \`${report.promptFingerprint}\``,
     `**Match:** ±${report.match.lineWindow} lines${report.match.requireCategory ? ", category required" : ""}`,
+    `**Review:** ${reviewSettings(report)}`,
     "",
     "## Metrics",
     "",
