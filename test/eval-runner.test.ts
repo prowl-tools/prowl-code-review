@@ -243,6 +243,52 @@ describe("runBenchmark", () => {
     expect(seenDiff).toMatch(/2 \+added\(\);/); // new-side line number annotated
   });
 
+  it("filters sensitive files and redacts secrets before review", async () => {
+    const cases = [
+      {
+        id: "safe-input",
+        description: "d",
+        kind: "clean" as const,
+        diff: `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const t = "ghp_${"a".repeat(36)}";
+diff --git a/.env b/config/example.txt
+similarity index 72%
+rename from .env
+rename to config/example.txt
+--- a/.env
++++ b/config/example.txt
+@@ -1 +1 @@
+-DATABASE_URL=postgres://user:pass@host/db
++DATABASE_URL=postgres://user:pass@host/db
+`,
+        context: `token sk-${"A".repeat(24)}`,
+        expected: []
+      }
+    ];
+    const review = fakeReview(() => []);
+    await runBenchmark(cases, { config, runReview: review });
+
+    const input = review.mock.calls[0][0];
+    expect(input.diff).not.toContain(".env");
+    expect(input.diff).not.toContain("config/example.txt");
+    expect(input.diff).not.toContain("AKIAIOSFODNN7EXAMPLE");
+    expect(input.diff).not.toContain("postgres://user:pass@host/db");
+    expect(input.diff).not.toContain("ghp_aaaa");
+    expect(input.diff).toContain("src/a.ts");
+    expect(input.diff).toContain("[REDACTED:github-token]");
+    expect(input.context).toBe("token [REDACTED:llm-key]");
+  });
+
   it("marks a case errored when its review throws (excluded from metrics)", async () => {
     const cases = [
       {

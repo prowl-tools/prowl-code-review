@@ -12,6 +12,8 @@ import {
 } from "../review/run-review.js";
 import { parseDiff } from "../review/parse-diff.js";
 import { renderGuardedDiff } from "../review/render-diff.js";
+import { redactSecrets } from "../review/redact.js";
+import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
 import { scoreCase, erroredCase } from "./match.js";
 import { aggregate } from "./metrics.js";
 import { promptFingerprint } from "./version.js";
@@ -108,11 +110,14 @@ export async function runBenchmark(
       // Mirror the production pipeline: parse the stored diff and feed the model
       // the same new-side line-annotated rendering, so reported line numbers are
       // comparable to a real review (and to the case's expected bug lines).
-      const rendered = renderGuardedDiff(parseDiff(benchmarkCase.diff).files);
+      const safeDiff = filterSensitiveDiffFiles(parseDiff(benchmarkCase.diff).files);
+      const rendered = renderGuardedDiff(safeDiff.files);
+      const diff = redactSecrets(rendered).text;
+      const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;
       const result = await review(
         {
-          diff: rendered,
-          context: benchmarkCase.context,
+          diff,
+          context,
           guidelines: benchmarkCase.guidelines
         },
         { config, complete: options.complete, ...reviewSettings }
