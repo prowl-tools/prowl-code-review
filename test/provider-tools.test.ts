@@ -165,15 +165,15 @@ describe("gemini completeWithTools", () => {
     });
 
     await completeWithTools(
-      { messages: [{ role: "user", text: "go" }], tools: TOOLS, maxTokens: 128, temperature: 0.2 },
+      { messages: [{ role: "user", text: "go" }], tools: TOOLS, maxTokens: 129, temperature: 0.2 },
       { provider: "gemini", model: "gemini-2.5-pro", apiKey: "key" }
     );
 
     const body = bodyOf(fn) as { generationConfig: Json; safetySettings: Array<Json> };
     expect(body.generationConfig).toMatchObject({
-      maxOutputTokens: 128,
+      maxOutputTokens: 129,
       temperature: 0.2,
-      thinkingConfig: { thinkingBudget: 127 }
+      thinkingConfig: { thinkingBudget: 128 }
     });
     expect(body.safetySettings).toHaveLength(4);
     expect(body.safetySettings.every((setting) => setting.threshold === "BLOCK_NONE")).toBe(true);
