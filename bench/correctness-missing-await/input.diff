@@ -1,0 +1,12 @@
+diff --git a/src/api/account.ts b/src/api/account.ts
+--- a/src/api/account.ts
++++ b/src/api/account.ts
+@@ -5,4 +5,7 @@ import { db } from "../db/client.js";
+ export async function closeAccount(id: number): Promise<boolean> {
+-  const account = await db.findAccount(id);
+-  return account.active === false;
++  // Settle balances, then report whether the account is closed.
++  const account = db.findAccount(id);
++  await db.settleBalances(id);
++  return account.active === false;
+ }

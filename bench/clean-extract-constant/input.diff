@@ -1,0 +1,10 @@
+diff --git a/src/util/retry.ts b/src/util/retry.ts
+--- a/src/util/retry.ts
++++ b/src/util/retry.ts
+@@ -1,3 +1,5 @@
++const MAX_ATTEMPTS = 3;
++
+ export function shouldRetry(attempt: number): boolean {
+-  return attempt < 3;
++  return attempt < MAX_ATTEMPTS;
+ }

@@ -1,0 +1,13 @@
+{
+  "description": "Refactor drops an `await`, so an async result is used as a Promise.",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "src/api/account.ts",
+      "line": 7,
+      "category": "correctness",
+      "severity": "major",
+      "note": "db.findAccount is no longer awaited, so `account` is a Promise and `account.active` is always undefined."
+    }
+  ]
+}
