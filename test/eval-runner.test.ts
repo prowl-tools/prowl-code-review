@@ -398,15 +398,23 @@ rename to config/example.txt
           kind: "clean" as const,
           diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n+orphan();",
           expected: []
+        },
+        {
+          id: "empty-hunk",
+          description: "d",
+          kind: "clean" as const,
+          diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1 +1 @@",
+          expected: []
         }
       ],
       { config, runReview: review }
     );
 
     expect(review).not.toHaveBeenCalled();
-    expect(report.errored).toBe(2);
+    expect(report.errored).toBe(3);
     expect(report.cases[0].error).toMatch(/no changed files/);
     expect(report.cases[1].error).toMatch(/no textual hunks/);
+    expect(report.cases[2].error).toMatch(/empty textual hunks/);
     expect(report.metrics.cleanCases).toBe(0);
   });
 
