@@ -55,6 +55,19 @@ export interface RunBenchmarkOptions {
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
 }
 
+/** True when the review pipeline returned normally but no specialist pass succeeded. */
+function allSpecialistPassesFailed(result: ReviewResult): boolean {
+  return result.passes.length > 0 && result.passes.every((pass) => !pass.ok);
+}
+
+/** Build a compact error message from failed specialist passes. */
+function failedPassMessage(result: ReviewResult): string {
+  const failures = result.passes
+    .filter((pass) => !pass.ok)
+    .map((pass) => `${pass.specialist}${pass.error ? `: ${pass.error}` : ""}`);
+  return `All review specialist passes failed: ${failures.join("; ")}`;
+}
+
 /** Run the full benchmark and return a scored, stamped report. */
 export async function runBenchmark(
   cases: BenchmarkCase[],
@@ -82,6 +95,10 @@ export async function runBenchmark(
         },
         { config, complete: options.complete, ...options.review }
       );
+      if (allSpecialistPassesFailed(result)) {
+        results.push(erroredCase(benchmarkCase.id, benchmarkCase.kind, failedPassMessage(result)));
+        continue;
+      }
       results.push(
         scoreCase(benchmarkCase.id, benchmarkCase.kind, result.findings, benchmarkCase.expected, match)
       );

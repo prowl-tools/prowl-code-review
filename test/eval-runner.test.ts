@@ -215,6 +215,36 @@ describe("runBenchmark", () => {
     expect(report.metrics.bugCases).toBe(0); // excluded
   });
 
+  it("marks a case errored when every specialist pass fails", async () => {
+    const cases = [
+      {
+        id: "all-failed",
+        description: "d",
+        kind: "clean" as const,
+        diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n x\n+y",
+        expected: []
+      }
+    ];
+    const review = vi.fn(async (): Promise<ReviewResult> => ({
+      findings: [],
+      raw: [],
+      passes: [
+        { specialist: "correctness", findings: 0, ok: false, error: "provider down" },
+        { specialist: "security", findings: 0, ok: false, error: "model unavailable" }
+      ],
+      verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+
+    const report = await runBenchmark(cases, { config, runReview: review });
+    expect(report.errored).toBe(1);
+    expect(report.cases[0].errored).toBe(true);
+    expect(report.cases[0].error).toContain("All review specialist passes failed");
+    expect(report.cases[0].error).toContain("correctness: provider down");
+    expect(report.metrics.cleanCases).toBe(0); // excluded
+  });
+
   it("forwards review knobs and completion to the review pass", async () => {
     const cases = [
       {

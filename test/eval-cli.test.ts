@@ -76,6 +76,29 @@ describe("eval command helpers", () => {
       "2 benchmark cases errored"
     ]);
   });
+
+  it("passes the gate when thresholds are met and no cases errored", () => {
+    const report = { metrics: metrics({ precision: 0.9, recall: 0.85, f1: 0.87 }), errored: 0 };
+    expect(evaluateGate(report, { precision: 0.8, recall: 0.8, f1: 0.8 })).toEqual([]);
+  });
+
+  it("reports threshold-only gate failures", () => {
+    const report = { metrics: metrics({ precision: 0.5, recall: 0.6, f1: 0.55 }), errored: 0 };
+    expect(evaluateGate(report, { precision: 0.8, recall: 0.8, f1: 0.8 })).toEqual([
+      "precision 50.0% < min 80.0%",
+      "recall 60.0% < min 80.0%",
+      "F1 55.0% < min 80.0%"
+    ]);
+  });
+
+  it("reports threshold and errored-case gate failures together", () => {
+    const report = { metrics: metrics({ precision: 0.5, recall: 0.85, f1: 0.65 }), errored: 1 };
+    expect(evaluateGate(report, { precision: 0.8, recall: 0.8, f1: 0.8 })).toEqual([
+      "precision 50.0% < min 80.0%",
+      "F1 65.0% < min 80.0%",
+      "1 benchmark case errored"
+    ]);
+  });
 });
 
 describe("report rendering", () => {
