@@ -157,7 +157,12 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
     - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
 
-## Low Priority
+56. **Suppress no-op reviews (stay quiet when there's nothing worth saying)**
+    As a developer, I want prowl-review to *not* post a review when it found nothing worth changing, so that the PR isn't littered with a "Findings: none" comment on every push.
+    - Acceptance: when a review produces no findings at/above the configured severity floor **and** the run was healthy (all specialist passes succeeded, nothing skipped, no errors/redaction notes worth surfacing), skip publishing entirely (config-overridable, e.g. `postOnNoFindings: false` default; `--always-comment` to force).
+    - Acceptance: **do NOT suppress a degraded review** — if any specialist pass failed (e.g. "Gemini API returned no content"), files were skipped, or the per-PR budget/limits truncated coverage, still post so the degradation is visible (this is the failure mode behind the current recurring empty reviews). A "clean" result and a "couldn't actually review" result must not look the same.
+    - Acceptance: interacts cleanly with update-not-duplicate (#22) and incremental re-review (#23) — if a prior prowl-review surfaced findings that are now resolved, update/resolve the existing review rather than leaving a stale one; a freshly-clean PR with no prior review simply stays silent.
+    - Acceptance: unit-tested decision function (pure `shouldPublish(review)` separate from the posting side-effect).
 
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
