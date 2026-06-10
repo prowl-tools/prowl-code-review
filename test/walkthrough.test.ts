@@ -84,12 +84,18 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("🟠 1");
   });
 
-  it("groups changed files by top directory with line deltas", () => {
+  it("groups changed files by top directory inside a collapsed details block", () => {
     const md = buildWalkthrough({ findings: [], files });
-    expect(md).toContain("### Changed files (2)");
+    // The file inventory is collapsed behind <details>, not a top-level heading (#54).
+    expect(md).not.toContain("### Changed files");
+    expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
+    expect(md).toContain("<details>");
+    expect(md).toContain("</details>");
     expect(md).toContain("**src/**");
     expect(md).toContain("`src/a.ts` — modified (+12 −3)");
     expect(md).toContain("**(root)/**");
+    // Blank line after <summary> so the Markdown list renders inside the block.
+    expect(md).toContain("</summary>\n\n**");
   });
 
   it("escapes untrusted review text before rendering Markdown", () => {

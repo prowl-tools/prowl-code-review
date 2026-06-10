@@ -219,10 +219,14 @@ function topDir(path: string): string {
   return slash === -1 ? "(root)" : path.slice(0, slash);
 }
 
-/** Render the grouped changed-file list with untrusted paths in safe code spans. */
+/**
+ * Render the grouped changed-file list inside a collapsed `<details>` so the
+ * file inventory stays out of the summary's main flow — a count in the summary,
+ * the full list one click away (backlog #54).
+ */
 function changedFilesSection(files: DiffFile[]): string {
   if (files.length === 0) {
-    return "### Changed files\n_None._";
+    return "<details>\n<summary><b>Changed files (0)</b></summary>\n\n_None._\n\n</details>";
   }
   const groups = new Map<string, DiffFile[]>();
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
@@ -232,19 +236,29 @@ function changedFilesSection(files: DiffFile[]): string {
     groups.set(dir, list);
   }
 
-  const lines: string[] = [`### Changed files (${files.length})`];
+  const body: string[] = [];
   for (const [dir, groupFiles] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const label = dir === "(root)" ? "(root)/" : escapeMarkdownText(`${dir}/`);
-    lines.push(`**${label}**`);
+    body.push(`**${label}**`);
     for (const file of groupFiles) {
       const { additions, deletions } = lineDelta(file);
       const delta = file.binary
         ? "binary"
         : [additions ? `+${additions}` : "", deletions ? `−${deletions}` : ""].filter(Boolean).join(" ") || "no line changes";
-      lines.push(`- ${inlineCode(file.path)} — ${file.status} (${delta})`);
+      body.push(`- ${inlineCode(file.path)} — ${file.status} (${delta})`);
     }
   }
-  return lines.join("\n");
+
+  // A blank line after <summary> is required for GitHub to render the Markdown
+  // list inside the disclosure block.
+  return [
+    "<details>",
+    `<summary><b>Changed files (${files.length})</b></summary>`,
+    "",
+    body.join("\n"),
+    "",
+    "</details>"
+  ].join("\n");
 }
 
 /** Render skipped-file notes with untrusted paths in safe code spans. */
