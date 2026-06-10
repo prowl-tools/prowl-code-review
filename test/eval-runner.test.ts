@@ -334,6 +334,53 @@ rename to config/example.txt
     expect(input.diff).not.toContain("### b.ts");
   });
 
+  it("marks cases errored when expected bug files are omitted by guards", async () => {
+    const cases = [
+      {
+        id: "sensitive-expected",
+        description: "d",
+        kind: "bug" as const,
+        diff: [
+          "diff --git a/.env b/.env",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/.env",
+          "@@ -0,0 +1 @@",
+          "+API_KEY=AKIAIOSFODNN7EXAMPLE"
+        ].join("\n"),
+        expected: [{ file: ".env", line: 1, note: "n" }]
+      },
+      {
+        id: "limited-expected",
+        description: "d",
+        kind: "bug" as const,
+        diff: [
+          "diff --git a/a.ts b/a.ts",
+          "--- a/a.ts",
+          "+++ b/a.ts",
+          "@@ -1 +1,2 @@",
+          " const a = 1;",
+          "+a();",
+          "diff --git a/b.ts b/b.ts",
+          "--- a/b.ts",
+          "+++ b/b.ts",
+          "@@ -1 +1,2 @@",
+          " const b = 1;",
+          "+b();"
+        ].join("\n"),
+        expected: [{ file: "b.ts", line: 2, note: "n" }]
+      }
+    ];
+    const review = fakeReview(() => []);
+    const report = await runBenchmark(cases, { config, runReview: review, diffLimits: { maxFiles: 1 } });
+
+    expect(review).not.toHaveBeenCalled();
+    expect(report.errored).toBe(2);
+    expect(report.cases[0].error).toContain(".env (sensitive)");
+    expect(report.cases[1].error).toContain("b.ts (maxFiles)");
+    expect(report.metrics.bugCases).toBe(0); // excluded
+  });
+
   it("marks unparsable benchmark diffs as errored without calling review", async () => {
     const review = fakeReview(() => []);
     const report = await runBenchmark(
