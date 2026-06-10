@@ -4,6 +4,12 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Collapse the changed-files overview behind a `<details>` disclosure in the review summary
+  (`src/review/walkthrough.ts`): the summary now shows just a file count, with the grouped
+  list one click away — so the file inventory is no longer a top-level wall of text on every
+  review. (backlog #54)
+
 ### Added
 - False-positive verification pass (`src/review/verify.ts`, backlog #8): before the judge, every
   *low-confidence* finding (below `0.8`, configurable) is re-checked by a single skeptical
