@@ -38,8 +38,12 @@ export interface ReviewInput {
 export interface RunReviewOptions {
   /** Provider config; resolved from the environment when omitted. */
   config?: ProviderConfig;
-  /** Drop findings below this severity in the judge. Default keeps all. */
+  /** Drop findings below this severity in the judge. Default `minor` (#55). */
   minSeverity?: Severity;
+  /** Drop non-critical findings below this confidence. Default 0.5 (#55). */
+  minConfidence?: number;
+  /** Cap the number of findings surfaced. Default 25 (#55). */
+  maxFindings?: number;
   /** Injectable completion (defaults to the provider dispatcher). */
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
 }
@@ -125,7 +129,11 @@ export async function runReview(
 
   const raw = outcomes.flatMap((outcome) => outcome.findings);
   const usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
-  const { findings, ...judge } = judgeFindings(raw, { minSeverity: options.minSeverity });
+  const { findings, ...judge } = judgeFindings(raw, {
+    minSeverity: options.minSeverity,
+    minConfidence: options.minConfidence,
+    maxFindings: options.maxFindings
+  });
 
   return {
     findings,
