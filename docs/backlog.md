@@ -24,11 +24,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a maintainer, I want a defined place to persist per-PR state in a stateless Action, so that incremental review, update-not-duplicate, and learnings actually work.
     - Acceptance: decide and implement a store for last-reviewed SHA, already-posted findings, and learnings (e.g. a hidden marker comment and/or a `.prowl-review/` artifact); documented and reused by #22/#21/#30.
 
-13. **Quality eval harness**
-    As a maintainer, I want to score the reviewer against a fixed benchmark of PRs-with-known-bugs, so that I can tune prompts/passes and *prove* parity with CodeRabbit/Greptile instead of guessing.
-    - Acceptance: a curated benchmark set (seeded real bugs + clean PRs) and a runner that computes precision/recall/F1 and false-positive rate.
-    - Acceptance: results are reproducible per prompt/model version; regressions are visible before release.
-
 14. **Security hardening: prompt-injection resistance + agent tool sandboxing**
     As a maintainer, I want the reviewer hardened against malicious PR content, so that an untrusted diff/comment can't hijack the review, its retrieval tools, or its commands.
     - Acceptance: all PR content (diff, code, comments, titles, branch names) is treated as untrusted **data, not instructions**; the system prompt enforces this; detected injection attempts are ignored and may be surfaced as a finding.
