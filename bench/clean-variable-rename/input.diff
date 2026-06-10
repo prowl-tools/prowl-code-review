@@ -1,0 +1,10 @@
+diff --git a/src/util/format.ts b/src/util/format.ts
+--- a/src/util/format.ts
++++ b/src/util/format.ts
+@@ -1,4 +1,4 @@
+ export function greet(name: string): string {
+-  const msg = `Hello, ${name}!`;
+-  return msg;
++  const greeting = `Hello, ${name}!`;
++  return greeting;
+ }

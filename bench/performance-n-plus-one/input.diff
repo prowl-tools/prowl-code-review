@@ -1,0 +1,15 @@
+diff --git a/src/api/orders.ts b/src/api/orders.ts
+--- a/src/api/orders.ts
++++ b/src/api/orders.ts
+@@ -4,5 +4,11 @@ import { db } from "../db/client.js";
+ export async function orderTotals(orderIds: number[]): Promise<number[]> {
+   const totals: number[] = [];
+-  const rows = await db.query("SELECT id, total FROM orders WHERE id = ANY($1)", [orderIds]);
+-  return rows.map((r) => r.total);
++  // Load totals for each requested order.
++  for (const id of orderIds) {
++    const row = await db.queryOne("SELECT total FROM orders WHERE id = $1", [id]);
++    totals.push(row.total);
++  }
++  return totals;
+ }

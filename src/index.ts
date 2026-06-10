@@ -161,3 +161,24 @@ export {
   type ReviewResult,
   type SpecialistPassReport
 } from "./review/run-review.js";
+
+// Quality eval harness (benchmark scoring + runner).
+export {
+  BenchmarkCaseSchema,
+  ExpectedBugSchema,
+  CASE_KINDS,
+  DEFAULT_LINE_WINDOW,
+  type BenchmarkCase,
+  type ExpectedBug,
+  type CaseKind,
+  type CaseResult,
+  type MatchOptions,
+  type EvalMetrics,
+  type EvalReport
+} from "./eval/types.js";
+export { matchesBug, scoreCase, erroredCase } from "./eval/match.js";
+export { aggregate, precision, recall, f1Score } from "./eval/metrics.js";
+export { loadBenchmark, loadCase } from "./eval/load.js";
+export { runBenchmark, type RunBenchmarkOptions, type ReviewKnobs } from "./eval/runner.js";
+export { renderReportMarkdown, renderReportJson } from "./eval/report.js";
+export { promptFingerprint } from "./eval/version.js";
