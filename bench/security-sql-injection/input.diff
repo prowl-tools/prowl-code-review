@@ -1,0 +1,11 @@
+diff --git a/src/db/users.ts b/src/db/users.ts
+--- a/src/db/users.ts
++++ b/src/db/users.ts
+@@ -7,3 +7,7 @@ import { db } from "./client.js";
+ export async function findUser(id: number) {
+   return db.query("SELECT * FROM users WHERE id = $1", [id]);
+ }
++export async function searchUsers(term: string) {
++  // Search user profiles by term.
++  return db.query("SELECT * FROM users WHERE bio LIKE '%" + term + "%'");
++}

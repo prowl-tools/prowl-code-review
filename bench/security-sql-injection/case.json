@@ -1,0 +1,13 @@
+{
+  "description": "New search query concatenates user input directly into SQL.",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "src/db/users.ts",
+      "line": 12,
+      "category": "security",
+      "severity": "critical",
+      "note": "User-supplied `term` is concatenated into the SQL string — SQL injection."
+    }
+  ]
+}
