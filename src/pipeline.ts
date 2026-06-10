@@ -106,7 +106,10 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
 /** Surface what the high-signal defaults hid, so suppression isn't silent (#55). */
 function judgeNotes(reviewResult: ReviewResult): string[] {
   const notes: string[] = [];
-  const { belowConfidence, capped } = reviewResult.judge;
+  const { belowThreshold, belowConfidence, capped } = reviewResult.judge;
+  if (belowThreshold > 0) {
+    notes.push(`Hid ${belowThreshold} finding(s) below the severity floor.`);
+  }
   if (belowConfidence > 0) {
     notes.push(`Hid ${belowConfidence} low-confidence finding(s) below the confidence floor.`);
   }

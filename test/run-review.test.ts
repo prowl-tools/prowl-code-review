@@ -28,7 +28,7 @@ function fakeComplete() {
       return reply(
         "```json\n" +
           JSON.stringify([
-            { file: "b.ts", line: 10, severity: "minor", category: "correctness", title: "weak", body: "y", confidence: 0.4 },
+            { file: "b.ts", line: 10, severity: "minor", category: "correctness", title: "weak", body: "y", confidence: 0.5 },
             { file: "b.ts", line: 10, severity: "major", category: "correctness", title: "strong", body: "y", confidence: 0.6 }
           ]) +
           "\n```"
