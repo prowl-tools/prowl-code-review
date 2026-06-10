@@ -98,6 +98,13 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("</summary>\n\n**");
   });
 
+  it("renders an empty changed-files list inside a collapsed details block", () => {
+    const md = buildWalkthrough({ findings: [], files: [] });
+    expect(md).not.toContain("### Changed files");
+    expect(md).toContain("<summary><b>Changed files (0)</b></summary>");
+    expect(md).toContain("_None._");
+  });
+
   it("escapes untrusted review text before rendering Markdown", () => {
     const md = buildWalkthrough({
       summary: "Looks fine @org/team.\n### Spoof\n<!-- hidden -->\n> quote",
