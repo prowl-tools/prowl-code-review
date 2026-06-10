@@ -52,7 +52,7 @@ export function rankFindings(findings: Finding[]): Finding[] {
     if (b.confidence !== a.confidence) {
       return b.confidence - a.confidence;
     }
-    return a.file.localeCompare(b.file);
+    return findingKey(a).localeCompare(findingKey(b));
   });
 }
 

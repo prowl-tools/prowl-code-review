@@ -62,6 +62,15 @@ describe("rankFindings", () => {
     expect(ranked.map((f) => f.severity)).toEqual(["critical", "major", "major", "minor"]);
     expect(ranked[1].confidence).toBe(0.8); // higher-confidence major first
   });
+
+  it("breaks complete ranking ties by stable finding key", () => {
+    const ranked = rankFindings([
+      finding({ line: 3, title: "later" }),
+      finding({ line: 2, title: "earlier" })
+    ]);
+
+    expect(ranked.map((f) => f.title)).toEqual(["earlier", "later"]);
+  });
 });
 
 describe("filterBySeverity", () => {
@@ -165,6 +174,38 @@ describe("judgeFindings high-signal defaults (#55)", () => {
     expect(result.capped).toBe(3);
   });
 
+  it("treats negative infinity maxFindings as zero", () => {
+    const findings = [
+      finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "b.ts", severity: "major", confidence: 0.9 })
+    ];
+    const result = judgeFindings(findings, { maxFindings: -Infinity });
+
+    expect(result.findings).toEqual([]);
+    expect(result.capped).toBe(2);
+  });
+
+  it("treats infinity maxFindings as all ranked findings", () => {
+    const findings = [
+      finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "b.ts", severity: "major", confidence: 0.9 })
+    ];
+    const result = judgeFindings(findings, { maxFindings: Infinity });
+
+    expect(result.findings).toHaveLength(2);
+    expect(result.capped).toBe(0);
+  });
+
+  it("falls back to the default cap for NaN maxFindings", () => {
+    const many = Array.from({ length: DEFAULT_MAX_FINDINGS + 5 }, (_, i) =>
+      finding({ file: `f${i}.ts`, severity: "major", confidence: 0.9 })
+    );
+    const result = judgeFindings(many, { maxFindings: NaN });
+
+    expect(result.findings).toHaveLength(DEFAULT_MAX_FINDINGS);
+    expect(result.capped).toBe(5);
+  });
+
   it("returns all findings when the cap is higher than the ranked count", () => {
     const findings = [
       finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
@@ -192,5 +233,18 @@ describe("judgeFindings high-signal defaults (#55)", () => {
     expect(result.findings).toHaveLength(1);
     expect(result.capped).toBe(1);
     expect(result.findings[0].file).toBe("a.ts");
+  });
+
+  it("selects the same capped findings regardless of input order", () => {
+    const one = finding({ line: 3, title: "later", severity: "major", confidence: 0.9 });
+    const two = finding({ line: 2, title: "earlier", severity: "major", confidence: 0.9 });
+
+    const first = judgeFindings([one, two], { maxFindings: 1 });
+    const second = judgeFindings([two, one], { maxFindings: 1 });
+
+    expect(first.findings.map((f) => f.title)).toEqual(["earlier"]);
+    expect(second.findings.map((f) => f.title)).toEqual(["earlier"]);
+    expect(first.capped).toBe(1);
+    expect(second.capped).toBe(1);
   });
 });
