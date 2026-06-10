@@ -151,14 +151,14 @@ export interface EvalMetrics {
 export interface EvalReviewSettings {
   /** Whether the false-positive verification pass ran. */
   verify: boolean;
-  /** Optional minimum severity floor mirrored from the review command. */
-  minSeverity?: Severity;
-  /** Optional confidence floor for non-critical findings. */
-  minConfidence?: number;
-  /** Optional cap on surfaced findings. */
-  maxFindings?: number;
-  /** Optional confidence threshold above which findings skip verification. */
-  verifyConfidence?: number;
+  /** Effective minimum severity floor used by the judge. */
+  minSeverity: Severity;
+  /** Effective confidence floor for non-critical findings. */
+  minConfidence: number;
+  /** Effective cap on surfaced findings. */
+  maxFindings: number;
+  /** Effective confidence threshold above which findings skip verification. */
+  verifyConfidence: number;
 }
 
 /** A full benchmark run, stamped for reproducibility. */

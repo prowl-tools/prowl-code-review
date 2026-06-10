@@ -5,6 +5,12 @@ import { tmpdir } from "node:os";
 import { loadBenchmark, loadCase } from "../src/eval/load.js";
 import { runBenchmark } from "../src/eval/runner.js";
 import { parseDiff } from "../src/review/parse-diff.js";
+import {
+  DEFAULT_MAX_FINDINGS,
+  DEFAULT_MIN_CONFIDENCE,
+  DEFAULT_MIN_SEVERITY
+} from "../src/review/judge.js";
+import { DEFAULT_VERIFY_CONFIDENCE } from "../src/review/verify.js";
 import type { CompletionResult, ProviderConfig } from "../src/providers/index.js";
 import type { ReviewInput, ReviewResult } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
@@ -12,6 +18,14 @@ import type { Finding } from "../src/review/findings.js";
 const config: ProviderConfig = { provider: "anthropic", model: "test-model", apiKey: "k" };
 
 const BENCH_DIR = join(__dirname, "..", "bench");
+
+const defaultReviewSettings = {
+  verify: true,
+  minSeverity: DEFAULT_MIN_SEVERITY,
+  minConfidence: DEFAULT_MIN_CONFIDENCE,
+  maxFindings: DEFAULT_MAX_FINDINGS,
+  verifyConfidence: DEFAULT_VERIFY_CONFIDENCE
+};
 
 function writeCase(
   root: string,
@@ -216,7 +230,7 @@ describe("runBenchmark", () => {
     expect(report.model).toBe("test-model");
     expect(report.promptFingerprint).toMatch(/^[0-9a-f]{12}$/);
     expect(report.match.lineWindow).toBe(3);
-    expect(report.review).toEqual({ verify: true });
+    expect(report.review).toEqual(defaultReviewSettings);
 
     expect(report.metrics.recall).toBe(1); // bug covered
     expect(report.metrics.coveredBugs).toBe(1);
@@ -374,6 +388,10 @@ rename to config/example.txt
       review: { verify: false, minSeverity: "major" }
     });
     expect(review).toHaveBeenCalledTimes(1);
-    expect(report.review).toEqual({ verify: false, minSeverity: "major" });
+    expect(report.review).toEqual({
+      ...defaultReviewSettings,
+      verify: false,
+      minSeverity: "major"
+    });
   });
 });
