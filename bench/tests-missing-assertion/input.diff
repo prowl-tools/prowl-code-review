@@ -1,0 +1,12 @@
+diff --git a/test/parse.test.ts b/test/parse.test.ts
+--- a/test/parse.test.ts
++++ b/test/parse.test.ts
+@@ -10,3 +10,7 @@ describe("parseAmount", () => {
+   it("parses integers", () => {
+     expect(parseAmount("42")).toBe(42);
+   });
++  it("handles negative amounts", () => {
++    // Exercise the negative path.
++    parseAmount("-5");
++  });
+ });
