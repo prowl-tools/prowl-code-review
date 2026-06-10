@@ -4,7 +4,7 @@
   "expected": [
     {
       "file": "src/db/users.ts",
-      "line": 15,
+      "line": 12,
       "category": "security",
       "severity": "critical",
       "note": "User-supplied `term` is concatenated into the SQL string — SQL injection."

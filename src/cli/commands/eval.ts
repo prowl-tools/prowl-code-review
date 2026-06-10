@@ -4,7 +4,7 @@ import { isAbsolute, resolve } from "node:path";
 import { loadBenchmark } from "../../eval/load.js";
 import { runBenchmark, type ReviewKnobs } from "../../eval/runner.js";
 import { renderReportJson, renderReportMarkdown } from "../../eval/report.js";
-import type { EvalMetrics } from "../../eval/types.js";
+import type { EvalMetrics, EvalReport } from "../../eval/types.js";
 import { parseMinSeverity } from "./review.js";
 
 /**
@@ -67,6 +67,15 @@ export function evaluateThresholds(metrics: EvalMetrics, thresholds: Thresholds)
   return failures;
 }
 
+/** Pure gate check for a full report, including errored cases excluded from metrics. */
+export function evaluateGate(report: Pick<EvalReport, "metrics" | "errored">, thresholds: Thresholds): string[] {
+  const failures = evaluateThresholds(report.metrics, thresholds);
+  if (report.errored > 0) {
+    failures.push(`${report.errored} benchmark case${report.errored === 1 ? "" : "s"} errored`);
+  }
+  return failures;
+}
+
 interface EvalCommandOptions {
   bench?: string;
   json?: string;
@@ -122,7 +131,7 @@ export function buildEvalCommand(): Command {
         console.log(`\nWrote JSON report to ${jsonPath}`);
       }
 
-      const failures = evaluateThresholds(report.metrics, {
+      const failures = evaluateGate(report, {
         precision: parseThreshold(options.minPrecision, "--min-precision"),
         recall: parseThreshold(options.minRecall, "--min-recall"),
         f1: parseThreshold(options.minF1, "--min-f1")

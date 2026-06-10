@@ -16,20 +16,25 @@ import { SEVERITIES } from "../review/findings.js";
  */
 
 /** A single known defect seeded in a benchmark case, located for matching. */
-export const ExpectedBugSchema = z.object({
-  /** Repo-relative file the defect lives on (new side of the diff). */
-  file: z.string().min(1),
-  /** 1-based new-side line where the defect starts. */
-  line: z.number().int().positive(),
-  /** End line for a multi-line defect (defaults to `line`). */
-  endLine: z.number().int().positive().optional(),
-  /** Optional expected category (e.g. correctness/security); matched only when `requireCategory`. */
-  category: z.string().min(1).optional(),
-  /** Optional expected severity, for reporting (not used in matching). */
-  severity: z.enum(SEVERITIES).optional(),
-  /** Human note describing the seeded bug. */
-  note: z.string().min(1)
-});
+export const ExpectedBugSchema = z
+  .object({
+    /** Repo-relative file the defect lives on (new side of the diff). */
+    file: z.string().min(1),
+    /** 1-based new-side line where the defect starts. */
+    line: z.number().int().positive(),
+    /** End line for a multi-line defect (defaults to `line`). */
+    endLine: z.number().int().positive().optional(),
+    /** Optional expected category (e.g. correctness/security); matched only when `requireCategory`. */
+    category: z.string().min(1).optional(),
+    /** Optional expected severity, for reporting (not used in matching). */
+    severity: z.enum(SEVERITIES).optional(),
+    /** Human note describing the seeded bug. */
+    note: z.string().min(1)
+  })
+  .refine((bug) => bug.endLine === undefined || bug.endLine >= bug.line, {
+    message: "endLine must be greater than or equal to line",
+    path: ["endLine"]
+  });
 
 export type ExpectedBug = z.infer<typeof ExpectedBugSchema>;
 

@@ -81,6 +81,36 @@ describe("loadBenchmark", () => {
     }
   });
 
+  it("rejects a clean case that lists expected defects", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      writeCase(
+        root,
+        "noisy-clean",
+        { description: "d", kind: "clean", expected: [{ file: "x.ts", line: 1, note: "n" }] },
+        "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,2 @@\n x\n+y"
+      );
+      expect(() => loadCase(join(root, "noisy-clean"), "noisy-clean")).toThrow(/noisy-clean.*must not list expected defects/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects expected bug ranges where endLine precedes line", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      writeCase(
+        root,
+        "bad-range",
+        { description: "d", kind: "bug", expected: [{ file: "x.ts", line: 4, endLine: 3, note: "n" }] },
+        "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,4 @@\n x\n+y\n+z\n+w"
+      );
+      expect(() => loadCase(join(root, "bad-range"), "bad-range")).toThrow(/bad-range.*endLine must be greater than or equal to line/);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("throws when input.diff is missing", () => {
     const root = mkdtempSync(join(tmpdir(), "bench-"));
     try {
