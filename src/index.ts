@@ -143,6 +143,18 @@ export {
   type Impact
 } from "./review/walkthrough.js";
 export {
+  verifyFindings,
+  parseVerdicts,
+  buildVerifySystem,
+  buildVerifyPrompt,
+  DEFAULT_VERIFY_CONFIDENCE,
+  VerdictSchema,
+  type Verdict,
+  type VerifyInput,
+  type VerifyOptions,
+  type VerifyResult
+} from "./review/verify.js";
+export {
   runReview,
   type ReviewInput,
   type RunReviewOptions,
