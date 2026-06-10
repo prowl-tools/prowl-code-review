@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Quality eval harness (`src/eval/`, `bench/`, backlog #13): scores the reviewer against an
+  in-repo benchmark of PRs-with-known-bugs + clean PRs so quality is measured, not guessed.
+  Each case (a stored unified diff labelled `bug`/`clean`) runs through the real pipeline
+  (parsed + line-annotated as in production) and is scored for bug-level **recall**,
+  finding-level **precision**, **F1**, and a **clean-PR false-alarm rate**; matching is
+  same-file + ±line-window overlap (optional category match). Reports are stamped with
+  provider/model + a **prompt fingerprint** (hash of the specialist + verifier prompts) for
+  reproducibility. New `prowl-review eval` command (markdown + optional JSON report;
+  `--min-precision`/`--min-recall`/`--min-f1` gates fail CI on a regression). Runner/completion
+  are injectable so the harness is unit-tested without a key; the real eval needs `PROWL_AI_KEY`.
+  Seed set covers correctness/security/performance + clean cases. See `docs/eval.md`.
 - False-positive verification pass (`src/review/verify.ts`, backlog #8): before the judge, every
   *low-confidence* finding (below `0.8`, configurable) is re-checked by a single skeptical
   "is this ACTUALLY a bug?" call that can drop outright false positives or move confidence up/down;

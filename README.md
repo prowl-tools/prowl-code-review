@@ -23,6 +23,18 @@ The CLI entry point is `dist/cli.js` (bin: `prowl-review`):
 node dist/cli.js --help
 ```
 
+### Quality benchmark
+
+Score the reviewer against the in-repo benchmark of PRs-with-known-bugs to
+measure precision/recall/F1 and the clean-PR false-alarm rate (needs
+`PROWL_AI_KEY`):
+
+```bash
+node dist/cli.js eval            # scores ./bench, prints a summary
+```
+
+See [`docs/eval.md`](docs/eval.md) for details and [`bench/README.md`](bench/README.md) for the case format.
+
 ## License
 
 Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).
