@@ -10,6 +10,12 @@ import {
   type ReviewResult,
   type RunReviewOptions
 } from "../review/run-review.js";
+import {
+  DEFAULT_MAX_FINDINGS,
+  DEFAULT_MIN_CONFIDENCE,
+  DEFAULT_MIN_SEVERITY
+} from "../review/judge.js";
+import { DEFAULT_VERIFY_CONFIDENCE } from "../review/verify.js";
 import { parseDiff } from "../review/parse-diff.js";
 import { renderGuardedDiff } from "../review/render-diff.js";
 import { redactSecrets } from "../review/redact.js";
@@ -73,22 +79,13 @@ function failedPassMessage(result: ReviewResult): string {
 
 /** Fill in review defaults so report metadata fully describes the run. */
 function normalizeReviewSettings(review?: ReviewKnobs): EvalReviewSettings {
-  const settings: EvalReviewSettings = {
-    verify: review?.verify ?? true
+  return {
+    verify: review?.verify ?? true,
+    minSeverity: review?.minSeverity ?? DEFAULT_MIN_SEVERITY,
+    minConfidence: review?.minConfidence ?? DEFAULT_MIN_CONFIDENCE,
+    maxFindings: review?.maxFindings ?? DEFAULT_MAX_FINDINGS,
+    verifyConfidence: review?.verifyConfidence ?? DEFAULT_VERIFY_CONFIDENCE
   };
-  if (review?.minSeverity !== undefined) {
-    settings.minSeverity = review.minSeverity;
-  }
-  if (review?.minConfidence !== undefined) {
-    settings.minConfidence = review.minConfidence;
-  }
-  if (review?.maxFindings !== undefined) {
-    settings.maxFindings = review.maxFindings;
-  }
-  if (review?.verifyConfidence !== undefined) {
-    settings.verifyConfidence = review.verifyConfidence;
-  }
-  return settings;
 }
 
 /** Run the full benchmark and return a scored, stamped report. */

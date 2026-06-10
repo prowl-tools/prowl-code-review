@@ -5,8 +5,8 @@ import { aggregate, precision, recall, f1Score } from "../src/eval/metrics.js";
 import { promptFingerprint } from "../src/eval/version.js";
 import { BenchmarkCaseSchema, type ExpectedBug } from "../src/eval/types.js";
 import type { Finding } from "../src/review/findings.js";
-import { buildSharedSystem, buildSpecialistDirective, DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
-import { buildVerifySystem } from "../src/review/verify.js";
+import { buildSharedSystem, buildSpecialistPrompt, DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
+import { buildVerifyPrompt, buildVerifySystem } from "../src/review/verify.js";
 
 function finding(over: Partial<Finding> = {}): Finding {
   return {
@@ -138,15 +138,51 @@ describe("aggregate", () => {
 });
 
 describe("promptFingerprint", () => {
-  it("hashes the rendered specialist directives", () => {
+  it("hashes the rendered specialist and verifier prompts", () => {
+    const placeholders = {
+      diff: "{{PROWL_EVAL_DIFF}}",
+      context: "{{PROWL_EVAL_CONTEXT}}"
+    };
+    const verifyFinding: Finding = {
+      file: "{{PROWL_EVAL_FILE}}",
+      line: 1,
+      severity: "major",
+      category: "correctness",
+      title: "{{PROWL_EVAL_TITLE}}",
+      body: "{{PROWL_EVAL_BODY}}",
+      confidence: 0.5
+    };
     const material = JSON.stringify({
       shared: buildSharedSystem({}),
       specialists: DEFAULT_SPECIALISTS.map((specialist) => ({
         key: specialist.key,
         model: specialist.model ?? null,
-        directive: buildSpecialistDirective(specialist)
+        prompt: {
+          withoutContext: buildSpecialistPrompt({
+            specialist,
+            diff: placeholders.diff
+          }),
+          withContext: buildSpecialistPrompt({
+            specialist,
+            diff: placeholders.diff,
+            context: placeholders.context
+          })
+        }
       })),
-      verify: buildVerifySystem()
+      verify: {
+        system: buildVerifySystem(),
+        prompt: {
+          withoutContext: buildVerifyPrompt({
+            candidates: [verifyFinding],
+            diff: placeholders.diff
+          }),
+          withContext: buildVerifyPrompt({
+            candidates: [verifyFinding],
+            diff: placeholders.diff,
+            context: placeholders.context
+          })
+        }
+      }
     });
     expect(promptFingerprint()).toBe(createHash("sha256").update(material).digest("hex").slice(0, 12));
   });

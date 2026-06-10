@@ -9,6 +9,12 @@ import {
 } from "../src/cli/commands/eval.js";
 import { renderReportMarkdown, renderReportJson } from "../src/eval/report.js";
 import type { BenchmarkCase, EvalMetrics, EvalReport } from "../src/eval/types.js";
+import {
+  DEFAULT_MAX_FINDINGS,
+  DEFAULT_MIN_CONFIDENCE,
+  DEFAULT_MIN_SEVERITY
+} from "../src/review/judge.js";
+import { DEFAULT_VERIFY_CONFIDENCE } from "../src/review/verify.js";
 
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
@@ -42,13 +48,21 @@ const benchmarkCase: BenchmarkCase = {
   expected: []
 };
 
+const defaultReviewSettings = {
+  verify: true,
+  minSeverity: DEFAULT_MIN_SEVERITY,
+  minConfidence: DEFAULT_MIN_CONFIDENCE,
+  maxFindings: DEFAULT_MAX_FINDINGS,
+  verifyConfidence: DEFAULT_VERIFY_CONFIDENCE
+};
+
 function report(over: Partial<EvalReport> = {}): EvalReport {
   return {
     provider: "anthropic",
     model: "claude-x",
     promptFingerprint: "abc123def456",
     match: { lineWindow: 3, requireCategory: false },
-    review: { verify: true },
+    review: defaultReviewSettings,
     metrics: metrics({ precision: 0.75, recall: 0.6, f1: 0.667 }),
     cases: [],
     errored: 0,
@@ -189,7 +203,7 @@ describe("eval command action", () => {
 
 describe("report rendering", () => {
   const renderedReport = report({
-    review: { verify: false, minSeverity: "major" },
+    review: { ...defaultReviewSettings, verify: false, minSeverity: "major" },
     cases: [
       {
         id: "bug-hit",
@@ -245,7 +259,7 @@ describe("report rendering", () => {
   it("round-trips JSON", () => {
     const parsed = JSON.parse(renderReportJson(renderedReport));
     expect(parsed.promptFingerprint).toBe("abc123def456");
-    expect(parsed.review).toEqual({ verify: false, minSeverity: "major" });
+    expect(parsed.review).toEqual({ ...defaultReviewSettings, verify: false, minSeverity: "major" });
     expect(parsed.cases).toHaveLength(3);
   });
 });
