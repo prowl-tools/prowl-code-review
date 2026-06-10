@@ -17,6 +17,8 @@ import {
 } from "../review/judge.js";
 import { DEFAULT_VERIFY_CONFIDENCE } from "../review/verify.js";
 import { parseDiff } from "../review/parse-diff.js";
+import { applyDiffLimits } from "../review/size-guards.js";
+import type { DiffFile, DiffLimits } from "../review/diff-types.js";
 import { renderGuardedDiff } from "../review/render-diff.js";
 import { redactSecrets } from "../review/redact.js";
 import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
@@ -54,6 +56,8 @@ export type ReviewKnobs = Pick<
 export interface RunBenchmarkOptions {
   /** Provider config; resolved from the environment when omitted. */
   config?: ProviderConfig;
+  /** Diff size limits applied before rendering, mirroring the production review path. */
+  diffLimits?: DiffLimits;
   /** Finding↔bug matching configuration. */
   match?: MatchOptions;
   /** Review knobs applied to every case (defaults to the pipeline defaults). */
@@ -88,6 +92,21 @@ function normalizeReviewSettings(review?: ReviewKnobs): EvalReviewSettings {
   };
 }
 
+/** Reject malformed fixtures before they can score as quiet or ordinary misses. */
+function validateParsedBenchmarkDiff(files: DiffFile[]): void {
+  if (files.length === 0) {
+    throw new Error("Invalid benchmark diff: no changed files were parsed.");
+  }
+  const withoutHunks = files.filter((file) => !file.binary && file.hunks.length === 0);
+  if (withoutHunks.length > 0) {
+    throw new Error(
+      `Invalid benchmark diff: no textual hunks were parsed for ${withoutHunks
+        .map((file) => file.path)
+        .join(", ")}.`
+    );
+  }
+}
+
 /** Run the full benchmark and return a scored, stamped report. */
 export async function runBenchmark(
   cases: BenchmarkCase[],
@@ -107,8 +126,11 @@ export async function runBenchmark(
       // Mirror the production pipeline: parse the stored diff and feed the model
       // the same new-side line-annotated rendering, so reported line numbers are
       // comparable to a real review (and to the case's expected bug lines).
-      const safeDiff = filterSensitiveDiffFiles(parseDiff(benchmarkCase.diff).files);
-      const rendered = renderGuardedDiff(safeDiff.files);
+      const parsed = parseDiff(benchmarkCase.diff);
+      validateParsedBenchmarkDiff(parsed.files);
+      const safeDiff = filterSensitiveDiffFiles(parsed.files);
+      const guarded = applyDiffLimits({ files: safeDiff.files }, options.diffLimits);
+      const rendered = renderGuardedDiff(guarded.files);
       const diff = redactSecrets(rendered).text;
       const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;
       const result = await review(

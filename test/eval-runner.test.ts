@@ -303,6 +303,66 @@ rename to config/example.txt
     expect(input.context).toBe("token [REDACTED:llm-key]");
   });
 
+  it("applies diff limits before rendering the review input", async () => {
+    const cases = [
+      {
+        id: "limited",
+        description: "d",
+        kind: "clean" as const,
+        diff: [
+          "diff --git a/a.ts b/a.ts",
+          "--- a/a.ts",
+          "+++ b/a.ts",
+          "@@ -1 +1,2 @@",
+          " const a = 1;",
+          "+a();",
+          "diff --git a/b.ts b/b.ts",
+          "--- a/b.ts",
+          "+++ b/b.ts",
+          "@@ -1 +1,2 @@",
+          " const b = 1;",
+          "+b();"
+        ].join("\n"),
+        expected: []
+      }
+    ];
+    const review = fakeReview(() => []);
+    await runBenchmark(cases, { config, runReview: review, diffLimits: { maxFiles: 1 } });
+
+    const input = review.mock.calls[0][0];
+    expect(input.diff).toContain("### a.ts");
+    expect(input.diff).not.toContain("### b.ts");
+  });
+
+  it("marks unparsable benchmark diffs as errored without calling review", async () => {
+    const review = fakeReview(() => []);
+    const report = await runBenchmark(
+      [
+        {
+          id: "not-a-diff",
+          description: "d",
+          kind: "clean" as const,
+          diff: "this is not a git diff",
+          expected: []
+        },
+        {
+          id: "no-hunk",
+          description: "d",
+          kind: "clean" as const,
+          diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n+orphan();",
+          expected: []
+        }
+      ],
+      { config, runReview: review }
+    );
+
+    expect(review).not.toHaveBeenCalled();
+    expect(report.errored).toBe(2);
+    expect(report.cases[0].error).toMatch(/no changed files/);
+    expect(report.cases[1].error).toMatch(/no textual hunks/);
+    expect(report.metrics.cleanCases).toBe(0);
+  });
+
   it("marks a case errored when its review throws (excluded from metrics)", async () => {
     const cases = [
       {
