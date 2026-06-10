@@ -9,8 +9,7 @@ import {
   type ToolCompletionResult,
   type ToolProviderMetadata,
   type GeminiToolMessagePart,
-  type ToolMessage,
-  DEFAULT_MAX_TOKENS
+  type ToolMessage
 } from "./types.js";
 
 interface GeminiPart {
@@ -27,8 +26,91 @@ interface GeminiUsage {
 }
 
 interface GeminiResponse {
-  candidates?: Array<{ content?: { parts?: GeminiPart[] } }>;
+  candidates?: Array<{ content?: { parts?: GeminiPart[] }; finishReason?: string }>;
+  promptFeedback?: { blockReason?: string };
   usageMetadata?: GeminiUsage;
+}
+
+/**
+ * Output budget for Gemini. Larger than the shared {@link DEFAULT_MAX_TOKENS}
+ * because Gemini 2.5 "thinking" tokens count against `maxOutputTokens`: on a
+ * full review prompt the 4096 default was being consumed entirely by thinking,
+ * leaving zero tokens for the answer (an empty response → "no content").
+ */
+const GEMINI_MAX_OUTPUT_TOKENS = 8192;
+
+/** Cap thinking so the remainder of the budget is guaranteed for the answer. */
+const GEMINI_THINKING_BUDGET = 2048;
+const GEMINI_PRO_MIN_THINKING_BUDGET = 128;
+const GEMINI_FLASH_LITE_MIN_THINKING_BUDGET = 512;
+
+/**
+ * Reviewing vulnerability/secret code (SQL injection, leaked keys, …) is the job;
+ * don't let safety filters blank the response. Set all categories to BLOCK_NONE
+ * so a legitimate security review isn't silently refused (`finishReason: SAFETY`).
+ */
+const GEMINI_SAFETY_SETTINGS = [
+  { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+  { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+  { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+  { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+] as const;
+
+/** Gemini 2.5 uses token-budget thinking controls; older lines reject them. */
+function supportsThinkingBudget(model: string): boolean {
+  return /gemini-2\.5/i.test(model);
+}
+
+/** Gemini 3 and later use thinking levels rather than token budgets. */
+function supportsThinkingLevel(model: string): boolean {
+  return /gemini-[3-9]/i.test(model);
+}
+
+function validThinkingBudget(model: string, maxOutputTokens: number): number | undefined {
+  const budget = Math.min(GEMINI_THINKING_BUDGET, Math.max(maxOutputTokens - 1, 0));
+  if (/gemini-2\.5-pro/i.test(model)) {
+    return budget >= GEMINI_PRO_MIN_THINKING_BUDGET ? budget : undefined;
+  }
+  if (/gemini-2\.5-flash-lite/i.test(model)) {
+    return budget >= GEMINI_FLASH_LITE_MIN_THINKING_BUDGET ? budget : 0;
+  }
+  return budget;
+}
+
+/**
+ * Build `generationConfig` shared by the text and tool paths: a larger output
+ * budget plus a bounded thinking budget on models that support it.
+ */
+function buildGenerationConfig(
+  model: string,
+  maxTokens: number | undefined,
+  temperature: number | undefined
+): Record<string, unknown> {
+  const maxOutputTokens = maxTokens ?? GEMINI_MAX_OUTPUT_TOKENS;
+  const generationConfig: Record<string, unknown> = {
+    maxOutputTokens,
+    ...(temperature !== undefined ? { temperature } : {})
+  };
+  if (supportsThinkingBudget(model)) {
+    const thinkingBudget = validThinkingBudget(model, maxOutputTokens);
+    if (thinkingBudget !== undefined) {
+      generationConfig.thinkingConfig = { thinkingBudget };
+    }
+  } else if (supportsThinkingLevel(model)) {
+    generationConfig.thinkingConfig = { thinkingLevel: "high" };
+  }
+  return generationConfig;
+}
+
+/** Build a diagnostic suffix from a response that yielded no usable text. */
+function noContentDetail(data: GeminiResponse): string {
+  const reason = data.candidates?.[0]?.finishReason;
+  const blocked = data.promptFeedback?.blockReason;
+  const parts = [
+    reason ? `finishReason: ${reason}` : "",
+    blocked ? `blockReason: ${blocked}` : ""
+  ].filter(Boolean);
+  return parts.length > 0 ? ` (${parts.join(", ")})` : "";
 }
 
 function endpoint(model: string): string {
@@ -140,10 +222,8 @@ async function completeGemini(
 ): Promise<CompletionResult> {
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text: request.prompt }] }],
-    generationConfig: {
-      maxOutputTokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
-      ...(request.temperature !== undefined ? { temperature: request.temperature } : {})
-    }
+    generationConfig: buildGenerationConfig(config.model, request.maxTokens, request.temperature),
+    safetySettings: GEMINI_SAFETY_SETTINGS
   };
 
   if (request.system) {
@@ -171,7 +251,9 @@ async function completeGemini(
     ?.map((part) => part.text ?? "")
     .join("");
   if (!text) {
-    throw new Error("Gemini API returned no content");
+    // Surface the reason (e.g. MAX_TOKENS from thinking, or SAFETY) instead of a
+    // generic message, so a degraded run is diagnosable rather than mysterious.
+    throw new Error(`Gemini API returned no content${noContentDetail(data)}`);
   }
 
   return {
@@ -198,10 +280,8 @@ async function completeGeminiTools(
         }))
       }
     ],
-    generationConfig: {
-      maxOutputTokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
-      ...(request.temperature !== undefined ? { temperature: request.temperature } : {})
-    }
+    generationConfig: buildGenerationConfig(config.model, request.maxTokens, request.temperature),
+    safetySettings: GEMINI_SAFETY_SETTINGS
   };
 
   if (request.system) {
