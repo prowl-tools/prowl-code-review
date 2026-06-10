@@ -1,0 +1,4 @@
+{
+  "description": "Pure local variable rename; behavior is unchanged.",
+  "kind": "clean"
+}
