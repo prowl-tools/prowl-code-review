@@ -4,6 +4,16 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Gemini "returned no content" failures (`src/providers/gemini.ts`, toward backlog #17): the default
+  `maxOutputTokens` was 4096, but Gemini 2.5 "thinking" tokens count against that budget — on a full
+  review prompt thinking consumed it entirely, leaving no answer and failing the specialist passes
+  (the recurring degraded reviews on recent PRs). Now sends a larger output budget (8192) plus a
+  bounded `thinkingConfig.thinkingBudget` on 2.5+ models (omitted on older ones that reject it), and
+  `BLOCK_NONE` safety settings so reviewing vulnerability/secret code isn't silently filtered. The
+  empty-content error now reports the actual `finishReason`/`blockReason` instead of a generic
+  message, so a degraded run is diagnosable. (Retry/backoff + cross-generation failback remain in #17.)
+
 ### Changed
 - Collapse the changed-files overview behind a `<details>` disclosure in the review summary
   (`src/review/walkthrough.ts`): the summary now shows just a file count, with the grouped

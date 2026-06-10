@@ -320,7 +320,7 @@ describe("gemini provider", () => {
     expect(methodOf(fn)).toBe("POST");
     expect(headersOf(fn)["x-goog-api-key"]).toBe("key");
     const body = bodyOf(fn);
-    expect((body.generationConfig as Json).maxOutputTokens).toBe(4096);
+    expect((body.generationConfig as Json).maxOutputTokens).toBe(8192);
     expect(body.systemInstruction).toEqual({ parts: [{ text: "guidelines" }] });
     expect(body.contents).toEqual([{ role: "user", parts: [{ text: "diff" }] }]);
     expect(result.text).toBe("review");
@@ -381,5 +381,35 @@ describe("gemini provider", () => {
   it("throws when a successful response contains no text content", async () => {
     mockFetch({ candidates: [{ content: { parts: [{}] } }] });
     await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/Gemini API returned no content/);
+  });
+
+  it("surfaces finishReason in the no-content error (the thinking-exhaustion case)", async () => {
+    mockFetch({ candidates: [{ finishReason: "MAX_TOKENS", content: { parts: [{}] } }] });
+    await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(
+      /no content \(finishReason: MAX_TOKENS\)/
+    );
+  });
+
+  it("surfaces a prompt blockReason in the no-content error (the safety case)", async () => {
+    mockFetch({ promptFeedback: { blockReason: "SAFETY" }, candidates: [] });
+    await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/no content \(blockReason: SAFETY\)/);
+  });
+
+  it("always sends BLOCK_NONE safety settings", async () => {
+    const fn = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    await complete({ prompt: "diff" }, config);
+    const settings = bodyOf(fn).safetySettings as Array<Json>;
+    expect(settings).toHaveLength(4);
+    expect(settings.every((s) => s.threshold === "BLOCK_NONE")).toBe(true);
+  });
+
+  it("caps the thinking budget on 2.5+ models and omits it on older ones", async () => {
+    const fn25 = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    await complete({ prompt: "diff" }, { provider: "gemini", model: "gemini-2.5-pro", apiKey: "key" });
+    expect((bodyOf(fn25).generationConfig as Json).thinkingConfig).toEqual({ thinkingBudget: 2048 });
+
+    const fnOld = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    await complete({ prompt: "diff" }, { provider: "gemini", model: "gemini-1.5-pro", apiKey: "key" });
+    expect((bodyOf(fnOld).generationConfig as Json).thinkingConfig).toBeUndefined();
   });
 });
