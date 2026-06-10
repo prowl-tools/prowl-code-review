@@ -148,6 +148,13 @@ function validateExpectedFilesVisible(
   }
 }
 
+/** Reject cases where guards removed every file before review. */
+function validateReviewableDiff(files: DiffFile[]): void {
+  if (files.length === 0) {
+    throw new Error("Invalid benchmark diff: no reviewable files remained after guards.");
+  }
+}
+
 /** Run the full benchmark and return a scored, stamped report. */
 export async function runBenchmark(
   cases: BenchmarkCase[],
@@ -175,6 +182,7 @@ export async function runBenchmark(
         ...safeDiff.skipped,
         ...guarded.skipped
       ]);
+      validateReviewableDiff(guarded.files);
       const rendered = renderGuardedDiff(guarded.files);
       const diff = redactSecrets(rendered).text;
       const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;

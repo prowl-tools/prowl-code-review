@@ -334,6 +334,47 @@ rename to config/example.txt
     expect(input.diff).not.toContain("### b.ts");
   });
 
+  it("marks cases errored when guards omit every reviewable file", async () => {
+    const cases = [
+      {
+        id: "sensitive-clean",
+        description: "d",
+        kind: "clean" as const,
+        diff: [
+          "diff --git a/.env b/.env",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b/.env",
+          "@@ -0,0 +1 @@",
+          "+API_KEY=AKIAIOSFODNN7EXAMPLE"
+        ].join("\n"),
+        expected: []
+      },
+      {
+        id: "limited-clean",
+        description: "d",
+        kind: "clean" as const,
+        diff: [
+          "diff --git a/a.ts b/a.ts",
+          "--- a/a.ts",
+          "+++ b/a.ts",
+          "@@ -1 +1,2 @@",
+          " const a = 1;",
+          "+a();"
+        ].join("\n"),
+        expected: []
+      }
+    ];
+    const review = fakeReview(() => []);
+    const report = await runBenchmark(cases, { config, runReview: review, diffLimits: { maxFiles: 0 } });
+
+    expect(review).not.toHaveBeenCalled();
+    expect(report.errored).toBe(2);
+    expect(report.cases[0].error).toContain("no reviewable files");
+    expect(report.cases[1].error).toContain("no reviewable files");
+    expect(report.metrics.cleanCases).toBe(0); // excluded
+  });
+
   it("marks cases errored when expected bug files are omitted by guards", async () => {
     const cases = [
       {
