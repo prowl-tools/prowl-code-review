@@ -52,6 +52,10 @@ export interface ReviewPullRequestOptions {
   diffLimits?: DiffLimits;
   contextLimits?: RetrievalLimits;
   minSeverity?: Severity;
+  /** Drop non-critical findings below this confidence (default 0.5, #55). */
+  minConfidence?: number;
+  /** Cap the number of findings surfaced (default 25, #55). */
+  maxFindings?: number;
   guidelines?: string;
   event?: ReviewEvent;
   /** Skip agentic cross-file context retrieval (e.g. fork PRs / cost control). */
@@ -97,6 +101,22 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
       truncateNote(`Review pass "${pass.specialist}" failed: ${pass.error ?? "unknown error"}`)
     )
   ];
+}
+
+/** Surface what the high-signal defaults hid, so suppression isn't silent (#55). */
+function judgeNotes(reviewResult: ReviewResult): string[] {
+  const notes: string[] = [];
+  const { belowThreshold, belowConfidence, capped } = reviewResult.judge;
+  if (belowThreshold > 0) {
+    notes.push(`Hid ${belowThreshold} finding(s) below the severity floor.`);
+  }
+  if (belowConfidence > 0) {
+    notes.push(`Hid ${belowConfidence} low-confidence finding(s) below the confidence floor.`);
+  }
+  if (capped > 0) {
+    notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
+  }
+  return notes;
 }
 
 /** Treat both sides of a rename as sensitive-path evidence. */
@@ -168,14 +188,24 @@ export async function reviewPullRequest(
 
   const reviewResult = await review(
     { diff: diffText, context, guidelines: options.guidelines },
-    { config, minSeverity: options.minSeverity }
+    {
+      config,
+      minSeverity: options.minSeverity,
+      minConfidence: options.minConfidence,
+      maxFindings: options.maxFindings
+    }
   );
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
     files: reviewFiles,
     skipped,
-    notes: [...redactionNotes, ...contextNotes, ...reviewPassNotes(reviewResult)]
+    notes: [
+      ...redactionNotes,
+      ...contextNotes,
+      ...judgeNotes(reviewResult),
+      ...reviewPassNotes(reviewResult)
+    ]
   });
 
   const payload = buildReviewPayload({

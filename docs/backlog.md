@@ -156,6 +156,7 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 54. **Review comment presentation polish (visual design)**
     As a developer reading a review, I want the comment to look premium and scannable (CodeRabbit/Greptile-grade), so that it's pleasant rather than a flat wall of text.
     - Acceptance: use **collapsible `<details>`** for long/secondary sections (changed-files, review notes) so the summary stays short by default.
+    - Acceptance: **condense the changed-files overview** — a count + a collapsed `<details>` (or a tight table), never a bullet-per-file wall (the current 15-file list reads as noise); when there are few/no findings, the whole comment stays short and skimmable rather than a long scroll.
     - Acceptance: use GitHub **alert blocks** (`> [!NOTE]` / `> [!WARNING]` / `> [!CAUTION]`) for impact + review-notes instead of plain emoji lines; render findings as a compact **table** (severity badge · location · title) rather than a flat list.
     - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
     - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
