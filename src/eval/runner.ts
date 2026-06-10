@@ -116,6 +116,16 @@ function validateParsedBenchmarkDiff(files: DiffFile[]): void {
         .join(", ")}.`
     );
   }
+  const withEmptyHunks = files.filter(
+    (file) => !file.binary && file.hunks.some((hunk) => hunk.lines.length === 0)
+  );
+  if (withEmptyHunks.length > 0) {
+    throw new Error(
+      `Invalid benchmark diff: empty textual hunks were parsed for ${withEmptyHunks
+        .map((file) => file.path)
+        .join(", ")}.`
+    );
+  }
 }
 
 /** Ensure every expected defect remains visible after production-style guards. */
