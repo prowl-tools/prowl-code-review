@@ -1,0 +1,13 @@
+{
+  "description": "Off-by-one loop bound reads one element past the requested count.",
+  "kind": "bug",
+  "expected": [
+    {
+      "file": "src/util/sum.ts",
+      "line": 4,
+      "category": "correctness",
+      "severity": "major",
+      "note": "Loop uses `<= n`, so it iterates n+1 times and reads values[n] (out of bounds)."
+    }
+  ]
+}
