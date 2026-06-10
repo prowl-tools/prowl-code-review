@@ -20,10 +20,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    - Acceptance: retry a pass once on unparseable/empty output before giving up (today `parseFindings` just drops invalid entries).
    - Acceptance: use providers' native structured-output / JSON mode where available, instead of prompt-instructed JSON.
 
-8. **False-positive verification pass**
-   As a developer, I want low-confidence findings re-checked skeptically before posting, so that the review is high-signal and not naggy.
-   - Acceptance: findings below a confidence threshold get a second "is this actually a bug?" pass that can demote/drop them; severity threshold + dedup applied before posting; counts of dropped findings logged.
-
 12. **Review state persistence strategy**
     As a maintainer, I want a defined place to persist per-PR state in a stateless Action, so that incremental review, update-not-duplicate, and learnings actually work.
     - Acceptance: decide and implement a store for last-reviewed SHA, already-posted findings, and learnings (e.g. a hidden marker comment and/or a `.prowl-review/` artifact); documented and reused by #22/#21/#30.
