@@ -18,7 +18,7 @@ import {
 import { DEFAULT_VERIFY_CONFIDENCE } from "../review/verify.js";
 import { parseDiff } from "../review/parse-diff.js";
 import { applyDiffLimits } from "../review/size-guards.js";
-import type { DiffFile, DiffLimits } from "../review/diff-types.js";
+import type { DiffFile, DiffLimits, SkippedFile } from "../review/diff-types.js";
 import { renderGuardedDiff } from "../review/render-diff.js";
 import { redactSecrets } from "../review/redact.js";
 import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
@@ -118,6 +118,26 @@ function validateParsedBenchmarkDiff(files: DiffFile[]): void {
   }
 }
 
+/** Ensure every expected defect remains visible after production-style guards. */
+function validateExpectedFilesVisible(
+  benchmarkCase: BenchmarkCase,
+  files: DiffFile[],
+  skipped: SkippedFile[]
+): void {
+  const visiblePaths = new Set(files.map((file) => file.path));
+  const skippedReasons = new Map(skipped.map((file) => [file.path, file.reason]));
+  const missing = [...new Set(benchmarkCase.expected.map((bug) => bug.file))]
+    .filter((path) => !visiblePaths.has(path))
+    .map((path) => {
+      const reason = skippedReasons.get(path);
+      return reason === undefined ? path : `${path} (${reason})`;
+    });
+
+  if (missing.length > 0) {
+    throw new Error(`Expected bug file omitted from review input: ${missing.join(", ")}`);
+  }
+}
+
 /** Run the full benchmark and return a scored, stamped report. */
 export async function runBenchmark(
   cases: BenchmarkCase[],
@@ -141,6 +161,10 @@ export async function runBenchmark(
       validateParsedBenchmarkDiff(parsed.files);
       const safeDiff = filterSensitiveDiffFiles(parsed.files);
       const guarded = applyDiffLimits({ files: safeDiff.files }, options.diffLimits);
+      validateExpectedFilesVisible(benchmarkCase, guarded.files, [
+        ...safeDiff.skipped,
+        ...guarded.skipped
+      ]);
       const rendered = renderGuardedDiff(guarded.files);
       const diff = redactSecrets(rendered).text;
       const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;
