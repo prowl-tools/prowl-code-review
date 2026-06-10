@@ -54,9 +54,14 @@ const GEMINI_SAFETY_SETTINGS = [
   { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
 ] as const;
 
-/** Gemini 2.5+ are thinking models; older lines reject an unknown `thinkingConfig`. */
-function supportsThinking(model: string): boolean {
-  return /gemini-(2\.5|[3-9])/i.test(model);
+/** Gemini 2.5 uses token-budget thinking controls; older lines reject them. */
+function supportsThinkingBudget(model: string): boolean {
+  return /gemini-2\.5/i.test(model);
+}
+
+/** Gemini 3 and later use thinking levels rather than token budgets. */
+function supportsThinkingLevel(model: string): boolean {
+  return /gemini-[3-9]/i.test(model);
 }
 
 /**
@@ -68,12 +73,17 @@ function buildGenerationConfig(
   maxTokens: number | undefined,
   temperature: number | undefined
 ): Record<string, unknown> {
+  const maxOutputTokens = maxTokens ?? GEMINI_MAX_OUTPUT_TOKENS;
   const generationConfig: Record<string, unknown> = {
-    maxOutputTokens: maxTokens ?? GEMINI_MAX_OUTPUT_TOKENS,
+    maxOutputTokens,
     ...(temperature !== undefined ? { temperature } : {})
   };
-  if (supportsThinking(model)) {
-    generationConfig.thinkingConfig = { thinkingBudget: GEMINI_THINKING_BUDGET };
+  if (supportsThinkingBudget(model)) {
+    generationConfig.thinkingConfig = {
+      thinkingBudget: Math.min(GEMINI_THINKING_BUDGET, Math.max(maxOutputTokens - 1, 0))
+    };
+  } else if (supportsThinkingLevel(model)) {
+    generationConfig.thinkingConfig = { thinkingLevel: "high" };
   }
   return generationConfig;
 }

@@ -153,6 +153,32 @@ describe("gemini completeWithTools", () => {
     expect(result.toolCalls).toEqual([{ id: "call_1", name: "read_file", input: { path: "a.ts" } }]);
   });
 
+  it("sends safety settings and bounded thinking config for tool requests", async () => {
+    const fn = mockFetch({
+      candidates: [
+        {
+          content: {
+            parts: [{ functionCall: { id: "call_1", name: "read_file", args: { path: "a.ts" } } }]
+          }
+        }
+      ]
+    });
+
+    await completeWithTools(
+      { messages: [{ role: "user", text: "go" }], tools: TOOLS, maxTokens: 128, temperature: 0.2 },
+      { provider: "gemini", model: "gemini-2.5-pro", apiKey: "key" }
+    );
+
+    const body = bodyOf(fn) as { generationConfig: Json; safetySettings: Array<Json> };
+    expect(body.generationConfig).toMatchObject({
+      maxOutputTokens: 128,
+      temperature: 0.2,
+      thinkingConfig: { thinkingBudget: 127 }
+    });
+    expect(body.safetySettings).toHaveLength(4);
+    expect(body.safetySettings.every((setting) => setting.threshold === "BLOCK_NONE")).toBe(true);
+  });
+
   it("echoes function-call ids in follow-up function responses", async () => {
     const fn = mockFetch({ candidates: [{ content: { parts: [{ text: "done" }] } }] });
     const messages: ToolMessage[] = [

@@ -403,10 +403,21 @@ describe("gemini provider", () => {
     expect(settings.every((s) => s.threshold === "BLOCK_NONE")).toBe(true);
   });
 
-  it("caps the thinking budget on 2.5+ models and omits it on older ones", async () => {
+  it("uses model-specific Gemini thinking controls", async () => {
     const fn25 = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
     await complete({ prompt: "diff" }, { provider: "gemini", model: "gemini-2.5-pro", apiKey: "key" });
     expect((bodyOf(fn25).generationConfig as Json).thinkingConfig).toEqual({ thinkingBudget: 2048 });
+
+    const fn25Small = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    await complete(
+      { prompt: "diff", maxTokens: 128 },
+      { provider: "gemini", model: "gemini-2.5-pro", apiKey: "key" }
+    );
+    expect((bodyOf(fn25Small).generationConfig as Json).thinkingConfig).toEqual({ thinkingBudget: 127 });
+
+    const fn3 = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
+    await complete({ prompt: "diff" }, { provider: "gemini", model: "gemini-3-pro", apiKey: "key" });
+    expect((bodyOf(fn3).generationConfig as Json).thinkingConfig).toEqual({ thinkingLevel: "high" });
 
     const fnOld = mockFetch({ candidates: [{ content: { parts: [{ text: "ok" }] } }] });
     await complete({ prompt: "diff" }, { provider: "gemini", model: "gemini-1.5-pro", apiKey: "key" });
