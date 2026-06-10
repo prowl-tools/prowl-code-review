@@ -81,6 +81,11 @@ function failedPassMessage(result: ReviewResult): string {
   return `All review specialist passes failed: ${failures.join("; ")}`;
 }
 
+/** Build a compact error message when the verification pass did not run cleanly. */
+function verificationFailureMessage(result: ReviewResult): string {
+  return `Review verification failed: ${result.verification.error ?? "unknown error"}`;
+}
+
 /** Fill in review defaults so report metadata fully describes the run. */
 function normalizeReviewSettings(review?: ReviewKnobs): EvalReviewSettings {
   return {
@@ -143,6 +148,10 @@ export async function runBenchmark(
       );
       if (allSpecialistPassesFailed(result)) {
         results.push(erroredCase(benchmarkCase.id, benchmarkCase.kind, failedPassMessage(result)));
+        continue;
+      }
+      if (!result.verification.ok) {
+        results.push(erroredCase(benchmarkCase.id, benchmarkCase.kind, verificationFailureMessage(result)));
         continue;
       }
       results.push(

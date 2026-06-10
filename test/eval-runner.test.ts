@@ -414,6 +414,49 @@ rename to config/example.txt
     expect(report.metrics.cleanCases).toBe(0); // excluded
   });
 
+  it("marks a case errored when verification fails", async () => {
+    const cases = [
+      {
+        id: "verify-failed",
+        description: "d",
+        kind: "bug" as const,
+        diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n x\n+y",
+        expected: [{ file: "a.ts", line: 2, note: "n" }]
+      }
+    ];
+    const review = vi.fn(async (): Promise<ReviewResult> => ({
+      findings: [
+        {
+          file: "a.ts",
+          line: 2,
+          severity: "major",
+          category: "correctness",
+          title: "t",
+          body: "b",
+          confidence: 0.6
+        }
+      ],
+      raw: [],
+      passes: [{ specialist: "correctness", findings: 1, ok: true }],
+      verification: {
+        verified: 1,
+        droppedFalsePositive: 0,
+        demoted: 0,
+        unverified: 1,
+        ok: false,
+        error: "verifier unavailable"
+      },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+
+    const report = await runBenchmark(cases, { config, runReview: review });
+    expect(report.errored).toBe(1);
+    expect(report.cases[0].errored).toBe(true);
+    expect(report.cases[0].error).toBe("Review verification failed: verifier unavailable");
+    expect(report.metrics.bugCases).toBe(0); // excluded
+  });
+
   it("forwards review knobs and completion to the review pass", async () => {
     const cases = [
       {
