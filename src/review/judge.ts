@@ -7,8 +7,8 @@ import {
 
 /**
  * Deterministic judge pass (backlog #6) + high-signal defaults (backlog #55):
- * consolidate the specialists' raw findings into one clean, ranked list — dedup
- * identical issues, drop low-severity/low-confidence noise, rank, and cap the
+ * consolidate the specialists' raw findings into one clean, ranked list: drop
+ * low-severity/low-confidence noise, dedup identical issues, rank, and cap the
  * volume — so the default review is useful, not noisy.
  *
  * The skeptical "is this actually a bug?" LLM verification is a separate pass
@@ -91,21 +91,35 @@ export interface JudgeResult {
   capped: number;
 }
 
-/** Run the full deterministic judge: dedupe → severity → confidence → rank → cap. */
-export function judgeFindings(findings: Finding[], options: JudgeOptions = {}): JudgeResult {
-  const deduped = dedupeFindings(findings);
-  const duplicatesRemoved = findings.length - deduped.length;
+function normalizeMaxFindings(value: number | undefined, available: number): number {
+  const requested = value ?? DEFAULT_MAX_FINDINGS;
+  if (Number.isNaN(requested)) {
+    return Math.min(available, DEFAULT_MAX_FINDINGS);
+  }
+  if (requested === Infinity) {
+    return available;
+  }
+  if (requested === -Infinity) {
+    return 0;
+  }
+  return Math.min(available, Math.max(0, Math.floor(requested)));
+}
 
+/** Run the full deterministic judge: severity → confidence → dedupe → rank → cap. */
+export function judgeFindings(findings: Finding[], options: JudgeOptions = {}): JudgeResult {
   const minSeverity = options.minSeverity ?? DEFAULT_MIN_SEVERITY;
-  const afterSeverity = filterBySeverity(deduped, minSeverity);
-  const belowThreshold = deduped.length - afterSeverity.length;
+  const afterSeverity = filterBySeverity(findings, minSeverity);
+  const belowThreshold = findings.length - afterSeverity.length;
 
   const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
   const afterConfidence = filterByConfidence(afterSeverity, minConfidence);
   const belowConfidence = afterSeverity.length - afterConfidence.length;
 
-  const ranked = rankFindings(afterConfidence);
-  const maxFindings = options.maxFindings ?? DEFAULT_MAX_FINDINGS;
+  const deduped = dedupeFindings(afterConfidence);
+  const duplicatesRemoved = afterConfidence.length - deduped.length;
+
+  const ranked = rankFindings(deduped);
+  const maxFindings = normalizeMaxFindings(options.maxFindings, ranked.length);
   const capped = Math.max(0, ranked.length - maxFindings);
 
   return {

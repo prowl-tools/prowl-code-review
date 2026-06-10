@@ -118,6 +118,21 @@ describe("judgeFindings high-signal defaults (#55)", () => {
     expect(result.findings.map((f) => f.file)).toEqual(["d.ts", "c.ts"]);
   });
 
+  it("preserves high-confidence duplicates before choosing a preferred finding", () => {
+    const result = judgeFindings(
+      [
+        finding({ severity: "major", confidence: 0.4, title: "low-confidence-major" }),
+        finding({ severity: "minor", confidence: 0.9, title: "high-confidence-minor" })
+      ],
+      { minSeverity: "minor", minConfidence: 0.5 }
+    );
+
+    expect(result.belowConfidence).toBe(1);
+    expect(result.duplicatesRemoved).toBe(0);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe("high-confidence-minor");
+  });
+
   it("caps the number of findings and reports the overflow", () => {
     const many = Array.from({ length: DEFAULT_MAX_FINDINGS + 5 }, (_, i) =>
       finding({ file: `f${i}.ts`, severity: "major", confidence: 0.9 })
@@ -125,5 +140,57 @@ describe("judgeFindings high-signal defaults (#55)", () => {
     const result = judgeFindings(many);
     expect(result.findings).toHaveLength(DEFAULT_MAX_FINDINGS);
     expect(result.capped).toBe(5);
+  });
+
+  it("allows maxFindings to suppress all ranked findings", () => {
+    const findings = [
+      finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "b.ts", severity: "major", confidence: 0.9 })
+    ];
+    const result = judgeFindings(findings, { maxFindings: 0 });
+
+    expect(result.findings).toEqual([]);
+    expect(result.capped).toBe(2);
+  });
+
+  it("clamps negative maxFindings before slicing", () => {
+    const findings = [
+      finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "b.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "c.ts", severity: "major", confidence: 0.9 })
+    ];
+    const result = judgeFindings(findings, { maxFindings: -5 });
+
+    expect(result.findings).toEqual([]);
+    expect(result.capped).toBe(3);
+  });
+
+  it("returns all findings when the cap is higher than the ranked count", () => {
+    const findings = [
+      finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+      finding({ file: "b.ts", severity: "minor", confidence: 0.9 })
+    ];
+    const result = judgeFindings(findings, { maxFindings: 5 });
+
+    expect(result.findings).toHaveLength(2);
+    expect(result.capped).toBe(0);
+  });
+
+  it("applies severity and confidence filters before capping", () => {
+    const result = judgeFindings(
+      [
+        finding({ file: "a.ts", severity: "major", confidence: 0.9 }),
+        finding({ file: "b.ts", severity: "minor", confidence: 0.9 }),
+        finding({ file: "c.ts", severity: "major", confidence: 0.2 }),
+        finding({ file: "d.ts", severity: "info", confidence: 0.9 })
+      ],
+      { maxFindings: 1 }
+    );
+
+    expect(result.belowThreshold).toBe(1);
+    expect(result.belowConfidence).toBe(1);
+    expect(result.findings).toHaveLength(1);
+    expect(result.capped).toBe(1);
+    expect(result.findings[0].file).toBe("a.ts");
   });
 });

@@ -214,13 +214,15 @@ new file mode 100644
     const deps = makeDeps();
     deps.runReview.mockResolvedValue(
       reviewResult([finding()], {
-        judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 2, capped: 3 }
+        judge: { duplicatesRemoved: 0, belowThreshold: 1, belowConfidence: 2, capped: 3 }
       })
     );
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
     // Note text is markdown-escaped in the walkthrough, so match escape-safe substrings.
+    expect(result.payload.body).toContain("Hid 1 finding");
+    expect(result.payload.body).toContain("severity floor");
     expect(result.payload.body).toContain("Hid 2 low");
     expect(result.payload.body).toContain("3 additional lower");
   });
