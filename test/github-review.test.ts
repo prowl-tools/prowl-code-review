@@ -129,9 +129,11 @@ describe("submitReview", () => {
     expect(review.event).toBe("COMMENT");
     expect(review).toEqual(
       expect.objectContaining({
-        body: expect.stringContaining("summary")
+        body: "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
       })
     );
+    expect(review.body).not.toContain(REVIEW_MARKER);
+    expect(review.body).not.toContain("prowl-review:state");
     expect(review.comments).toHaveLength(1);
     expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
     expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
@@ -258,6 +260,32 @@ describe("submitReview", () => {
       })
     );
     expect(createReview.mock.calls[0][0]).not.toHaveProperty("comments");
+    expect(createComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("submits inline comments as COMMENT before a separate non-comment review event", async () => {
+    const { octokit, createComment, createReview } = mockOctokit([]);
+    await submitReview(
+      octokit,
+      ref,
+      payload({ event: "REQUEST_CHANGES", comments: [comment()] }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(2);
+    const inlineReview = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
+    expect(inlineReview.event).toBe("COMMENT");
+    expect(inlineReview.comments).toHaveLength(1);
+    expect(inlineReview.body).not.toContain(REVIEW_MARKER);
+
+    const eventReview = createReview.mock.calls[1][0] as { event?: string; body?: string; comments?: unknown[] };
+    expect(eventReview).toEqual(
+      expect.objectContaining({
+        event: "REQUEST_CHANGES",
+        body: expect.stringContaining("summary")
+      })
+    );
+    expect(eventReview).not.toHaveProperty("comments");
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
