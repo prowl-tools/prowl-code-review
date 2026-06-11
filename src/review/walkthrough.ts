@@ -32,6 +32,8 @@ const IMPACT_BADGE: Record<Impact, string> = {
   low: "🟢 Low"
 };
 
+type LineDelta = { additions: number; deletions: number };
+
 export interface WalkthroughInput {
   /** Consolidated, ranked findings from the judge (#6). */
   findings: Finding[];
@@ -158,7 +160,7 @@ function fencedCodeBlock(language: string, body: string): string {
 }
 
 /** Count added and deleted text lines for one parsed diff file. */
-function lineDelta(file: DiffFile): { additions: number; deletions: number } {
+function lineDelta(file: DiffFile): LineDelta {
   let additions = 0;
   let deletions = 0;
   for (const hunk of file.hunks) {
@@ -173,10 +175,21 @@ function lineDelta(file: DiffFile): { additions: number; deletions: number } {
   return { additions, deletions };
 }
 
+/** Reuse diff-line counts when several summary sections need the same file delta. */
+function lineDeltaFor(file: DiffFile, deltas?: Map<DiffFile, LineDelta>): LineDelta {
+  const cached = deltas?.get(file);
+  if (cached) {
+    return cached;
+  }
+  const delta = lineDelta(file);
+  deltas?.set(file, delta);
+  return delta;
+}
+
 /** Count all changed text lines across parsed diff files. */
-function totalChangedLines(files: DiffFile[]): number {
+function totalChangedLines(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>): number {
   return files.reduce((sum, file) => {
-    const { additions, deletions } = lineDelta(file);
+    const { additions, deletions } = lineDeltaFor(file, deltas);
     return sum + additions + deletions;
   }, 0);
 }
@@ -235,7 +248,7 @@ function topDir(path: string): string {
  * file inventory stays out of the summary's main flow — a count in the summary,
  * the full list one click away (backlog #54).
  */
-function changedFilesSection(files: DiffFile[]): string {
+function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>): string {
   if (files.length === 0) {
     return "<details>\n<summary><b>Changed files (0)</b></summary>\n\n_None._\n\n</details>";
   }
@@ -252,7 +265,7 @@ function changedFilesSection(files: DiffFile[]): string {
     const label = dir === "(root)" ? "(root)/" : escapeMarkdownText(`${dir}/`);
     body.push(`**${label}**`);
     for (const file of groupFiles) {
-      const { additions, deletions } = lineDelta(file);
+      const { additions, deletions } = lineDeltaFor(file, deltas);
       const delta = file.binary
         ? "binary"
         : [additions ? `+${additions}` : "", deletions ? `−${deletions}` : ""].filter(Boolean).join(" ") || "no line changes";
@@ -325,7 +338,7 @@ function escapeReviewNote(note: string): string {
   return note
     .split(/\r\n|\r|\n/)
     .map((line) => escapeMarkdownParagraph(line))
-    .join("\\\\n");
+    .join(" ");
 }
 
 /** Render reviewer-visible operational notes without allowing Markdown injection. */
@@ -389,7 +402,8 @@ function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: numb
  * `degraded` (a clear "review incomplete" — never disguised as "Findings: none").
  */
 export function buildWalkthrough(input: WalkthroughInput): string {
-  const changedLines = totalChangedLines(input.files);
+  const lineDeltas = new Map<DiffFile, LineDelta>();
+  const changedLines = totalChangedLines(input.files, lineDeltas);
   const impact = input.impact ?? deriveImpact(input.findings, input.files, changedLines);
   const effort = input.effort ?? deriveEffort(input.files, changedLines);
   const state = reviewCommentState(input);
@@ -400,7 +414,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
     sections.push(
       `✅ No issues found ${CLEAN_EMOJI}`,
       reviewInfoDetails(input, impact, effort),
-      changedFilesSection(input.files)
+      changedFilesSection(input.files, lineDeltas)
     );
   } else if (state === "degraded") {
     const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
@@ -408,13 +422,13 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       failed > 0 && input.coverage
         ? `⚠️ **Review incomplete** — ${failed}/${input.coverage.total} specialist passes failed; coverage degraded`
         : "⚠️ **Review incomplete** — coverage degraded";
-    sections.push(header, notesSection(input.notes), changedFilesSection(input.files));
+    sections.push(header, notesSection(input.notes), changedFilesSection(input.files, lineDeltas));
   } else {
     const counts = severityCounts(input.findings);
     sections.push(
       summarySection(input.summary),
       `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
-      changedFilesSection(input.files),
+      changedFilesSection(input.files, lineDeltas),
       findingsSection(input.findings),
       notesSection(input.notes)
     );
