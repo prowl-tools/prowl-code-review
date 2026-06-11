@@ -5,7 +5,7 @@ import {
   type PullRequestMeta,
   type PullRequestRef
 } from "./github/diff.js";
-import { submitReview as defaultSubmitReview } from "./github/review.js";
+import { submitReview as defaultSubmitReview, type SubmitReviewOptions } from "./github/review.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
 import type { DiffLimits, SkippedFile } from "./review/diff-types.js";
@@ -42,7 +42,7 @@ export interface PipelineDeps {
     octokit: OctokitLike,
     ref: PullRequestRef,
     payload: ReviewPayload,
-    commitId?: string
+    options?: SubmitReviewOptions
   ) => Promise<void>;
 }
 
@@ -256,7 +256,7 @@ export async function reviewPullRequest(
 
   let posted = false;
   if (!options.dryRun) {
-    await submit(octokit, ref, payload, meta.headSha);
+    await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
     posted = true;
   }
 
