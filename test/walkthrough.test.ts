@@ -166,12 +166,14 @@ describe("buildWalkthrough", () => {
     const md = buildWalkthrough({
       findings: [makeFinding("major")],
       files,
-      notes: ["Reached limit @org/team\n### injected"]
+      notes: ["Reached limit @org/team\n<!-- <details>spoof</details> -->\n### injected"]
     });
 
     expect(md).toContain("Review notes");
-    expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
+    expect(md).toContain("Reached limit &#64;org/team\\\\n\\<\\!-- \\<details\\>spoof\\</details\\> --\\>\\\\n\\#\\#\\# injected");
     expect(md).not.toContain("@org/team");
+    expect(md).not.toContain("<!-- <details>spoof</details> -->");
+    expect(md).not.toContain("<details>spoof</details>");
     expect(md).not.toContain("\n### injected");
   });
 
@@ -213,13 +215,14 @@ describe("buildWalkthrough", () => {
         findings: [],
         files,
         coverage: { passed: 4, total: 4 },
-        notes: ["Redacted 1 secret(s) from src/a.ts", "Reached limit @org/team\n### injected"]
+        notes: ["Redacted 1 secret(s) from src/a.ts", "Reached limit @org/team\n<!-- hidden -->\n### injected"]
       });
       expect(md).toContain("✅ No issues found");
       expect(md).toContain("Redacted 1 secret");
-      expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
+      expect(md).toContain("Reached limit &#64;org/team\\\\n\\<\\!-- hidden --\\>\\\\n\\#\\#\\# injected");
       expect(md).not.toContain("⚠️ **Review notes**");
       expect(md).not.toContain("@org/team");
+      expect(md).not.toContain("<!-- hidden -->");
       expect(md).not.toContain("\n### injected");
     });
 

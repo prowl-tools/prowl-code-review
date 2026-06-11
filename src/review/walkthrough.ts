@@ -320,6 +320,14 @@ function summarySection(summary: string | undefined): string {
   return trimmed ? escapeMarkdownParagraph(trimmed) : "_Automated review of the changes in this pull request._";
 }
 
+/** Escape multi-line operational notes line-by-line before putting them in Markdown lists. */
+function escapeReviewNote(note: string): string {
+  return note
+    .split(/\r\n|\r|\n/)
+    .map((line) => escapeMarkdownParagraph(line))
+    .join("\\\\n");
+}
+
 /** Render reviewer-visible operational notes without allowing Markdown injection. */
 function notesSection(notes: string[] | undefined): string {
   const visible = notes?.map((note) => note.trim()).filter(Boolean) ?? [];
@@ -328,7 +336,7 @@ function notesSection(notes: string[] | undefined): string {
   }
   return [
     "> ⚠️ **Review notes**",
-    ...visible.map((note) => `> - ${escapeMarkdownParagraph(note)}`)
+    ...visible.map((note) => `> - ${escapeReviewNote(note)}`)
   ].join("\n");
 }
 
@@ -370,7 +378,7 @@ function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: numb
   }`;
   const lines = [header];
   for (const note of input.notes?.map((n) => n.trim()).filter(Boolean) ?? []) {
-    lines.push(`- ${escapeMarkdownParagraph(note)}`);
+    lines.push(`- ${escapeReviewNote(note)}`);
   }
   return ["<details>", "<summary><b>Review info</b></summary>", "", lines.join("\n"), "", "</details>"].join("\n");
 }
