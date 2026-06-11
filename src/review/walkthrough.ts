@@ -191,25 +191,28 @@ export function severityCounts(findings: Finding[]): Record<Severity, number> {
 }
 
 /** Derive PR impact from the worst finding severity and change size. */
-export function deriveImpact(findings: Finding[], files: DiffFile[]): Impact {
+export function deriveImpact(
+  findings: Finding[],
+  files: DiffFile[],
+  changedLines = totalChangedLines(files)
+): Impact {
   if (findings.some((f) => f.severity === "critical")) {
     return "high";
   }
-  if (findings.some((f) => f.severity === "major") || totalChangedLines(files) > 400) {
+  if (findings.some((f) => f.severity === "major") || changedLines > 400) {
     return "medium";
   }
   return "low";
 }
 
 /** Derive a 1–5 estimated-effort score from change size and file count. */
-export function deriveEffort(files: DiffFile[]): number {
-  const lines = totalChangedLines(files);
+export function deriveEffort(files: DiffFile[], changedLines = totalChangedLines(files)): number {
   const count = files.length;
   let score = 1;
-  if (lines > 20 || count > 2) score = 2;
-  if (lines > 80 || count > 5) score = 3;
-  if (lines > 250 || count > 15) score = 4;
-  if (lines > 600 || count > 40) score = 5;
+  if (changedLines > 20 || count > 2) score = 2;
+  if (changedLines > 80 || count > 5) score = 3;
+  if (changedLines > 250 || count > 15) score = 4;
+  if (changedLines > 600 || count > 40) score = 5;
   return score;
 }
 
@@ -375,8 +378,9 @@ function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: numb
  * `degraded` (a clear "review incomplete" — never disguised as "Findings: none").
  */
 export function buildWalkthrough(input: WalkthroughInput): string {
-  const impact = input.impact ?? deriveImpact(input.findings, input.files);
-  const effort = input.effort ?? deriveEffort(input.files);
+  const changedLines = totalChangedLines(input.files);
+  const impact = input.impact ?? deriveImpact(input.findings, input.files, changedLines);
+  const effort = input.effort ?? deriveEffort(input.files, changedLines);
   const state = reviewCommentState(input);
 
   const sections: string[] = [REVIEW_MARKER, "## prowl-review"];

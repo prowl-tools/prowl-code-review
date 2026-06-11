@@ -244,6 +244,15 @@ rename to config/example.txt
 @@ -1 +1 @@
 -DATABASE_URL=postgres://user:pass@host/db
 +DATABASE_URL=postgres://user:pass@host/db
+diff --git a/config/public.txt b/secrets/prod.txt
+similarity index 72%
+rename from config/public.txt
+rename to secrets/prod.txt
+--- a/config/public.txt
++++ b/secrets/prod.txt
+@@ -1 +1 @@
+-PUBLIC_VALUE=example
++PUBLIC_VALUE=example
 `;
     deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
 
@@ -257,11 +266,14 @@ rename to config/example.txt
     // .env is kept out of the review entirely and reported.
     expect(result.skipped).toContainEqual({ path: ".env", reason: "sensitive" });
     expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
+    expect(result.skipped).toContainEqual({ path: "secrets/prod.txt", reason: "sensitive" });
     expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
     expect(diffInput).not.toContain("config/example.txt");
+    expect(diffInput).not.toContain("secrets/prod.txt");
+    expect(diffInput).not.toContain("config/public.txt");
     expect(diffInput).not.toContain("postgres://user:pass@host/db");
     expect(diffInput).toContain("src/a.ts");
     expect(diffInput).not.toContain("AKIAIOSFODNN7EXAMPLE");

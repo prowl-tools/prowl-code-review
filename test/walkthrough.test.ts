@@ -208,16 +208,19 @@ describe("buildWalkthrough", () => {
       expect(md).not.toContain("Findings:");
     });
 
-    it("folds benign notes into the clean state's review info, not a warning callout", () => {
+    it("folds clean-state notes safely into review info, not a warning callout", () => {
       const md = buildWalkthrough({
         findings: [],
         files,
         coverage: { passed: 4, total: 4 },
-        notes: ["Redacted 1 secret(s) from src/a.ts"]
+        notes: ["Redacted 1 secret(s) from src/a.ts", "Reached limit @org/team\n### injected"]
       });
       expect(md).toContain("✅ No issues found");
       expect(md).toContain("Redacted 1 secret");
+      expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
       expect(md).not.toContain("⚠️ **Review notes**");
+      expect(md).not.toContain("@org/team");
+      expect(md).not.toContain("\n### injected");
     });
 
     it("renders a degraded state that never looks like a clean pass", () => {
@@ -234,6 +237,18 @@ describe("buildWalkthrough", () => {
       expect(md).not.toContain("No issues found");
       expect(md).not.toContain("Findings: none");
       expect(md).not.toContain("✅");
+    });
+
+    it("renders a generic degraded header when passes are ok but degraded is true", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        degraded: true,
+        coverage: { passed: 4, total: 4 }
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — coverage degraded");
+      expect(md).not.toContain("specialist passes failed");
+      expect(md).not.toContain("No issues found");
     });
 
     it("shows the full findings report even when also degraded", () => {
