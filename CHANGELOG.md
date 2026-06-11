@@ -32,6 +32,16 @@ All notable changes to Prowl Review will be documented in this file.
   review. (backlog #54)
 
 ### Added
+- Review state persistence + update-not-duplicate (`src/review/state.ts`, `src/github/review.ts`,
+  backlog #12 + #22 core): the summary is now a single top-level PR comment carrying a hidden,
+  versioned state marker (last-reviewed SHA + posted-finding fingerprints). On a re-run prowl-review
+  finds that comment by its marker and **edits it in place** instead of stacking a new review every
+  push, and posts only **net-new** inline findings (deduped against fingerprints already posted on a
+  prior push; fingerprints are line-independent so a finding that drifts a few lines isn't reposted).
+  The publish decision (`planPublish`) is pure and unit-tested. Deferred under #22/#23: GraphQL
+  `resolveReviewThread` for outdated threads, human-reply handling, and incremental delta-review.
+  One-time transition note: summaries posted before this change were review bodies, not issue
+  comments, so the first run after upgrade creates a fresh summary comment (old ones are left as-is).
 - Expanded the quality benchmark (`bench/`, backlog #13): added a real confirmed bug from a prior
   PR (secret-redaction regex truncating URL/connection-string values, #15) plus coverage the seed
   set lacked — a `tests` case (a test that asserts nothing), a second `correctness` case (a dropped

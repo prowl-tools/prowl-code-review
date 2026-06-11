@@ -20,10 +20,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    - Acceptance: retry a pass once on unparseable/empty output before giving up (today `parseFindings` just drops invalid entries).
    - Acceptance: use providers' native structured-output / JSON mode where available, instead of prompt-instructed JSON.
 
-12. **Review state persistence strategy**
-    As a maintainer, I want a defined place to persist per-PR state in a stateless Action, so that incremental review, update-not-duplicate, and learnings actually work.
-    - Acceptance: decide and implement a store for last-reviewed SHA, already-posted findings, and learnings (e.g. a hidden marker comment and/or a `.prowl-review/` artifact); documented and reused by #22/#21/#30.
-
 14. **Security hardening: prompt-injection resistance + agent tool sandboxing**
     As a maintainer, I want the reviewer hardened against malicious PR content, so that an untrusted diff/comment can't hijack the review, its retrieval tools, or its commands.
     - Acceptance: all PR content (diff, code, comments, titles, branch names) is treated as untrusted **data, not instructions**; the system prompt enforces this; detected injection attempts are ignored and may be surfaced as a finding.
@@ -61,9 +57,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer who pushes often, I want superseded reviews cancelled, so that rapid re-pushes don't spawn overlapping reviews that race to comment.
     - Acceptance: the Action/workflow uses a `concurrency` group keyed to the PR with `cancel-in-progress`; in-flight reviews for an outdated SHA are cancelled cleanly.
 
-22. **Update-not-duplicate + resolve outdated threads**
-    As a developer, I want re-runs to update the existing review instead of stacking new ones, so that the PR stays clean across pushes.
-    - Acceptance: find the prior prowl-review summary by a prowl-specific marker or stored review id (with author as a secondary check only), then update it via REST `PUT /repos/{owner}/{repo}/pulls/{pull_number}/reviews/{review_id}` or the matching GraphQL mutation; post only net-new inline findings; mark fixed/outdated threads resolved via GraphQL `resolveReviewThread`.
+22. **Update-not-duplicate: resolve outdated threads + respect human replies** *(core done — see resolved.md)*
+    As a developer, I want re-runs to also tidy up stale threads and honor my replies, so that the PR stays clean and the bot isn't argumentative.
+    - **Done (core):** the summary is found by marker and updated in place (now a top-level PR comment, not a stacked review); only net-new inline findings are posted (deduped via the #12 state fingerprints).
+    - Acceptance: mark fixed/outdated finding threads resolved via GraphQL `resolveReviewThread` when their finding no longer appears (or its line is gone).
     - Acceptance: respect human replies on a finding — "won't fix"/"acknowledged" resolves the thread; "I disagree" makes the judge justify the finding or withdraw it (instead of blindly re-emitting it).
 
 23. **Incremental re-review on new commits**
