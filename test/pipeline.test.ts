@@ -69,8 +69,8 @@ describe("reviewPullRequest", () => {
     expect(reviewInput.context).toContain("export const a = 1;"); // gathered context threaded in
 
     expect(deps.submitReview).toHaveBeenCalledTimes(1);
-    const [, , payload, commitId] = deps.submitReview.mock.calls[0];
-    expect(commitId).toBe("head");
+    const [, , payload, submitOptions] = deps.submitReview.mock.calls[0];
+    expect(submitOptions).toEqual({ commitId: "head", headSha: "head" });
     expect(payload.body).toContain("prowl-review");
     expect(payload.comments).toHaveLength(1); // finding on line 2 anchors inline
 
