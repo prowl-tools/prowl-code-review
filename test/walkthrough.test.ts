@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWalkthrough,
+  reviewCommentState,
   severityCounts,
   deriveImpact,
   deriveEffort,
@@ -62,14 +63,14 @@ describe("buildWalkthrough", () => {
   const files = [makeFile("src/a.ts", 12, 3), makeFile("README.md", 2, 1)];
 
   it("includes the marker, header, and provided summary", () => {
-    const md = buildWalkthrough({ findings: [], files, summary: "Adds caching to auth." });
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
     expect(md).toContain("## prowl-review");
     expect(md).toContain("Adds caching to auth.");
   });
 
-  it("falls back to a default summary when none is given", () => {
-    const md = buildWalkthrough({ findings: [], files });
+  it("falls back to a default summary when none is given (findings state)", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files });
     expect(md).toContain("Automated review of the changes");
   });
 
@@ -163,7 +164,7 @@ describe("buildWalkthrough", () => {
 
   it("renders review notes safely", () => {
     const md = buildWalkthrough({
-      findings: [],
+      findings: [makeFinding("major")],
       files,
       notes: ["Reached limit @org/team\n### injected"]
     });
@@ -190,5 +191,70 @@ describe("buildWalkthrough", () => {
     });
 
     expect(md).toContain("````mermaid\ngraph TD; A-->B\n```\n### fake\n````");
+  });
+
+  describe("comment states (#56)", () => {
+    it("renders a compact clean state when healthy with no findings", () => {
+      const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
+      expect(md).toContain("✅ No issues found 🦝");
+      // Review info is collapsed, with the pass count.
+      expect(md).toContain("<summary><b>Review info</b></summary>");
+      expect(md).toContain("4/4 passes");
+      expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
+      // None of the verbose findings-state chrome.
+      expect(md).not.toContain("**Impact:**");
+      expect(md).not.toContain("### Findings");
+      expect(md).not.toContain("No blocking issues found");
+      expect(md).not.toContain("Findings:");
+    });
+
+    it("folds benign notes into the clean state's review info, not a warning callout", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 4, total: 4 },
+        notes: ["Redacted 1 secret(s) from src/a.ts"]
+      });
+      expect(md).toContain("✅ No issues found");
+      expect(md).toContain("Redacted 1 secret");
+      expect(md).not.toContain("⚠️ **Review notes**");
+    });
+
+    it("renders a degraded state that never looks like a clean pass", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        degraded: true,
+        coverage: { passed: 1, total: 4 },
+        notes: ['Review pass "correctness" failed: Gemini API returned no content']
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — 3/4 specialist passes failed");
+      expect(md).toContain("Gemini API returned no content");
+      // Must NOT masquerade as clean.
+      expect(md).not.toContain("No issues found");
+      expect(md).not.toContain("Findings: none");
+      expect(md).not.toContain("✅");
+    });
+
+    it("shows the full findings report even when also degraded", () => {
+      const md = buildWalkthrough({
+        findings: [makeFinding("critical", { title: "SQLi" })],
+        files,
+        degraded: true,
+        coverage: { passed: 3, total: 4 }
+      });
+      expect(md).toContain("**Impact:**");
+      expect(md).toContain("**SQLi**");
+      expect(md).not.toContain("Review incomplete");
+    });
+  });
+
+  describe("reviewCommentState", () => {
+    it("prefers findings, then degraded, then clean", () => {
+      expect(reviewCommentState({ findings: [makeFinding("minor")], files })).toBe("findings");
+      expect(reviewCommentState({ findings: [makeFinding("minor")], files, degraded: true })).toBe("findings");
+      expect(reviewCommentState({ findings: [], files, degraded: true })).toBe("degraded");
+      expect(reviewCommentState({ findings: [], files })).toBe("clean");
+    });
   });
 });

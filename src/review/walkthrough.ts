@@ -49,6 +49,14 @@ export interface WalkthroughInput {
   impact?: Impact;
   /** Override the derived effort (1–5). */
   effort?: number;
+  /** Specialist-pass coverage, for the review-info line and degraded detection (#56). */
+  coverage?: { passed: number; total: number };
+  /**
+   * True when the run could not fully review (a specialist pass failed,
+   * verification failed, coverage truncated). Drives the "degraded" comment
+   * state so a failed review is never disguised as a clean pass (#56).
+   */
+  degraded?: boolean;
 }
 
 const SKIP_LABELS: Record<SkipReason, string> = {
@@ -321,33 +329,84 @@ function notesSection(notes: string[] | undefined): string {
   ].join("\n");
 }
 
-/** Render the full walkthrough summary markdown for a review. */
+/** Signature emoji for a genuinely clean review (Prowl's raccoon, not a generic 🎉). */
+const CLEAN_EMOJI = "🦝";
+
+/** The three distinct shapes a review comment can take (backlog #56). */
+export type ReviewCommentState = "findings" | "clean" | "degraded";
+
+/**
+ * Pick the comment state from the review result. `findings` wins (real issues
+ * are shown even if the run was also degraded); otherwise a degraded run is a
+ * failure, and only a healthy empty run is "clean".
+ */
+export function reviewCommentState(input: WalkthroughInput): ReviewCommentState {
+  if (input.findings.length > 0) {
+    return "findings";
+  }
+  return input.degraded ? "degraded" : "clean";
+}
+
+/** Render the "> ⚠️ Not reviewed" skip line, or "" when nothing was skipped. */
+function skippedNoteBlock(skipped: SkippedFile[] | undefined): string {
+  return skipped && skipped.length > 0 ? `> ⚠️ **Not reviewed:** ${skippedFilesNote(skipped)}` : "";
+}
+
+/** Render the optional Mermaid diagram block, or "" when none is provided. */
+function diagramBlock(mermaid: string | undefined): string {
+  return mermaid?.trim() ? ["### Diagram", fencedCodeBlock("mermaid", mermaid)].join("\n") : "";
+}
+
+/** Collapsed "Review info" block for the clean state: impact/effort/passes + benign notes. */
+function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: number): string {
+  const header = `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effort}/5${
+    input.coverage ? ` · ${input.coverage.passed}/${input.coverage.total} passes` : ""
+  }`;
+  const lines = [header];
+  for (const note of input.notes?.map((n) => n.trim()).filter(Boolean) ?? []) {
+    lines.push(`- ${escapeMarkdownParagraph(note)}`);
+  }
+  return ["<details>", "<summary><b>Review info</b></summary>", "", lines.join("\n"), "", "</details>"].join("\n");
+}
+
+/**
+ * Render the review summary markdown in one of three distinct states (#56):
+ * `findings` (full report), `clean` (compact "no issues" + collapsibles), or
+ * `degraded` (a clear "review incomplete" — never disguised as "Findings: none").
+ */
 export function buildWalkthrough(input: WalkthroughInput): string {
-  const counts = severityCounts(input.findings);
   const impact = input.impact ?? deriveImpact(input.findings, input.files);
   const effort = input.effort ?? deriveEffort(input.files);
+  const state = reviewCommentState(input);
 
-  const sections: string[] = [
-    REVIEW_MARKER,
-    "## prowl-review",
-    summarySection(input.summary),
-    `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
-    changedFilesSection(input.files),
-    findingsSection(input.findings)
-  ];
+  const sections: string[] = [REVIEW_MARKER, "## prowl-review"];
 
-  if (input.skipped && input.skipped.length > 0) {
-    sections.push(`> ⚠️ **Not reviewed:** ${skippedFilesNote(input.skipped)}`);
+  if (state === "clean") {
+    sections.push(
+      `✅ No issues found ${CLEAN_EMOJI}`,
+      reviewInfoDetails(input, impact, effort),
+      changedFilesSection(input.files)
+    );
+  } else if (state === "degraded") {
+    const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
+    const header =
+      failed > 0 && input.coverage
+        ? `⚠️ **Review incomplete** — ${failed}/${input.coverage.total} specialist passes failed; coverage degraded`
+        : "⚠️ **Review incomplete** — coverage degraded";
+    sections.push(header, notesSection(input.notes), changedFilesSection(input.files));
+  } else {
+    const counts = severityCounts(input.findings);
+    sections.push(
+      summarySection(input.summary),
+      `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
+      changedFilesSection(input.files),
+      findingsSection(input.findings),
+      notesSection(input.notes)
+    );
   }
 
-  const notes = notesSection(input.notes);
-  if (notes) {
-    sections.push(notes);
-  }
+  sections.push(skippedNoteBlock(input.skipped), diagramBlock(input.mermaid));
 
-  if (input.mermaid?.trim()) {
-    sections.push(["### Diagram", fencedCodeBlock("mermaid", input.mermaid)].join("\n"));
-  }
-
-  return sections.join("\n\n");
+  // Drop the empty placeholders the per-state blocks may have produced.
+  return sections.filter((section) => section.trim().length > 0).join("\n\n");
 }

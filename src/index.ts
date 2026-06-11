@@ -135,12 +135,14 @@ export {
 } from "./review/specialists.js";
 export {
   buildWalkthrough,
+  reviewCommentState,
   severityCounts,
   deriveImpact,
   deriveEffort,
   REVIEW_MARKER,
   type WalkthroughInput,
-  type Impact
+  type Impact,
+  type ReviewCommentState
 } from "./review/walkthrough.js";
 export {
   verifyFindings,
