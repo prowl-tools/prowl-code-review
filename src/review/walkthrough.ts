@@ -117,6 +117,15 @@ function escapeMarkdownParagraph(value: string): string {
   return neutralizeMentions(escaped);
 }
 
+/** Escape multiline paragraph content line-by-line, then flatten it to one Markdown line. */
+function escapeMarkdownParagraphFlat(value: string): string {
+  return value
+    .split(/\r\n|\r|\n/)
+    .map((line) => escapeMarkdownParagraph(line.trim()))
+    .filter(Boolean)
+    .join(" ");
+}
+
 /** Detect a leading ordered-list marker after trimming summary text. */
 function isOrderedListDot(value: string, dotIndex: number): boolean {
   if (dotIndex === 0 || value.charAt(dotIndex) !== "." || value.charAt(dotIndex + 1) !== " ") {
@@ -321,7 +330,7 @@ function findingsSection(findings: Finding[]): string {
   const lines = ["### Findings"];
   for (const finding of blockers) {
     lines.push(
-      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownText(finding.title)}** — ${findingLocation(finding)}`
+      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`
     );
   }
   return lines.join("\n");
@@ -330,15 +339,12 @@ function findingsSection(findings: Finding[]): string {
 /** Render caller-provided summaries as escaped text, preserving the fallback style. */
 function summarySection(summary: string | undefined): string {
   const trimmed = summary?.trim();
-  return trimmed ? escapeMarkdownParagraph(trimmed) : "_Automated review of the changes in this pull request._";
+  return trimmed ? escapeMarkdownParagraphFlat(trimmed) : "_Automated review of the changes in this pull request._";
 }
 
 /** Escape multi-line operational notes line-by-line before putting them in Markdown lists. */
 function escapeReviewNote(note: string): string {
-  return note
-    .split(/\r\n|\r|\n/)
-    .map((line) => escapeMarkdownParagraph(line))
-    .join(" ");
+  return escapeMarkdownParagraphFlat(note);
 }
 
 /** Render reviewer-visible operational notes without allowing Markdown injection. */

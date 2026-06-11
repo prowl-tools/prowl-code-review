@@ -262,6 +262,7 @@ describe("reviewPullRequest", () => {
     expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
     expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
     expect(result.payload.body).toContain("Not reviewed");
+    expect(result.payload.body).toContain("skipped - file limit reached");
     expect(result.payload.body).toContain("src/b.ts");
     expect(result.payload.body).not.toContain("No issues found");
   });
