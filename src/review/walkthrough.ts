@@ -347,7 +347,10 @@ export function reviewCommentState(input: WalkthroughInput): ReviewCommentState 
   if (input.findings.length > 0) {
     return "findings";
   }
-  return input.degraded ? "degraded" : "clean";
+  const partialCoverage =
+    input.coverage !== undefined && input.coverage.passed < input.coverage.total;
+  const skippedFiles = (input.skipped?.length ?? 0) > 0;
+  return input.degraded || partialCoverage || skippedFiles ? "degraded" : "clean";
 }
 
 /** Render the "> ⚠️ Not reviewed" skip line, or "" when nothing was skipped. */
