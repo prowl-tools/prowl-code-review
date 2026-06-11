@@ -126,6 +126,32 @@ describe("submitReview", () => {
     expect(createReview).not.toHaveBeenCalled();
   });
 
+  it("updates the summary even when there are no new inline findings", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`
+    };
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([prior]);
+    await submitReview(
+      octokit,
+      ref,
+      payload({ body: `${REVIEW_MARKER}\n## prowl-review\n\nnew summary` }),
+      { headSha: "head3" }
+    );
+
+    expect(createReview).not.toHaveBeenCalled();
+    expect(createComment).not.toHaveBeenCalled();
+    expect(updateComment).toHaveBeenCalledTimes(1);
+    const updated = updateComment.mock.calls[0][0] as { body: string; comment_id: number };
+    expect(updated.comment_id).toBe(77);
+    expect(updated.body).toContain("new summary");
+    expect(parseState(updated.body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head3",
+      postedFindings: ["fp-a"]
+    });
+  });
+
   it("does not post inline comments when no commit id is available", async () => {
     const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(octokit, ref, payload());
@@ -184,5 +210,24 @@ describe("submitReview", () => {
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).toHaveBeenCalledTimes(1);
     expect((updateComment.mock.calls[0][0] as { comment_id: number }).comment_id).toBe(201);
+  });
+
+  it("caps the prior summary scan to avoid unbounded pagination", async () => {
+    const filler = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, body: "noise" }));
+    const priorAfterCap = {
+      id: 1001,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`
+    };
+    const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([
+      ...filler,
+      priorAfterCap
+    ]);
+
+    await submitReview(octokit, ref, payload());
+
+    expect(listComments).toHaveBeenCalledTimes(10);
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createReview).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1);
   });
 });
