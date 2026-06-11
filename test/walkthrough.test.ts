@@ -239,6 +239,16 @@ describe("buildWalkthrough", () => {
       expect(md).not.toContain("✅");
     });
 
+    it("derives degraded state from partial coverage without an explicit flag", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 3, total: 4 }
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — 1/4 specialist passes failed");
+      expect(md).not.toContain("No issues found");
+    });
+
     it("renders a generic degraded header when passes are ok but degraded is true", () => {
       const md = buildWalkthrough({
         findings: [],
@@ -269,6 +279,8 @@ describe("buildWalkthrough", () => {
       expect(reviewCommentState({ findings: [makeFinding("minor")], files })).toBe("findings");
       expect(reviewCommentState({ findings: [makeFinding("minor")], files, degraded: true })).toBe("findings");
       expect(reviewCommentState({ findings: [], files, degraded: true })).toBe("degraded");
+      expect(reviewCommentState({ findings: [], files, coverage: { passed: 3, total: 4 } })).toBe("degraded");
+      expect(reviewCommentState({ findings: [], files, skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }] })).toBe("degraded");
       expect(reviewCommentState({ findings: [], files })).toBe("clean");
     });
   });
