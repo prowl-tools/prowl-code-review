@@ -74,6 +74,7 @@ describe("serializeState / parseState round-trip", () => {
   it("returns null for a malformed or schema-invalid marker (graceful fallback)", () => {
     expect(parseState("<!-- prowl-review:state {not json} -->")).toBeNull();
     expect(parseState('<!-- prowl-review:state {"v":"x"} -->')).toBeNull();
+    expect(parseState('<!-- prowl-review:state {"v":2,"postedFindings":[]} -->')).toBeNull();
   });
 
   it("defaults postedFindings to an empty array when omitted", () => {

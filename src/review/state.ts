@@ -28,7 +28,7 @@ const STATE_MARKER_RE = /<!-- prowl-review:state ([\s\S]*?) -->/;
 /** Persisted state marker schema embedded in prowl-review's summary comment. */
 export const ReviewStateSchema = z.object({
   /** Schema version for forward-compatible parsing. */
-  v: z.number().int().positive(),
+  v: z.literal(REVIEW_STATE_VERSION),
   /** Head SHA the last review ran against (for incremental re-review, #23). */
   lastReviewedSha: z.string().min(1).optional(),
   /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
@@ -38,10 +38,12 @@ export const ReviewStateSchema = z.object({
 /** Parsed review state loaded from a prior prowl-review summary comment. */
 export type ReviewState = z.infer<typeof ReviewStateSchema>;
 
+/** Normalize prose fields used by finding fingerprints without preserving cosmetic drift. */
 function normalizeFingerprintText(value: string): string {
   return value.trim().toLowerCase().replace(/\r\n/g, "\n").replace(/\s+/g, " ");
 }
 
+/** Normalize optional suggested code used by finding fingerprints. */
 function normalizeFingerprintSuggestion(value: string | undefined): string {
   return (value ?? "").replace(/\r\n/g, "\n").trim();
 }
