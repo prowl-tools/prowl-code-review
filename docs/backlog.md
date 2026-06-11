@@ -152,16 +152,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
     - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
 
-56. **Three distinct review-comment states (clean / degraded / findings)**
-    As a developer, I want the review comment to look different depending on whether the reviewer found nothing, couldn't run, or found real issues — so that a clean PR isn't a wall of text and a *failed* review is never disguised as "all clear."
-    - Acceptance: the walkthrough renders **three visually distinct states**, never conflated:
-      1. **Healthy + findings** → the full report (current behavior).
-      2. **Healthy + nothing** → a compact, celebratory line — `## prowl-review` + `No issues found <emoji>` (emoji TBD; candidates 🦝 brand / 🛡️ / ✨, not CodeRabbit's 🎉) — with secondary detail tucked into collapsed `<details>` (review info: impact·effort·N/4 passes·model; changed files; optional walkthrough). **Drop** the `Impact … · Findings: none` banner and the `### Findings / No blocking issues found` block. Visual target: CodeRabbit's clean comment (compact headline + collapsibles).
-      3. **Degraded / passes failed** → a clear failure header, e.g. `⚠️ Review incomplete — N/4 passes failed; coverage degraded`, with the reasons (incl. the surfaced `finishReason`/`blockReason`) in a `<details>`. **Must never show "Findings: none"** — a "couldn't actually review" result must not look like a clean pass (the original bug this item came from).
-    - Acceptance: state selection is a pure, unit-tested function over the review result (healthy = no findings at/above the severity floor AND no failed passes / skips / coverage-truncation); the renderer is `buildWalkthrough` (#9) only — no posting side-effects.
-    - Acceptance: the clean-state comment **updates the existing comment in place** via update-not-duplicate (#22), so rapid pushes don't stack a new line each run.
-    - Acceptance: config-overridable verbosity, e.g. `noFindingsComment: "minimal" | "full"` (default `minimal`); degraded state always renders regardless.
-
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
     - Acceptance: only generate `suggestion` blocks for high-confidence findings; optionally apply-and-typecheck/lint the fix in a sandbox before including it.
