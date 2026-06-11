@@ -137,6 +137,7 @@ describe("reviewPullRequest", () => {
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
+    expect(deps.submitReview).toHaveBeenCalledTimes(1);
     expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
     expect(result.payload.body).toContain("Context retrieval failed");
     expect(result.payload.body).not.toContain("No issues found");

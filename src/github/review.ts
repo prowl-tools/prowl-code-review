@@ -18,6 +18,10 @@ import { embedState, parseState, REVIEW_STATE_VERSION, type ReviewState } from "
  */
 
 const MAX_SUMMARY_COMMENT_PAGES = 10;
+const MAX_INLINE_COMMENT_PAGES = 10;
+const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
+const INLINE_FINGERPRINT_SUFFIX = " -->";
+const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
 
 /** A prior prowl-review summary comment found on the PR. */
 export interface PriorSummaryComment {
@@ -54,11 +58,16 @@ export function planPublish(input: {
   payload: ReviewPayload;
   priorComment: PriorSummaryComment | null;
   headSha?: string;
+  /** Fingerprints recovered from prior bot-authored inline comments. */
+  priorPostedFindings?: string[];
   /** Inline comments known to have been posted; defaults to all net-new comments for pure planning. */
   postedInlineComments?: ReviewComment[];
 }): PublishPlan {
   const priorState = parseState(input.priorComment?.body);
-  const alreadyPosted = new Set(priorState?.postedFindings ?? []);
+  const priorPostedFindings = [
+    ...new Set([...(priorState?.postedFindings ?? []), ...(input.priorPostedFindings ?? [])])
+  ];
+  const alreadyPosted = new Set(priorPostedFindings);
 
   const newInlineComments = input.payload.comments.filter(
     (comment) => !alreadyPosted.has(comment.fingerprint)
@@ -68,7 +77,7 @@ export function planPublish(input: {
   // Track only inline fingerprints that were actually posted, so failed/skipped
   // publishes are retried on the next run instead of disappearing from state.
   const postedFindings = [
-    ...new Set([...(priorState?.postedFindings ?? []), ...postedInlineComments.map((c) => c.fingerprint)])
+    ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
   const state: ReviewState = {
@@ -91,8 +100,11 @@ async function findPriorSummary(
   ref: PullRequestRef,
   botLogin?: string
 ): Promise<PriorSummaryComment | null> {
+  if (!botLogin) {
+    return null;
+  }
+
   const perPage = 100;
-  const markerComments: Array<{ id: number; body?: string; user?: { login?: string } | null }> = [];
   let page = 1;
 
   for (;;) {
@@ -101,11 +113,16 @@ async function findPriorSummary(
       repo: ref.repo,
       issue_number: ref.pull_number,
       per_page: perPage,
-      page
+      page,
+      sort: "created",
+      direction: "desc"
     });
-    markerComments.push(
-      ...response.data.filter((comment) => (comment.body ?? "").includes(REVIEW_MARKER))
+    const chosen = response.data.find(
+      (comment) => comment.user?.login === botLogin && (comment.body ?? "").includes(REVIEW_MARKER)
     );
+    if (chosen) {
+      return { id: chosen.id, body: chosen.body ?? "" };
+    }
 
     if (response.data.length < perPage || page >= MAX_SUMMARY_COMMENT_PAGES) {
       break;
@@ -113,23 +130,78 @@ async function findPriorSummary(
     page += 1;
   }
 
-  if (markerComments.length === 0) {
-    return null;
+  return null;
+}
+
+/** Resolve the authenticated bot login used to trust prior prowl-review comments. */
+async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
+  if (botLogin) {
+    return botLogin;
   }
-  // Prefer one authored by our bot when a login is known; otherwise the most
-  // recent marker comment (listComments returns ascending by creation).
-  const botComments = botLogin
-    ? markerComments.filter((comment) => comment.user?.login === botLogin)
-    : [];
-  const chosen = botComments.at(-1) ?? markerComments[markerComments.length - 1];
-  return { id: chosen.id, body: chosen.body ?? "" };
+
+  try {
+    const response = await octokit.rest.users.getAuthenticated();
+    return response.data.login;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Append a hidden fingerprint marker so posted inline comments can be recovered after summary-write failures. */
+function appendInlineFingerprintMarker(body: string, fingerprint: string): string {
+  return `${body.replace(INLINE_FINGERPRINT_RE, "").trimEnd()}\n\n${INLINE_FINGERPRINT_PREFIX}${fingerprint}${INLINE_FINGERPRINT_SUFFIX}`;
+}
+
+/** Extract hidden prowl-review fingerprints from an existing inline review comment body. */
+function parseInlineFingerprintMarkers(body: string | undefined): string[] {
+  if (!body) {
+    return [];
+  }
+  return [...body.matchAll(INLINE_FINGERPRINT_RE)].map((match) => match[1]);
+}
+
+/** List fingerprints already posted by this bot as inline review comments. */
+async function listPriorInlineFingerprints(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<string[]> {
+  if (!botLogin) {
+    return [];
+  }
+
+  const perPage = 100;
+  const fingerprints: string[] = [];
+  let page = 1;
+
+  for (;;) {
+    const response = await octokit.rest.pulls.listReviewComments({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: ref.pull_number,
+      per_page: perPage,
+      page
+    });
+    for (const comment of response.data) {
+      if (comment.user?.login === botLogin) {
+        fingerprints.push(...parseInlineFingerprintMarkers(comment.body));
+      }
+    }
+
+    if (response.data.length < perPage || page >= MAX_INLINE_COMMENT_PAGES) {
+      break;
+    }
+    page += 1;
+  }
+
+  return [...new Set(fingerprints)];
 }
 
 /** Strip internal fields before sending an inline comment to GitHub. */
 function toGitHubComment(comment: ReviewComment) {
   return {
     path: comment.path,
-    body: comment.body,
+    body: appendInlineFingerprintMarker(comment.body, comment.fingerprint),
     line: comment.line,
     side: comment.side,
     ...(comment.start_line !== undefined ? { start_line: comment.start_line } : {}),
@@ -137,6 +209,7 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
+/** Build the short review body required when posting a batched COMMENT review. */
 function inlineBatchReviewBody(commentCount: number): string {
   const noun = commentCount === 1 ? "finding" : "findings";
   return `prowl-review posted ${commentCount} new inline ${noun}. See the summary comment for full review context.`;
@@ -152,11 +225,16 @@ export async function submitReview(
   payload: ReviewPayload,
   options: SubmitReviewOptions = {}
 ): Promise<void> {
-  const prior = await findPriorSummary(octokit, ref, options.botLogin);
+  const botLogin = await getAuthenticatedLogin(octokit, options.botLogin);
+  const [prior, priorPostedFindings] = await Promise.all([
+    findPriorSummary(octokit, ref, botLogin),
+    listPriorInlineFingerprints(octokit, ref, botLogin)
+  ]);
   const initialPlan = planPublish({
     payload,
     priorComment: prior,
     headSha: options.headSha,
+    priorPostedFindings,
     postedInlineComments: []
   });
 
@@ -183,6 +261,7 @@ export async function submitReview(
     payload,
     priorComment: prior,
     headSha: options.headSha,
+    priorPostedFindings,
     postedInlineComments
   });
 

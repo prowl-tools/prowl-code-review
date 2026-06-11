@@ -41,7 +41,9 @@ All notable changes to Prowl Review will be documented in this file.
   suggestion content so same-title findings with different details remain distinct).
   Net-new inline findings are submitted in one batched `pulls.createReview` call, and their
   fingerprints are persisted only after that review call succeeds; skipped or failed inline publishes
-  remain retryable on the next run. The publish decision (`planPublish`) is pure and unit-tested.
+  remain retryable on the next run. Prior summary state is trusted only from the authenticated bot,
+  and hidden inline fingerprint markers let the next run recover posted findings if the summary
+  state write fails after review creation. The publish decision (`planPublish`) is pure and unit-tested.
   Deferred under #22/#23: GraphQL
   `resolveReviewThread` for outdated threads, human-reply handling, and incremental delta-review.
   One-time transition note: summaries posted before this change were review bodies, not issue
