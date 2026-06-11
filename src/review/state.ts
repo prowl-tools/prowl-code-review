@@ -1,0 +1,90 @@
+import { createHash } from "node:crypto";
+import { z } from "zod";
+import type { Finding } from "./findings.js";
+
+/**
+ * Review state persistence (backlog #12) — the store that makes the Action's
+ * re-runs stateful without any external infrastructure.
+ *
+ * State is a small versioned JSON blob embedded in a hidden HTML-comment marker
+ * inside prowl-review's own summary comment on the PR. On a re-run the publisher
+ * (#22) finds the prior comment by {@link STATE_MARKER_PREFIX}, parses the state,
+ * and uses it to update-not-duplicate (edit the summary in place, post only
+ * net-new inline findings). No GitHub artifacts, no branches, no DB.
+ *
+ * This module is pure (serialize / parse / fingerprint); the GitHub read/write
+ * side lives in `github/review.ts`.
+ */
+
+/** Bump when the persisted shape changes incompatibly. */
+export const REVIEW_STATE_VERSION = 1;
+
+const STATE_MARKER_PREFIX = "<!-- prowl-review:state ";
+const STATE_MARKER_SUFFIX = " -->";
+
+/** Matches the persisted state marker and captures its JSON payload. */
+const STATE_MARKER_RE = /<!-- prowl-review:state ([\s\S]*?) -->/;
+
+export const ReviewStateSchema = z.object({
+  /** Schema version for forward-compatible parsing. */
+  v: z.number().int().positive(),
+  /** Head SHA the last review ran against (for incremental re-review, #23). */
+  lastReviewedSha: z.string().min(1).optional(),
+  /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
+  postedFindings: z.array(z.string()).default([])
+});
+
+export type ReviewState = z.infer<typeof ReviewStateSchema>;
+
+/**
+ * Stable fingerprint for an inline finding, used to avoid re-posting the same
+ * comment on every push. Deliberately line-independent: a finding that drifts a
+ * few lines as the PR evolves keeps the same fingerprint, so it isn't re-posted
+ * as if it were new. Keyed on file + category + normalized title.
+ */
+export function findingFingerprint(finding: Finding): string {
+  const material = [
+    finding.file.replace(/\\/g, "/").replace(/^\.\//, ""),
+    finding.category.trim().toLowerCase(),
+    finding.title.trim().toLowerCase().replace(/\s+/g, " ")
+  ].join("\n");
+  return createHash("sha1").update(material).digest("hex").slice(0, 16);
+}
+
+/** Render the hidden state marker comment for embedding in a summary body. */
+export function serializeState(state: ReviewState): string {
+  return `${STATE_MARKER_PREFIX}${JSON.stringify(state)}${STATE_MARKER_SUFFIX}`;
+}
+
+/**
+ * Extract and validate persisted state from a comment body, or null when the
+ * body has no (valid) state marker. Tolerant: a malformed/old marker parses to
+ * null so the run falls back to a fresh first-review rather than throwing.
+ */
+export function parseState(body: string | null | undefined): ReviewState | null {
+  if (!body) {
+    return null;
+  }
+  const match = STATE_MARKER_RE.exec(body);
+  if (!match) {
+    return null;
+  }
+  let raw: unknown;
+  try {
+    raw = JSON.parse(match[1]);
+  } catch {
+    return null;
+  }
+  const result = ReviewStateSchema.safeParse(raw);
+  return result.success ? result.data : null;
+}
+
+/**
+ * Embed (or replace) the state marker in a summary body. Kept on its own line at
+ * the end so it never disturbs the rendered Markdown above it.
+ */
+export function embedState(body: string, state: ReviewState): string {
+  const marker = serializeState(state);
+  const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
+  return `${stripped}\n\n${marker}`;
+}
