@@ -52,6 +52,8 @@ export function planPublish(input: {
   payload: ReviewPayload;
   priorComment: PriorSummaryComment | null;
   headSha?: string;
+  /** Inline comments known to have been posted; defaults to all net-new comments for pure planning. */
+  postedInlineComments?: ReviewComment[];
 }): PublishPlan {
   const priorState = parseState(input.priorComment?.body);
   const alreadyPosted = new Set(priorState?.postedFindings ?? []);
@@ -59,10 +61,12 @@ export function planPublish(input: {
   const newInlineComments = input.payload.comments.filter(
     (comment) => !alreadyPosted.has(comment.fingerprint)
   );
+  const postedInlineComments = input.postedInlineComments ?? newInlineComments;
 
-  // Track every inline fingerprint surfaced so far so re-runs don't repeat them.
+  // Track only inline fingerprints that were actually posted, so failed/skipped
+  // publishes are retried on the next run instead of disappearing from state.
   const postedFindings = [
-    ...new Set([...(priorState?.postedFindings ?? []), ...input.payload.comments.map((c) => c.fingerprint)])
+    ...new Set([...(priorState?.postedFindings ?? []), ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
   const state: ReviewState = {
@@ -85,21 +89,37 @@ async function findPriorSummary(
   ref: PullRequestRef,
   botLogin?: string
 ): Promise<PriorSummaryComment | null> {
-  const response = await octokit.rest.issues.listComments({
-    owner: ref.owner,
-    repo: ref.repo,
-    issue_number: ref.pull_number,
-    per_page: 100
-  });
+  const perPage = 100;
+  const markerComments: Array<{ id: number; body?: string; user?: { login?: string } | null }> = [];
+  let page = 1;
 
-  const ours = response.data.filter((comment) => (comment.body ?? "").includes(REVIEW_MARKER));
-  if (ours.length === 0) {
+  for (;;) {
+    const response = await octokit.rest.issues.listComments({
+      owner: ref.owner,
+      repo: ref.repo,
+      issue_number: ref.pull_number,
+      per_page: perPage,
+      page
+    });
+    markerComments.push(
+      ...response.data.filter((comment) => (comment.body ?? "").includes(REVIEW_MARKER))
+    );
+
+    if (response.data.length < perPage) {
+      break;
+    }
+    page += 1;
+  }
+
+  if (markerComments.length === 0) {
     return null;
   }
   // Prefer one authored by our bot when a login is known; otherwise the most
   // recent marker comment (listComments returns ascending by creation).
-  const preferred = botLogin ? ours.find((c) => c.user?.login === botLogin) : undefined;
-  const chosen = preferred ?? ours[ours.length - 1];
+  const botComments = botLogin
+    ? markerComments.filter((comment) => comment.user?.login === botLogin)
+    : [];
+  const chosen = botComments.at(-1) ?? markerComments[markerComments.length - 1];
   return { id: chosen.id, body: chosen.body ?? "" };
 }
 
@@ -115,6 +135,11 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
+function inlineBatchReviewBody(commentCount: number): string {
+  const noun = commentCount === 1 ? "finding" : "findings";
+  return `prowl-review posted ${commentCount} new inline ${noun}. See the summary comment for full review context.`;
+}
+
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present, and posts only net-new inline findings.
@@ -126,36 +151,51 @@ export async function submitReview(
   options: SubmitReviewOptions = {}
 ): Promise<void> {
   const prior = await findPriorSummary(octokit, ref, options.botLogin);
-  const plan = planPublish({ payload, priorComment: prior, headSha: options.headSha });
+  const initialPlan = planPublish({
+    payload,
+    priorComment: prior,
+    headSha: options.headSha,
+    postedInlineComments: []
+  });
+
+  let postedInlineComments: ReviewComment[] = [];
+  const reviewComments = options.commitId ? initialPlan.newInlineComments.map(toGitHubComment) : [];
+  const shouldCreateReview = payload.event !== "COMMENT" || reviewComments.length > 0;
+
+  if (shouldCreateReview) {
+    await octokit.rest.pulls.createReview({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: ref.pull_number,
+      event: payload.event,
+      ...(options.commitId ? { commit_id: options.commitId } : {}),
+      body: payload.event === "COMMENT" ? inlineBatchReviewBody(reviewComments.length) : payload.body,
+      ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
+    });
+    postedInlineComments = reviewComments.length > 0 ? initialPlan.newInlineComments : [];
+  }
+
+  const finalPlan = planPublish({
+    payload,
+    priorComment: prior,
+    headSha: options.headSha,
+    postedInlineComments
+  });
 
   // Summary: update in place, or create on the first run.
-  if (plan.priorCommentId !== undefined) {
+  if (finalPlan.priorCommentId !== undefined) {
     await octokit.rest.issues.updateComment({
       owner: ref.owner,
       repo: ref.repo,
-      comment_id: plan.priorCommentId,
-      body: plan.summaryBody
+      comment_id: finalPlan.priorCommentId,
+      body: finalPlan.summaryBody
     });
   } else {
     await octokit.rest.issues.createComment({
       owner: ref.owner,
       repo: ref.repo,
       issue_number: ref.pull_number,
-      body: plan.summaryBody
+      body: finalPlan.summaryBody
     });
-  }
-
-  // Inline findings: post only the net-new ones, anchored to the head commit.
-  // (Resolving outdated threads + grouping into one review is deferred — see #22.)
-  if (options.commitId) {
-    for (const comment of plan.newInlineComments) {
-      await octokit.rest.pulls.createReviewComment({
-        owner: ref.owner,
-        repo: ref.repo,
-        pull_number: ref.pull_number,
-        commit_id: options.commitId,
-        ...toGitHubComment(comment)
-      });
-    }
   }
 }

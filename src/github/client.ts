@@ -39,19 +39,6 @@ export interface OctokitLike {
           start_side?: ReviewSide;
         }>;
       }): Promise<{ data: unknown }>;
-      /** Post a single inline review comment anchored to a diff line. */
-      createReviewComment(params: {
-        owner: string;
-        repo: string;
-        pull_number: number;
-        commit_id: string;
-        path: string;
-        body: string;
-        line?: number;
-        side?: ReviewSide;
-        start_line?: number;
-        start_side?: ReviewSide;
-      }): Promise<{ data: unknown }>;
     };
     /** Issue endpoints — a PR is an issue, so its top-level comments live here. */
     issues: {
@@ -61,6 +48,7 @@ export interface OctokitLike {
         repo: string;
         issue_number: number;
         per_page?: number;
+        page?: number;
       }): Promise<{ data: Array<{ id: number; body?: string; user?: { login?: string } | null }> }>;
       /** Create a top-level PR/issue comment (the summary on a first run). */
       createComment(params: {
