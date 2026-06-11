@@ -1,5 +1,6 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
+import { findingFingerprint } from "./state.js";
 
 /**
  * Inline comments + committable suggestions (backlog #10).
@@ -30,6 +31,8 @@ export interface ReviewComment {
   start_side?: ReviewSide;
   /** Markdown body for the inline review comment. */
   body: string;
+  /** Stable fingerprint of the source finding, for update-not-duplicate dedup (#12/#22). */
+  fingerprint: string;
 }
 
 /** Result of mapping findings into inline comments. */
@@ -262,7 +265,8 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
       path: finding.file,
       line: finding.line,
       side: "RIGHT",
-      body: formatFindingComment(finding)
+      body: formatFindingComment(finding),
+      fingerprint: findingFingerprint(finding)
     };
 
     if (canAnchorRange && endLine !== undefined) {
