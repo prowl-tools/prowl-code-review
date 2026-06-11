@@ -219,11 +219,12 @@ export async function reviewPullRequest(
   );
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
-  // when a specialist pass failed or verification failed — so a failed review
-  // is never rendered as a clean "no issues found".
+  // when a specialist pass failed, verification failed, or guardrails skipped
+  // files — so an incomplete review is never rendered as a clean "no issues found".
   const passesPassed = reviewResult.passes.filter((pass) => pass.ok).length;
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
-  const degraded = passesPassed < reviewResult.passes.length || !reviewResult.verification.ok;
+  const degraded =
+    passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || skipped.length > 0;
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
