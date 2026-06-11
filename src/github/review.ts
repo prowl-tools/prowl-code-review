@@ -209,12 +209,6 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
-/** Build the short review body required when posting a batched COMMENT review. */
-function inlineBatchReviewBody(commentCount: number): string {
-  const noun = commentCount === 1 ? "finding" : "findings";
-  return `prowl-review posted ${commentCount} new inline ${noun}. See the summary comment for full review context.`;
-}
-
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present, and posts only net-new inline findings.
@@ -251,7 +245,7 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: payload.event === "COMMENT" ? inlineBatchReviewBody(reviewComments.length) : payload.body,
+      body: payload.body,
       ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     postedInlineComments = reviewComments.length > 0 ? initialPlan.newInlineComments : [];
