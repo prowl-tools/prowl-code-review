@@ -19,11 +19,12 @@ All notable changes to Prowl Review will be documented in this file.
   renders differently by outcome instead of always a full report. **Clean** (healthy + nothing
   found) → a compact `✅ No issues found 🦝` with impact/effort/passes and the changed-files list
   tucked into collapsed `<details>` (no more `Findings: none` banner). **Degraded** (a specialist
-  pass or verification failed) → a clear `⚠️ Review incomplete — N/M passes failed` with the reasons,
+  pass failed, verification failed, or guardrails skipped files) → a clear `⚠️ Review incomplete`
+  message with the reasons,
   and **never** "Findings: none" — so a review that couldn't run is no longer disguised as a clean
   pass. **Findings** → the full report as before. State selection is a pure, tested
-  `reviewCommentState`; the pipeline derives coverage/degraded from the specialist + verification
-  results.
+  `reviewCommentState`; the pipeline derives coverage/degraded from specialist, verification, and
+  skipped-file results.
 - Collapse the changed-files overview behind a `<details>` disclosure in the review summary
   (`src/review/walkthrough.ts`): the summary now shows just a file count, with the grouped
   list one click away — so the file inventory is no longer a top-level wall of text on every

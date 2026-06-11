@@ -161,6 +161,66 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("Review incomplete");
   });
 
+  it("renders a degraded state when verification fails, even with no findings", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ],
+        verification: {
+          verified: 0,
+          droppedFalsePositive: 0,
+          demoted: 0,
+          unverified: 0,
+          ok: false,
+          error: "provider timeout"
+        }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("False-positive verification failed");
+    expect(result.payload.body).toContain("provider timeout");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
+  it("renders skipped-file reviews as degraded instead of clean", async () => {
+    const deps = makeDeps();
+    const twoFileDiff = `${DIFF}diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1 +1,2 @@
+ const b = 1;
++const c = 2;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: twoFileDiff });
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      diffLimits: { maxFiles: 1 },
+      deps
+    });
+
+    expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("Not reviewed");
+    expect(result.payload.body).toContain("src/b.ts");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
   it("skips sensitive files and redacts secrets before review", async () => {
     const deps = makeDeps();
     const sensitiveDiff = `diff --git a/.env b/.env
