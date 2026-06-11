@@ -123,6 +123,51 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("provider timeout");
   });
 
+  it("renders context retrieval failures as degraded when no findings remain", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockRejectedValue(new Error("provider timeout"));
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("Context retrieval failed");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
+  it("renders context retrieval limit hits as degraded when no findings remain", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
+      rounds: 6,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      reachedLimit: true,
+      notes: ["Reached max tool rounds (6)."],
+      toolOutputs: []
+    });
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
   it("surfaces failed review passes so clean summaries are not misleading", async () => {
     const deps = makeDeps();
     deps.runReview.mockResolvedValue(
@@ -136,9 +181,93 @@ describe("reviewPullRequest", () => {
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
-    expect(result.payload.body).toContain("_No blocking issues found._");
-    expect(result.payload.body).toContain("1/2 review specialist passes failed");
+    // A failed pass renders the degraded state — never a clean "no issues" (#56).
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — 1/2 specialist passes failed");
     expect(result.payload.body).toContain("Review pass \"correctness\" failed: provider rejected prompt");
+    expect(result.payload.body).not.toContain("No blocking issues found");
+  });
+
+  it("renders the compact clean state when healthy with no findings", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("✅ No issues found");
+    expect(result.payload.body).toContain("2/2 passes");
+    expect(result.payload.body).not.toContain("Findings: none");
+    expect(result.payload.body).not.toContain("Review incomplete");
+  });
+
+  it("renders a degraded state when verification fails, even with no findings", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ],
+        verification: {
+          verified: 0,
+          droppedFalsePositive: 0,
+          demoted: 0,
+          unverified: 0,
+          ok: false,
+          error: "provider timeout"
+        }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("False-positive verification failed");
+    expect(result.payload.body).toContain("provider timeout");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
+  it("renders skipped-file reviews as clean-with-caveat, not degraded (#56)", async () => {
+    const deps = makeDeps();
+    const twoFileDiff = `${DIFF}diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1 +1,2 @@
+ const b = 1;
++const c = 2;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: twoFileDiff });
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      diffLimits: { maxFiles: 1 },
+      deps
+    });
+
+    expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
+    // A healthy review that skipped files is partial, not failed: clean state with
+    // an honest caveat headline + the "Not reviewed" note — never the alarming
+    // "Review incomplete" reserved for actual failures.
+    expect(result.payload.body).toContain("✅ No issues found in reviewed files");
+    expect(result.payload.body).toContain("Not reviewed");
+    expect(result.payload.body).toContain("skipped - file limit reached");
+    expect(result.payload.body).toContain("src/b.ts");
+    expect(result.payload.body).not.toContain("Review incomplete");
   });
 
   it("skips sensitive files and redacts secrets before review", async () => {
@@ -164,8 +293,18 @@ rename to config/example.txt
 @@ -1 +1 @@
 -DATABASE_URL=postgres://user:pass@host/db
 +DATABASE_URL=postgres://user:pass@host/db
+diff --git a/config/public.txt b/secrets/prod.txt
+similarity index 72%
+rename from config/public.txt
+rename to secrets/prod.txt
+--- a/config/public.txt
++++ b/secrets/prod.txt
+@@ -1 +1 @@
+-PUBLIC_VALUE=example
++PUBLIC_VALUE=example
 `;
     deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
 
     const result = await reviewPullRequest(octokit, ref, {
       config,
@@ -177,17 +316,23 @@ rename to config/example.txt
     // .env is kept out of the review entirely and reported.
     expect(result.skipped).toContainEqual({ path: ".env", reason: "sensitive" });
     expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
+    expect(result.skipped).toContainEqual({ path: "secrets/prod.txt", reason: "sensitive" });
     expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
     expect(diffInput).not.toContain("config/example.txt");
+    expect(diffInput).not.toContain("secrets/prod.txt");
+    expect(diffInput).not.toContain("config/public.txt");
     expect(diffInput).not.toContain("postgres://user:pass@host/db");
     expect(diffInput).toContain("src/a.ts");
     expect(diffInput).not.toContain("AKIAIOSFODNN7EXAMPLE");
     expect(diffInput).not.toContain("ghp_aaaa");
     expect(diffInput).toContain("[REDACTED");
     expect(result.payload.body).toContain("sensitive");
+    // Sensitive/size skips are partial coverage, not a failed review: clean + caveat.
+    expect(result.payload.body).toContain("✅ No issues found in reviewed files");
+    expect(result.payload.body).not.toContain("Review incomplete");
   });
 
   it("redacts private key blocks after rendering annotated diffs", async () => {

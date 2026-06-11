@@ -185,6 +185,7 @@ export async function reviewPullRequest(
   let context: string | undefined;
   let contextFiles = 0;
   let contextNotes: string[] = [];
+  let contextDegraded = false;
   if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
     try {
       const gathered = await gather({
@@ -195,6 +196,7 @@ export async function reviewPullRequest(
       });
       contextFiles = gathered.files.length;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
+      contextDegraded = gathered.reachedLimit;
       if (gathered.files.length > 0) {
         const joined = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
         // Defense-in-depth: tool reads are already redacted, but redact again.
@@ -202,6 +204,7 @@ export async function reviewPullRequest(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      contextDegraded = true;
       contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
   }
@@ -218,10 +221,23 @@ export async function reviewPullRequest(
     }
   );
 
+  // Coverage drives the three review-comment states (#56): a run is "degraded"
+  // when the reviewer couldn't fully run — a specialist pass failed, verification
+  // failed, or context retrieval was truncated. Guardrail file skips are NOT a
+  // failure: the review is healthy but partial, so it renders as the clean state
+  // with a caveat headline ("No issues found in reviewed files") + the skip note,
+  // rather than an alarming "Review incomplete" on every PR that touches a lockfile.
+  const passesPassed = reviewResult.passes.filter((pass) => pass.ok).length;
+  const coverage = { passed: passesPassed, total: reviewResult.passes.length };
+  const degraded =
+    passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
+
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
     files: reviewFiles,
     skipped,
+    coverage,
+    degraded,
     notes: [
       ...redactionNotes,
       ...contextNotes,

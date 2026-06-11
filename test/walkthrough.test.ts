@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildWalkthrough,
+  reviewCommentState,
   severityCounts,
   deriveImpact,
   deriveEffort,
@@ -62,14 +63,14 @@ describe("buildWalkthrough", () => {
   const files = [makeFile("src/a.ts", 12, 3), makeFile("README.md", 2, 1)];
 
   it("includes the marker, header, and provided summary", () => {
-    const md = buildWalkthrough({ findings: [], files, summary: "Adds caching to auth." });
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
     expect(md).toContain("## prowl-review");
     expect(md).toContain("Adds caching to auth.");
   });
 
-  it("falls back to a default summary when none is given", () => {
-    const md = buildWalkthrough({ findings: [], files });
+  it("falls back to a default summary when none is given (findings state)", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files });
     expect(md).toContain("Automated review of the changes");
   });
 
@@ -107,11 +108,11 @@ describe("buildWalkthrough", () => {
 
   it("escapes untrusted review text before rendering Markdown", () => {
     const md = buildWalkthrough({
-      summary: "Looks fine @org/team.\n### Spoof\n<!-- hidden -->\n> quote",
+      summary: "Looks fine @org/team.\n- list item\n1. ordered\n### Spoof\n<!-- hidden -->\n> quote",
       findings: [
         makeFinding("major", {
           file: "findings/`bad`\n### injected.md",
-          title: "Title **break**\n### fake @org/team"
+          title: "Title **break**\n- list item\n1. ordered\n### fake @org/team"
         })
       ],
       files: [makeFile("src/`spoof`\n### fake.md", 1, 0)],
@@ -121,12 +122,14 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("``src/`spoof`\\n### fake.md``");
     expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
     expect(md).toContain("``skip/`bad`\\n### skipped.md``");
-    expect(md).toContain("Title \\*\\*break\\*\\*\\\\n\\#\\#\\# fake &#64;org/team");
-    expect(md).toContain("Looks fine &#64;org/team.\\\\n\\#\\#\\# Spoof\\\\n\\<\\!-- hidden --\\>\\\\n\\> quote");
+    expect(md).toContain("Title \\*\\*break\\*\\* \\- list item 1\\. ordered \\#\\#\\# fake &#64;org/team");
+    expect(md).toContain("Looks fine &#64;org/team. \\- list item 1\\. ordered \\#\\#\\# Spoof &lt;\\!-- hidden --&gt; &gt; quote");
     expect(md).not.toContain("`spoof`\n### fake.md");
     expect(md).not.toContain("`bad`\n### injected.md");
     expect(md).not.toContain("`bad`\n### skipped.md");
     expect(md).not.toContain("Title **break**\n### fake @org/team");
+    expect(md).not.toContain("\n- list item");
+    expect(md).not.toContain("\n1. ordered");
     expect(md).not.toContain("Looks fine @org/team.\n### Spoof");
     expect(md).not.toContain("<!-- hidden -->");
     expect(md).not.toContain("@org/team");
@@ -163,14 +166,17 @@ describe("buildWalkthrough", () => {
 
   it("renders review notes safely", () => {
     const md = buildWalkthrough({
-      findings: [],
+      findings: [makeFinding("major")],
       files,
-      notes: ["Reached limit @org/team\n### injected"]
+      notes: ["Reached limit @org/team\n* injected item\n<!-- <details>spoof</details> -->\n### injected"]
     });
 
     expect(md).toContain("Review notes");
-    expect(md).toContain("Reached limit &#64;org/team\\\\n\\#\\#\\# injected");
+    expect(md).toContain("Reached limit &#64;org/team \\* injected item &lt;\\!-- &lt;details&gt;spoof&lt;/details&gt; --&gt; \\#\\#\\# injected");
     expect(md).not.toContain("@org/team");
+    expect(md).not.toContain("<!-- <details>spoof</details> -->");
+    expect(md).not.toContain("<details>spoof</details>");
+    expect(md).not.toContain("\n* injected item");
     expect(md).not.toContain("\n### injected");
   });
 
@@ -190,5 +196,113 @@ describe("buildWalkthrough", () => {
     });
 
     expect(md).toContain("````mermaid\ngraph TD; A-->B\n```\n### fake\n````");
+  });
+
+  describe("comment states (#56)", () => {
+    it("renders a compact clean state when healthy with no findings", () => {
+      const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
+      expect(md).toContain("✅ No issues found 🦝");
+      // Review info is collapsed, with the pass count.
+      expect(md).toContain("<summary><b>Review info</b></summary>");
+      expect(md).toContain("4/4 passes");
+      expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
+      // None of the verbose findings-state chrome.
+      expect(md).not.toContain("**Impact:**");
+      expect(md).not.toContain("### Findings");
+      expect(md).not.toContain("No blocking issues found");
+      expect(md).not.toContain("Findings:");
+    });
+
+    it("stays clean with a caveat headline when files were skipped (#56)", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 4, total: 4 },
+        skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
+      });
+      // Partial coverage on a healthy review: clean + honest caveat, not degraded.
+      expect(md).toContain("✅ No issues found in reviewed files 🦝");
+      expect(md).toContain("Not reviewed");
+      expect(md).toContain("huge.lock");
+      expect(md).not.toContain("Review incomplete");
+    });
+
+    it("folds clean-state notes safely into review info, not a warning callout", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 4, total: 4 },
+        notes: ["Redacted 1 secret(s) from src/a.ts", "Reached limit @org/team\n<!-- hidden -->\n### injected"]
+      });
+      expect(md).toContain("✅ No issues found");
+      expect(md).toContain("Redacted 1 secret");
+      expect(md).toContain("Reached limit &#64;org/team &lt;\\!-- hidden --&gt; \\#\\#\\# injected");
+      expect(md).not.toContain("⚠️ **Review notes**");
+      expect(md).not.toContain("@org/team");
+      expect(md).not.toContain("<!-- hidden -->");
+      expect(md).not.toContain("\n### injected");
+    });
+
+    it("renders a degraded state that never looks like a clean pass", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        degraded: true,
+        coverage: { passed: 1, total: 4 },
+        notes: ['Review pass "correctness" failed: Gemini API returned no content']
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — 3/4 specialist passes failed");
+      expect(md).toContain("Gemini API returned no content");
+      // Must NOT masquerade as clean.
+      expect(md).not.toContain("No issues found");
+      expect(md).not.toContain("Findings: none");
+      expect(md).not.toContain("✅");
+    });
+
+    it("derives degraded state from partial coverage without an explicit flag", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 3, total: 4 }
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — 1/4 specialist passes failed");
+      expect(md).not.toContain("No issues found");
+    });
+
+    it("renders a generic degraded header when passes are ok but degraded is true", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        degraded: true,
+        coverage: { passed: 4, total: 4 }
+      });
+      expect(md).toContain("⚠️ **Review incomplete** — coverage degraded");
+      expect(md).not.toContain("specialist passes failed");
+      expect(md).not.toContain("No issues found");
+    });
+
+    it("shows the full findings report even when also degraded", () => {
+      const md = buildWalkthrough({
+        findings: [makeFinding("critical", { title: "SQLi" })],
+        files,
+        degraded: true,
+        coverage: { passed: 3, total: 4 }
+      });
+      expect(md).toContain("**Impact:**");
+      expect(md).toContain("**SQLi**");
+      expect(md).not.toContain("Review incomplete");
+    });
+  });
+
+  describe("reviewCommentState", () => {
+    it("prefers findings, then degraded, then clean", () => {
+      expect(reviewCommentState({ findings: [makeFinding("minor")], files })).toBe("findings");
+      expect(reviewCommentState({ findings: [makeFinding("minor")], files, degraded: true })).toBe("findings");
+      expect(reviewCommentState({ findings: [], files, degraded: true })).toBe("degraded");
+      expect(reviewCommentState({ findings: [], files, coverage: { passed: 3, total: 4 } })).toBe("degraded");
+      // Skipped files are partial coverage on a healthy review → clean (caveat), not degraded (#56).
+      expect(reviewCommentState({ findings: [], files, skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }] })).toBe("clean");
+      expect(reviewCommentState({ findings: [], files })).toBe("clean");
+    });
   });
 });

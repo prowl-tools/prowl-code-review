@@ -32,6 +32,8 @@ const IMPACT_BADGE: Record<Impact, string> = {
   low: "🟢 Low"
 };
 
+type LineDelta = { additions: number; deletions: number };
+
 export interface WalkthroughInput {
   /** Consolidated, ranked findings from the judge (#6). */
   findings: Finding[];
@@ -49,6 +51,14 @@ export interface WalkthroughInput {
   impact?: Impact;
   /** Override the derived effort (1–5). */
   effort?: number;
+  /** Specialist-pass coverage, for the review-info line and degraded detection (#56). */
+  coverage?: { passed: number; total: number };
+  /**
+   * True when the run could not fully review (a specialist pass failed,
+   * verification failed, coverage truncated). Drives the "degraded" comment
+   * state so a failed review is never disguised as a clean pass (#56).
+   */
+  degraded?: boolean;
 }
 
 const SKIP_LABELS: Record<SkipReason, string> = {
@@ -87,9 +97,20 @@ function normalizeMarkdownText(value: string): string {
 function escapeMarkdownText(value: string): string {
   let escaped = "";
   for (const char of normalizeMarkdownText(value)) {
-    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
+}
+
+/** Escape angle brackets as entities so untrusted text cannot become raw HTML. */
+function escapeMarkdownChar(char: string): string {
+  if (char === "<") {
+    return "&lt;";
+  }
+  if (char === ">") {
+    return "&gt;";
+  }
+  return `\\${char}`;
 }
 
 /** Escape untrusted paragraph text without over-escaping normal punctuation. */
@@ -102,9 +123,18 @@ function escapeMarkdownParagraph(value: string): string {
       MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
       (index === 0 && char === "-") ||
       isOrderedListDot(normalized, index);
-    escaped += shouldEscape ? `\\${char}` : char;
+    escaped += shouldEscape ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
+}
+
+/** Escape multiline paragraph content line-by-line, then flatten it to one Markdown line. */
+function escapeMarkdownParagraphFlat(value: string): string {
+  return value
+    .split(/\r\n|\r|\n/)
+    .map((line) => escapeMarkdownParagraph(line.trim()))
+    .filter(Boolean)
+    .join(" ");
 }
 
 /** Detect a leading ordered-list marker after trimming summary text. */
@@ -150,7 +180,7 @@ function fencedCodeBlock(language: string, body: string): string {
 }
 
 /** Count added and deleted text lines for one parsed diff file. */
-function lineDelta(file: DiffFile): { additions: number; deletions: number } {
+function lineDelta(file: DiffFile): LineDelta {
   let additions = 0;
   let deletions = 0;
   for (const hunk of file.hunks) {
@@ -165,10 +195,21 @@ function lineDelta(file: DiffFile): { additions: number; deletions: number } {
   return { additions, deletions };
 }
 
+/** Reuse diff-line counts when several summary sections need the same file delta. */
+function lineDeltaFor(file: DiffFile, deltas?: Map<DiffFile, LineDelta>): LineDelta {
+  const cached = deltas?.get(file);
+  if (cached) {
+    return cached;
+  }
+  const delta = lineDelta(file);
+  deltas?.set(file, delta);
+  return delta;
+}
+
 /** Count all changed text lines across parsed diff files. */
-function totalChangedLines(files: DiffFile[]): number {
+function totalChangedLines(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>): number {
   return files.reduce((sum, file) => {
-    const { additions, deletions } = lineDelta(file);
+    const { additions, deletions } = lineDeltaFor(file, deltas);
     return sum + additions + deletions;
   }, 0);
 }
@@ -183,25 +224,28 @@ export function severityCounts(findings: Finding[]): Record<Severity, number> {
 }
 
 /** Derive PR impact from the worst finding severity and change size. */
-export function deriveImpact(findings: Finding[], files: DiffFile[]): Impact {
+export function deriveImpact(
+  findings: Finding[],
+  files: DiffFile[],
+  changedLines = totalChangedLines(files)
+): Impact {
   if (findings.some((f) => f.severity === "critical")) {
     return "high";
   }
-  if (findings.some((f) => f.severity === "major") || totalChangedLines(files) > 400) {
+  if (findings.some((f) => f.severity === "major") || changedLines > 400) {
     return "medium";
   }
   return "low";
 }
 
 /** Derive a 1–5 estimated-effort score from change size and file count. */
-export function deriveEffort(files: DiffFile[]): number {
-  const lines = totalChangedLines(files);
+export function deriveEffort(files: DiffFile[], changedLines = totalChangedLines(files)): number {
   const count = files.length;
   let score = 1;
-  if (lines > 20 || count > 2) score = 2;
-  if (lines > 80 || count > 5) score = 3;
-  if (lines > 250 || count > 15) score = 4;
-  if (lines > 600 || count > 40) score = 5;
+  if (changedLines > 20 || count > 2) score = 2;
+  if (changedLines > 80 || count > 5) score = 3;
+  if (changedLines > 250 || count > 15) score = 4;
+  if (changedLines > 600 || count > 40) score = 5;
   return score;
 }
 
@@ -224,7 +268,7 @@ function topDir(path: string): string {
  * file inventory stays out of the summary's main flow — a count in the summary,
  * the full list one click away (backlog #54).
  */
-function changedFilesSection(files: DiffFile[]): string {
+function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>): string {
   if (files.length === 0) {
     return "<details>\n<summary><b>Changed files (0)</b></summary>\n\n_None._\n\n</details>";
   }
@@ -241,7 +285,7 @@ function changedFilesSection(files: DiffFile[]): string {
     const label = dir === "(root)" ? "(root)/" : escapeMarkdownText(`${dir}/`);
     body.push(`**${label}**`);
     for (const file of groupFiles) {
-      const { additions, deletions } = lineDelta(file);
+      const { additions, deletions } = lineDeltaFor(file, deltas);
       const delta = file.binary
         ? "binary"
         : [additions ? `+${additions}` : "", deletions ? `−${deletions}` : ""].filter(Boolean).join(" ") || "no line changes";
@@ -297,7 +341,7 @@ function findingsSection(findings: Finding[]): string {
   const lines = ["### Findings"];
   for (const finding of blockers) {
     lines.push(
-      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownText(finding.title)}** — ${findingLocation(finding)}`
+      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`
     );
   }
   return lines.join("\n");
@@ -306,7 +350,12 @@ function findingsSection(findings: Finding[]): string {
 /** Render caller-provided summaries as escaped text, preserving the fallback style. */
 function summarySection(summary: string | undefined): string {
   const trimmed = summary?.trim();
-  return trimmed ? escapeMarkdownParagraph(trimmed) : "_Automated review of the changes in this pull request._";
+  return trimmed ? escapeMarkdownParagraphFlat(trimmed) : "_Automated review of the changes in this pull request._";
+}
+
+/** Escape multi-line operational notes line-by-line before putting them in Markdown lists. */
+function escapeReviewNote(note: string): string {
+  return escapeMarkdownParagraphFlat(note);
 }
 
 /** Render reviewer-visible operational notes without allowing Markdown injection. */
@@ -317,37 +366,100 @@ function notesSection(notes: string[] | undefined): string {
   }
   return [
     "> ⚠️ **Review notes**",
-    ...visible.map((note) => `> - ${escapeMarkdownParagraph(note)}`)
+    ...visible.map((note) => `> - ${escapeReviewNote(note)}`)
   ].join("\n");
 }
 
-/** Render the full walkthrough summary markdown for a review. */
+/** Signature emoji for a genuinely clean review (Prowl's raccoon, not a generic 🎉). */
+const CLEAN_EMOJI = "🦝";
+
+/** The three distinct shapes a review comment can take (backlog #56). */
+export type ReviewCommentState = "findings" | "clean" | "degraded";
+
+/**
+ * Pick the comment state from the review result. `findings` wins (real issues
+ * are shown even if the run was also degraded); a run that couldn't fully
+ * execute (caller's `degraded` flag, or a failed specialist pass seen via
+ * partial coverage) is `degraded`; everything else is `clean`.
+ *
+ * Skipped files do NOT make a run degraded — a guardrail skip is partial
+ * coverage on an otherwise healthy review, surfaced as the clean state's caveat
+ * headline + the "Not reviewed" note, not an alarming "Review incomplete" (#56).
+ */
+export function reviewCommentState(input: WalkthroughInput): ReviewCommentState {
+  if (input.findings.length > 0) {
+    return "findings";
+  }
+  const partialCoverage =
+    input.coverage !== undefined && input.coverage.passed < input.coverage.total;
+  return input.degraded || partialCoverage ? "degraded" : "clean";
+}
+
+/** Render the "> ⚠️ Not reviewed" skip line, or "" when nothing was skipped. */
+function skippedNoteBlock(skipped: SkippedFile[] | undefined): string {
+  return skipped && skipped.length > 0 ? `> ⚠️ **Not reviewed:** ${skippedFilesNote(skipped)}` : "";
+}
+
+/** Render the optional Mermaid diagram block, or "" when none is provided. */
+function diagramBlock(mermaid: string | undefined): string {
+  return mermaid?.trim() ? ["### Diagram", fencedCodeBlock("mermaid", mermaid)].join("\n") : "";
+}
+
+/** Collapsed "Review info" block for the clean state: impact/effort/passes + benign notes. */
+function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: number): string {
+  const header = `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effort}/5${
+    input.coverage ? ` · ${input.coverage.passed}/${input.coverage.total} passes` : ""
+  }`;
+  const lines = [header];
+  for (const note of input.notes?.map((n) => n.trim()).filter(Boolean) ?? []) {
+    lines.push(`- ${escapeReviewNote(note)}`);
+  }
+  return ["<details>", "<summary><b>Review info</b></summary>", "", lines.join("\n"), "", "</details>"].join("\n");
+}
+
+/**
+ * Render the review summary markdown in one of three distinct states (#56):
+ * `findings` (full report), `clean` (compact "no issues" + collapsibles), or
+ * `degraded` (a clear "review incomplete" — never disguised as "Findings: none").
+ */
 export function buildWalkthrough(input: WalkthroughInput): string {
-  const counts = severityCounts(input.findings);
-  const impact = input.impact ?? deriveImpact(input.findings, input.files);
-  const effort = input.effort ?? deriveEffort(input.files);
+  const lineDeltas = new Map<DiffFile, LineDelta>();
+  const changedLines = totalChangedLines(input.files, lineDeltas);
+  const impact = input.impact ?? deriveImpact(input.findings, input.files, changedLines);
+  const effort = input.effort ?? deriveEffort(input.files, changedLines);
+  const state = reviewCommentState(input);
 
-  const sections: string[] = [
-    REVIEW_MARKER,
-    "## prowl-review",
-    summarySection(input.summary),
-    `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
-    changedFilesSection(input.files),
-    findingsSection(input.findings)
-  ];
+  const sections: string[] = [REVIEW_MARKER, "## prowl-review"];
 
-  if (input.skipped && input.skipped.length > 0) {
-    sections.push(`> ⚠️ **Not reviewed:** ${skippedFilesNote(input.skipped)}`);
+  if (state === "clean") {
+    // When guardrails skipped files the review is still healthy, but it didn't
+    // see everything — caveat the headline rather than claiming a blanket pass
+    // (the "Not reviewed" note below lists what was skipped). (#56)
+    const headline =
+      (input.skipped?.length ?? 0) > 0
+        ? `✅ No issues found in reviewed files ${CLEAN_EMOJI}`
+        : `✅ No issues found ${CLEAN_EMOJI}`;
+    sections.push(headline, reviewInfoDetails(input, impact, effort), changedFilesSection(input.files, lineDeltas));
+  } else if (state === "degraded") {
+    const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
+    const header =
+      failed > 0 && input.coverage
+        ? `⚠️ **Review incomplete** — ${failed}/${input.coverage.total} specialist passes failed; coverage degraded`
+        : "⚠️ **Review incomplete** — coverage degraded";
+    sections.push(header, notesSection(input.notes), changedFilesSection(input.files, lineDeltas));
+  } else {
+    const counts = severityCounts(input.findings);
+    sections.push(
+      summarySection(input.summary),
+      `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
+      changedFilesSection(input.files, lineDeltas),
+      findingsSection(input.findings),
+      notesSection(input.notes)
+    );
   }
 
-  const notes = notesSection(input.notes);
-  if (notes) {
-    sections.push(notes);
-  }
+  sections.push(skippedNoteBlock(input.skipped), diagramBlock(input.mermaid));
 
-  if (input.mermaid?.trim()) {
-    sections.push(["### Diagram", fencedCodeBlock("mermaid", input.mermaid)].join("\n"));
-  }
-
-  return sections.join("\n\n");
+  // Drop the empty placeholders the per-state blocks may have produced.
+  return sections.filter((section) => section.trim().length > 0).join("\n\n");
 }
