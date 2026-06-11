@@ -378,8 +378,13 @@ export type ReviewCommentState = "findings" | "clean" | "degraded";
 
 /**
  * Pick the comment state from the review result. `findings` wins (real issues
- * are shown even if the run was also degraded); otherwise a degraded run is a
- * failure, and only a healthy empty run is "clean".
+ * are shown even if the run was also degraded); a run that couldn't fully
+ * execute (caller's `degraded` flag, or a failed specialist pass seen via
+ * partial coverage) is `degraded`; everything else is `clean`.
+ *
+ * Skipped files do NOT make a run degraded — a guardrail skip is partial
+ * coverage on an otherwise healthy review, surfaced as the clean state's caveat
+ * headline + the "Not reviewed" note, not an alarming "Review incomplete" (#56).
  */
 export function reviewCommentState(input: WalkthroughInput): ReviewCommentState {
   if (input.findings.length > 0) {
@@ -387,8 +392,7 @@ export function reviewCommentState(input: WalkthroughInput): ReviewCommentState 
   }
   const partialCoverage =
     input.coverage !== undefined && input.coverage.passed < input.coverage.total;
-  const skippedFiles = (input.skipped?.length ?? 0) > 0;
-  return input.degraded || partialCoverage || skippedFiles ? "degraded" : "clean";
+  return input.degraded || partialCoverage ? "degraded" : "clean";
 }
 
 /** Render the "> ⚠️ Not reviewed" skip line, or "" when nothing was skipped. */
@@ -428,11 +432,14 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   const sections: string[] = [REVIEW_MARKER, "## prowl-review"];
 
   if (state === "clean") {
-    sections.push(
-      `✅ No issues found ${CLEAN_EMOJI}`,
-      reviewInfoDetails(input, impact, effort),
-      changedFilesSection(input.files, lineDeltas)
-    );
+    // When guardrails skipped files the review is still healthy, but it didn't
+    // see everything — caveat the headline rather than claiming a blanket pass
+    // (the "Not reviewed" note below lists what was skipped). (#56)
+    const headline =
+      (input.skipped?.length ?? 0) > 0
+        ? `✅ No issues found in reviewed files ${CLEAN_EMOJI}`
+        : `✅ No issues found ${CLEAN_EMOJI}`;
+    sections.push(headline, reviewInfoDetails(input, impact, effort), changedFilesSection(input.files, lineDeltas));
   } else if (state === "degraded") {
     const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
     const header =

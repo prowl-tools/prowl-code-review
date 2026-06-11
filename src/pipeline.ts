@@ -222,15 +222,15 @@ export async function reviewPullRequest(
   );
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
-  // when a specialist pass failed, verification/context retrieval failed, or
-  // guardrails skipped files — so an incomplete review is never rendered as clean.
+  // when the reviewer couldn't fully run — a specialist pass failed, verification
+  // failed, or context retrieval was truncated. Guardrail file skips are NOT a
+  // failure: the review is healthy but partial, so it renders as the clean state
+  // with a caveat headline ("No issues found in reviewed files") + the skip note,
+  // rather than an alarming "Review incomplete" on every PR that touches a lockfile.
   const passesPassed = reviewResult.passes.filter((pass) => pass.ok).length;
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
   const degraded =
-    passesPassed < reviewResult.passes.length ||
-    !reviewResult.verification.ok ||
-    skipped.length > 0 ||
-    contextDegraded;
+    passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
