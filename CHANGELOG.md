@@ -38,7 +38,10 @@ All notable changes to Prowl Review will be documented in this file.
   finds that comment by its marker and **edits it in place** instead of stacking a new review every
   push, and posts only **net-new** inline findings (deduped against fingerprints already posted on a
   prior push; fingerprints are line-independent so a finding that drifts a few lines isn't reposted).
-  The publish decision (`planPublish`) is pure and unit-tested. Deferred under #22/#23: GraphQL
+  Net-new inline findings are submitted in one batched `pulls.createReview` call, and their
+  fingerprints are persisted only after that review call succeeds; skipped or failed inline publishes
+  remain retryable on the next run. The publish decision (`planPublish`) is pure and unit-tested.
+  Deferred under #22/#23: GraphQL
   `resolveReviewThread` for outdated threads, human-reply handling, and incremental delta-review.
   One-time transition note: summaries posted before this change were review bodies, not issue
   comments, so the first run after upgrade creates a fresh summary comment (old ones are left as-is).
