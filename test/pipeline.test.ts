@@ -301,6 +301,7 @@ rename to secrets/prod.txt
 +PUBLIC_VALUE=example
 `;
     deps.fetchPullRequest.mockResolvedValue({ meta, diff: sensitiveDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
 
     const result = await reviewPullRequest(octokit, ref, {
       config,
@@ -326,6 +327,8 @@ rename to secrets/prod.txt
     expect(diffInput).not.toContain("ghp_aaaa");
     expect(diffInput).toContain("[REDACTED");
     expect(result.payload.body).toContain("sensitive");
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).not.toContain("No issues found");
   });
 
   it("redacts private key blocks after rendering annotated diffs", async () => {

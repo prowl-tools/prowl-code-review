@@ -97,9 +97,20 @@ function normalizeMarkdownText(value: string): string {
 function escapeMarkdownText(value: string): string {
   let escaped = "";
   for (const char of normalizeMarkdownText(value)) {
-    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
+}
+
+/** Escape angle brackets as entities so untrusted text cannot become raw HTML. */
+function escapeMarkdownChar(char: string): string {
+  if (char === "<") {
+    return "&lt;";
+  }
+  if (char === ">") {
+    return "&gt;";
+  }
+  return `\\${char}`;
 }
 
 /** Escape untrusted paragraph text without over-escaping normal punctuation. */
@@ -112,7 +123,7 @@ function escapeMarkdownParagraph(value: string): string {
       MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
       (index === 0 && char === "-") ||
       isOrderedListDot(normalized, index);
-    escaped += shouldEscape ? `\\${char}` : char;
+    escaped += shouldEscape ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
 }

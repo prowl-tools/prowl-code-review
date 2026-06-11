@@ -123,7 +123,7 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("``findings/`bad`\\n### injected.md:5``");
     expect(md).toContain("``skip/`bad`\\n### skipped.md``");
     expect(md).toContain("Title \\*\\*break\\*\\* \\- list item 1\\. ordered \\#\\#\\# fake &#64;org/team");
-    expect(md).toContain("Looks fine &#64;org/team. \\- list item 1\\. ordered \\#\\#\\# Spoof \\<\\!-- hidden --\\> \\> quote");
+    expect(md).toContain("Looks fine &#64;org/team. \\- list item 1\\. ordered \\#\\#\\# Spoof &lt;\\!-- hidden --&gt; &gt; quote");
     expect(md).not.toContain("`spoof`\n### fake.md");
     expect(md).not.toContain("`bad`\n### injected.md");
     expect(md).not.toContain("`bad`\n### skipped.md");
@@ -172,7 +172,7 @@ describe("buildWalkthrough", () => {
     });
 
     expect(md).toContain("Review notes");
-    expect(md).toContain("Reached limit &#64;org/team \\* injected item \\<\\!-- \\<details\\>spoof\\</details\\> --\\> \\#\\#\\# injected");
+    expect(md).toContain("Reached limit &#64;org/team \\* injected item &lt;\\!-- &lt;details&gt;spoof&lt;/details&gt; --&gt; \\#\\#\\# injected");
     expect(md).not.toContain("@org/team");
     expect(md).not.toContain("<!-- <details>spoof</details> -->");
     expect(md).not.toContain("<details>spoof</details>");
@@ -222,7 +222,7 @@ describe("buildWalkthrough", () => {
       });
       expect(md).toContain("✅ No issues found");
       expect(md).toContain("Redacted 1 secret");
-      expect(md).toContain("Reached limit &#64;org/team \\<\\!-- hidden --\\> \\#\\#\\# injected");
+      expect(md).toContain("Reached limit &#64;org/team &lt;\\!-- hidden --&gt; \\#\\#\\# injected");
       expect(md).not.toContain("⚠️ **Review notes**");
       expect(md).not.toContain("@org/team");
       expect(md).not.toContain("<!-- hidden -->");
