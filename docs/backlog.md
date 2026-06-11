@@ -152,13 +152,15 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
     - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
 
-56. **Suppress no-op reviews (stay quiet when there's nothing worth saying)**
-    As a developer, I want prowl-review to collapse to a tiny acknowledgment (not a full report) when it found nothing worth changing, so that the PR isn't littered with a long "Findings: none" comment on every push.
-    - Acceptance: when a review produces no findings at/above the configured severity floor **and** the run was healthy (all specialist passes succeeded, nothing skipped, no errors/redaction notes worth surfacing), post a single minimal line (e.g. `✅ prowl-review: no issues found`) instead of the full walkthrough (config-overridable, e.g. `noFindingsComment: "minimal" | "full" | "silent"`, default `minimal`).
-    - Acceptance: the minimal acknowledgment must **update the existing comment in place** via update-not-duplicate (#22), so rapid pushes don't stack a new LGTM line each run — otherwise the "minimal" form is still per-push noise.
-    - Acceptance: **do NOT suppress a degraded review** — if any specialist pass failed (e.g. "Gemini API returned no content"), files were skipped, or the per-PR budget/limits truncated coverage, still post so the degradation is visible (this is the failure mode behind the current recurring empty reviews). A "clean" result and a "couldn't actually review" result must not look the same.
-    - Acceptance: interacts cleanly with update-not-duplicate (#22) and incremental re-review (#23) — if a prior prowl-review surfaced findings that are now resolved, update/resolve the existing review rather than leaving a stale one; a freshly-clean PR with no prior review simply stays silent.
-    - Acceptance: unit-tested decision function (pure `shouldPublish(review)` separate from the posting side-effect).
+56. **Three distinct review-comment states (clean / degraded / findings)**
+    As a developer, I want the review comment to look different depending on whether the reviewer found nothing, couldn't run, or found real issues — so that a clean PR isn't a wall of text and a *failed* review is never disguised as "all clear."
+    - Acceptance: the walkthrough renders **three visually distinct states**, never conflated:
+      1. **Healthy + findings** → the full report (current behavior).
+      2. **Healthy + nothing** → a compact, celebratory line — `## prowl-review` + `No issues found <emoji>` (emoji TBD; candidates 🦝 brand / 🛡️ / ✨, not CodeRabbit's 🎉) — with secondary detail tucked into collapsed `<details>` (review info: impact·effort·N/4 passes·model; changed files; optional walkthrough). **Drop** the `Impact … · Findings: none` banner and the `### Findings / No blocking issues found` block. Visual target: CodeRabbit's clean comment (compact headline + collapsibles).
+      3. **Degraded / passes failed** → a clear failure header, e.g. `⚠️ Review incomplete — N/4 passes failed; coverage degraded`, with the reasons (incl. the surfaced `finishReason`/`blockReason`) in a `<details>`. **Must never show "Findings: none"** — a "couldn't actually review" result must not look like a clean pass (the original bug this item came from).
+    - Acceptance: state selection is a pure, unit-tested function over the review result (healthy = no findings at/above the severity floor AND no failed passes / skips / coverage-truncation); the renderer is `buildWalkthrough` (#9) only — no posting side-effects.
+    - Acceptance: the clean-state comment **updates the existing comment in place** via update-not-duplicate (#22), so rapid pushes don't stack a new line each run.
+    - Acceptance: config-overridable verbosity, e.g. `noFindingsComment: "minimal" | "full"` (default `minimal`); degraded state always renders regardless.
 
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
