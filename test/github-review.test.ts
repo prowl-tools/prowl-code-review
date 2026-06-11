@@ -14,10 +14,13 @@ function mockOctokit(
   login = "github-actions[bot]"
 ) {
   const listComments = vi.fn(
-    async (params: { per_page?: number; page?: number; direction?: "asc" | "desc" }) => {
+    async (params: { per_page?: number; page?: number; sort?: string; direction?: "asc" | "desc" }) => {
       const perPage = params.per_page ?? 30;
       const page = params.page ?? 1;
-      const comments = params.direction === "desc" ? [...priorComments].reverse() : priorComments;
+      const comments =
+        (params.sort === undefined || params.sort === "created") && params.direction === "desc"
+          ? [...priorComments].reverse()
+          : priorComments;
       const start = (page - 1) * perPage;
       return { data: comments.slice(start, start + perPage) };
     }
@@ -126,7 +129,7 @@ describe("submitReview", () => {
     expect(review.event).toBe("COMMENT");
     expect(review).toEqual(
       expect.objectContaining({
-        body: "prowl-review posted 1 new inline finding. See the summary comment for full review context."
+        body: expect.stringContaining("summary")
       })
     );
     expect(review.comments).toHaveLength(1);
@@ -218,6 +221,23 @@ describe("submitReview", () => {
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
   });
 
+  it("falls back to a fresh summary when the authenticated login cannot be resolved", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, createComment, getAuthenticated, updateComment } = mockOctokit([prior]);
+    getAuthenticated.mockRejectedValueOnce(new Error("auth unavailable"));
+
+    await submitReview(octokit, ref, payload());
+
+    expect(getAuthenticated).toHaveBeenCalledTimes(1);
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
+  });
+
   it("preserves non-comment review events", async () => {
     const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(
@@ -296,5 +316,45 @@ describe("submitReview", () => {
       lastReviewedSha: "head",
       postedFindings: ["fp-a"]
     });
+  });
+
+  it("paginates when recovering fingerprints from prior bot inline comments", async () => {
+    const filler = Array.from({ length: 100 }, () => ({
+      body: "noise",
+      user: { login: "github-actions[bot]" }
+    }));
+    const { octokit, createComment, createReview, listReviewComments } = mockOctokit(
+      [],
+      [...filler, { body: "old inline\n\n<!-- prowl-review:finding fp-a -->", user: { login: "github-actions[bot]" } }]
+    );
+
+    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
+
+    expect(listReviewComments).toHaveBeenCalledTimes(2);
+    expect(createReview).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
+      "fp-a"
+    ]);
+  });
+
+  it("caps prior inline fingerprint recovery to avoid unbounded pagination", async () => {
+    const filler = Array.from({ length: 1000 }, () => ({
+      body: "noise",
+      user: { login: "github-actions[bot]" }
+    }));
+    const { octokit, createComment, createReview, listReviewComments } = mockOctokit(
+      [],
+      [...filler, { body: "old inline\n\n<!-- prowl-review:finding fp-a -->", user: { login: "github-actions[bot]" } }]
+    );
+
+    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
+
+    expect(listReviewComments).toHaveBeenCalledTimes(10);
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
+      "fp-a"
+    ]);
   });
 });
