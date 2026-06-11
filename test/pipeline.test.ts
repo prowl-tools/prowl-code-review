@@ -123,6 +123,51 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("provider timeout");
   });
 
+  it("renders context retrieval failures as degraded when no findings remain", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockRejectedValue(new Error("provider timeout"));
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("Context retrieval failed");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
+  it("renders context retrieval limit hits as degraded when no findings remain", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
+      rounds: 6,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      reachedLimit: true,
+      notes: ["Reached max tool rounds (6)."],
+      toolOutputs: []
+    });
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
+    expect(result.payload.body).not.toContain("No issues found");
+  });
+
   it("surfaces failed review passes so clean summaries are not misleading", async () => {
     const deps = makeDeps();
     deps.runReview.mockResolvedValue(

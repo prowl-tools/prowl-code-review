@@ -185,6 +185,7 @@ export async function reviewPullRequest(
   let context: string | undefined;
   let contextFiles = 0;
   let contextNotes: string[] = [];
+  let contextDegraded = false;
   if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
     try {
       const gathered = await gather({
@@ -195,6 +196,7 @@ export async function reviewPullRequest(
       });
       contextFiles = gathered.files.length;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
+      contextDegraded = gathered.reachedLimit;
       if (gathered.files.length > 0) {
         const joined = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
         // Defense-in-depth: tool reads are already redacted, but redact again.
@@ -202,6 +204,7 @@ export async function reviewPullRequest(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      contextDegraded = true;
       contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
   }
@@ -219,12 +222,15 @@ export async function reviewPullRequest(
   );
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
-  // when a specialist pass failed, verification failed, or guardrails skipped
-  // files — so an incomplete review is never rendered as a clean "no issues found".
+  // when a specialist pass failed, verification/context retrieval failed, or
+  // guardrails skipped files — so an incomplete review is never rendered as clean.
   const passesPassed = reviewResult.passes.filter((pass) => pass.ok).length;
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
   const degraded =
-    passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || skipped.length > 0;
+    passesPassed < reviewResult.passes.length ||
+    !reviewResult.verification.ok ||
+    skipped.length > 0 ||
+    contextDegraded;
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
