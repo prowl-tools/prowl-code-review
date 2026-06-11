@@ -209,6 +209,12 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
+/** Build the marker-free review body used when batching inline COMMENT reviews. */
+function inlineBatchReviewBody(commentCount: number): string {
+  const noun = commentCount === 1 ? "finding" : "findings";
+  return `prowl-review posted ${commentCount} new inline ${noun}. The updatable summary comment has the full review context.`;
+}
+
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present, and posts only net-new inline findings.
@@ -234,21 +240,31 @@ export async function submitReview(
 
   let postedInlineComments: ReviewComment[] = [];
   const reviewComments = options.commitId ? initialPlan.newInlineComments.map(toGitHubComment) : [];
-  const shouldCreateReview = payload.event !== "COMMENT" || reviewComments.length > 0;
 
-  if (shouldCreateReview) {
+  if (reviewComments.length > 0) {
     // Post before persisting fingerprints; otherwise a failed GitHub review
     // submission would suppress retries for inline comments that never existed.
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
       pull_number: ref.pull_number,
+      event: "COMMENT",
+      ...(options.commitId ? { commit_id: options.commitId } : {}),
+      body: inlineBatchReviewBody(reviewComments.length),
+      comments: reviewComments
+    });
+    postedInlineComments = initialPlan.newInlineComments;
+  }
+
+  if (payload.event !== "COMMENT") {
+    await octokit.rest.pulls.createReview({
+      owner: ref.owner,
+      repo: ref.repo,
+      pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: payload.body,
-      ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
+      body: payload.body
     });
-    postedInlineComments = reviewComments.length > 0 ? initialPlan.newInlineComments : [];
   }
 
   const finalPlan = planPublish({
