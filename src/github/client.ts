@@ -39,6 +39,46 @@ export interface OctokitLike {
           start_side?: ReviewSide;
         }>;
       }): Promise<{ data: unknown }>;
+      /** List inline review comments already posted on the PR. */
+      listReviewComments(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        per_page?: number;
+        page?: number;
+      }): Promise<{ data: Array<{ body?: string; user?: { login?: string } | null }> }>;
+    };
+    /** Issue endpoints — a PR is an issue, so its top-level comments live here. */
+    issues: {
+      /** List a PR/issue's top-level comments (used to find our prior summary). */
+      listComments(params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        per_page?: number;
+        page?: number;
+        sort?: "created" | "updated";
+        direction?: "asc" | "desc";
+      }): Promise<{ data: Array<{ id: number; body?: string; user?: { login?: string } | null }> }>;
+      /** Create a top-level PR/issue comment (the summary on a first run). */
+      createComment(params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        body: string;
+      }): Promise<{ data: unknown }>;
+      /** Update an existing PR/issue comment in place (update-not-duplicate). */
+      updateComment(params: {
+        owner: string;
+        repo: string;
+        comment_id: number;
+        body: string;
+      }): Promise<{ data: unknown }>;
+    };
+    /** User endpoints used to identify the authenticated GitHub app/bot. */
+    users: {
+      /** Return the authenticated user's login for comment ownership checks. */
+      getAuthenticated(): Promise<{ data: { login: string } }>;
     };
   };
 }

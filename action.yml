@@ -34,7 +34,7 @@ inputs:
     required: false
     default: ""
   github-token:
-    description: "Token used to post the review (needs pull-requests: write)."
+    description: "Token used to post the review (needs pull-requests: write and issues: write)."
     required: false
     default: ${{ github.token }}
 

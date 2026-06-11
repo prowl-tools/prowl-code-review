@@ -74,7 +74,22 @@ export {
   type PullRequestMeta,
   type FetchedPullRequest
 } from "./github/diff.js";
-export { submitReview } from "./github/review.js";
+export {
+  submitReview,
+  planPublish,
+  type SubmitReviewOptions,
+  type PublishPlan,
+  type PriorSummaryComment
+} from "./github/review.js";
+export {
+  findingFingerprint,
+  serializeState,
+  parseState,
+  embedState,
+  REVIEW_STATE_VERSION,
+  ReviewStateSchema,
+  type ReviewState
+} from "./review/state.js";
 
 // Inline comments + committable suggestions (the published review).
 export {
