@@ -213,6 +213,20 @@ describe("buildWalkthrough", () => {
       expect(md).not.toContain("Findings:");
     });
 
+    it("stays clean with a caveat headline when files were skipped (#56)", () => {
+      const md = buildWalkthrough({
+        findings: [],
+        files,
+        coverage: { passed: 4, total: 4 },
+        skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
+      });
+      // Partial coverage on a healthy review: clean + honest caveat, not degraded.
+      expect(md).toContain("✅ No issues found in reviewed files 🦝");
+      expect(md).toContain("Not reviewed");
+      expect(md).toContain("huge.lock");
+      expect(md).not.toContain("Review incomplete");
+    });
+
     it("folds clean-state notes safely into review info, not a warning callout", () => {
       const md = buildWalkthrough({
         findings: [],
@@ -286,7 +300,8 @@ describe("buildWalkthrough", () => {
       expect(reviewCommentState({ findings: [makeFinding("minor")], files, degraded: true })).toBe("findings");
       expect(reviewCommentState({ findings: [], files, degraded: true })).toBe("degraded");
       expect(reviewCommentState({ findings: [], files, coverage: { passed: 3, total: 4 } })).toBe("degraded");
-      expect(reviewCommentState({ findings: [], files, skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }] })).toBe("degraded");
+      // Skipped files are partial coverage on a healthy review → clean (caveat), not degraded (#56).
+      expect(reviewCommentState({ findings: [], files, skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }] })).toBe("clean");
       expect(reviewCommentState({ findings: [], files })).toBe("clean");
     });
   });

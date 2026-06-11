@@ -233,7 +233,7 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("No issues found");
   });
 
-  it("renders skipped-file reviews as degraded instead of clean", async () => {
+  it("renders skipped-file reviews as clean-with-caveat, not degraded (#56)", async () => {
     const deps = makeDeps();
     const twoFileDiff = `${DIFF}diff --git a/src/b.ts b/src/b.ts
 --- a/src/b.ts
@@ -260,11 +260,14 @@ describe("reviewPullRequest", () => {
     });
 
     expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
-    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
+    // A healthy review that skipped files is partial, not failed: clean state with
+    // an honest caveat headline + the "Not reviewed" note — never the alarming
+    // "Review incomplete" reserved for actual failures.
+    expect(result.payload.body).toContain("✅ No issues found in reviewed files");
     expect(result.payload.body).toContain("Not reviewed");
     expect(result.payload.body).toContain("skipped - file limit reached");
     expect(result.payload.body).toContain("src/b.ts");
-    expect(result.payload.body).not.toContain("No issues found");
+    expect(result.payload.body).not.toContain("Review incomplete");
   });
 
   it("skips sensitive files and redacts secrets before review", async () => {
@@ -327,8 +330,9 @@ rename to secrets/prod.txt
     expect(diffInput).not.toContain("ghp_aaaa");
     expect(diffInput).toContain("[REDACTED");
     expect(result.payload.body).toContain("sensitive");
-    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
-    expect(result.payload.body).not.toContain("No issues found");
+    // Sensitive/size skips are partial coverage, not a failed review: clean + caveat.
+    expect(result.payload.body).toContain("✅ No issues found in reviewed files");
+    expect(result.payload.body).not.toContain("Review incomplete");
   });
 
   it("redacts private key blocks after rendering annotated diffs", async () => {
