@@ -152,6 +152,13 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: clean header + consistent severity/impact badges + a one-line TL;DR; an estimated-effort visual (e.g. `▰▰▰▱▱`); degrade-safe (still renders if a feature is unsupported).
     - Acceptance: pure-formatter changes to `buildWalkthrough` (#9) and inline (#10), covered by tests; benchmarked visually against CodeRabbit/Greptile for "premium feel." (Bot avatar/branding is separate — see #47.)
 
+57. **Per-finding "Resolve with an AI agent" prompt**
+    As a developer, I want each finding to carry a ready-to-copy prompt for my coding agent that tells it to verify the issue and either apply a minimal fix or explain why it's not needed, so that I can clear review comments quickly (the CodeRabbit "Prompt for AI Agents" affordance, made our own). Made for agents, controlled by humans.
+    - Acceptance: a collapsed `<details><summary>🤖 Resolve with an AI agent</summary>` block is appended to every finding via `formatFindingComment` (#10), so it appears on **both** inline review comments and the summary's "Unmapped findings" from one insertion point.
+    - Acceptance: the block is a **fenced, copy-paste prompt** (no markdown rendering) containing the finding location (`file:line`/range), severity + category, title, body, and the committable suggestion when present — followed by a fixed instruction: *verify the finding against the current code; if valid, apply the smallest change that resolves it without altering unrelated behavior and re-run build/tests; if not, leave the code unchanged and explain why.*
+    - Acceptance: untrusted finding text is **fence-widened** (longer than any backtick run) and control-char-sanitized so it cannot break out of the code fence or inject markdown/HTML (consistent with the existing inline-comment escaping).
+    - Acceptance: **default on**; a config toggle (e.g. `agentPrompt`) rides along with the config loader (#29). Unit-tested in `inline.ts`.
+
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
     - Acceptance: only generate `suggestion` blocks for high-confidence findings; optionally apply-and-typecheck/lint the fix in a sandbox before including it.
