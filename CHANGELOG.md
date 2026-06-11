@@ -15,6 +15,17 @@ All notable changes to Prowl Review will be documented in this file.
   message, so a degraded run is diagnosable. (Retry/backoff + cross-generation failback remain in #17.)
 
 ### Changed
+- Three distinct review-comment states (`src/review/walkthrough.ts`, backlog #56): the summary now
+  renders differently by outcome instead of always a full report. **Clean** (healthy + nothing
+  found) → a compact `✅ No issues found 🦝` with impact/effort/passes and the changed-files list
+  tucked into collapsed `<details>` (no more `Findings: none` banner); when guardrails skipped
+  files the review is still healthy but partial, so it stays clean with an honest caveat headline
+  (`✅ No issues found in reviewed files`) + the "Not reviewed" note — not an alarming
+  "Review incomplete" on every PR that touches a lockfile. **Degraded** (a specialist pass failed,
+  verification failed, or context retrieval was truncated — i.e. the reviewer couldn't fully run) →
+  a clear `⚠️ Review incomplete` message with the reasons, and **never** "Findings: none", so a
+  review that couldn't run is no longer disguised as a clean pass. **Findings** → the full report as
+  before. State selection is a pure, tested `reviewCommentState`.
 - Collapse the changed-files overview behind a `<details>` disclosure in the review summary
   (`src/review/walkthrough.ts`): the summary now shows just a file count, with the grouped
   list one click away — so the file inventory is no longer a top-level wall of text on every
