@@ -37,7 +37,8 @@ All notable changes to Prowl Review will be documented in this file.
   versioned state marker (last-reviewed SHA + posted-finding fingerprints). On a re-run prowl-review
   finds that comment by its marker and **edits it in place** instead of stacking a new review every
   push, and posts only **net-new** inline findings (deduped against fingerprints already posted on a
-  prior push; fingerprints are line-independent so a finding that drifts a few lines isn't reposted).
+  prior push; fingerprints are SHA-256, line-independent, and include normalized title/body plus
+  suggestion content so same-title findings with different details remain distinct).
   Net-new inline findings are submitted in one batched `pulls.createReview` call, and their
   fingerprints are persisted only after that review call succeeds; skipped or failed inline publishes
   remain retryable on the next run. The publish decision (`planPublish`) is pure and unit-tested.

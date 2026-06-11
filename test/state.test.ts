@@ -33,11 +33,19 @@ describe("findingFingerprint", () => {
     expect(a).toBe(b);
   });
 
-  it("differs by file, category, and title", () => {
+  it("differs by file, category, title, body, and suggestion", () => {
     const base = findingFingerprint(finding());
     expect(findingFingerprint(finding({ file: "src/b.ts" }))).not.toBe(base);
     expect(findingFingerprint(finding({ category: "security" }))).not.toBe(base);
     expect(findingFingerprint(finding({ title: "Something else" }))).not.toBe(base);
+    expect(findingFingerprint(finding({ body: "different explanation" }))).not.toBe(base);
+    expect(findingFingerprint(finding({ suggestion: "return value;" }))).not.toBe(base);
+  });
+
+  it("normalizes finding body whitespace and case", () => {
+    const a = findingFingerprint(finding({ body: "Missing   await\nbefore call" }));
+    const b = findingFingerprint(finding({ body: "missing await before CALL" }));
+    expect(a).toBe(b);
   });
 });
 

@@ -25,6 +25,7 @@ const STATE_MARKER_SUFFIX = " -->";
 /** Matches the persisted state marker and captures its JSON payload. */
 const STATE_MARKER_RE = /<!-- prowl-review:state ([\s\S]*?) -->/;
 
+/** Persisted state marker schema embedded in prowl-review's summary comment. */
 export const ReviewStateSchema = z.object({
   /** Schema version for forward-compatible parsing. */
   v: z.number().int().positive(),
@@ -34,21 +35,32 @@ export const ReviewStateSchema = z.object({
   postedFindings: z.array(z.string()).default([])
 });
 
+/** Parsed review state loaded from a prior prowl-review summary comment. */
 export type ReviewState = z.infer<typeof ReviewStateSchema>;
+
+function normalizeFingerprintText(value: string): string {
+  return value.trim().toLowerCase().replace(/\r\n/g, "\n").replace(/\s+/g, " ");
+}
+
+function normalizeFingerprintSuggestion(value: string | undefined): string {
+  return (value ?? "").replace(/\r\n/g, "\n").trim();
+}
 
 /**
  * Stable fingerprint for an inline finding, used to avoid re-posting the same
  * comment on every push. Deliberately line-independent: a finding that drifts a
  * few lines as the PR evolves keeps the same fingerprint, so it isn't re-posted
- * as if it were new. Keyed on file + category + normalized title.
+ * as if it were new. Keyed on file + category + normalized title/body/suggestion.
  */
 export function findingFingerprint(finding: Finding): string {
   const material = [
     finding.file.replace(/\\/g, "/").replace(/^\.\//, ""),
-    finding.category.trim().toLowerCase(),
-    finding.title.trim().toLowerCase().replace(/\s+/g, " ")
+    normalizeFingerprintText(finding.category),
+    normalizeFingerprintText(finding.title),
+    normalizeFingerprintText(finding.body),
+    normalizeFingerprintSuggestion(finding.suggestion)
   ].join("\n");
-  return createHash("sha1").update(material).digest("hex").slice(0, 16);
+  return createHash("sha256").update(material).digest("hex").slice(0, 16);
 }
 
 /** Render the hidden state marker comment for embedding in a summary body. */

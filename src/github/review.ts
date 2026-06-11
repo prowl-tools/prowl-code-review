@@ -17,6 +17,8 @@ import { embedState, parseState, REVIEW_STATE_VERSION, type ReviewState } from "
  * the GitHub reads/writes. `octokit` is injectable for testing.
  */
 
+const MAX_SUMMARY_COMMENT_PAGES = 10;
+
 /** A prior prowl-review summary comment found on the PR. */
 export interface PriorSummaryComment {
   id: number;
@@ -105,7 +107,7 @@ async function findPriorSummary(
       ...response.data.filter((comment) => (comment.body ?? "").includes(REVIEW_MARKER))
     );
 
-    if (response.data.length < perPage) {
+    if (response.data.length < perPage || page >= MAX_SUMMARY_COMMENT_PAGES) {
       break;
     }
     page += 1;
@@ -163,6 +165,8 @@ export async function submitReview(
   const shouldCreateReview = payload.event !== "COMMENT" || reviewComments.length > 0;
 
   if (shouldCreateReview) {
+    // Post before persisting fingerprints; otherwise a failed GitHub review
+    // submission would suppress retries for inline comments that never existed.
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
