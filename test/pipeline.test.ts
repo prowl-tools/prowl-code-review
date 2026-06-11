@@ -136,9 +136,29 @@ describe("reviewPullRequest", () => {
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
-    expect(result.payload.body).toContain("_No blocking issues found._");
-    expect(result.payload.body).toContain("1/2 review specialist passes failed");
+    // A failed pass renders the degraded state — never a clean "no issues" (#56).
+    expect(result.payload.body).toContain("⚠️ **Review incomplete** — 1/2 specialist passes failed");
     expect(result.payload.body).toContain("Review pass \"correctness\" failed: provider rejected prompt");
+    expect(result.payload.body).not.toContain("No blocking issues found");
+  });
+
+  it("renders the compact clean state when healthy with no findings", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: true },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("✅ No issues found");
+    expect(result.payload.body).toContain("2/2 passes");
+    expect(result.payload.body).not.toContain("Findings: none");
+    expect(result.payload.body).not.toContain("Review incomplete");
   });
 
   it("skips sensitive files and redacts secrets before review", async () => {
