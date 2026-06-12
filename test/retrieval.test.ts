@@ -2,7 +2,17 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+vi.mock("../src/providers/index.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/providers/index.js")>();
+  return {
+    ...actual,
+    completeWithTools: vi.fn()
+  };
+});
+
 import { gatherContext } from "../src/context/retrieval.js";
+import { completeWithTools } from "../src/providers/index.js";
 import type { ProviderConfig, ToolCall, ToolCompletionResult } from "../src/providers/index.js";
 
 let root: string;
@@ -44,6 +54,34 @@ function scripted(responses: ToolCompletionResult[]) {
 }
 
 describe("gatherContext", () => {
+  it("retries transient failures from the default completion (#17)", async () => {
+    const completeWithToolsMock = vi.mocked(completeWithTools);
+    const retryAttempts: number[] = [];
+
+    completeWithToolsMock
+      .mockReset()
+      .mockRejectedValueOnce(new Error("Anthropic API error (529): overloaded_error"))
+      .mockResolvedValueOnce(end());
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      retry: {
+        sleep: async () => {},
+        baseDelayMs: 1,
+        random: () => 0,
+        onRetry: ({ attempt }) => retryAttempts.push(attempt)
+      }
+    });
+
+    expect(completeWithToolsMock).toHaveBeenCalledTimes(2);
+    expect(retryAttempts).toEqual([1]);
+    expect(result.rounds).toBe(1);
+    expect(result.reachedLimit).toBe(false);
+    expect(result.notes).toEqual([]);
+  });
+
   it("reads a requested file then stops", async () => {
     const run = scripted([
       toolUse([{ id: "c1", name: "read_file", input: { path: "src/a.ts" } }]),
