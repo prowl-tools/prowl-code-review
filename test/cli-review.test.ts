@@ -8,6 +8,7 @@ import {
   resolveGuidelinesWorkspace,
   resolvePullNumber,
   resolveRepo,
+  resolveTrustWorkspace,
   resolveWorkspace
 } from "../src/cli/commands/review.js";
 
@@ -110,5 +111,21 @@ describe("review command helpers", () => {
 
     process.env.PROWL_GUIDELINES_WORKSPACE = "   ";
     expect(resolveGuidelinesWorkspace()).toBeUndefined();
+  });
+
+  it("resolves workspace execution trust from explicit truthy env values", () => {
+    expect(resolveTrustWorkspace()).toBe(false);
+
+    process.env.PROWL_TRUST_WORKSPACE = "true";
+    expect(resolveTrustWorkspace()).toBe(true);
+
+    process.env.PROWL_TRUST_WORKSPACE = "1";
+    expect(resolveTrustWorkspace()).toBe(true);
+
+    process.env.PROWL_TRUST_WORKSPACE = "yes";
+    expect(resolveTrustWorkspace()).toBe(true);
+
+    process.env.PROWL_TRUST_WORKSPACE = "false";
+    expect(resolveTrustWorkspace()).toBe(false);
   });
 });

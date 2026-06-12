@@ -49,6 +49,15 @@ describe("dedupeFindings", () => {
     ]);
     expect(result).toHaveLength(4);
   });
+
+  it("dedupes linter grounding against specialist rediscoveries on the same line", () => {
+    const result = dedupeFindings([
+      finding({ category: "lint", severity: "minor", title: "lint", confidence: 0.9 }),
+      finding({ category: "correctness", severity: "major", title: "specialist", confidence: 0.8 })
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe("specialist");
+  });
 });
 
 describe("rankFindings", () => {

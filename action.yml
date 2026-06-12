@@ -33,6 +33,10 @@ inputs:
     description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md; omitted disables guidelines."
     required: false
     default: ""
+  trust-workspace:
+    description: "Allow repo-local linter/SAST tools to execute in workspace-path. Use only for trusted checkouts."
+    required: false
+    default: "false"
   github-token:
     description: "Token used to post the review (needs pull-requests: write and issues: write)."
     required: false
@@ -71,8 +75,10 @@ runs:
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
+        PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
       run: |
         ARGS=()
         [ -n "$PROWL_MIN_SEVERITY" ] && ARGS+=(--min-severity "$PROWL_MIN_SEVERITY")
         [ "$PROWL_DRY_RUN" = "true" ] && ARGS+=(--dry-run)
+        [ "$PROWL_TRUST_WORKSPACE" = "true" ] && ARGS+=(--trust-workspace)
         node "$GITHUB_ACTION_PATH/dist/cli.js" review "${ARGS[@]}"

@@ -116,6 +116,18 @@ describe("runReview", () => {
     expect(result.findings).toContainEqual(lintFinding); // survives the judge (minor)
   });
 
+  it("wraps grounding in an explicit untrusted prompt section", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      expect(request.prompt).toContain("# Untrusted linter/SAST grounding\nGROUNDING_SUMMARY");
+      return reply("[]");
+    });
+
+    await runReview(
+      { diff: "d", grounding: { findings: [], summary: "GROUNDING_SUMMARY" } },
+      { config, complete, verify: false }
+    );
+  });
+
   it("applies the severity threshold via the judge", async () => {
     const complete = vi.fn(async (): Promise<CompletionResult> =>
       reply(

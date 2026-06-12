@@ -104,13 +104,26 @@ describe("reviewPullRequest", () => {
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
     expect(deps.gatherGrounding).toHaveBeenCalledWith(
-      expect.objectContaining({ root: "/repo", changedPaths: ["src/a.ts"] })
+      expect.objectContaining({
+        root: "/repo",
+        changedPaths: ["src/a.ts"],
+        changedLines: { "src/a.ts": [2] },
+        trustWorkspace: false
+      })
     );
     const reviewInput = deps.runReview.mock.calls[0][0];
     expect(reviewInput.grounding.findings).toEqual([lint]);
     expect(reviewInput.grounding.summary).toContain("no-debugger");
     expect(result.payload.body).toContain("Linter grounding");
     expect(result.payload.body).toContain("ESLint");
+  });
+
+  it("passes the trusted workspace opt-in to grounding", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, trustWorkspace: true });
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({ trustWorkspace: true })
+    );
   });
 
   it("skips grounding when asked", async () => {

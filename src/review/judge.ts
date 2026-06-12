@@ -31,11 +31,39 @@ function preferred(a: Finding, b: Finding): Finding {
   return b.confidence > a.confidence ? b : a;
 }
 
-/** Collapse findings that share file + line + category, keeping the strongest. */
+function lineKey(finding: Finding): string | null {
+  return finding.line ? `${finding.file}|${finding.line}` : null;
+}
+
+function isLintFinding(finding: Finding): boolean {
+  return finding.category.toLowerCase() === "lint";
+}
+
+function dedupeBucket(finding: Finding, lintLines: Set<string>): string {
+  const loc = lineKey(finding);
+  if (loc && lintLines.has(loc)) {
+    return loc;
+  }
+  return findingKey(finding);
+}
+
+/**
+ * Collapse duplicate findings, keeping the strongest.
+ *
+ * Normal model findings dedupe by file + line + category. Linter grounding is
+ * special: if a specialist re-reports the same linter-backed line with another
+ * category, collapse those together too.
+ */
 export function dedupeFindings(findings: Finding[]): Finding[] {
+  const lintLines = new Set(
+    findings
+      .filter(isLintFinding)
+      .map(lineKey)
+      .filter((key): key is string => Boolean(key))
+  );
   const byKey = new Map<string, Finding>();
   for (const finding of findings) {
-    const key = findingKey(finding);
+    const key = dedupeBucket(finding, lintLines);
     const existing = byKey.get(key);
     byKey.set(key, existing ? preferred(existing, finding) : finding);
   }

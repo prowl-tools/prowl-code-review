@@ -73,7 +73,7 @@ export interface SpecialistPassReport {
 export interface ReviewResult {
   /** Consolidated, ranked findings after the judge. */
   findings: Finding[];
-  /** Every raw finding the specialists produced (pre-judge). */
+  /** Every pre-judge finding: specialist output plus deterministic grounding. */
   raw: Finding[];
   /** Per-specialist outcome (count, ok/failed). */
   passes: SpecialistPassReport[];
