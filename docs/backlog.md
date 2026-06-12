@@ -157,12 +157,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: untrusted finding text is **fence-widened** (longer than any backtick run) and control-char-sanitized so it cannot break out of the code fence or inject markdown/HTML (consistent with the existing inline-comment escaping).
     - Acceptance: **default on**; a config toggle (e.g. `agentPrompt`) rides along with the config loader (#29). Unit-tested in `inline.ts`.
 
-58. **Collapsible nitpick section + severity calibration for polish**
-    As a developer, I want non-blocking polish tucked into a collapsed "nitpick" section (and graded as minor, not major), so that genuine blockers stand out and the review isn't cluttered with low-value suggestions — the way CodeRabbit buckets its nitpicks.
-    - Acceptance: a collapsed `<details><summary>🧹 Nitpicks (N)</summary>` block in the walkthrough summary holds findings below the blocking threshold (default: `minor` and below); only `major`/`critical` stay prominent in the "Findings" list. Pure `buildWalkthrough` change (#9), keyed on the #55 severity model.
-    - Acceptance: only blocking (`major`+) findings post as **inline** comments; nitpicks live solely in the collapsed summary section, so the diff isn't peppered with non-blocking notes (interacts with the inline-volume cap #25).
-    - Acceptance: **severity-rubric nudge** in the specialist prompt (#6) so theoretical / won't-happen-in-practice paths, micro-optimizations, and style/polish grade as `minor` (or lower), **not** `major` — otherwise polish keeps landing in the blocking tier and never reaches the bucket. Validate the calibration shift with the eval harness (#13: precision/false-alarm rate should improve, recall hold).
-    - Acceptance: config toggle (nitpick threshold) rides along with the config loader (#29). Motivated by PR #22, where two polish items (a non-`COMMENT`-event-only path; a pagination micro-perf nit) were graded **major** and surfaced as prominent blockers.
 
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.

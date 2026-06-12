@@ -1,5 +1,6 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
+import { isBlockingFinding } from "./findings.js";
 import { findingFingerprint } from "./state.js";
 
 /**
@@ -61,8 +62,8 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   info: "⚪"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
-const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -141,11 +142,25 @@ function isOrderedListDot(value: string, dotIndex: number): boolean {
   return true;
 }
 
+/** Escape angle brackets as entities so untrusted text cannot become raw HTML. */
+function escapeMarkdownChar(char: string): string {
+  if (char === "<") {
+    return "&lt;";
+  }
+  if (char === ">") {
+    return "&gt;";
+  }
+  if (char === "&") {
+    return "&amp;";
+  }
+  return `\\${char}`;
+}
+
 /** Escape Markdown metacharacters for plain text contexts such as headings. */
 function escapeMarkdownText(value: string): string {
   let escaped = "";
   for (const char of normalizeMarkdownText(value)) {
-    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
 }
@@ -160,9 +175,14 @@ function escapeMarkdownParagraph(value: string): string {
       MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
       (index === 0 && char === "-") ||
       isOrderedListDot(normalized, index);
-    escaped += shouldEscape ? `\\${char}` : char;
+    escaped += shouldEscape ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
+}
+
+/** Escape multiline body text line-by-line while preserving paragraph breaks. */
+function escapeMarkdownParagraphBlock(value: string): string {
+  return value.split(/\r\n|\r|\n/).map(escapeMarkdownParagraph).join("\n");
 }
 
 /** Wrap suggested code in a ```suggestion fence longer than any backtick run in it. */
@@ -188,7 +208,7 @@ export function formatFindingComment(finding: Finding): string {
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     "",
-    escapeMarkdownParagraph(finding.body)
+    escapeMarkdownParagraphBlock(finding.body)
   ];
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
@@ -285,6 +305,10 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
  * Assemble the single published review: the walkthrough `summaryBody` plus
  * inline comments for the findings that anchor to the diff. Unmapped findings
  * are appended to the body with full detail so non-inline findings are not lost.
+ *
+ * Only blocking findings (`major`+) become inline/unmapped comments; nitpicks
+ * (`minor` and below) live in the summary's collapsed nitpick section instead of
+ * peppering the diff (#58).
  */
 export function buildReviewPayload(input: {
   findings: Finding[];
@@ -292,7 +316,8 @@ export function buildReviewPayload(input: {
   summaryBody: string;
   event?: ReviewEvent;
 }): ReviewPayload {
-  const { comments, unmapped } = buildInlineComments(input.findings, input.diff);
+  const blocking = input.findings.filter(isBlockingFinding);
+  const { comments, unmapped } = buildInlineComments(blocking, input.diff);
   return {
     body: withUnmappedFindings(input.summaryBody, unmapped),
     event: input.event ?? "COMMENT",
