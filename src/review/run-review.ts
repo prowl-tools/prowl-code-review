@@ -1,10 +1,12 @@
 import {
   complete as defaultComplete,
+  retrying,
   emptyUsage,
   resolveProviderConfig,
   type CompletionRequest,
   type CompletionResult,
   type ProviderConfig,
+  type RetryOptions,
   type TokenUsage
 } from "../providers/index.js";
 import { type Finding, type Severity, parseFindings } from "./findings.js";
@@ -58,8 +60,10 @@ export interface RunReviewOptions {
   verify?: boolean;
   /** Findings at/above this confidence skip verification. Default 0.8 (#8). */
   verifyConfidence?: number;
-  /** Injectable completion (defaults to the provider dispatcher). */
+  /** Injectable completion (defaults to the provider dispatcher, wrapped in retry). */
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
+  /** Retry/backoff config for transient provider errors (#17). Applied to the default completion. */
+  retry?: RetryOptions;
 }
 
 export interface SpecialistPassReport {
@@ -98,7 +102,10 @@ export async function runReview(
   input: ReviewInput,
   options: RunReviewOptions = {}
 ): Promise<ReviewResult> {
-  const run = options.complete ?? defaultComplete;
+  // Default provider calls retry transient failures (#17); an injected `complete`
+  // is used as-is (tests/consumers control their own retry). `run` is reused for
+  // both specialist passes and the verification pass, so both get resilience.
+  const run = options.complete ?? retrying(defaultComplete, options.retry);
   const baseConfig = options.config ?? resolveProviderConfig();
   const specialists = input.specialists ?? DEFAULT_SPECIALISTS;
 
