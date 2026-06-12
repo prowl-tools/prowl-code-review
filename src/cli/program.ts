@@ -2,6 +2,7 @@ import { Command } from "commander";
 import pkg from "../../package.json";
 import { buildReviewCommand } from "./commands/review.js";
 import { buildEvalCommand } from "./commands/eval.js";
+import { buildInitCommand } from "./commands/init.js";
 
 /** Current CLI version read from the package manifest. */
 export const CLI_VERSION = pkg.version;
@@ -17,6 +18,7 @@ export function buildProgram(): Command {
 
   program.addCommand(buildReviewCommand());
   program.addCommand(buildEvalCommand());
+  program.addCommand(buildInitCommand());
 
   return program;
 }
