@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { relative, isAbsolute } from "node:path";
+import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
 // `relative`/`isAbsolute` are used for normalizing ESLint's absolute paths back
 // to repo-relative; changed-path safety is checked structurally below.
@@ -185,11 +185,14 @@ function filterToChangedLines(findings: Finding[], changedLines: Map<string, Set
 }
 
 /** True when the failure indicates the ESLint executable is unavailable. */
-function isEslintUnavailable(result: ExecResult): boolean {
+function isEslintUnavailable(result: ExecResult, eslintScriptPath: string): boolean {
   if (result.code === 127) {
     return true;
   }
   const text = `${result.stderr}\n${result.stdout}`;
+  if (/Cannot find module/i.test(text) && text.includes(eslintScriptPath)) {
+    return true;
+  }
   return /(?:command not found|not recognized as an internal or external command|could not determine executable to run|spawn .* ENOENT)/i.test(text);
 }
 
@@ -258,9 +261,10 @@ async function runEslint(
     notes.push(`ESLint: linted ${limited.length}/${files.length} changed files (file cap).`);
   }
 
-  // Run the repo-local binary directly so missing ESLint degrades gracefully
-  // without allowing a package manager to resolve from the registry.
-  const result = await params.exec("node_modules/.bin/eslint", ["--format", "json", "--", ...limited], params.root);
+  const eslintScriptPath = join(params.root, "node_modules", "eslint", "bin", "eslint.js");
+  // Invoke the JS entrypoint through this Node process instead of package
+  // manager shims, avoiding registry resolution and shell/batch parsing.
+  const result = await params.exec(process.execPath, [eslintScriptPath, "--format", "json", "--", ...limited], params.root);
 
   if (result.code === null) {
     return { findings: [], notes: [...notes, "ESLint: timed out; skipped."] };
@@ -269,7 +273,7 @@ async function runEslint(
   const findings = filterToChangedLines(parsedFindings, changedLineLookup(params.changedLines));
   const hasJsonOutput = result.stdout.trim().startsWith("[");
 
-  if (parsedFindings.length === 0 && isEslintUnavailable(result)) {
+  if (parsedFindings.length === 0 && isEslintUnavailable(result, eslintScriptPath)) {
     return { findings: [], notes: [...notes, "ESLint not available in the workspace; skipped lint grounding."] };
   }
   if (parsedFindings.length === 0 && (!hasJsonOutput || result.code !== 0 || result.stderr.trim())) {
