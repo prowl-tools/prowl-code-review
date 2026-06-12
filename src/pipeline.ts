@@ -17,6 +17,13 @@ import {
   type RetrievalLimits
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
+import {
+  gatherGrounding as defaultGatherGrounding,
+  buildGroundingSummary,
+  type GatherGroundingParams,
+  type GroundingResult,
+  type GroundingLimits
+} from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
 import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
@@ -38,6 +45,7 @@ export interface PipelineDeps {
   fetchPullRequest?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
   gatherContext?: (params: GatherContextParams) => Promise<GatheredContext>;
   runReview?: (input: ReviewInput, options?: RunReviewOptions) => Promise<ReviewResult>;
+  gatherGrounding?: (params: GatherGroundingParams) => Promise<GroundingResult>;
   submitReview?: (
     octokit: OctokitLike,
     ref: PullRequestRef,
@@ -65,6 +73,10 @@ export interface ReviewPullRequestOptions {
   event?: ReviewEvent;
   /** Skip agentic cross-file context retrieval (e.g. fork PRs / cost control). */
   skipContext?: boolean;
+  /** Skip linter/SAST grounding (#16). */
+  skipGrounding?: boolean;
+  /** Limits for the linter/SAST grounding stage (#16). */
+  groundingLimits?: GroundingLimits;
   /** Build the review but don't publish it. */
   dryRun?: boolean;
   deps?: PipelineDeps;
@@ -158,6 +170,7 @@ export async function reviewPullRequest(
   const deps = options.deps ?? {};
   const fetchPr = deps.fetchPullRequest ?? defaultFetchPullRequest;
   const gather = deps.gatherContext ?? defaultGatherContext;
+  const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const submit = deps.submitReview ?? defaultSubmitReview;
 
@@ -209,8 +222,30 @@ export async function reviewPullRequest(
     }
   }
 
+  // Linter/SAST grounding (#16): run the repo's deterministic linters on the
+  // changed files and feed the findings into the review so the LLM reconciles
+  // rather than re-discovers. Degrades gracefully; never blocks the review.
+  let grounding: ReviewInput["grounding"];
+  let groundingNotes: string[] = [];
+  if (!options.skipGrounding && options.toolkitRoot && reviewFiles.length > 0) {
+    try {
+      const result = await ground({
+        root: options.toolkitRoot,
+        changedPaths: reviewFiles.map((file) => file.path),
+        limits: options.groundingLimits
+      });
+      groundingNotes = result.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
+      if (result.findings.length > 0) {
+        grounding = { findings: result.findings, summary: buildGroundingSummary(result.findings) };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${message}`)];
+    }
+  }
+
   const reviewResult = await review(
-    { diff: diffText, context, guidelines: options.guidelines },
+    { diff: diffText, context, guidelines: options.guidelines, grounding },
     {
       config,
       minSeverity: options.minSeverity,
@@ -241,6 +276,7 @@ export async function reviewPullRequest(
     notes: [
       ...redactionNotes,
       ...contextNotes,
+      ...groundingNotes,
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
       ...reviewPassNotes(reviewResult)
