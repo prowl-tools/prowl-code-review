@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeConfigTemplate } from "../src/cli/commands/init.js";
@@ -26,7 +26,7 @@ describe("prowl-review init (#29)", () => {
   it("writes a commented config template", () => {
     const dir = tempDir();
     const path = writeConfigTemplate(".", false, dir);
-    expect(path).toBe(join(dir, CONFIG_FILENAME));
+    expect(path).toBe(join(realpathSync(dir), CONFIG_FILENAME));
     const body = readFileSync(path, "utf8");
     expect(body).toContain(".prowl-review.yml");
     expect(body).toContain("PROWL_AI_KEY");
@@ -58,5 +58,17 @@ describe("prowl-review init (#29)", () => {
     expect(() => writeConfigTemplate("../outside", false, dir)).toThrow(/outside the workspace/);
     expect(() => writeConfigTemplate(sibling, false, dir)).toThrow(/outside the workspace/);
     expect(() => writeConfigTemplate(tmpdir(), false, dir)).toThrow(/outside the workspace/);
+  });
+
+  it("refuses to write through a symlinked directory", () => {
+    const dir = tempDir();
+    const outside = tempDir();
+    try {
+      symlinkSync(outside, join(dir, "linked"), process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    expect(() => writeConfigTemplate("linked", false, dir)).toThrow(/symlinked path/);
   });
 });
