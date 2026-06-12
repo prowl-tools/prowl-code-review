@@ -140,13 +140,18 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("`img.png` — modified (binary)");
   });
 
-  it("lists blocking findings but not minor/info ones", () => {
+  it("lists blocking findings prominently and nitpicks in a collapsed section (#58)", () => {
     const md = buildWalkthrough({
       findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("minor", { title: "nit" })],
       files
     });
+    // Blocking finding in the prominent list; nitpick tucked into the collapsed section.
+    expect(md).toContain("### Findings");
     expect(md).toContain("**SQLi**");
-    expect(md).not.toContain("nit");
+    expect(md).toContain("🧹 Nitpicks (1)");
+    expect(md).toContain("**nit**");
+    // The nitpick comes after the Findings header, not above it.
+    expect(md.indexOf("### Findings")).toBeLessThan(md.indexOf("Nitpicks"));
   });
 
   it("notes findings-free reviews", () => {

@@ -1,6 +1,6 @@
 import type { DiffFile } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
-import { SEVERITIES, SEVERITY_ORDER } from "./findings.js";
+import { SEVERITIES, isBlockingFinding } from "./findings.js";
 import type { SkipReason, SkippedFile } from "./diff-types.js";
 
 /**
@@ -330,21 +330,38 @@ function findingLocation(finding: Finding): string {
   return inlineCode(finding.line ? `${finding.file}:${finding.line}` : finding.file);
 }
 
-/** Render only blocking findings in the summary; inline comments carry details. */
+/** One finding rendered as a summary bullet (badge · title · location). */
+function findingBullet(finding: Finding): string {
+  return `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`;
+}
+
+/** Render only blocking findings prominently; nitpicks go in their own section. */
 function findingsSection(findings: Finding[]): string {
-  const blockers = findings.filter(
-    (f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER.major
-  );
+  const blockers = findings.filter(isBlockingFinding);
   if (blockers.length === 0) {
     return "### Findings\n_No blocking issues found._";
   }
-  const lines = ["### Findings"];
-  for (const finding of blockers) {
-    lines.push(
-      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`
-    );
+  return ["### Findings", ...blockers.map(findingBullet)].join("\n");
+}
+
+/**
+ * Render non-blocking (`minor` and below) findings in a collapsed "Nitpicks"
+ * disclosure so polish doesn't clutter the review or the diff (#58). Empty when
+ * there are no nitpicks.
+ */
+function nitpickSection(findings: Finding[]): string {
+  const nits = findings.filter((finding) => !isBlockingFinding(finding));
+  if (nits.length === 0) {
+    return "";
   }
-  return lines.join("\n");
+  return [
+    "<details>",
+    `<summary>🧹 Nitpicks (${nits.length})</summary>`,
+    "",
+    nits.map(findingBullet).join("\n"),
+    "",
+    "</details>"
+  ].join("\n");
 }
 
 /** Render caller-provided summaries as escaped text, preserving the fallback style. */
@@ -454,6 +471,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
       changedFilesSection(input.files, lineDeltas),
       findingsSection(input.findings),
+      nitpickSection(input.findings),
       notesSection(input.notes)
     );
   }
