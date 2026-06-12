@@ -1,8 +1,10 @@
 import {
   completeWithTools as defaultCompleteWithTools,
+  retrying,
   emptyUsage,
   resolveProviderConfig,
   type ProviderConfig,
+  type RetryOptions,
   type ToolCompletionRequest,
   type ToolCompletionResult,
   type ToolDefinition,
@@ -112,11 +114,13 @@ export interface GatherContextParams {
   limits?: RetrievalLimits;
   /** Extra system guidance (e.g. review guidelines). */
   system?: string;
-  /** Injectable tool-use completion (defaults to the provider dispatcher). */
+  /** Injectable tool-use completion (defaults to the provider dispatcher, wrapped in retry). */
   runCompletion?: (
     request: ToolCompletionRequest,
     config: ProviderConfig
   ) => Promise<ToolCompletionResult>;
+  /** Retry/backoff config for transient provider errors (#17). Applied to the default completion. */
+  retry?: RetryOptions;
 }
 
 interface ExecutedTool {
@@ -254,7 +258,7 @@ function executeTool(
 
 /** Run the agentic retrieval loop and return the gathered cross-file context. */
 export async function gatherContext(params: GatherContextParams): Promise<GatheredContext> {
-  const run = params.runCompletion ?? defaultCompleteWithTools;
+  const run = params.runCompletion ?? retrying(defaultCompleteWithTools, params.retry);
   const config = params.config ?? resolveProviderConfig();
   const maxRounds = params.limits?.maxRounds ?? 6;
   const maxFiles = params.limits?.maxFiles ?? 20;

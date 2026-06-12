@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { runReview } from "../src/review/run-review.js";
+import { retrying } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResult, ProviderConfig } from "../src/providers/index.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
@@ -127,6 +128,26 @@ describe("runReview", () => {
       { diff: "d", grounding: { findings: [], summary: "GROUNDING_SUMMARY" } },
       { config, complete, verify: false }
     );
+  });
+
+  it("recovers from a transient provider error via retry (#17)", async () => {
+    let attempts = 0;
+    const flaky = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Correctness reviewer")) {
+        attempts += 1;
+        if (attempts === 1) {
+          throw new Error("Anthropic API error (429): slow down");
+        }
+      }
+      return reply("[]");
+    });
+    const complete = retrying(flaky, { sleep: async () => {}, baseDelayMs: 1, random: () => 0 });
+
+    const result = await runReview({ diff: "d" }, { config, complete, verify: false });
+
+    // The correctness pass hit a 429 once, retried, and succeeded — no degraded pass.
+    expect(attempts).toBe(2);
+    expect(result.passes.every((p) => p.ok)).toBe(true);
   });
 
   it("applies the severity threshold via the judge", async () => {
