@@ -9,7 +9,8 @@ import { PROVIDER_NAMES } from "../providers/index.js";
  * a repo with no config file reviews with the documented defaults, so the
  * GitHub Action works out of the box. Precedence is **CLI flag > config file >
  * built-in default** (and, for the provider, the BYOK env vars still win — see
- * the review command).
+ * the review command). Workspace execution trust is intentionally not accepted
+ * from repo config; use the CLI/env/action input for trusted checkouts.
  *
  * Secrets never live here: the provider API key always comes from `PROWL_AI_KEY`
  * in the environment, never the repo. Only the non-secret provider/model
@@ -53,13 +54,7 @@ const contextSchema = z
 const groundingSchema = z
   .object({
     /** Run repo linters and feed results into the review. Default true. */
-    enabled: z.boolean().optional(),
-    /**
-     * Allow grounding to execute repository-defined linter code/config in the
-     * checkout. Default false — untrusted PR checkouts must not run their own
-     * lint config. Leave off in CI on untrusted forks.
-     */
-    trustWorkspace: z.boolean().optional()
+    enabled: z.boolean().optional()
   })
   .strict();
 

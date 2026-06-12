@@ -25,7 +25,7 @@ function tempDir(): string {
 describe("prowl-review init (#29)", () => {
   it("writes a commented config template", () => {
     const dir = tempDir();
-    const path = writeConfigTemplate(dir, false);
+    const path = writeConfigTemplate(".", false, dir);
     expect(path).toBe(join(dir, CONFIG_FILENAME));
     const body = readFileSync(path, "utf8");
     expect(body).toContain(".prowl-review.yml");
@@ -34,7 +34,7 @@ describe("prowl-review init (#29)", () => {
 
   it("scaffolds a file that is valid once uncommented (defaults are all-optional)", () => {
     const dir = tempDir();
-    const body = readFileSync(writeConfigTemplate(dir, false), "utf8");
+    const body = readFileSync(writeConfigTemplate(".", false, dir), "utf8");
     // Every line is commented, so the parsed document is empty and valid.
     expect(configSchema.parse(parseYaml(body) ?? {})).toEqual({});
   });
@@ -42,13 +42,19 @@ describe("prowl-review init (#29)", () => {
   it("refuses to overwrite an existing config without --force", () => {
     const dir = tempDir();
     writeFileSync(join(dir, CONFIG_FILENAME), "provider: openai\n");
-    expect(() => writeConfigTemplate(dir, false)).toThrow(/already exists/);
+    expect(() => writeConfigTemplate(".", false, dir)).toThrow(/already exists/);
   });
 
   it("overwrites with --force", () => {
     const dir = tempDir();
     writeFileSync(join(dir, CONFIG_FILENAME), "provider: openai\n");
-    const path = writeConfigTemplate(dir, true);
+    const path = writeConfigTemplate(".", true, dir);
     expect(readFileSync(path, "utf8")).toContain("BYOK AI code review");
+  });
+
+  it("refuses to write outside the workspace", () => {
+    const dir = tempDir();
+    expect(() => writeConfigTemplate("../outside", false, dir)).toThrow(/outside the workspace/);
+    expect(() => writeConfigTemplate(tmpdir(), false, dir)).toThrow(/outside the workspace/);
   });
 });

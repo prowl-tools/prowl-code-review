@@ -1,12 +1,11 @@
 /**
  * The commented `.prowl-review.yml` scaffold written by `prowl-review init`
- * (backlog #29). Every option is shown commented-out at its built-in default,
- * so a fresh file documents the knobs without changing any behavior until the
- * user opts in by uncommenting.
+ * (backlog #29). All options are commented out, so a fresh file documents the
+ * knobs without changing any behavior until the user opts in by uncommenting.
  */
 export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-review (BYOK AI code review)
-# All options are optional; every value below is the built-in default, shown
-# commented out. Uncomment and edit only what you want to change.
+# All options are optional. Commented values document defaults or safe examples.
+# Uncomment and edit only what you want to change.
 # Precedence: CLI flag > this file > built-in default.
 #
 # Secrets never go here. The provider API key always comes from the
@@ -14,7 +13,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 
 # --- Provider -----------------------------------------------------------------
 # Which LLM to use. The API key still comes from PROWL_AI_KEY; the matching
-# PROWL_AI_PROVIDER / PROWL_AI_MODEL env vars override these when set.
+# Non-empty PROWL_AI_PROVIDER / PROWL_AI_MODEL env vars override these when set.
 # provider: anthropic        # anthropic | openai | gemini
 # model: <provider default>  # e.g. claude-... / gpt-... / gemini-...
 
@@ -35,11 +34,15 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Linter / SAST grounding --------------------------------------------------
 # grounding:
 #   enabled: true            # run repo linters and feed results into the review
-#   trustWorkspace: false    # allow repo-defined lint code/config to execute
-#                            # (keep false on untrusted PR checkouts)
+#
+# Workspace execution trust is intentionally not read from repo config.
+# Use --trust-workspace, PROWL_TRUST_WORKSPACE, or the trust-workspace Action
+# input only for trusted checkouts.
 
 # --- Diff size guards ---------------------------------------------------------
 # diff:
-#   maxFiles: 0              # max changed files reviewed (unset = no cap; rest reported as skipped)
-#   maxBytes: 0              # max total diff bytes sent to the provider (unset = no cap)
+#   # Leave maxFiles / maxBytes unset for no cap.
+#   # Set either value to a positive integer to enable a cap, for example:
+#   # maxFiles: 100
+#   # maxBytes: 200000
 `;

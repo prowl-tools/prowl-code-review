@@ -139,7 +139,9 @@ function compact<T extends Record<string, unknown>>(obj: T): T | undefined {
  * Precedence is **CLI flag > config file > built-in default**: an omitted value
  * stays `undefined` so the pipeline/judge applies its own default. A disable
  * from either the CLI or the config switches a stage off (the CLI has no
- * positive re-enable flag). Pure and env-injectable for testing.
+ * positive re-enable flag). Workspace trust is intentionally out-of-band:
+ * only the CLI flag or environment may enable repo-local code execution.
+ * Pure and env-injectable for testing.
  */
 export function resolveReviewOptions(
   cli: ReviewCommandOptions,
@@ -161,7 +163,7 @@ export function resolveReviewOptions(
     skipGrounding:
       cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
     trustWorkspace:
-      cli.trustWorkspace ?? config.grounding?.trustWorkspace ?? resolveTrustWorkspace(env),
+      cli.trustWorkspace ?? resolveTrustWorkspace(env),
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes

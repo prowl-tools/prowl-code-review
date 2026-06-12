@@ -10,9 +10,9 @@ inputs:
     description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret."
     required: true
   ai-provider:
-    description: "LLM provider: anthropic (default) | openai | gemini."
+    description: "Optional LLM provider override: anthropic | openai | gemini. Omit to use .prowl-review.yml or the built-in default."
     required: false
-    default: "anthropic"
+    default: ""
   ai-model:
     description: "Optional model override (per-provider default otherwise)."
     required: false

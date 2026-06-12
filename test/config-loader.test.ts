@@ -74,6 +74,8 @@ describe("loadConfig (#29)", () => {
   });
 
   it("throws when an explicit config path does not exist", () => {
-    expect(() => loadConfig({ configPath: "/no/such/.prowl-review.yml" })).toThrow(/not found/);
+    const dir = tempDir();
+    const missing = join(dir, CONFIG_FILENAME);
+    expect(() => loadConfig({ configPath: missing })).toThrow(/not found/);
   });
 });
