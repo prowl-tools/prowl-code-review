@@ -1,6 +1,6 @@
 import type { DiffFile } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
-import { SEVERITIES, SEVERITY_ORDER } from "./findings.js";
+import { SEVERITIES, isBlockingFinding } from "./findings.js";
 import type { SkipReason, SkippedFile } from "./diff-types.js";
 
 /**
@@ -68,8 +68,8 @@ const SKIP_LABELS: Record<SkipReason, string> = {
   sensitive: "sensitive - kept out of the prompt"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
-const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 
 /** Replace control characters so untrusted paths cannot change Markdown structure. */
 function normalizeMarkdownText(value: string): string {
@@ -110,6 +110,9 @@ function escapeMarkdownChar(char: string): string {
   if (char === ">") {
     return "&gt;";
   }
+  if (char === "&") {
+    return "&amp;";
+  }
   return `\\${char}`;
 }
 
@@ -135,6 +138,11 @@ function escapeMarkdownParagraphFlat(value: string): string {
     .map((line) => escapeMarkdownParagraph(line.trim()))
     .filter(Boolean)
     .join(" ");
+}
+
+/** Escape multiline body text line-by-line while preserving paragraph breaks. */
+function escapeMarkdownParagraphBlock(value: string): string {
+  return value.split(/\r\n|\r|\n/).map(escapeMarkdownParagraph).join("\n");
 }
 
 /** Detect a leading ordered-list marker after trimming summary text. */
@@ -169,8 +177,8 @@ function inlineCode(value: string): string {
 }
 
 /** Render fenced code with a fence longer than any backtick run in the body. */
-function fencedCodeBlock(language: string, body: string): string {
-  const trimmed = body.trim();
+function fencedCodeBlock(language: string, body: string, options: { preserveWhitespace?: boolean } = {}): string {
+  const trimmed = options.preserveWhitespace ? body.replace(/\r\n|\r/g, "\n") : body.trim();
   const longestBacktickRun = Math.max(
     0,
     ...Array.from(trimmed.matchAll(/`+/g), (match) => match[0].length)
@@ -330,21 +338,48 @@ function findingLocation(finding: Finding): string {
   return inlineCode(finding.line ? `${finding.file}:${finding.line}` : finding.file);
 }
 
-/** Render only blocking findings in the summary; inline comments carry details. */
+/** One finding rendered as a summary bullet (badge · title · location). */
+function findingBullet(finding: Finding): string {
+  return `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`;
+}
+
+/** One nitpick rendered with enough detail to fix it without an inline comment. */
+function nitpickDetail(finding: Finding): string {
+  const parts = [findingBullet(finding), "", escapeMarkdownParagraphBlock(finding.body)];
+  const suggestion = finding.suggestion;
+  if (suggestion?.trim()) {
+    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion, { preserveWhitespace: true }));
+  }
+  return parts.join("\n");
+}
+
+/** Render only blocking findings prominently; nitpicks go in their own section. */
 function findingsSection(findings: Finding[]): string {
-  const blockers = findings.filter(
-    (f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER.major
-  );
+  const blockers = findings.filter(isBlockingFinding);
   if (blockers.length === 0) {
     return "### Findings\n_No blocking issues found._";
   }
-  const lines = ["### Findings"];
-  for (const finding of blockers) {
-    lines.push(
-      `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`
-    );
+  return ["### Findings", ...blockers.map(findingBullet)].join("\n");
+}
+
+/**
+ * Render non-blocking (`minor` and below) findings in a collapsed "Nitpicks"
+ * disclosure so polish doesn't clutter the review or the diff (#58). Empty when
+ * there are no nitpicks.
+ */
+function nitpickSection(findings: Finding[]): string {
+  const nits = findings.filter((finding) => !isBlockingFinding(finding));
+  if (nits.length === 0) {
+    return "";
   }
-  return lines.join("\n");
+  return [
+    "<details>",
+    `<summary>🧹 Nitpicks (${nits.length})</summary>`,
+    "",
+    nits.map(nitpickDetail).join("\n\n"),
+    "",
+    "</details>"
+  ].join("\n");
 }
 
 /** Render caller-provided summaries as escaped text, preserving the fallback style. */
@@ -454,6 +489,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
       changedFilesSection(input.files, lineDeltas),
       findingsSection(input.findings),
+      nitpickSection(input.findings),
       notesSection(input.notes)
     );
   }

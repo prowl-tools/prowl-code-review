@@ -141,6 +141,7 @@ describe("verify prompt construction", () => {
   it("keeps untrusted evidence out of the system block", () => {
     const system = buildVerifySystem();
     expect(system).toContain("false-positive verifier");
+    expect(system).toContain("hypothetical"); // drops doesn't-happen-now findings (#58)
     expect(system).not.toContain("SECRET_DIFF");
 
     const prompt = buildVerifyPrompt({

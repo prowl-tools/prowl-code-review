@@ -83,3 +83,12 @@ export function parseFindings(text: string): Finding[] {
 export function findingKey(finding: Finding): string {
   return `${finding.file}|${finding.line ?? 0}|${finding.category.toLowerCase()}`;
 }
+
+/**
+ * A finding is "blocking" when its severity is `major` or worse — i.e. a problem
+ * the code actually exhibits. `minor` and below are nitpicks: surfaced in a
+ * collapsed section, not as prominent/inline comments (#58).
+ */
+export function isBlockingFinding(finding: Finding): boolean {
+  return SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER.major;
+}

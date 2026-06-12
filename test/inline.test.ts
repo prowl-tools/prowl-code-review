@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildInlineComments, buildReviewPayload, formatFindingComment } from "../src/review/inline.js";
+import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
 
@@ -139,11 +140,18 @@ describe("formatFindingComment", () => {
   });
 
   it("escapes markdown and neutralizes mentions in finding text", () => {
-    const body = formatFindingComment(f({ title: "Ping @team *now*", body: "1. @team <script> *bold*" }));
+    const body = formatFindingComment(f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }));
 
-    expect(body).toContain("Ping &#64;team \\*now\\*");
-    expect(body).toContain("1\\. &#64;team \\<script\\> \\*bold\\*");
+    expect(body).toContain("Ping &#64;team \\*now\\* &amp; later");
+    expect(body).toContain("1\\. &#64;team &lt;script&gt; &amp;\\#x3C;img&amp;\\#x3E; \\*bold\\*");
     expect(body).not.toContain("@team");
+  });
+
+  it("preserves escaped line breaks in finding bodies", () => {
+    const body = formatFindingComment(f({ body: "First line\n- second line\n1. third line" }));
+
+    expect(body).toContain("First line\n\\- second line\n1\\. third line");
+    expect(body).not.toContain("First line\\n");
   });
 
   it("includes a committable suggestion block when a fix exists", () => {
@@ -176,7 +184,7 @@ describe("buildReviewPayload", () => {
         f({ line: 6 }),
         f({
           line: 99,
-          severity: "minor",
+          severity: "major",
           title: "Unmapped issue",
           body: "Needs context outside the diff.",
           suggestion: "const fixed = true;"
@@ -189,7 +197,7 @@ describe("buildReviewPayload", () => {
     expect(payload.comments).toHaveLength(1);
     expect(payload.body).toContain("## walkthrough\n\n## Unmapped findings");
     expect(payload.body).toContain("src/a\\.ts:99");
-    expect(payload.body).toContain("[minor] Unmapped issue");
+    expect(payload.body).toContain("[major] Unmapped issue");
     expect(payload.body).toContain("Needs context outside the diff.");
     expect(payload.body).toContain("```suggestion");
     expect(payload.body).toContain("const fixed = true;");
@@ -198,5 +206,35 @@ describe("buildReviewPayload", () => {
   it("respects an explicit event", () => {
     const payload = buildReviewPayload({ findings: [], diff, summaryBody: "x", event: "REQUEST_CHANGES" });
     expect(payload.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("keeps nitpick (minor) findings out of inline comments (#58)", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6, severity: "major", title: "real bug" }),
+        f({ line: 6, severity: "minor", category: "lint", title: "nit" })
+      ],
+      diff,
+      summaryBody: "## walkthrough\n"
+    });
+    // Only the blocking finding anchors inline; the nitpick is handled in the summary.
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].body).toContain("real bug");
+    expect(payload.body).not.toContain("nit");
+  });
+
+  it("keeps nitpick findings in the walkthrough summary when using the full review body (#58)", () => {
+    const findings = [
+      f({ line: 6, severity: "major", title: "real bug" }),
+      f({ line: 6, severity: "minor", category: "lint", title: "nit", body: "Fix the lint warning." })
+    ];
+    const summaryBody = buildWalkthrough({ findings, files: diff.files });
+    const payload = buildReviewPayload({ findings, diff, summaryBody });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].body).toContain("real bug");
+    expect(payload.body).toContain("Nitpicks");
+    expect(payload.body).toContain("nit");
+    expect(payload.body).toContain("Fix the lint warning.");
   });
 });

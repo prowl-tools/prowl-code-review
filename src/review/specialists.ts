@@ -75,7 +75,16 @@ const SIGNAL_DIRECTIVE = [
   "Prefer fewer, higher-confidence findings over many speculative ones.",
   "Do NOT: restate what the code obviously does; flag style, formatting, or naming",
   "preferences; or raise speculative issues that require unlikely preconditions.",
-  "When in doubt, omit the finding. Set an honest `confidence` (0–1) — low when unsure."
+  "When in doubt, omit the finding. Set an honest `confidence` (0–1) — low when unsure.",
+  "",
+  "Severity + confidence calibration (important):",
+  "- A problem the changed code ACTUALLY exhibits today is `major` or `critical`.",
+  "- A finding is *speculative/polish* if it is hedged (\"could\", \"might\", \"may\",",
+  "  \"potentially\"), depends on preconditions that do not occur in the current code,",
+  "  is a micro-optimization with no measurable impact, or is a \"might want to refactor",
+  "  for future flexibility\" suggestion. Prefer to OMIT these; if you must report one,",
+  "  grade it `info` (never `minor` or above) AND set a LOW confidence (≤ 0.4).",
+  "Do not dress up a hypothetical as a real defect with a confident severity."
 ].join("\n");
 
 /**
