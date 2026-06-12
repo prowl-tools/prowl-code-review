@@ -8,7 +8,7 @@ import {
 import { submitReview as defaultSubmitReview, type SubmitReviewOptions } from "./github/review.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
-import type { DiffLimits, SkippedFile } from "./review/diff-types.js";
+import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
   gatherContext as defaultGatherContext,
@@ -75,6 +75,8 @@ export interface ReviewPullRequestOptions {
   skipContext?: boolean;
   /** Skip linter/SAST grounding (#16). */
   skipGrounding?: boolean;
+  /** Allow grounding to execute repository-defined linter code/config in toolkitRoot. */
+  trustWorkspace?: boolean;
   /** Limits for the linter/SAST grounding stage (#16). */
   groundingLimits?: GroundingLimits;
   /** Build the review but don't publish it. */
@@ -160,6 +162,25 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
   return notes;
 }
 
+/** Build a new-side changed-line map for grounding tools that lint whole files. */
+function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
+  const changed: Record<string, number[]> = {};
+  for (const file of files) {
+    const lines = new Set<number>();
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.type === "add" && line.newLine) {
+          lines.add(line.newLine);
+        }
+      }
+    }
+    if (lines.size > 0) {
+      changed[file.path] = [...lines].sort((a, b) => a - b);
+    }
+  }
+  return changed;
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -232,6 +253,8 @@ export async function reviewPullRequest(
       const result = await ground({
         root: options.toolkitRoot,
         changedPaths: reviewFiles.map((file) => file.path),
+        changedLines: changedLinesByPath(reviewFiles),
+        trustWorkspace: options.trustWorkspace === true,
         limits: options.groundingLimits
       });
       groundingNotes = result.notes.map((note) => truncateNote(`Linter grounding: ${note}`));

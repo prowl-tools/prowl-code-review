@@ -48,6 +48,17 @@ export interface GatherGroundingParams {
   root: string;
   /** Repo-relative changed file paths (new side). */
   changedPaths: string[];
+  /**
+   * New-side changed lines by repo-relative file path. When provided, linter
+   * messages outside these lines are dropped so pre-existing lint failures do
+   * not become PR findings.
+   */
+  changedLines?: Record<string, readonly number[]>;
+  /**
+   * Whether it is safe to execute repository-defined linter code/config in
+   * `root`. Keep false for untrusted PR checkouts.
+   */
+  trustWorkspace?: boolean;
   /** Injectable command runner (defaults to a confined execFile). */
   exec?: Exec;
   limits?: GroundingLimits;
@@ -102,6 +113,7 @@ function safeRelativePaths(paths: string[]): string[] {
 }
 
 const ESLINT_EXTENSIONS = /\.(?:m|c)?[jt]sx?$/i;
+const ESLINT_DIAGNOSTIC_LIMIT = 500;
 
 interface EslintMessage {
   ruleId: string | null;
@@ -134,6 +146,61 @@ function eslintToFinding(root: string, fileResult: EslintFileResult, message: Es
     body: message.ruleId ? `${message.message} (${message.ruleId})` : message.message,
     confidence: 0.9
   };
+}
+
+/** Normalize changed-line maps to repo-relative slash paths for lookup. */
+function changedLineLookup(changedLines: GatherGroundingParams["changedLines"]): Map<string, Set<number>> | undefined {
+  if (!changedLines) {
+    return undefined;
+  }
+  const lookup = new Map<string, Set<number>>();
+  for (const [file, lines] of Object.entries(changedLines)) {
+    const normalized = file.replace(/^\.\//, "").replace(/\\/g, "/");
+    lookup.set(normalized, new Set(lines.filter((line) => Number.isInteger(line) && line > 0)));
+  }
+  return lookup;
+}
+
+/** Keep only findings whose line range intersects the new-side changed lines. */
+function filterToChangedLines(findings: Finding[], changedLines: Map<string, Set<number>> | undefined): Finding[] {
+  if (!changedLines) {
+    return findings;
+  }
+  return findings.filter((finding) => {
+    if (!finding.line) {
+      return false;
+    }
+    const lines = changedLines.get(finding.file);
+    if (!lines || lines.size === 0) {
+      return false;
+    }
+    const start = finding.line;
+    const end = finding.endLine && finding.endLine > start ? finding.endLine : start;
+    for (const line of lines) {
+      if (line >= start && line <= end) {
+        return true;
+      }
+    }
+    return false;
+  });
+}
+
+/** True when the failure indicates the ESLint executable is unavailable. */
+function isEslintUnavailable(result: ExecResult): boolean {
+  if (result.code === 127) {
+    return true;
+  }
+  const text = `${result.stderr}\n${result.stdout}`;
+  return /(?:command not found|not recognized as an internal or external command|could not determine executable to run|spawn .* ENOENT)/i.test(text);
+}
+
+/** Keep non-JSON/non-zero ESLint failures actionable without flooding comments. */
+function eslintFailureNote(result: ExecResult): string {
+  const diagnostic = (result.stderr.trim() || result.stdout.trim() || "no diagnostic output").slice(
+    0,
+    ESLINT_DIAGNOSTIC_LIMIT
+  );
+  return `ESLint failed (exit ${result.code}); skipped lint grounding. ${diagnostic}`;
 }
 
 /** Parse `eslint --format json` stdout into findings; tolerant of junk. */
@@ -171,11 +238,19 @@ async function runEslint(
   params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
     exec: Exec;
     limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
   const files = safeRelativePaths(params.changedPaths).filter((p) => ESLINT_EXTENSIONS.test(p));
   if (files.length === 0) {
     return { findings: [], notes: [] };
+  }
+  if (!params.trustWorkspace) {
+    return {
+      findings: [],
+      notes: ["ESLint skipped because the workspace is not trusted to execute repository-defined lint code."]
+    };
   }
 
   const limited = files.slice(0, params.limits.maxFiles);
@@ -186,16 +261,20 @@ async function runEslint(
 
   // `npx --no-install` runs the repo's own ESLint without ever installing it, so
   // an absent linter degrades gracefully instead of pulling from the network.
-  const result = await params.exec("npx", ["--no-install", "eslint", "--format", "json", ...limited], params.root);
+  const result = await params.exec("npx", ["--no-install", "eslint", "--format", "json", "--", ...limited], params.root);
 
   if (result.code === null) {
     return { findings: [], notes: [...notes, "ESLint: timed out; skipped."] };
   }
-  // npx exits 127-ish (or prints an error) when eslint isn't installed; with no
-  // parseable JSON we treat it as "not available" rather than a hard failure.
-  const findings = parseEslintJson(params.root, result.stdout);
-  if (findings.length === 0 && !result.stdout.trim().startsWith("[")) {
+  const parsedFindings = parseEslintJson(params.root, result.stdout);
+  const findings = filterToChangedLines(parsedFindings, changedLineLookup(params.changedLines));
+  const hasJsonOutput = result.stdout.trim().startsWith("[");
+
+  if (parsedFindings.length === 0 && isEslintUnavailable(result)) {
     return { findings: [], notes: [...notes, "ESLint not available in the workspace; skipped lint grounding."] };
+  }
+  if (parsedFindings.length === 0 && (!hasJsonOutput || result.code !== 0 || result.stderr.trim())) {
+    return { findings: [], notes: [...notes, eslintFailureNote(result)] };
   }
 
   if (findings.length > params.limits.maxFindings) {
@@ -224,7 +303,14 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
   const runners = [runEslint];
   const results = await Promise.all(
     runners.map((runner) =>
-      runner({ root: params.root, changedPaths: params.changedPaths, exec, limits }).catch(
+      runner({
+        root: params.root,
+        changedPaths: params.changedPaths,
+        changedLines: params.changedLines,
+        trustWorkspace: params.trustWorkspace === true,
+        exec,
+        limits
+      }).catch(
         (error): GroundingResult => ({
           findings: [],
           notes: [`Linter grounding error: ${error instanceof Error ? error.message : String(error)}`]

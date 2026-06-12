@@ -126,7 +126,7 @@ export function buildSpecialistPrompt(input: {
   ];
 
   if (input.grounding) {
-    sections.push(input.grounding);
+    sections.push(`# Untrusted linter/SAST grounding\n${input.grounding}`);
   }
   if (input.context) {
     sections.push(`# Untrusted cross-file context\n${input.context}`);

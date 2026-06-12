@@ -91,6 +91,12 @@ export function resolveGuidelinesWorkspace(): string | undefined {
   return process.env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
 }
 
+/** Resolve whether repo-local tooling may execute in the review workspace. */
+export function resolveTrustWorkspace(): boolean {
+  const value = process.env.PROWL_TRUST_WORKSPACE?.trim().toLowerCase();
+  return value === "true" || value === "1" || value === "yes";
+}
+
 interface ReviewCommandOptions {
   pr?: string;
   repo?: string;
@@ -98,6 +104,7 @@ interface ReviewCommandOptions {
   context?: boolean;
   verify?: boolean;
   grounding?: boolean;
+  trustWorkspace?: boolean;
   dryRun?: boolean;
 }
 
@@ -112,6 +119,7 @@ export function buildReviewCommand(): Command {
     .option("--min-severity <severity>", `drop findings below this severity (${SEVERITIES.join("|")})`)
     .option("--no-context", "skip agentic cross-file context retrieval")
     .option("--no-grounding", "skip linter/SAST grounding")
+    .option("--trust-workspace", "allow repo-local linter/SAST tools to execute in the workspace")
     .option("--no-verify", "skip the skeptical false-positive verification pass")
     .option("--dry-run", "build the review but do not publish it")
     .action(async (options: ReviewCommandOptions) => {
@@ -134,6 +142,7 @@ export function buildReviewCommand(): Command {
           toolkitRoot: root,
           skipContext: options.context === false,
           skipGrounding: options.grounding === false,
+          trustWorkspace: options.trustWorkspace === true || resolveTrustWorkspace(),
           verify: options.verify !== false,
           minSeverity: parseMinSeverity(options.minSeverity),
           guidelines,

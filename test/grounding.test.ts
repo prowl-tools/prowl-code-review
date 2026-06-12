@@ -52,12 +52,13 @@ describe("gatherGrounding", () => {
     const result = await gatherGrounding({
       root: ROOT,
       changedPaths: ["src/a.ts", "README.md", "data.json"],
+      trustWorkspace: true,
       exec
     });
 
     // Only the .ts file is passed to eslint.
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[1]).toEqual(["--no-install", "eslint", "--format", "json", "src/a.ts"]);
+    expect(call[1]).toEqual(["--no-install", "eslint", "--format", "json", "--", "src/a.ts"]);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe("no-debugger");
     expect(result.notes.join(" ")).toContain("1 grounding finding");
@@ -70,16 +71,36 @@ describe("gatherGrounding", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("skips repo-local ESLint unless the workspace is trusted", async () => {
+    const exec = fakeExec({ stdout: eslintOutput([{ ruleId: "no-debugger", severity: 2, message: "no debugger", line: 3 }]) });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      exec
+    });
+    expect(exec).not.toHaveBeenCalled();
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("not trusted");
+  });
+
   it("degrades gracefully when ESLint is not installed", async () => {
     const exec = fakeExec({ stdout: "", stderr: "npx: command not found", code: 127 });
-    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], trustWorkspace: true, exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("ESLint not available");
   });
 
+  it("surfaces installed-but-broken ESLint failures", async () => {
+    const exec = fakeExec({ stdout: "", stderr: "Error: Cannot find module eslint.config.js", code: 2 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], trustWorkspace: true, exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("ESLint failed (exit 2)");
+    expect(result.notes.join(" ")).toContain("Cannot find module");
+  });
+
   it("notes a timeout (code null) and skips", async () => {
     const exec = fakeExec({ code: null });
-    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], trustWorkspace: true, exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("timed out");
   });
@@ -87,16 +108,66 @@ describe("gatherGrounding", () => {
   it("caps findings and reports truncation", async () => {
     const many = Array.from({ length: 5 }, (_, i) => ({ ruleId: `r${i}`, severity: 2, message: "m", line: i + 1 }));
     const exec = fakeExec({ stdout: eslintOutput(many) });
-    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec, limits: { maxFindings: 2 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      exec,
+      limits: { maxFindings: 2 }
+    });
     expect(result.findings).toHaveLength(2);
     expect(result.notes.join(" ")).toContain("kept 2/5");
   });
 
+  it("caps files passed to ESLint and reports truncation", async () => {
+    const manyFiles = ["a.ts", "b.ts", "c.ts"];
+    const exec = fakeExec({ stdout: "[]" });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: manyFiles,
+      trustWorkspace: true,
+      exec,
+      limits: { maxFiles: 2 }
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(5)).toEqual(["a.ts", "b.ts"]);
+    expect(result.notes.join(" ")).toContain("linted 2/3");
+  });
+
+  it("keeps only ESLint findings that overlap changed new-side lines", async () => {
+    const exec = fakeExec({
+      stdout: eslintOutput([
+        { ruleId: "no-debugger", severity: 2, message: "no debugger", line: 3 },
+        { ruleId: "eqeqeq", severity: 2, message: "use ===", line: 20 }
+      ])
+    });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [3] },
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe("no-debugger");
+  });
+
   it("ignores changed paths that escape the workspace", async () => {
     const exec = fakeExec({ stdout: "[]" });
-    await gatherGrounding({ root: ROOT, changedPaths: ["../outside.ts", "/etc/evil.ts"], exec });
+    await gatherGrounding({ root: ROOT, changedPaths: ["../outside.ts", "/etc/evil.ts"], trustWorkspace: true, exec });
     // Both escape → no JS/TS files in-workspace → exec never runs.
     expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("handles an unexpected error in a runner", async () => {
+    const exec = vi.fn().mockRejectedValue(new Error("ENOENT"));
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Linter grounding error: ENOENT");
   });
 });
 
