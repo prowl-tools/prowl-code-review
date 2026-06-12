@@ -44,6 +44,15 @@ describe("parseEslintJson", () => {
     expect(parseEslintJson(ROOT, "command not found")).toEqual([]);
     expect(parseEslintJson(ROOT, "{}")).toEqual([]);
   });
+
+  it("normalizes mixed path separators", () => {
+    const findings = parseEslintJson(
+      ROOT,
+      eslintOutput([{ ruleId: "mixed-path", severity: 2, message: "mixed path", line: 2 }], "src/foo\\bar.ts")
+    );
+
+    expect(findings[0].file).toBe("src/foo/bar.ts");
+  });
 });
 
 describe("gatherGrounding", () => {
