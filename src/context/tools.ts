@@ -46,6 +46,7 @@ const DEFAULT_MAX_LISTED_FILES = 2000;
 const DEFAULT_MAX_MATCH_TEXT_BYTES = 1024;
 const MAX_SEARCH_PATTERN_LENGTH = 256;
 const MAX_BOUNDED_REPEAT = 100;
+const MAX_UNBOUNDED_REPETITIONS = 4;
 
 /** Thrown when a requested path escapes the repo root or doesn't exist. */
 export class RepoAccessError extends Error {}
@@ -298,6 +299,45 @@ function hasUnsafeQuantifiedGroup(pattern: string): boolean {
   return false;
 }
 
+/** Cap broad repetition so an LLM cannot compose many overlapping wildcards. */
+function countUnboundedRepetitions(pattern: string): number {
+  let count = 0;
+  let escaped = false;
+  let inCharClass = false;
+
+  for (let i = 0; i < pattern.length; i += 1) {
+    const char = pattern[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (inCharClass) {
+      if (char === "]") {
+        inCharClass = false;
+      }
+      continue;
+    }
+    if (char === "[") {
+      inCharClass = true;
+      continue;
+    }
+
+    const quantifier = quantifierAt(pattern, i);
+    if (quantifier) {
+      if (quantifier.unbounded) {
+        count += 1;
+      }
+      i = quantifier.end;
+    }
+  }
+
+  return count;
+}
+
 /** Keep model-supplied search regexes in a low-complexity subset. */
 function assertSafeSearchPattern(pattern: string): void {
   if (pattern.length > MAX_SEARCH_PATTERN_LENGTH) {
@@ -313,6 +353,9 @@ function assertSafeSearchPattern(pattern: string): void {
   }
   if (hasUnsafeQuantifiedGroup(pattern)) {
     throw new RepoAccessError("Unsafe search pattern: nested or ambiguous repetition is not allowed");
+  }
+  if (countUnboundedRepetitions(pattern) > MAX_UNBOUNDED_REPETITIONS) {
+    throw new RepoAccessError("Unsafe search pattern: too many unbounded repetitions");
   }
 }
 

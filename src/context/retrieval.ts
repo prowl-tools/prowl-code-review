@@ -1,8 +1,10 @@
 import {
   completeWithTools as defaultCompleteWithTools,
+  retrying,
   emptyUsage,
   resolveProviderConfig,
   type ProviderConfig,
+  type RetryOptions,
   type ToolCompletionRequest,
   type ToolCompletionResult,
   type ToolDefinition,
@@ -112,11 +114,13 @@ export interface GatherContextParams {
   limits?: RetrievalLimits;
   /** Extra system guidance (e.g. review guidelines). */
   system?: string;
-  /** Injectable tool-use completion (defaults to the provider dispatcher). */
+  /** Injectable tool-use completion (defaults to the provider dispatcher, wrapped in retry). */
   runCompletion?: (
     request: ToolCompletionRequest,
     config: ProviderConfig
   ) => Promise<ToolCompletionResult>;
+  /** Retry/backoff config for transient provider errors (#17). Applied to the default completion. */
+  retry?: RetryOptions;
 }
 
 interface ExecutedTool {
@@ -172,6 +176,7 @@ function executeTool(
         notes.push(`File budget reached (${maxFiles}); skipped ${path}`);
         return toolExecution(`File budget reached (${maxFiles}); not reading ${path}.`, true);
       }
+      // Repo tools enforce root confinement, symlink rejection, ignore rules, and read caps.
       const result = readRepoFile(options, path);
       const { text: safeContent, count: redactions } = redactSecrets(result.content);
       if (redactions > 0) {
@@ -197,6 +202,7 @@ function executeTool(
         return toolExecution("Error: search_repo requires a 'pattern'.");
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
+      // searchRepo validates regex complexity and confines traversal to the repo root.
       const result = searchRepo(options, pattern, dir, {
         shouldSearchFile: (path) => !isSensitiveFile(path)
       });
@@ -229,6 +235,7 @@ function executeTool(
 
     if (call.name === "list_files") {
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
+      // Listing shares the same repo-root confinement and symlink/ignore guards.
       const result = listRepoFilesDetailed(options, dir);
       const body = result.files.join("\n") || "(empty)";
       const content = body + (result.truncated ? "\n…[more files omitted]" : "");
@@ -254,7 +261,7 @@ function executeTool(
 
 /** Run the agentic retrieval loop and return the gathered cross-file context. */
 export async function gatherContext(params: GatherContextParams): Promise<GatheredContext> {
-  const run = params.runCompletion ?? defaultCompleteWithTools;
+  const run = params.runCompletion ?? retrying(defaultCompleteWithTools, params.retry);
   const config = params.config ?? resolveProviderConfig();
   const maxRounds = params.limits?.maxRounds ?? 6;
   const maxFiles = params.limits?.maxFiles ?? 20;
