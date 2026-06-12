@@ -58,7 +58,8 @@ describe("gatherGrounding", () => {
 
     // Only the .ts file is passed to eslint.
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[1]).toEqual(["--no-install", "eslint", "--format", "json", "--", "src/a.ts"]);
+    expect(call[0]).toBe("node_modules/.bin/eslint");
+    expect(call[1]).toEqual(["--format", "json", "--", "src/a.ts"]);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe("no-debugger");
     expect(result.notes.join(" ")).toContain("1 grounding finding");
@@ -84,7 +85,7 @@ describe("gatherGrounding", () => {
   });
 
   it("degrades gracefully when ESLint is not installed", async () => {
-    const exec = fakeExec({ stdout: "", stderr: "npx: command not found", code: 127 });
+    const exec = fakeExec({ stdout: "", stderr: "node_modules/.bin/eslint: command not found", code: 127 });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], trustWorkspace: true, exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("ESLint not available");
@@ -129,7 +130,7 @@ describe("gatherGrounding", () => {
       exec,
       limits: { maxFiles: 2 }
     });
-    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(5)).toEqual(["a.ts", "b.ts"]);
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(3)).toEqual(["a.ts", "b.ts"]);
     expect(result.notes.join(" ")).toContain("linted 2/3");
   });
 

@@ -199,6 +199,17 @@ function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; co
   return { findings: redacted, count };
 }
 
+/** Redact linter operational notes before they can be rendered in the review body. */
+function redactGroundingNotes(notes: string[]): { notes: string[]; count: number } {
+  let count = 0;
+  const redacted = notes.map((note) => {
+    const result = redactSecrets(note);
+    count += result.count;
+    return result.text;
+  });
+  return { notes: redacted, count };
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -275,10 +286,12 @@ export async function reviewPullRequest(
         trustWorkspace: options.trustWorkspace === true,
         limits: options.groundingLimits
       });
-      groundingNotes = result.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
+      const redactedNotes = redactGroundingNotes(result.notes);
+      groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
       const redacted = redactGroundingFindings(result.findings);
-      if (redacted.count > 0) {
-        redactionNotes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
+      const redactionCount = redacted.count + redactedNotes.count;
+      if (redactionCount > 0) {
+        redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
       }
       if (redacted.findings.length > 0) {
         grounding = { findings: redacted.findings, summary: buildGroundingSummary(redacted.findings) };
