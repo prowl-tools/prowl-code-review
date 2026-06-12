@@ -12,7 +12,7 @@ function fakeSleep() {
 
 describe("isRetryableError", () => {
   it("retries rate-limit, timeout, and 5xx statuses", () => {
-    for (const status of [408, 425, 429, 500, 502, 503, 504]) {
+    for (const status of [408, 425, 429, 500, 502, 503, 504, 529]) {
       expect(isRetryableError({ status })).toBe(true);
     }
   });
@@ -26,6 +26,7 @@ describe("isRetryableError", () => {
 
   it("classifies provider error messages by embedded status", () => {
     expect(isRetryableError(new Error("Anthropic API error (429): slow down"))).toBe(true);
+    expect(isRetryableError(new Error("Anthropic API error (529): overloaded_error"))).toBe(true);
     expect(isRetryableError(new Error("OpenAI API error (500): oops"))).toBe(true);
     expect(isRetryableError(new Error("Gemini API error (403): forbidden"))).toBe(false);
   });
@@ -85,6 +86,32 @@ describe("withRetry", () => {
     await expect(withRetry(fn, { sleep, maxAttempts: 3, baseDelayMs: 10, random: () => 0 })).rejects.toThrow(/503/);
     expect(fn).toHaveBeenCalledTimes(3);
     expect(delays).toHaveLength(2); // sleeps between the 3 attempts
+  });
+
+  it("sanitizes invalid maxAttempts values", async () => {
+    const { sleep } = fakeSleep();
+    const fnWithNaN = vi.fn().mockRejectedValue(new Error("OpenAI API error (503): overloaded"));
+    await expect(withRetry(fnWithNaN, { sleep, maxAttempts: Number.NaN, random: () => 0 })).rejects.toThrow(/503/);
+    expect(fnWithNaN).toHaveBeenCalledTimes(3);
+
+    const fnWithInfinity = vi.fn().mockRejectedValue(new Error("OpenAI API error (503): overloaded"));
+    await expect(withRetry(fnWithInfinity, { sleep, maxAttempts: Number.POSITIVE_INFINITY, random: () => 0 })).rejects.toThrow(/503/);
+    expect(fnWithInfinity).toHaveBeenCalledTimes(3);
+  });
+
+  it("normalizes maxAttempts to at least one whole attempt", async () => {
+    const { sleep } = fakeSleep();
+    const fnWithZero = vi.fn().mockRejectedValue(new Error("OpenAI API error (503): overloaded"));
+    await expect(withRetry(fnWithZero, { sleep, maxAttempts: 0 })).rejects.toThrow(/503/);
+    expect(fnWithZero).toHaveBeenCalledTimes(1);
+
+    const fnWithFraction = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("OpenAI API error (503): overloaded"))
+      .mockRejectedValueOnce(new Error("OpenAI API error (503): overloaded"))
+      .mockResolvedValue("recovered");
+    await expect(withRetry(fnWithFraction, { sleep, maxAttempts: 2.9 })).rejects.toThrow(/503/);
+    expect(fnWithFraction).toHaveBeenCalledTimes(2);
   });
 
   it("invokes onRetry before each backoff", async () => {

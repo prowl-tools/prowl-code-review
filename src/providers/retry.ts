@@ -10,7 +10,7 @@
  */
 
 /** HTTP statuses worth retrying: rate-limit, request timeout/too-early, and 5xx. */
-const RETRYABLE_STATUS = new Set([408, 425, 429, 500, 502, 503, 504]);
+const RETRYABLE_STATUS = new Set([408, 425, 429]);
 
 /** Network/transport error codes (Node/undici) that are transient. */
 const RETRYABLE_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "EPIPE"]);
@@ -34,12 +34,21 @@ export const DEFAULT_MAX_ATTEMPTS = 3;
 export const DEFAULT_BASE_DELAY_MS = 500;
 export const DEFAULT_MAX_DELAY_MS = 8_000;
 
+function isRetryableStatus(status: number): boolean {
+  return RETRYABLE_STATUS.has(status) || (status >= 500 && status < 600);
+}
+
+function normalizedMaxAttempts(value: number | undefined): number {
+  const raw = value ?? DEFAULT_MAX_ATTEMPTS;
+  return Number.isFinite(raw) ? Math.max(1, Math.trunc(raw)) : DEFAULT_MAX_ATTEMPTS;
+}
+
 /** True when an error looks transient and a retry might succeed. */
 export function isRetryableError(error: unknown): boolean {
   if (error && typeof error === "object") {
     const status = (error as { status?: unknown }).status;
     if (typeof status === "number") {
-      return RETRYABLE_STATUS.has(status);
+      return isRetryableStatus(status);
     }
     const code = (error as { code?: unknown }).code;
     if (typeof code === "string" && RETRYABLE_CODES.has(code)) {
@@ -51,7 +60,8 @@ export function isRetryableError(error: unknown): boolean {
   }
   const message = error instanceof Error ? error.message : String(error);
   // Provider errors are thrown as "<Provider> API error (<status>): …".
-  if (/API error \((?:408|425|429|500|502|503|504)\)/.test(message)) {
+  const statusMatch = message.match(/API error \((\d{3})\)/);
+  if (statusMatch && isRetryableStatus(Number(statusMatch[1]))) {
     return true;
   }
   return /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|fetch failed|network error|socket hang up/i.test(
@@ -76,7 +86,7 @@ export function backoffDelay(attempt: number, options: RetryOptions = {}): numbe
  * Non-retryable errors (and the final attempt) reject immediately.
  */
 export async function withRetry<T>(fn: (attempt: number) => Promise<T>, options: RetryOptions = {}): Promise<T> {
-  const maxAttempts = Math.max(1, options.maxAttempts ?? DEFAULT_MAX_ATTEMPTS);
+  const maxAttempts = normalizedMaxAttempts(options.maxAttempts);
   const sleep = options.sleep ?? defaultSleep;
 
   let lastError: unknown;
@@ -93,7 +103,7 @@ export async function withRetry<T>(fn: (attempt: number) => Promise<T>, options:
       await sleep(delayMs);
     }
   }
-  throw lastError;
+  throw lastError ?? new Error("withRetry exhausted without an error");
 }
 
 /**
