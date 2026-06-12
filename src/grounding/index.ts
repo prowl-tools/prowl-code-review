@@ -176,8 +176,8 @@ function filterToChangedLines(findings: Finding[], changedLines: Map<string, Set
     }
     const start = finding.line;
     const end = finding.endLine && finding.endLine > start ? finding.endLine : start;
-    for (const line of lines) {
-      if (line >= start && line <= end) {
+    for (let line = start; line <= end; line += 1) {
+      if (lines.has(line)) {
         return true;
       }
     }

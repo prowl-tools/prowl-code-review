@@ -126,6 +126,28 @@ describe("reviewPullRequest", () => {
     );
   });
 
+  it("redacts linter grounding before it reaches review prompts", async () => {
+    const deps = makeDeps();
+    const lint = {
+      file: "src/a.ts",
+      line: 2,
+      severity: "minor" as const,
+      category: "lint",
+      title: "custom-rule",
+      body: "SECRET_KEY=django-insecure-super-secret-value",
+      confidence: 0.9
+    };
+    deps.gatherGrounding.mockResolvedValue({ findings: [lint], notes: [] });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    const grounding = deps.runReview.mock.calls[0][0].grounding;
+    expect(grounding.findings[0].body).toContain("[REDACTED:assignment]");
+    expect(grounding.summary).toContain("[REDACTED:assignment]");
+    expect(grounding.summary).not.toContain("django-insecure");
+    expect(result.payload.body).toContain("Redacted 1 secret\\(s\\) from linter grounding output.");
+  });
+
   it("skips grounding when asked", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipGrounding: true });

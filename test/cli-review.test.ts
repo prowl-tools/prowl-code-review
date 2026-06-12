@@ -114,6 +114,7 @@ describe("review command helpers", () => {
   });
 
   it("resolves workspace execution trust from explicit truthy env values", () => {
+    delete process.env.PROWL_TRUST_WORKSPACE;
     expect(resolveTrustWorkspace()).toBe(false);
 
     process.env.PROWL_TRUST_WORKSPACE = "true";

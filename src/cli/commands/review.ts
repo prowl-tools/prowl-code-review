@@ -142,7 +142,7 @@ export function buildReviewCommand(): Command {
           toolkitRoot: root,
           skipContext: options.context === false,
           skipGrounding: options.grounding === false,
-          trustWorkspace: options.trustWorkspace === true || resolveTrustWorkspace(),
+          trustWorkspace: options.trustWorkspace ?? resolveTrustWorkspace(),
           verify: options.verify !== false,
           minSeverity: parseMinSeverity(options.minSeverity),
           guidelines,
