@@ -220,7 +220,10 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("No issues found");
   });
 
-  it("renders context retrieval limit hits as degraded when no findings remain", async () => {
+  it("renders context retrieval limit hits as clean-with-note, not degraded (#56)", async () => {
+    // A hit bound (max rounds/files) or truncated search is partial context on an
+    // otherwise healthy review — benign, like a guardrail file-skip. It must NOT
+    // escalate the whole review to "Review incomplete"; the note still surfaces it.
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
       files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
@@ -241,9 +244,10 @@ describe("reviewPullRequest", () => {
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
-    expect(result.payload.body).toContain("⚠️ **Review incomplete** — coverage degraded");
-    expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
-    expect(result.payload.body).not.toContain("No issues found");
+    expect(result.payload.body).not.toContain("Review incomplete");
+    expect(result.payload.body).toContain("No issues found");
+    // Honest truncation (#5): the bound is still reported, just not as a failure.
+    expect(result.payload.body).toContain("Reached max tool rounds");
   });
 
   it("surfaces failed review passes so clean summaries are not misleading", async () => {
