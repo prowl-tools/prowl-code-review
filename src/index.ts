@@ -41,6 +41,21 @@ export {
   type ToolCompletionResult
 } from "./providers/index.js";
 
+// Linter / SAST grounding (deterministic findings fed into the review).
+export {
+  gatherGrounding,
+  buildGroundingSummary,
+  parseEslintJson,
+  DEFAULT_MAX_FILES as DEFAULT_GROUNDING_MAX_FILES,
+  DEFAULT_MAX_FINDINGS as DEFAULT_GROUNDING_MAX_FINDINGS,
+  DEFAULT_TIMEOUT_MS as DEFAULT_GROUNDING_TIMEOUT_MS,
+  type GatherGroundingParams,
+  type GroundingResult,
+  type GroundingLimits,
+  type Exec,
+  type ExecResult
+} from "./grounding/index.js";
+
 // Agentic cross-file context retrieval (sandboxed tools + tool-use loop).
 export {
   listRepoFiles,

@@ -50,6 +50,7 @@ function makeDeps() {
       notes: [],
       toolOutputs: []
     })),
+    gatherGrounding: vi.fn(async () => ({ findings: [], notes: [] })),
     runReview: vi.fn(async () => reviewResult([finding()])),
     submitReview: vi.fn(async () => {})
   };
@@ -90,6 +91,33 @@ describe("reviewPullRequest", () => {
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipContext: true });
     expect(deps.gatherContext).not.toHaveBeenCalled();
     expect(deps.runReview.mock.calls[0][0].context).toBeUndefined();
+  });
+
+  it("runs linter grounding and threads it into the review (#16)", async () => {
+    const deps = makeDeps();
+    const lint = {
+      file: "src/a.ts", line: 2, severity: "minor" as const,
+      category: "lint", title: "no-debugger", body: "no debugger", confidence: 0.9
+    };
+    deps.gatherGrounding.mockResolvedValue({ findings: [lint], notes: ["ESLint: 1 grounding finding(s)."] });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({ root: "/repo", changedPaths: ["src/a.ts"] })
+    );
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.grounding.findings).toEqual([lint]);
+    expect(reviewInput.grounding.summary).toContain("no-debugger");
+    expect(result.payload.body).toContain("Linter grounding");
+    expect(result.payload.body).toContain("ESLint");
+  });
+
+  it("skips grounding when asked", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipGrounding: true });
+    expect(deps.gatherGrounding).not.toHaveBeenCalled();
+    expect(deps.runReview.mock.calls[0][0].grounding).toBeUndefined();
   });
 
   it("surfaces context retrieval notes in the summary", async () => {
