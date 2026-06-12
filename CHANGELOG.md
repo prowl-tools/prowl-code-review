@@ -5,6 +5,19 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `.prowl-review.yml` config + `prowl-review init` (backlog #29, the config keystone): a Zod-validated,
+  fully-optional per-repo config (`src/config/`) so a repo with no file still reviews with the documented
+  defaults — the GitHub Action works out of the box. Tunes provider/model selection, the review floors
+  (`minSeverity`/`minConfidence`/`maxFindings`), the verification pass (`verify`/`verifyConfidence`),
+  cross-file context (`enabled`/`maxRounds`/`maxFiles`), linter grounding (`enabled`/`trustWorkspace`),
+  and diff size guards. Precedence is **CLI flag > config file > built-in default**; for the provider, the
+  BYOK env vars (`PROWL_AI_PROVIDER`/`PROWL_AI_MODEL`) still win and the API key is never read from the
+  file. The loader searches upward for `.prowl-review.yml`/`.yaml`, parses + validates with readable
+  per-field errors (`.strict()` so a typo is a loud error, not a silent no-op), and never silently falls
+  back to defaults on a malformed/invalid file. New `prowl-review init` scaffolds a commented config
+  (refuses to clobber without `--force`); `review` gains `--config <path>` / `--no-config`. 29 new tests.
+  This unblocks the deferred config toggles that ride on #29 (#56 `noFindingsComment`, #58 nitpick
+  threshold, #57 `agentPrompt`, #25 inline cap, #19 ignore globs, #30 guidelines/learnings).
 - LLM resilience: retry with backoff (`src/providers/retry.ts`, backlog #17 core): the review's
   default provider calls now retry transient failures — 429/408/425, 5xx, and network/timeout
   errors — with exponential backoff + full jitter, so a provider blip no longer degrades or sinks a
