@@ -14,6 +14,16 @@ import {
 } from "./types.js";
 
 export * from "./types.js";
+export {
+  withRetry,
+  retrying,
+  isRetryableError,
+  backoffDelay,
+  DEFAULT_MAX_ATTEMPTS,
+  DEFAULT_BASE_DELAY_MS,
+  DEFAULT_MAX_DELAY_MS,
+  type RetryOptions
+} from "./retry.js";
 
 const PROVIDERS: Record<ProviderName, Provider> = {
   anthropic: anthropicProvider,
