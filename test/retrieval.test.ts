@@ -138,6 +138,40 @@ describe("gatherContext", () => {
     expect(result.notes.some((n) => n.includes("read_file error"))).toBe(true);
   });
 
+  it("contains model-supplied path traversal attempts inside tool errors", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "read_file", input: { path: "../secret.txt" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.files).toEqual([]);
+    expect(result.notes.some((n) => n.includes("escapes repo root"))).toBe(true);
+  });
+
+  it("contains unsafe model-supplied search regexes inside tool errors", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "search_repo", input: { pattern: "(a+)+$" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run
+    });
+
+    expect(result.toolOutputs).toEqual([]);
+    expect(result.notes.some((n) => n.includes("Unsafe search pattern"))).toBe(true);
+  });
+
   it("preserves provider metadata on assistant tool turns", async () => {
     const metadata = {
       geminiParts: [

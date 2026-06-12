@@ -176,6 +176,7 @@ function executeTool(
         notes.push(`File budget reached (${maxFiles}); skipped ${path}`);
         return toolExecution(`File budget reached (${maxFiles}); not reading ${path}.`, true);
       }
+      // Repo tools enforce root confinement, symlink rejection, ignore rules, and read caps.
       const result = readRepoFile(options, path);
       const { text: safeContent, count: redactions } = redactSecrets(result.content);
       if (redactions > 0) {
@@ -201,6 +202,7 @@ function executeTool(
         return toolExecution("Error: search_repo requires a 'pattern'.");
       }
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
+      // searchRepo validates regex complexity and confines traversal to the repo root.
       const result = searchRepo(options, pattern, dir, {
         shouldSearchFile: (path) => !isSensitiveFile(path)
       });
@@ -233,6 +235,7 @@ function executeTool(
 
     if (call.name === "list_files") {
       const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
+      // Listing shares the same repo-root confinement and symlink/ignore guards.
       const result = listRepoFilesDetailed(options, dir);
       const body = result.files.join("\n") || "(empty)";
       const content = body + (result.truncated ? "\n…[more files omitted]" : "");
