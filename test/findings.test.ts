@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseFindings, findingKey, FindingSchema } from "../src/review/findings.js";
+import { parseFindings, findingKey, FindingSchema, isBlockingFinding } from "../src/review/findings.js";
+import type { Finding, Severity } from "../src/review/findings.js";
 
 const VALID = {
   file: "src/a.ts",
@@ -59,5 +60,20 @@ describe("findingKey", () => {
   it("treats a missing line as 0", () => {
     const noLine = FindingSchema.parse({ ...VALID, line: undefined });
     expect(findingKey(noLine)).toContain("|0|");
+  });
+});
+
+describe("isBlockingFinding", () => {
+  const cases: Array<[Severity, boolean]> = [
+    ["critical", true],
+    ["major", true],
+    ["minor", false],
+    ["trivial", false],
+    ["info", false]
+  ];
+
+  it.each(cases)("classifies %s findings as blocking=%s", (severity, expected) => {
+    const finding = FindingSchema.parse({ ...VALID, severity }) as Finding;
+    expect(isBlockingFinding(finding)).toBe(expected);
   });
 });

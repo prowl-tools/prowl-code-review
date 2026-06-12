@@ -142,11 +142,22 @@ function isOrderedListDot(value: string, dotIndex: number): boolean {
   return true;
 }
 
+/** Escape angle brackets as entities so untrusted text cannot become raw HTML. */
+function escapeMarkdownChar(char: string): string {
+  if (char === "<") {
+    return "&lt;";
+  }
+  if (char === ">") {
+    return "&gt;";
+  }
+  return `\\${char}`;
+}
+
 /** Escape Markdown metacharacters for plain text contexts such as headings. */
 function escapeMarkdownText(value: string): string {
   let escaped = "";
   for (const char of normalizeMarkdownText(value)) {
-    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? `\\${char}` : char;
+    escaped += MARKDOWN_TEXT_ESCAPES.has(char) ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
 }
@@ -161,7 +172,7 @@ function escapeMarkdownParagraph(value: string): string {
       MARKDOWN_PARAGRAPH_ESCAPES.has(char) ||
       (index === 0 && char === "-") ||
       isOrderedListDot(normalized, index);
-    escaped += shouldEscape ? `\\${char}` : char;
+    escaped += shouldEscape ? escapeMarkdownChar(char) : char;
   }
   return neutralizeMentions(escaped);
 }

@@ -142,7 +142,10 @@ describe("buildWalkthrough", () => {
 
   it("lists blocking findings prominently and nitpicks in a collapsed section (#58)", () => {
     const md = buildWalkthrough({
-      findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("minor", { title: "nit" })],
+      findings: [
+        makeFinding("critical", { title: "SQLi" }),
+        makeFinding("minor", { title: "nit", body: "Fix the lint warning.", suggestion: "const value = 1;" })
+      ],
       files
     });
     // Blocking finding in the prominent list; nitpick tucked into the collapsed section.
@@ -150,6 +153,9 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("**SQLi**");
     expect(md).toContain("🧹 Nitpicks (1)");
     expect(md).toContain("**nit**");
+    expect(md).toContain("Fix the lint warning.");
+    expect(md).toContain("```suggestion");
+    expect(md).toContain("const value = 1;");
     // The nitpick comes after the Findings header, not above it.
     expect(md.indexOf("### Findings")).toBeLessThan(md.indexOf("Nitpicks"));
   });
