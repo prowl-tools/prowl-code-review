@@ -1,5 +1,6 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
+import { isBlockingFinding } from "./findings.js";
 import { findingFingerprint } from "./state.js";
 
 /**
@@ -285,6 +286,10 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
  * Assemble the single published review: the walkthrough `summaryBody` plus
  * inline comments for the findings that anchor to the diff. Unmapped findings
  * are appended to the body with full detail so non-inline findings are not lost.
+ *
+ * Only blocking findings (`major`+) become inline/unmapped comments; nitpicks
+ * (`minor` and below) live in the summary's collapsed nitpick section instead of
+ * peppering the diff (#58).
  */
 export function buildReviewPayload(input: {
   findings: Finding[];
@@ -292,7 +297,8 @@ export function buildReviewPayload(input: {
   summaryBody: string;
   event?: ReviewEvent;
 }): ReviewPayload {
-  const { comments, unmapped } = buildInlineComments(input.findings, input.diff);
+  const blocking = input.findings.filter(isBlockingFinding);
+  const { comments, unmapped } = buildInlineComments(blocking, input.diff);
   return {
     body: withUnmappedFindings(input.summaryBody, unmapped),
     event: input.event ?? "COMMENT",

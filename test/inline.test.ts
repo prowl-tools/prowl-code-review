@@ -176,7 +176,7 @@ describe("buildReviewPayload", () => {
         f({ line: 6 }),
         f({
           line: 99,
-          severity: "minor",
+          severity: "major",
           title: "Unmapped issue",
           body: "Needs context outside the diff.",
           suggestion: "const fixed = true;"
@@ -189,7 +189,7 @@ describe("buildReviewPayload", () => {
     expect(payload.comments).toHaveLength(1);
     expect(payload.body).toContain("## walkthrough\n\n## Unmapped findings");
     expect(payload.body).toContain("src/a\\.ts:99");
-    expect(payload.body).toContain("[minor] Unmapped issue");
+    expect(payload.body).toContain("[major] Unmapped issue");
     expect(payload.body).toContain("Needs context outside the diff.");
     expect(payload.body).toContain("```suggestion");
     expect(payload.body).toContain("const fixed = true;");
@@ -198,5 +198,20 @@ describe("buildReviewPayload", () => {
   it("respects an explicit event", () => {
     const payload = buildReviewPayload({ findings: [], diff, summaryBody: "x", event: "REQUEST_CHANGES" });
     expect(payload.event).toBe("REQUEST_CHANGES");
+  });
+
+  it("keeps nitpick (minor) findings out of inline comments (#58)", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6, severity: "major", title: "real bug" }),
+        f({ line: 6, severity: "minor", category: "lint", title: "nit" })
+      ],
+      diff,
+      summaryBody: "## walkthrough\n"
+    });
+    // Only the blocking finding anchors inline; the nitpick is handled in the summary.
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].body).toContain("real bug");
+    expect(payload.body).not.toContain("nit");
   });
 });
