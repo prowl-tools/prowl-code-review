@@ -37,10 +37,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: add Gitleaks (secrets), Semgrep (SAST, rule-configurable), and Ruff (Python) as runners in the existing `src/grounding` registry, normalized to the findings schema and injected as grounding alongside ESLint.
     - Acceptance: per-language linter auto-selection generalizes with #5's language detection; graceful degradation when a tool is absent (already in place).
 
-17. **LLM resilience: retry/backoff + partial-failure handling**
-    As a developer, I want reviews to survive provider hiccups, so that a transient 429 or one failed pass doesn't kill the whole review.
-    - Acceptance: exponential backoff + jitter on 429/5xx; a failed specialist pass degrades gracefully (judge proceeds with the rest) and is reported.
-    - Acceptance: per-model-family failback (fall back to an older generation on overload, not across providers); failback only on retryable errors (429/503); heartbeat progress logs so long model "thinking" isn't mistaken for a hung job.
+17. **LLM resilience: cross-generation failback + heartbeat** *(retry/backoff + partial-failure done — see resolved.md)*
+    As a developer, I want reviews to survive sustained provider trouble and long "thinking", so that overload or a slow model doesn't kill or appear to hang the review.
+    - **Done:** exponential backoff + jitter on 429/408/425/5xx/network across specialist passes, verification, and context retrieval; a failed specialist pass already degrades gracefully and is reported (#56 surfaces it).
+    - Acceptance: per-model-family failback (fall back to an older generation on persistent overload, not across providers); failback only on retryable errors (429/503) after retries are exhausted.
+    - Acceptance: heartbeat progress logs so long model "thinking" isn't mistaken for a hung job (wire the existing `onRetry` hook + a periodic tick).
 
 18. **Per-PR budget cap**
     As a developer, I want a max-spend ceiling per review, so that a huge PR can't quietly cost me real money.
