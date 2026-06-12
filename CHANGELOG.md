@@ -42,7 +42,7 @@ All notable changes to Prowl Review will be documented in this file.
   (category `lint`, error→minor / warning→info, confidence 0.9). The findings merge into the
   review (deduped by the judge against anything the LLM re-found) and a compact "reconcile, don't
   re-report" summary is injected into every specialist prompt. Skippable via `--no-grounding`. The
-  runner shape generalizes to Gitleaks/Semgrep and, with #5, more languages. 15 grounding unit tests.
+  runner shape generalizes to Gitleaks/Semgrep and, with #5, more languages. 16 grounding unit tests.
 - Review state persistence + update-not-duplicate (`src/review/state.ts`, `src/github/review.ts`,
   backlog #12 + #22 core): the summary is now a single top-level PR comment carrying a hidden,
   versioned state marker (last-reviewed SHA + posted-finding fingerprints). On a re-run prowl-review

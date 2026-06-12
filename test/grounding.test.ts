@@ -151,6 +151,24 @@ describe("gatherGrounding", () => {
     expect(result.findings[0].title).toBe("no-debugger");
   });
 
+  it("keeps multi-line ESLint findings that overlap changed new-side lines", async () => {
+    const exec = fakeExec({
+      stdout: eslintOutput([
+        { ruleId: "multi-line-rule", severity: 2, message: "multi", line: 10, endLine: 12 },
+        { ruleId: "non-overlap-rule", severity: 2, message: "non-overlap", line: 15, endLine: 17 }
+      ])
+    });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [11, 20] },
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].title).toBe("multi-line-rule");
+  });
+
   it("ignores changed paths that escape the workspace", async () => {
     const exec = fakeExec({ stdout: "[]" });
     await gatherGrounding({ root: ROOT, changedPaths: ["../outside.ts", "/etc/evil.ts"], trustWorkspace: true, exec });

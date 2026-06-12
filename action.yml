@@ -80,5 +80,4 @@ runs:
         ARGS=()
         [ -n "$PROWL_MIN_SEVERITY" ] && ARGS+=(--min-severity "$PROWL_MIN_SEVERITY")
         [ "$PROWL_DRY_RUN" = "true" ] && ARGS+=(--dry-run)
-        [ "$PROWL_TRUST_WORKSPACE" = "true" ] && ARGS+=(--trust-workspace)
         node "$GITHUB_ACTION_PATH/dist/cli.js" review "${ARGS[@]}"

@@ -27,7 +27,7 @@ import {
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
 import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
-import type { Severity } from "./review/findings.js";
+import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
 
@@ -181,6 +181,24 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   return changed;
 }
 
+/** Redact untrusted linter finding text before it reaches prompts or comments. */
+function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; count: number } {
+  let count = 0;
+  const redacted = findings.map((finding) => {
+    const title = redactSecrets(finding.title);
+    const body = redactSecrets(finding.body);
+    const suggestion = finding.suggestion ? redactSecrets(finding.suggestion) : undefined;
+    count += title.count + body.count + (suggestion?.count ?? 0);
+    return {
+      ...finding,
+      title: title.text,
+      body: body.text,
+      ...(suggestion ? { suggestion: suggestion.text } : {})
+    };
+  });
+  return { findings: redacted, count };
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -258,8 +276,12 @@ export async function reviewPullRequest(
         limits: options.groundingLimits
       });
       groundingNotes = result.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
-      if (result.findings.length > 0) {
-        grounding = { findings: result.findings, summary: buildGroundingSummary(result.findings) };
+      const redacted = redactGroundingFindings(result.findings);
+      if (redacted.count > 0) {
+        redactionNotes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
+      }
+      if (redacted.findings.length > 0) {
+        grounding = { findings: redacted.findings, summary: buildGroundingSummary(redacted.findings) };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
