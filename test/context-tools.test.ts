@@ -183,4 +183,8 @@ describe("searchRepo", () => {
   it("rejects unsafe regex patterns before searching", () => {
     expect(() => searchRepo(options, "(a+)+$")).toThrow(/Unsafe search pattern/);
   });
+
+  it("rejects search patterns with too many unbounded repetitions", () => {
+    expect(() => searchRepo(options, "a*a*a*a*a*b")).toThrow(/too many unbounded repetitions/);
+  });
 });
