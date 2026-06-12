@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { existsSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { writeFileSync } from "node:fs";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { CONFIG_FILENAME } from "../../config/loader.js";
 import { CONFIG_TEMPLATE } from "../../config/template.js";
 
@@ -16,13 +16,31 @@ interface InitCommandOptions {
   force?: boolean;
 }
 
-/** Write the config template to `dir`; returns the path written. Pure-ish for tests. */
-export function writeConfigTemplate(dir: string, force: boolean): string {
-  const target = join(resolve(dir), CONFIG_FILENAME);
-  if (existsSync(target) && !force) {
-    throw new Error(`${CONFIG_FILENAME} already exists at ${target}. Use --force to overwrite.`);
+function existingConfigError(target: string): Error {
+  return new Error(`${CONFIG_FILENAME} already exists at ${target}. Use --force to overwrite.`);
+}
+
+function resolveTargetDir(dir: string, workspace: string): string {
+  const root = resolve(workspace);
+  const targetDir = resolve(root, dir);
+  const rel = relative(root, targetDir);
+  if (/^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) {
+    throw new Error(`Refusing to write ${CONFIG_FILENAME} outside the workspace: ${targetDir}`);
   }
-  writeFileSync(target, CONFIG_TEMPLATE, "utf8");
+  return targetDir;
+}
+
+/** Write the config template to `dir`; returns the path written. Pure-ish for tests. */
+export function writeConfigTemplate(dir: string, force: boolean, workspace = process.cwd()): string {
+  const target = join(resolveTargetDir(dir, workspace), CONFIG_FILENAME);
+  try {
+    writeFileSync(target, CONFIG_TEMPLATE, { encoding: "utf8", flag: force ? "w" : "wx" });
+  } catch (error) {
+    if (!force && (error as NodeJS.ErrnoException).code === "EEXIST") {
+      throw existingConfigError(target);
+    }
+    throw error;
+  }
   return target;
 }
 

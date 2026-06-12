@@ -12,7 +12,7 @@ describe("configSchema (#29)", () => {
       model: "gpt-x",
       review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
       context: { enabled: false, maxRounds: 3, maxFiles: 8 },
-      grounding: { enabled: true, trustWorkspace: true },
+      grounding: { enabled: true },
       diff: { maxFiles: 50, maxBytes: 100000 }
     };
     expect(configSchema.parse(input)).toEqual(input);
@@ -32,6 +32,10 @@ describe("configSchema (#29)", () => {
 
   it("rejects an unknown provider", () => {
     expect(() => configSchema.parse({ provider: "llama" })).toThrow();
+  });
+
+  it("rejects workspace trust from repo config", () => {
+    expect(() => configSchema.parse({ grounding: { trustWorkspace: true } })).toThrow();
   });
 
   it("rejects confidence outside 0–1", () => {

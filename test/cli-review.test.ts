@@ -166,11 +166,11 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolved.trustWorkspace).toBe(false);
   });
 
-  it("applies config values when the CLI is silent", () => {
+  it("applies safe config values when the CLI is silent", () => {
     const config: ProwlReviewConfig = {
       review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
       context: { enabled: false, maxRounds: 3, maxFiles: 8 },
-      grounding: { enabled: false, trustWorkspace: true },
+      grounding: { enabled: false },
       diff: { maxFiles: 50, maxBytes: 1000 }
     };
     const resolved = resolveReviewOptions({}, config, env);
@@ -182,7 +182,7 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolved.skipContext).toBe(true);
     expect(resolved.contextLimits).toEqual({ maxRounds: 3, maxFiles: 8 });
     expect(resolved.skipGrounding).toBe(true);
-    expect(resolved.trustWorkspace).toBe(true);
+    expect(resolved.trustWorkspace).toBe(false);
     expect(resolved.diffLimits).toEqual({ maxFiles: 50, maxDiffBytes: 1000 });
   });
 
@@ -200,12 +200,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   });
 
   it("lets a CLI --trust-workspace win over config and env", () => {
-    expect(resolveReviewOptions({ trustWorkspace: true }, { grounding: { trustWorkspace: false } }, env).trustWorkspace).toBe(true);
+    expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
   });
 
-  it("uses the env trust flag only when neither CLI nor config decide", () => {
+  it("uses only out-of-band inputs to enable workspace execution trust", () => {
     expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
-    expect(resolveReviewOptions({}, { grounding: { trustWorkspace: false } }, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(false);
+    expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
   });
 });
 
@@ -223,6 +223,15 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     );
     expect(cfg.provider).toBe("gemini");
     expect(cfg.model).toBe("g-env");
+  });
+
+  it("ignores blank env provider/model values so config defaults can apply", () => {
+    const cfg = resolveProviderConfig(
+      { PROWL_AI_KEY: "k", PROWL_AI_PROVIDER: "", PROWL_AI_MODEL: "   " } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-x" }
+    );
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-x");
   });
 
   it("falls back to the provider's default model when neither env nor config set one", () => {

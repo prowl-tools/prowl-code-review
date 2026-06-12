@@ -49,9 +49,9 @@ export interface ProviderDefaults {
 
 /**
  * Resolve provider configuration (BYOK). Selection precedence is
- * **env var > config default > built-in default**; the API key is always read
- * from the environment and never from config:
- * - `PROWL_AI_PROVIDER` — `anthropic` (default) | `openai` | `gemini`
+ * **env var > config default > built-in default**; blank env values are ignored.
+ * The API key is always read from the environment and never from config:
+ * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
  * - `PROWL_AI_KEY`      — the provider API key (required)
  * - `PROWL_AI_MODEL`    — optional model override (per-provider default otherwise)
  *
@@ -62,7 +62,7 @@ export function resolveProviderConfig(
   env: NodeJS.ProcessEnv = process.env,
   defaults: ProviderDefaults = {}
 ): ProviderConfig {
-  const raw = (env.PROWL_AI_PROVIDER ?? defaults.provider ?? "anthropic").toLowerCase();
+  const raw = (env.PROWL_AI_PROVIDER?.trim() || defaults.provider || "anthropic").toLowerCase();
   if (!isProviderName(raw)) {
     throw new Error(
       `Unsupported AI provider: ${raw}. Use one of: ${PROVIDER_NAMES.join(", ")}.`
