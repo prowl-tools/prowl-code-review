@@ -114,6 +114,8 @@ export function buildSpecialistPrompt(input: {
   specialist: Specialist;
   diff: string;
   context?: string;
+  /** Deterministic linter/SAST grounding to reconcile with, not re-report (#16). */
+  grounding?: string;
 }): string {
   const sections = [
     buildSpecialistDirective(input.specialist),
@@ -123,6 +125,9 @@ export function buildSpecialistPrompt(input: {
     ].join("\n")
   ];
 
+  if (input.grounding) {
+    sections.push(`# Untrusted linter/SAST grounding\n${input.grounding}`);
+  }
   if (input.context) {
     sections.push(`# Untrusted cross-file context\n${input.context}`);
   }

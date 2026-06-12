@@ -91,6 +91,43 @@ describe("runReview", () => {
     }
   });
 
+  it("injects grounding into prompts and merges grounding findings (#16)", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      // The grounding summary reaches every specialist prompt.
+      expect(request.prompt).toContain("GROUNDING_SUMMARY");
+      return reply("[]"); // specialists find nothing; only the linter finding remains
+    });
+    const lintFinding = {
+      file: "a.ts",
+      line: 3,
+      severity: "minor" as const,
+      category: "lint",
+      title: "no-debugger",
+      body: "no debugger (no-debugger)",
+      confidence: 0.9
+    };
+
+    const result = await runReview(
+      { diff: "d", grounding: { findings: [lintFinding], summary: "GROUNDING_SUMMARY" } },
+      { config, complete, verify: false }
+    );
+
+    expect(result.raw).toContainEqual(lintFinding); // merged pre-judge
+    expect(result.findings).toContainEqual(lintFinding); // survives the judge (minor)
+  });
+
+  it("wraps grounding in an explicit untrusted prompt section", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      expect(request.prompt).toContain("# Untrusted linter/SAST grounding\nGROUNDING_SUMMARY");
+      return reply("[]");
+    });
+
+    await runReview(
+      { diff: "d", grounding: { findings: [], summary: "GROUNDING_SUMMARY" } },
+      { config, complete, verify: false }
+    );
+  });
+
   it("applies the severity threshold via the judge", async () => {
     const complete = vi.fn(async (): Promise<CompletionResult> =>
       reply(

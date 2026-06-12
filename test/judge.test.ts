@@ -49,6 +49,33 @@ describe("dedupeFindings", () => {
     ]);
     expect(result).toHaveLength(4);
   });
+
+  it("dedupes linter grounding against specialist rediscoveries on the same line", () => {
+    const result = dedupeFindings([
+      finding({ category: "lint", severity: "minor", title: "no-debugger", body: "Unexpected debugger statement (no-debugger)", confidence: 0.9 }),
+      finding({ category: "correctness", severity: "major", title: "debug statement left in code", body: "Unexpected debugger statement", confidence: 0.8 })
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe("debug statement left in code");
+  });
+
+  it("keeps unrelated specialist findings on linted lines", () => {
+    const result = dedupeFindings([
+      finding({ category: "lint", severity: "minor", title: "no-console", body: "Unexpected console statement (no-console)", confidence: 0.9 }),
+      finding({ category: "security", severity: "major", title: "leaked token", body: "A token is exposed in the response.", confidence: 0.8 })
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.map((item) => item.title)).toEqual(["no-console", "leaked token"]);
+  });
+
+  it("keeps distinct lint findings on the same line", () => {
+    const result = dedupeFindings([
+      finding({ category: "lint", severity: "minor", title: "no-console", body: "Unexpected console statement (no-console)", confidence: 0.9 }),
+      finding({ category: "lint", severity: "minor", title: "no-debugger", body: "Unexpected debugger statement (no-debugger)", confidence: 0.9 })
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.map((item) => item.title)).toEqual(["no-console", "no-debugger"]);
+  });
 });
 
 describe("rankFindings", () => {
