@@ -12,8 +12,10 @@ All notable changes to Prowl Review will be documented in this file.
   cross-file context (`enabled`/`maxRounds`/`maxFiles`), linter grounding (`enabled`), and diff size
   guards. Precedence is **CLI flag > config file > built-in default**; for the provider, non-empty BYOK
   env vars (`PROWL_AI_PROVIDER`/`PROWL_AI_MODEL`) still win and the API key is never read from the
-  file. Workspace execution trust stays out-of-band via `--trust-workspace`, `PROWL_TRUST_WORKSPACE`,
-  or the Action input, so an untrusted repo config cannot enable local code execution. The loader searches
+  file. The GitHub Action supplies `PROWL_AI_PROVIDER` from its trusted `ai-provider` input, which
+  defaults to `anthropic`, so an untrusted repo config cannot redirect the provider endpoint. Workspace
+  execution trust stays out-of-band via `--trust-workspace`, `PROWL_TRUST_WORKSPACE`, or the Action
+  input, so an untrusted repo config cannot enable local code execution. The loader searches
   upward for `.prowl-review.yml`/`.yaml`, parses + validates with readable
   per-field errors (`.strict()` so a typo is a loud error, not a silent no-op), and never silently falls
   back to defaults on a malformed/invalid file. New `prowl-review init` scaffolds a commented config
