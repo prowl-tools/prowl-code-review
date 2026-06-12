@@ -15,6 +15,15 @@ All notable changes to Prowl Review will be documented in this file.
   message, so a degraded run is diagnosable. (Retry/backoff + cross-generation failback remain in #17.)
 
 ### Changed
+- Nitpick bucket + severity/confidence calibration (backlog #58): cut the non-blocking polish that
+  was popping up as prominent inline comments (PRs #22/#23 — hedged "could/might/potentially"
+  findings, micro-optimizations, hypothetical-future refactors). The specialist + verifier prompts
+  now grade anything speculative/precondition-dependent/micro-perf as `info` (prefer omit) **and**
+  low confidence (≤0.4), so the severity floor hides it, the confidence floor drops it, and
+  verification re-checks anything that slips through; the verifier explicitly drops
+  doesn't-happen-now findings. Presentation: only blocking findings (`major`+) post as inline
+  comments; `minor`-and-below render in a collapsed `🧹 Nitpicks (N)` section in the summary instead
+  of peppering the diff. (Tune/verify the false-alarm drop with the eval harness #13.)
 - Three distinct review-comment states (`src/review/walkthrough.ts`, backlog #56): the summary now
   renders differently by outcome instead of always a full report. **Clean** (healthy + nothing
   found) → a compact `✅ No issues found 🦝` with impact/effort/passes and the changed-files list
