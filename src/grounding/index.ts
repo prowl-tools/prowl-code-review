@@ -80,12 +80,11 @@ function defaultExec(timeoutMs: number): Exec {
         args,
         { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
         (error, stdout, stderr) => {
-          const code =
-            error && typeof (error as NodeJS.ErrnoException & { code?: number }).code === "number"
-              ? ((error as unknown as { code: number }).code)
-              : error
-                ? null
-                : 0;
+          let code: number | null = 0;
+          if (error) {
+            const errorCode = (error as NodeJS.ErrnoException).code;
+            code = typeof errorCode === "number" ? errorCode : errorCode === "ENOENT" ? 127 : null;
+          }
           resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
         }
       );
@@ -259,9 +258,9 @@ async function runEslint(
     notes.push(`ESLint: linted ${limited.length}/${files.length} changed files (file cap).`);
   }
 
-  // `npx --no-install` runs the repo's own ESLint without ever installing it, so
-  // an absent linter degrades gracefully instead of pulling from the network.
-  const result = await params.exec("npx", ["--no-install", "eslint", "--format", "json", "--", ...limited], params.root);
+  // Run the repo-local binary directly so missing ESLint degrades gracefully
+  // without allowing a package manager to resolve from the registry.
+  const result = await params.exec("node_modules/.bin/eslint", ["--format", "json", "--", ...limited], params.root);
 
   if (result.code === null) {
     return { findings: [], notes: [...notes, "ESLint: timed out; skipped."] };

@@ -148,6 +148,20 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("Redacted 1 secret\\(s\\) from linter grounding output.");
   });
 
+  it("redacts linter grounding notes before publishing them", async () => {
+    const deps = makeDeps();
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [],
+      notes: ["ESLint failed: SECRET_KEY=django-insecure-super-secret-value"]
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("REDACTED:assignment");
+    expect(result.payload.body).toContain("Redacted 1 secret\\(s\\) from linter grounding output.");
+    expect(result.payload.body).not.toContain("django-insecure");
+  });
+
   it("skips grounding when asked", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipGrounding: true });

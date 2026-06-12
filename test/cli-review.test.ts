@@ -126,6 +126,12 @@ describe("review command helpers", () => {
     process.env.PROWL_TRUST_WORKSPACE = "yes";
     expect(resolveTrustWorkspace()).toBe(true);
 
+    process.env.PROWL_TRUST_WORKSPACE = "TRUE";
+    expect(resolveTrustWorkspace()).toBe(true);
+
+    process.env.PROWL_TRUST_WORKSPACE = "Yes";
+    expect(resolveTrustWorkspace()).toBe(true);
+
     process.env.PROWL_TRUST_WORKSPACE = "false";
     expect(resolveTrustWorkspace()).toBe(false);
   });
