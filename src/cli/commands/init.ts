@@ -1,6 +1,6 @@
 import { Command } from "commander";
-import { writeFileSync } from "node:fs";
-import { join, resolve, sep } from "node:path";
+import { lstatSync, realpathSync, writeFileSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { CONFIG_FILENAME } from "../../config/loader.js";
 import { CONFIG_TEMPLATE } from "../../config/template.js";
 
@@ -20,8 +20,30 @@ function existingConfigError(target: string): Error {
   return new Error(`${CONFIG_FILENAME} already exists at ${target}. Use --force to overwrite.`);
 }
 
+function assertNoSymlinkPath(root: string, targetDir: string): void {
+  const rel = relative(root, targetDir);
+  if (!rel) {
+    return;
+  }
+
+  let current = root;
+  for (const part of rel.split(/[\\/]+/)) {
+    current = join(current, part);
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        throw new Error(`Refusing to write ${CONFIG_FILENAME} through symlinked path: ${current}`);
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return;
+      }
+      throw error;
+    }
+  }
+}
+
 function resolveTargetDir(dir: string, workspace: string): string {
-  const root = resolve(workspace);
+  const root = realpathSync(resolve(workspace));
   const targetDir = resolve(root, dir);
   const rootBoundary = root.endsWith(sep) ? root : `${root}${sep}`;
   const targetBoundary = targetDir.endsWith(sep) ? targetDir : `${targetDir}${sep}`;
@@ -30,6 +52,7 @@ function resolveTargetDir(dir: string, workspace: string): string {
   if (!comparableTarget.startsWith(comparableRoot)) {
     throw new Error(`Refusing to write ${CONFIG_FILENAME} outside the workspace: ${targetDir}`);
   }
+  assertNoSymlinkPath(root, targetDir);
   return targetDir;
 }
 
