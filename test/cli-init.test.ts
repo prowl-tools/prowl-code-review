@@ -54,7 +54,9 @@ describe("prowl-review init (#29)", () => {
 
   it("refuses to write outside the workspace", () => {
     const dir = tempDir();
+    const sibling = `${dir}-sibling`;
     expect(() => writeConfigTemplate("../outside", false, dir)).toThrow(/outside the workspace/);
+    expect(() => writeConfigTemplate(sibling, false, dir)).toThrow(/outside the workspace/);
     expect(() => writeConfigTemplate(tmpdir(), false, dir)).toThrow(/outside the workspace/);
   });
 });

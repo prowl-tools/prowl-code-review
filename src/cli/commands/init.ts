@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { CONFIG_FILENAME } from "../../config/loader.js";
 import { CONFIG_TEMPLATE } from "../../config/template.js";
 
@@ -23,8 +23,11 @@ function existingConfigError(target: string): Error {
 function resolveTargetDir(dir: string, workspace: string): string {
   const root = resolve(workspace);
   const targetDir = resolve(root, dir);
-  const rel = relative(root, targetDir);
-  if (/^\.\.(?:[\\/]|$)/.test(rel) || isAbsolute(rel)) {
+  const rootBoundary = root.endsWith(sep) ? root : `${root}${sep}`;
+  const targetBoundary = targetDir.endsWith(sep) ? targetDir : `${targetDir}${sep}`;
+  const comparableRoot = process.platform === "win32" ? rootBoundary.toLowerCase() : rootBoundary;
+  const comparableTarget = process.platform === "win32" ? targetBoundary.toLowerCase() : targetBoundary;
+  if (!comparableTarget.startsWith(comparableRoot)) {
     throw new Error(`Refusing to write ${CONFIG_FILENAME} outside the workspace: ${targetDir}`);
   }
   return targetDir;
