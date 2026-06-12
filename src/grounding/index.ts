@@ -83,7 +83,7 @@ function defaultExec(timeoutMs: number): Exec {
           let code: number | null = 0;
           if (error) {
             const errorCode = (error as { code?: unknown }).code;
-            code = typeof errorCode === "number" ? errorCode : errorCode === "ENOENT" ? 127 : null;
+            code = typeof errorCode === "number" ? errorCode : errorCode === "ENOENT" ? 127 : 1;
           }
           resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
         }
@@ -264,7 +264,11 @@ async function runEslint(
   const eslintScriptPath = join(params.root, "node_modules", "eslint", "bin", "eslint.js");
   // Invoke the JS entrypoint through this Node process instead of package
   // manager shims, avoiding registry resolution and shell/batch parsing.
-  const result = await params.exec(process.execPath, [eslintScriptPath, "--format", "json", "--", ...limited], params.root);
+  const result = await params.exec(
+    process.execPath,
+    ["--", eslintScriptPath, "--format", "json", "--no-error-on-unmatched-pattern", "--", ...limited],
+    params.root
+  );
 
   if (result.code === null) {
     return { findings: [], notes: [...notes, "ESLint: timed out; skipped."] };
