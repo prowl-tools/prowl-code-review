@@ -135,4 +135,11 @@ describe("review command helpers", () => {
     process.env.PROWL_TRUST_WORKSPACE = "false";
     expect(resolveTrustWorkspace()).toBe(false);
   });
+
+  it("resolves workspace execution trust to false for other env values", () => {
+    for (const value of ["0", "no", "falsey", ""]) {
+      process.env.PROWL_TRUST_WORKSPACE = value;
+      expect(resolveTrustWorkspace()).toBe(false);
+    }
+  });
 });

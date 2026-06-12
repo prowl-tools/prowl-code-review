@@ -58,8 +58,8 @@ describe("gatherGrounding", () => {
 
     // Only the .ts file is passed to eslint.
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls[0];
-    expect(call[0]).toBe("node_modules/.bin/eslint");
-    expect(call[1]).toEqual(["--format", "json", "--", "src/a.ts"]);
+    expect(call[0]).toBe(process.execPath);
+    expect(call[1]).toEqual(["/repo/node_modules/eslint/bin/eslint.js", "--format", "json", "--", "src/a.ts"]);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe("no-debugger");
     expect(result.notes.join(" ")).toContain("1 grounding finding");
@@ -85,7 +85,11 @@ describe("gatherGrounding", () => {
   });
 
   it("degrades gracefully when ESLint is not installed", async () => {
-    const exec = fakeExec({ stdout: "", stderr: "node_modules/.bin/eslint: command not found", code: 127 });
+    const exec = fakeExec({
+      stdout: "",
+      stderr: "Error: Cannot find module '/repo/node_modules/eslint/bin/eslint.js'",
+      code: 1
+    });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], trustWorkspace: true, exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("ESLint not available");
@@ -130,7 +134,7 @@ describe("gatherGrounding", () => {
       exec,
       limits: { maxFiles: 2 }
     });
-    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(3)).toEqual(["a.ts", "b.ts"]);
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(4)).toEqual(["a.ts", "b.ts"]);
     expect(result.notes.join(" ")).toContain("linted 2/3");
   });
 
@@ -168,6 +172,34 @@ describe("gatherGrounding", () => {
     });
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe("multi-line-rule");
+  });
+
+  it("drops ESLint findings without line numbers when filtering to changed lines", async () => {
+    const exec = fakeExec({
+      stdout: eslintOutput([{ ruleId: "no-line", severity: 2, message: "no line info" }])
+    });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [1, 2, 3] },
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+  });
+
+  it("drops ESLint findings in files with no changed lines", async () => {
+    const exec = fakeExec({
+      stdout: eslintOutput([{ ruleId: "some-rule", severity: 2, message: "msg", line: 5 }])
+    });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [] },
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
   });
 
   it("ignores changed paths that escape the workspace", async () => {

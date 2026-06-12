@@ -39,10 +39,52 @@ function isLintFinding(finding: Finding): boolean {
   return finding.category.toLowerCase() === "lint";
 }
 
-function dedupeBucket(finding: Finding, lintLines: Set<string>): string {
+function normalizeDedupeText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+interface LintDedupeEntry {
+  key: string;
+  matchers: string[];
+}
+
+function lintMatcherTerms(finding: Finding): string[] {
+  const title = normalizeDedupeText(finding.title);
+  const body = normalizeDedupeText(finding.body.replace(/\s*\([^)]*\)\s*$/, ""));
+  return [title && title !== "eslint" ? title : "", body].filter((term) => term.length >= 4);
+}
+
+function lintDedupeKey(loc: string, finding: Finding): string {
+  return `${loc}|lint|${lintMatcherTerms(finding)[0] ?? "eslint"}`;
+}
+
+function findingText(finding: Finding): string {
+  return normalizeDedupeText(`${finding.title} ${finding.body}`);
+}
+
+function matchingLintKey(finding: Finding, entries: LintDedupeEntry[] | undefined): string | null {
+  if (!entries) {
+    return null;
+  }
+  const text = findingText(finding);
+  for (const { key, matchers } of entries) {
+    if (matchers.some((matcher) => text.includes(matcher))) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function dedupeBucket(finding: Finding, lintEntries: Map<string, LintDedupeEntry[]>): string {
   const loc = lineKey(finding);
-  if (loc && lintLines.has(loc)) {
-    return loc;
+  if (loc && isLintFinding(finding)) {
+    return lintDedupeKey(loc, finding);
+  }
+  if (loc) {
+    const key = matchingLintKey(finding, lintEntries.get(loc));
+    if (key) {
+      return key;
+    }
   }
   return findingKey(finding);
 }
@@ -55,15 +97,19 @@ function dedupeBucket(finding: Finding, lintLines: Set<string>): string {
  * category, collapse those together too.
  */
 export function dedupeFindings(findings: Finding[]): Finding[] {
-  const lintLines = new Set(
-    findings
-      .filter(isLintFinding)
-      .map(lineKey)
-      .filter((key): key is string => Boolean(key))
-  );
+  const lintEntries = new Map<string, LintDedupeEntry[]>();
+  for (const finding of findings.filter(isLintFinding)) {
+    const loc = lineKey(finding);
+    if (!loc) {
+      continue;
+    }
+    const entries = lintEntries.get(loc) ?? [];
+    entries.push({ key: lintDedupeKey(loc, finding), matchers: lintMatcherTerms(finding) });
+    lintEntries.set(loc, entries);
+  }
   const byKey = new Map<string, Finding>();
   for (const finding of findings) {
-    const key = dedupeBucket(finding, lintLines);
+    const key = dedupeBucket(finding, lintEntries);
     const existing = byKey.get(key);
     byKey.set(key, existing ? preferred(existing, finding) : finding);
   }
