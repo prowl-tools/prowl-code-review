@@ -41,6 +41,18 @@ export {
   type ToolCompletionResult
 } from "./providers/index.js";
 
+// `.prowl-review.yml` configuration (loader + schema).
+export {
+  loadConfig,
+  findConfigPath,
+  CONFIG_FILENAME,
+  CONFIG_FILENAMES,
+  type LoadConfigOptions,
+  type LoadedConfig
+} from "./config/loader.js";
+export { configSchema, type ProwlReviewConfig } from "./config/schema.js";
+export { CONFIG_TEMPLATE } from "./config/template.js";
+
 // Linter / SAST grounding (deterministic findings fed into the review).
 export {
   gatherGrounding,
