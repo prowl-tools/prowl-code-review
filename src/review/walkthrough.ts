@@ -335,6 +335,16 @@ function findingBullet(finding: Finding): string {
   return `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`;
 }
 
+/** One nitpick rendered with enough detail to fix it without an inline comment. */
+function nitpickDetail(finding: Finding): string {
+  const parts = [findingBullet(finding), "", escapeMarkdownParagraphFlat(finding.body)];
+  const suggestion = finding.suggestion?.trim();
+  if (suggestion) {
+    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion));
+  }
+  return parts.join("\n");
+}
+
 /** Render only blocking findings prominently; nitpicks go in their own section. */
 function findingsSection(findings: Finding[]): string {
   const blockers = findings.filter(isBlockingFinding);
@@ -358,7 +368,7 @@ function nitpickSection(findings: Finding[]): string {
     "<details>",
     `<summary>🧹 Nitpicks (${nits.length})</summary>`,
     "",
-    nits.map(findingBullet).join("\n"),
+    nits.map(nitpickDetail).join("\n\n"),
     "",
     "</details>"
   ].join("\n");

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { buildInlineComments, buildReviewPayload, formatFindingComment } from "../src/review/inline.js";
+import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
 
@@ -142,7 +143,7 @@ describe("formatFindingComment", () => {
     const body = formatFindingComment(f({ title: "Ping @team *now*", body: "1. @team <script> *bold*" }));
 
     expect(body).toContain("Ping &#64;team \\*now\\*");
-    expect(body).toContain("1\\. &#64;team \\<script\\> \\*bold\\*");
+    expect(body).toContain("1\\. &#64;team &lt;script&gt; \\*bold\\*");
     expect(body).not.toContain("@team");
   });
 
@@ -213,5 +214,20 @@ describe("buildReviewPayload", () => {
     expect(payload.comments).toHaveLength(1);
     expect(payload.comments[0].body).toContain("real bug");
     expect(payload.body).not.toContain("nit");
+  });
+
+  it("keeps nitpick findings in the walkthrough summary when using the full review body (#58)", () => {
+    const findings = [
+      f({ line: 6, severity: "major", title: "real bug" }),
+      f({ line: 6, severity: "minor", category: "lint", title: "nit", body: "Fix the lint warning." })
+    ];
+    const summaryBody = buildWalkthrough({ findings, files: diff.files });
+    const payload = buildReviewPayload({ findings, diff, summaryBody });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].body).toContain("real bug");
+    expect(payload.body).toContain("Nitpicks");
+    expect(payload.body).toContain("nit");
+    expect(payload.body).toContain("Fix the lint warning.");
   });
 });
