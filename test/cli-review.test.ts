@@ -1,7 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   loadGuidelines,
   parseMinSeverity,
@@ -245,5 +246,18 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "anthropic" });
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.model).toBeTruthy();
+  });
+});
+
+describe("GitHub Action provider metadata", () => {
+  it("defaults provider selection to an out-of-band action input", () => {
+    const action = parseYaml(readFileSync(join(process.cwd(), "action.yml"), "utf8")) as {
+      inputs?: Record<string, { default?: unknown }>;
+      runs?: { steps?: Array<{ id?: string; env?: Record<string, string> }> };
+    };
+    const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
+
+    expect(action.inputs?.["ai-provider"]?.default).toBe("anthropic");
+    expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
   });
 });
