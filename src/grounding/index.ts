@@ -82,7 +82,7 @@ function defaultExec(timeoutMs: number): Exec {
         (error, stdout, stderr) => {
           let code: number | null = 0;
           if (error) {
-            const errorCode = (error as NodeJS.ErrnoException).code;
+            const errorCode = (error as { code?: unknown }).code;
             code = typeof errorCode === "number" ? errorCode : errorCode === "ENOENT" ? 127 : null;
           }
           resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code });
@@ -136,7 +136,7 @@ function eslintToFinding(root: string, fileResult: EslintFileResult, message: Es
   // ground the LLM without drowning out real findings (#55 floors do the rest).
   const severity: Severity = message.severity === 2 ? "minor" : "info";
   return {
-    file: file.replace(/\\/g, "/"),
+    file: file.replace(/[\\/]/g, "/"),
     ...(message.line ? { line: message.line } : {}),
     ...(message.endLine && message.line && message.endLine > message.line ? { endLine: message.endLine } : {}),
     severity,

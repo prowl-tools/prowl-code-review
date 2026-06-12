@@ -98,7 +98,11 @@ function dedupeBucket(finding: Finding, lintEntries: Map<string, LintDedupeEntry
  */
 export function dedupeFindings(findings: Finding[]): Finding[] {
   const lintEntries = new Map<string, LintDedupeEntry[]>();
-  for (const finding of findings.filter(isLintFinding)) {
+  // Build lint matchers first so specialist findings dedupe regardless of order.
+  for (const finding of findings) {
+    if (!isLintFinding(finding)) {
+      continue;
+    }
     const loc = lineKey(finding);
     if (!loc) {
       continue;
