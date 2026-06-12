@@ -14,6 +14,14 @@ All notable changes to Prowl Review will be documented in this file.
   failback + heartbeat progress logs remain open under #17.
 
 ### Fixed
+- Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
+  a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
+  was flipping the summary to "⚠️ Review incomplete — coverage degraded" even when all specialist
+  passes and verification ran cleanly (e.g. PR #25, where a single truncated `gatherContext` grep
+  triggered it). Like a guardrail file-skip, this is partial context on a healthy review, so it now
+  renders as the clean state with the bound still surfaced as a note (#5 no silent truncation).
+  "Review incomplete" is reserved for genuine inability to run — a failed specialist pass, failed
+  verification, or context retrieval that threw.
 - Gemini "returned no content" failures (`src/providers/gemini.ts`, toward backlog #17): the default
   `maxOutputTokens` was 4096, but Gemini 2.5 "thinking" tokens count against that budget — on a full
   review prompt thinking consumed it entirely, leaving no answer and failing the specialist passes
