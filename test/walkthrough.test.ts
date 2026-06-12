@@ -135,6 +135,16 @@ describe("buildWalkthrough", () => {
     expect(md).not.toContain("@org/team");
   });
 
+  it("escapes encoded HTML entities in untrusted text", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("major", { title: "Encoded &#x3C;script&#x3E;" })],
+      files
+    });
+
+    expect(md).toContain("Encoded &amp;\\#x3C;script&amp;\\#x3E;");
+    expect(md).not.toContain("Encoded &#x3C;script&#x3E;");
+  });
+
   it("marks binary files instead of showing line deltas", () => {
     const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
     expect(md).toContain("`img.png` — modified (binary)");
@@ -144,7 +154,11 @@ describe("buildWalkthrough", () => {
     const md = buildWalkthrough({
       findings: [
         makeFinding("critical", { title: "SQLi" }),
-        makeFinding("minor", { title: "nit", body: "Fix the lint warning.", suggestion: "const value = 1;" })
+        makeFinding("minor", {
+          title: "nit",
+          body: "Fix the lint warning.\n- keep this escaped",
+          suggestion: "  const value = 1;\n    nested();"
+        })
       ],
       files
     });
@@ -153,9 +167,9 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("**SQLi**");
     expect(md).toContain("🧹 Nitpicks (1)");
     expect(md).toContain("**nit**");
-    expect(md).toContain("Fix the lint warning.");
+    expect(md).toContain("Fix the lint warning.\n\\- keep this escaped");
     expect(md).toContain("```suggestion");
-    expect(md).toContain("const value = 1;");
+    expect(md).toContain("```suggestion\n  const value = 1;\n    nested();\n```");
     // The nitpick comes after the Findings header, not above it.
     expect(md.indexOf("### Findings")).toBeLessThan(md.indexOf("Nitpicks"));
   });

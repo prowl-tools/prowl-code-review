@@ -68,8 +68,8 @@ const SKIP_LABELS: Record<SkipReason, string> = {
   sensitive: "sensitive - kept out of the prompt"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
-const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 
 /** Replace control characters so untrusted paths cannot change Markdown structure. */
 function normalizeMarkdownText(value: string): string {
@@ -110,6 +110,9 @@ function escapeMarkdownChar(char: string): string {
   if (char === ">") {
     return "&gt;";
   }
+  if (char === "&") {
+    return "&amp;";
+  }
   return `\\${char}`;
 }
 
@@ -135,6 +138,11 @@ function escapeMarkdownParagraphFlat(value: string): string {
     .map((line) => escapeMarkdownParagraph(line.trim()))
     .filter(Boolean)
     .join(" ");
+}
+
+/** Escape multiline body text line-by-line while preserving paragraph breaks. */
+function escapeMarkdownParagraphBlock(value: string): string {
+  return value.split(/\r\n|\r|\n/).map(escapeMarkdownParagraph).join("\n");
 }
 
 /** Detect a leading ordered-list marker after trimming summary text. */
@@ -169,8 +177,8 @@ function inlineCode(value: string): string {
 }
 
 /** Render fenced code with a fence longer than any backtick run in the body. */
-function fencedCodeBlock(language: string, body: string): string {
-  const trimmed = body.trim();
+function fencedCodeBlock(language: string, body: string, options: { preserveWhitespace?: boolean } = {}): string {
+  const trimmed = options.preserveWhitespace ? body.replace(/\r\n|\r/g, "\n") : body.trim();
   const longestBacktickRun = Math.max(
     0,
     ...Array.from(trimmed.matchAll(/`+/g), (match) => match[0].length)
@@ -337,10 +345,10 @@ function findingBullet(finding: Finding): string {
 
 /** One nitpick rendered with enough detail to fix it without an inline comment. */
 function nitpickDetail(finding: Finding): string {
-  const parts = [findingBullet(finding), "", escapeMarkdownParagraphFlat(finding.body)];
-  const suggestion = finding.suggestion?.trim();
-  if (suggestion) {
-    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion));
+  const parts = [findingBullet(finding), "", escapeMarkdownParagraphBlock(finding.body)];
+  const suggestion = finding.suggestion;
+  if (suggestion?.trim()) {
+    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion, { preserveWhitespace: true }));
   }
   return parts.join("\n");
 }

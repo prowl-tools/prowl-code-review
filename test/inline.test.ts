@@ -140,11 +140,18 @@ describe("formatFindingComment", () => {
   });
 
   it("escapes markdown and neutralizes mentions in finding text", () => {
-    const body = formatFindingComment(f({ title: "Ping @team *now*", body: "1. @team <script> *bold*" }));
+    const body = formatFindingComment(f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }));
 
-    expect(body).toContain("Ping &#64;team \\*now\\*");
-    expect(body).toContain("1\\. &#64;team &lt;script&gt; \\*bold\\*");
+    expect(body).toContain("Ping &#64;team \\*now\\* &amp; later");
+    expect(body).toContain("1\\. &#64;team &lt;script&gt; &amp;\\#x3C;img&amp;\\#x3E; \\*bold\\*");
     expect(body).not.toContain("@team");
+  });
+
+  it("preserves escaped line breaks in finding bodies", () => {
+    const body = formatFindingComment(f({ body: "First line\n- second line\n1. third line" }));
+
+    expect(body).toContain("First line\n\\- second line\n1\\. third line");
+    expect(body).not.toContain("First line\\n");
   });
 
   it("includes a committable suggestion block when a fix exists", () => {

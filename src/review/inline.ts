@@ -62,8 +62,8 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   info: "⚪"
 };
 
-const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@".split(""));
-const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@".split(""));
+const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
+const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -150,6 +150,9 @@ function escapeMarkdownChar(char: string): string {
   if (char === ">") {
     return "&gt;";
   }
+  if (char === "&") {
+    return "&amp;";
+  }
   return `\\${char}`;
 }
 
@@ -177,6 +180,11 @@ function escapeMarkdownParagraph(value: string): string {
   return neutralizeMentions(escaped);
 }
 
+/** Escape multiline body text line-by-line while preserving paragraph breaks. */
+function escapeMarkdownParagraphBlock(value: string): string {
+  return value.split(/\r\n|\r|\n/).map(escapeMarkdownParagraph).join("\n");
+}
+
 /** Wrap suggested code in a ```suggestion fence longer than any backtick run in it. */
 function suggestionBlock(code: string): string {
   const longestRun = Math.max(0, ...Array.from(code.matchAll(/`+/g), (m) => m[0].length));
@@ -200,7 +208,7 @@ export function formatFindingComment(finding: Finding): string {
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     "",
-    escapeMarkdownParagraph(finding.body)
+    escapeMarkdownParagraphBlock(finding.body)
   ];
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
