@@ -259,7 +259,10 @@ export async function reviewPullRequest(
       });
       contextFiles = gathered.files.length;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
-      contextDegraded = gathered.reachedLimit;
+      // A hit bound (max rounds/files) or a truncated search/list is partial
+      // context on an otherwise healthy review — not an inability to run. Like a
+      // guardrail file-skip it stays a benign note, NOT a degraded headline (#56).
+      // Only a thrown retrieval error (catch below) means coverage truly degraded.
       if (gathered.files.length > 0) {
         const joined = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
         // Defense-in-depth: tool reads are already redacted, but redact again.
@@ -316,10 +319,11 @@ export async function reviewPullRequest(
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
   // when the reviewer couldn't fully run — a specialist pass failed, verification
-  // failed, or context retrieval was truncated. Guardrail file skips are NOT a
-  // failure: the review is healthy but partial, so it renders as the clean state
-  // with a caveat headline ("No issues found in reviewed files") + the skip note,
-  // rather than an alarming "Review incomplete" on every PR that touches a lockfile.
+  // failed, or context retrieval threw. Benign partial coverage is NOT a failure:
+  // guardrail file skips and bounded context truncation (max rounds/files, a
+  // truncated search) leave the review healthy but partial, so they render as the
+  // clean state with a caveat headline + a note, rather than an alarming "Review
+  // incomplete" on every PR that touches a lockfile or has many grep matches.
   const passesPassed = reviewResult.passes.filter((pass) => pass.ok).length;
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
   const degraded =
