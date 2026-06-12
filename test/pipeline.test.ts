@@ -50,6 +50,7 @@ function makeDeps() {
       notes: [],
       toolOutputs: []
     })),
+    gatherGrounding: vi.fn(async () => ({ findings: [], notes: [] })),
     runReview: vi.fn(async () => reviewResult([finding()])),
     submitReview: vi.fn(async () => {})
   };
@@ -90,6 +91,82 @@ describe("reviewPullRequest", () => {
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipContext: true });
     expect(deps.gatherContext).not.toHaveBeenCalled();
     expect(deps.runReview.mock.calls[0][0].context).toBeUndefined();
+  });
+
+  it("runs linter grounding and threads it into the review (#16)", async () => {
+    const deps = makeDeps();
+    const lint = {
+      file: "src/a.ts", line: 2, severity: "minor" as const,
+      category: "lint", title: "no-debugger", body: "no debugger", confidence: 0.9
+    };
+    deps.gatherGrounding.mockResolvedValue({ findings: [lint], notes: ["ESLint: 1 grounding finding(s)."] });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        root: "/repo",
+        changedPaths: ["src/a.ts"],
+        changedLines: { "src/a.ts": [2] },
+        trustWorkspace: false
+      })
+    );
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.grounding.findings).toEqual([lint]);
+    expect(reviewInput.grounding.summary).toContain("no-debugger");
+    expect(result.payload.body).toContain("Linter grounding");
+    expect(result.payload.body).toContain("ESLint");
+  });
+
+  it("passes the trusted workspace opt-in to grounding", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, trustWorkspace: true });
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({ trustWorkspace: true })
+    );
+  });
+
+  it("redacts linter grounding before it reaches review prompts", async () => {
+    const deps = makeDeps();
+    const lint = {
+      file: "src/a.ts",
+      line: 2,
+      severity: "minor" as const,
+      category: "lint",
+      title: "custom-rule",
+      body: "SECRET_KEY=django-insecure-super-secret-value",
+      confidence: 0.9
+    };
+    deps.gatherGrounding.mockResolvedValue({ findings: [lint], notes: [] });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    const grounding = deps.runReview.mock.calls[0][0].grounding;
+    expect(grounding.findings[0].body).toContain("[REDACTED:assignment]");
+    expect(grounding.summary).toContain("[REDACTED:assignment]");
+    expect(grounding.summary).not.toContain("django-insecure");
+    expect(result.payload.body).toContain("Redacted 1 secret\\(s\\) from linter grounding output.");
+  });
+
+  it("redacts linter grounding notes before publishing them", async () => {
+    const deps = makeDeps();
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [],
+      notes: ["ESLint failed: SECRET_KEY=django-insecure-super-secret-value"]
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("REDACTED:assignment");
+    expect(result.payload.body).toContain("Redacted 1 secret\\(s\\) from linter grounding output.");
+    expect(result.payload.body).not.toContain("django-insecure");
+  });
+
+  it("skips grounding when asked", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipGrounding: true });
+    expect(deps.gatherGrounding).not.toHaveBeenCalled();
+    expect(deps.runReview.mock.calls[0][0].grounding).toBeUndefined();
   });
 
   it("surfaces context retrieval notes in the summary", async () => {

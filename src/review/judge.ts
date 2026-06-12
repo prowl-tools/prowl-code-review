@@ -31,11 +31,89 @@ function preferred(a: Finding, b: Finding): Finding {
   return b.confidence > a.confidence ? b : a;
 }
 
-/** Collapse findings that share file + line + category, keeping the strongest. */
+function lineKey(finding: Finding): string | null {
+  return finding.line ? `${finding.file}|${finding.line}` : null;
+}
+
+function isLintFinding(finding: Finding): boolean {
+  return finding.category.toLowerCase() === "lint";
+}
+
+function normalizeDedupeText(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+}
+
+interface LintDedupeEntry {
+  key: string;
+  matchers: string[];
+}
+
+function lintMatcherTerms(finding: Finding): string[] {
+  const title = normalizeDedupeText(finding.title);
+  const body = normalizeDedupeText(finding.body.replace(/\s*\([^)]*\)\s*$/, ""));
+  return [title && title !== "eslint" ? title : "", body].filter((term) => term.length >= 4);
+}
+
+function lintDedupeKey(loc: string, finding: Finding): string {
+  return `${loc}|lint|${lintMatcherTerms(finding)[0] ?? "eslint"}`;
+}
+
+function findingText(finding: Finding): string {
+  return normalizeDedupeText(`${finding.title} ${finding.body}`);
+}
+
+function matchingLintKey(finding: Finding, entries: LintDedupeEntry[] | undefined): string | null {
+  if (!entries) {
+    return null;
+  }
+  const text = findingText(finding);
+  for (const { key, matchers } of entries) {
+    if (matchers.some((matcher) => text.includes(matcher))) {
+      return key;
+    }
+  }
+  return null;
+}
+
+function dedupeBucket(finding: Finding, lintEntries: Map<string, LintDedupeEntry[]>): string {
+  const loc = lineKey(finding);
+  if (loc && isLintFinding(finding)) {
+    return lintDedupeKey(loc, finding);
+  }
+  if (loc) {
+    const key = matchingLintKey(finding, lintEntries.get(loc));
+    if (key) {
+      return key;
+    }
+  }
+  return findingKey(finding);
+}
+
+/**
+ * Collapse duplicate findings, keeping the strongest.
+ *
+ * Normal model findings dedupe by file + line + category. Linter grounding is
+ * special: if a specialist re-reports the same linter-backed line with another
+ * category, collapse those together too.
+ */
 export function dedupeFindings(findings: Finding[]): Finding[] {
+  const lintEntries = new Map<string, LintDedupeEntry[]>();
+  // Build lint matchers first so specialist findings dedupe regardless of order.
+  for (const finding of findings) {
+    if (!isLintFinding(finding)) {
+      continue;
+    }
+    const loc = lineKey(finding);
+    if (!loc) {
+      continue;
+    }
+    const entries = lintEntries.get(loc) ?? [];
+    entries.push({ key: lintDedupeKey(loc, finding), matchers: lintMatcherTerms(finding) });
+    lintEntries.set(loc, entries);
+  }
   const byKey = new Map<string, Finding>();
   for (const finding of findings) {
-    const key = findingKey(finding);
+    const key = dedupeBucket(finding, lintEntries);
     const existing = byKey.get(key);
     byKey.set(key, existing ? preferred(existing, finding) : finding);
   }

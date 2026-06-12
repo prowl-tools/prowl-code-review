@@ -32,6 +32,17 @@ All notable changes to Prowl Review will be documented in this file.
   review. (backlog #54)
 
 ### Added
+- Linter/SAST grounding (`src/grounding/`, backlog #16 — the 4th differentiator): the pipeline runs
+  the repository's own deterministic linters on the changed files and feeds the results into the
+  review so the LLM **reconciles rather than re-discovers** (catching mechanical issues and curbing
+  hallucination). ESLint is the first runner (`--format json` via `npx --no-install`, workspace-
+  confined, bounded, changed-line filtered, graceful skip when absent); repo-local execution is
+  gated behind `--trust-workspace` / the `trust-workspace` action input so untrusted PR checkouts do
+  not execute their own ESLint config/plugins by default. Its messages normalize to findings
+  (category `lint`, error→minor / warning→info, confidence 0.9). The findings merge into the
+  review (deduped by the judge against anything the LLM re-found) and a compact "reconcile, don't
+  re-report" summary is injected into every specialist prompt. Skippable via `--no-grounding`. The
+  runner shape generalizes to Gitleaks/Semgrep and, with #5, more languages. 16 grounding unit tests.
 - Review state persistence + update-not-duplicate (`src/review/state.ts`, `src/github/review.ts`,
   backlog #12 + #22 core): the summary is now a single top-level PR comment carrying a hidden,
   versioned state marker (last-reviewed SHA + posted-finding fingerprints). On a re-run prowl-review

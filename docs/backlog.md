@@ -32,9 +32,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-16. **Linter / SAST grounding**
-    As a reviewer, I want deterministic linter/SAST findings fed into the review, so that mechanical issues are caught and the LLM hallucinates less.
-    - Acceptance: run available linters on changed files in parallel (ESLint, Ruff, Semgrep, Gitleaks — auto-selected by language per #5), normalize to the findings schema, inject as grounding signals; LLM reconciles rather than re-discovers.
+16b. **More grounding runners: Gitleaks / Semgrep / Ruff** *(framework + ESLint done — see resolved.md)*
+    As a reviewer, I want SAST + more-language linters fed into the review too, so that grounding isn't JS/TS-only.
+    - Acceptance: add Gitleaks (secrets), Semgrep (SAST, rule-configurable), and Ruff (Python) as runners in the existing `src/grounding` registry, normalized to the findings schema and injected as grounding alongside ESLint.
+    - Acceptance: per-language linter auto-selection generalizes with #5's language detection; graceful degradation when a tool is absent (already in place).
 
 17. **LLM resilience: retry/backoff + partial-failure handling**
     As a developer, I want reviews to survive provider hiccups, so that a transient 429 or one failed pass doesn't kill the whole review.

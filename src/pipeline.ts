@@ -8,7 +8,7 @@ import {
 import { submitReview as defaultSubmitReview, type SubmitReviewOptions } from "./github/review.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
-import type { DiffLimits, SkippedFile } from "./review/diff-types.js";
+import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
   gatherContext as defaultGatherContext,
@@ -17,10 +17,17 @@ import {
   type RetrievalLimits
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
+import {
+  gatherGrounding as defaultGatherGrounding,
+  buildGroundingSummary,
+  type GatherGroundingParams,
+  type GroundingResult,
+  type GroundingLimits
+} from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
 import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
-import type { Severity } from "./review/findings.js";
+import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
 
@@ -38,6 +45,7 @@ export interface PipelineDeps {
   fetchPullRequest?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
   gatherContext?: (params: GatherContextParams) => Promise<GatheredContext>;
   runReview?: (input: ReviewInput, options?: RunReviewOptions) => Promise<ReviewResult>;
+  gatherGrounding?: (params: GatherGroundingParams) => Promise<GroundingResult>;
   submitReview?: (
     octokit: OctokitLike,
     ref: PullRequestRef,
@@ -65,6 +73,12 @@ export interface ReviewPullRequestOptions {
   event?: ReviewEvent;
   /** Skip agentic cross-file context retrieval (e.g. fork PRs / cost control). */
   skipContext?: boolean;
+  /** Skip linter/SAST grounding (#16). */
+  skipGrounding?: boolean;
+  /** Allow grounding to execute repository-defined linter code/config in toolkitRoot. */
+  trustWorkspace?: boolean;
+  /** Limits for the linter/SAST grounding stage (#16). */
+  groundingLimits?: GroundingLimits;
   /** Build the review but don't publish it. */
   dryRun?: boolean;
   deps?: PipelineDeps;
@@ -148,6 +162,54 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
   return notes;
 }
 
+/** Build a new-side changed-line map for grounding tools that lint whole files. */
+function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
+  const changed: Record<string, number[]> = {};
+  for (const file of files) {
+    const lines = new Set<number>();
+    for (const hunk of file.hunks) {
+      for (const line of hunk.lines) {
+        if (line.type === "add" && line.newLine) {
+          lines.add(line.newLine);
+        }
+      }
+    }
+    if (lines.size > 0) {
+      changed[file.path] = [...lines].sort((a, b) => a - b);
+    }
+  }
+  return changed;
+}
+
+/** Redact untrusted linter finding text before it reaches prompts or comments. */
+function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; count: number } {
+  let count = 0;
+  const redacted = findings.map((finding) => {
+    const title = redactSecrets(finding.title);
+    const body = redactSecrets(finding.body);
+    const suggestion = finding.suggestion ? redactSecrets(finding.suggestion) : undefined;
+    count += title.count + body.count + (suggestion?.count ?? 0);
+    return {
+      ...finding,
+      title: title.text,
+      body: body.text,
+      ...(suggestion ? { suggestion: suggestion.text } : {})
+    };
+  });
+  return { findings: redacted, count };
+}
+
+/** Redact linter operational notes before they can be rendered in the review body. */
+function redactGroundingNotes(notes: string[]): { notes: string[]; count: number } {
+  let count = 0;
+  const redacted = notes.map((note) => {
+    const result = redactSecrets(note);
+    count += result.count;
+    return result.text;
+  });
+  return { notes: redacted, count };
+}
+
 /** Run the full review pipeline for one pull request. */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -158,6 +220,7 @@ export async function reviewPullRequest(
   const deps = options.deps ?? {};
   const fetchPr = deps.fetchPullRequest ?? defaultFetchPullRequest;
   const gather = deps.gatherContext ?? defaultGatherContext;
+  const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const submit = deps.submitReview ?? defaultSubmitReview;
 
@@ -209,8 +272,38 @@ export async function reviewPullRequest(
     }
   }
 
+  // Linter/SAST grounding (#16): run the repo's deterministic linters on the
+  // changed files and feed the findings into the review so the LLM reconciles
+  // rather than re-discovers. Degrades gracefully; never blocks the review.
+  let grounding: ReviewInput["grounding"];
+  let groundingNotes: string[] = [];
+  if (!options.skipGrounding && options.toolkitRoot && reviewFiles.length > 0) {
+    try {
+      const result = await ground({
+        root: options.toolkitRoot,
+        changedPaths: reviewFiles.map((file) => file.path),
+        changedLines: changedLinesByPath(reviewFiles),
+        trustWorkspace: options.trustWorkspace === true,
+        limits: options.groundingLimits
+      });
+      const redactedNotes = redactGroundingNotes(result.notes);
+      groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
+      const redacted = redactGroundingFindings(result.findings);
+      const redactionCount = redacted.count + redactedNotes.count;
+      if (redactionCount > 0) {
+        redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
+      }
+      if (redacted.findings.length > 0) {
+        grounding = { findings: redacted.findings, summary: buildGroundingSummary(redacted.findings) };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${message}`)];
+    }
+  }
+
   const reviewResult = await review(
-    { diff: diffText, context, guidelines: options.guidelines },
+    { diff: diffText, context, guidelines: options.guidelines, grounding },
     {
       config,
       minSeverity: options.minSeverity,
@@ -241,6 +334,7 @@ export async function reviewPullRequest(
     notes: [
       ...redactionNotes,
       ...contextNotes,
+      ...groundingNotes,
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
       ...reviewPassNotes(reviewResult)

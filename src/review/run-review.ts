@@ -37,6 +37,12 @@ export interface ReviewInput {
   guidelines?: string;
   /** Specialist set; defaults to {@link DEFAULT_SPECIALISTS}. */
   specialists?: Specialist[];
+  /**
+   * Deterministic linter/SAST grounding (#16): findings are merged into the
+   * review (deduped by the judge) and `summary` is injected into each specialist
+   * prompt so the LLM reconciles with them instead of re-discovering.
+   */
+  grounding?: { findings: Finding[]; summary: string };
 }
 
 export interface RunReviewOptions {
@@ -67,7 +73,7 @@ export interface SpecialistPassReport {
 export interface ReviewResult {
   /** Consolidated, ranked findings after the judge. */
   findings: Finding[];
-  /** Every raw finding the specialists produced (pre-judge). */
+  /** Every pre-judge finding: specialist output plus deterministic grounding. */
   raw: Finding[];
   /** Per-specialist outcome (count, ok/failed). */
   passes: SpecialistPassReport[];
@@ -110,7 +116,8 @@ export async function runReview(
           prompt: buildSpecialistPrompt({
             specialist,
             diff: input.diff,
-            context: input.context
+            context: input.context,
+            grounding: input.grounding?.summary
           })
         }, config);
         const findings = parseFindings(result.text).map((finding) => ({
@@ -137,7 +144,9 @@ export async function runReview(
     })
   );
 
-  const raw = outcomes.flatMap((outcome) => outcome.findings);
+  // Merge deterministic linter findings (#16) in with the specialists' raw
+  // findings; the judge dedups them against any the LLM re-discovered.
+  const raw = [...outcomes.flatMap((outcome) => outcome.findings), ...(input.grounding?.findings ?? [])];
   let usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
 
   // Skeptical false-positive pass (#8): re-check low-confidence findings before
