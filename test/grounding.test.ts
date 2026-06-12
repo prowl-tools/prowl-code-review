@@ -68,7 +68,15 @@ describe("gatherGrounding", () => {
     // Only the .ts file is passed to eslint.
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls[0];
     expect(call[0]).toBe(process.execPath);
-    expect(call[1]).toEqual(["/repo/node_modules/eslint/bin/eslint.js", "--format", "json", "--", "src/a.ts"]);
+    expect(call[1]).toEqual([
+      "--",
+      "/repo/node_modules/eslint/bin/eslint.js",
+      "--format",
+      "json",
+      "--no-error-on-unmatched-pattern",
+      "--",
+      "src/a.ts"
+    ]);
     expect(result.findings).toHaveLength(1);
     expect(result.findings[0].title).toBe("no-debugger");
     expect(result.notes.join(" ")).toContain("1 grounding finding");
@@ -143,7 +151,7 @@ describe("gatherGrounding", () => {
       exec,
       limits: { maxFiles: 2 }
     });
-    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(4)).toEqual(["a.ts", "b.ts"]);
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls[0][1].slice(6)).toEqual(["a.ts", "b.ts"]);
     expect(result.notes.join(" ")).toContain("linted 2/3");
   });
 
@@ -209,6 +217,30 @@ describe("gatherGrounding", () => {
       exec
     });
     expect(result.findings).toHaveLength(0);
+  });
+
+  it("drops findings for files with no changed lines while keeping other files", async () => {
+    const exec = fakeExec({
+      stdout: JSON.stringify([
+        {
+          filePath: "/repo/src/a.ts",
+          messages: [{ ruleId: "some-rule", severity: 2, message: "msg", line: 5 }]
+        },
+        {
+          filePath: "/repo/src/b.ts",
+          messages: [{ ruleId: "another-rule", severity: 2, message: "msg2", line: 10 }]
+        }
+      ])
+    });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/b.ts"],
+      changedLines: { "src/a.ts": [], "src/b.ts": [10] },
+      trustWorkspace: true,
+      exec
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].file).toBe("src/b.ts");
   });
 
   it("ignores changed paths that escape the workspace", async () => {
