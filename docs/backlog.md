@@ -89,10 +89,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer, I want control over when reviews fire, so that drafts are my buffer.
     - Acceptance: skip drafts until "ready for review" by default; config toggle for auto-review vs. on-demand (`@prowl-review review`) only.
 
-29. **`.prowl-review.yml` config + `init` command**
-    As a developer, I want a per-repo config, so that I can tune providers/models, specialist passes, severity threshold, path filters/instructions, risk-tiering, tone, ignore globs, and the comment cap.
-    - Acceptance: Zod-validated loader (style of `prowl/src/config/schema.ts`); documented defaults; `prowl-review init` scaffolds a commented config.
-
 30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
     - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` and a `LEARNED_PATTERNS.md` into the prompt; a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to learned-patterns (persisted per #12).
