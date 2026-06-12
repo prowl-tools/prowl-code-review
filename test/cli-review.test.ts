@@ -8,9 +8,12 @@ import {
   resolveGuidelinesWorkspace,
   resolvePullNumber,
   resolveRepo,
+  resolveReviewOptions,
   resolveTrustWorkspace,
   resolveWorkspace
 } from "../src/cli/commands/review.js";
+import { resolveProviderConfig } from "../src/providers/index.js";
+import type { ProwlReviewConfig } from "../src/config/schema.js";
 
 const ORIGINAL_ENV = process.env;
 let tempDirs: string[] = [];
@@ -144,5 +147,87 @@ describe("review command helpers", () => {
       process.env.PROWL_TRUST_WORKSPACE = value;
       expect(resolveTrustWorkspace()).toBe(false);
     }
+  });
+});
+
+describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () => {
+  const env = {} as NodeJS.ProcessEnv;
+
+  it("falls back to built-in defaults (undefined) when neither CLI nor config set a value", () => {
+    const resolved = resolveReviewOptions({}, {}, env);
+    expect(resolved.minSeverity).toBeUndefined();
+    expect(resolved.minConfidence).toBeUndefined();
+    expect(resolved.maxFindings).toBeUndefined();
+    expect(resolved.verify).toBeUndefined();
+    expect(resolved.skipContext).toBeUndefined();
+    expect(resolved.skipGrounding).toBeUndefined();
+    expect(resolved.contextLimits).toBeUndefined();
+    expect(resolved.diffLimits).toBeUndefined();
+    expect(resolved.trustWorkspace).toBe(false);
+  });
+
+  it("applies config values when the CLI is silent", () => {
+    const config: ProwlReviewConfig = {
+      review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
+      context: { enabled: false, maxRounds: 3, maxFiles: 8 },
+      grounding: { enabled: false, trustWorkspace: true },
+      diff: { maxFiles: 50, maxBytes: 1000 }
+    };
+    const resolved = resolveReviewOptions({}, config, env);
+    expect(resolved.minSeverity).toBe("major");
+    expect(resolved.minConfidence).toBe(0.7);
+    expect(resolved.maxFindings).toBe(10);
+    expect(resolved.verify).toBe(false);
+    expect(resolved.verifyConfidence).toBe(0.9);
+    expect(resolved.skipContext).toBe(true);
+    expect(resolved.contextLimits).toEqual({ maxRounds: 3, maxFiles: 8 });
+    expect(resolved.skipGrounding).toBe(true);
+    expect(resolved.trustWorkspace).toBe(true);
+    expect(resolved.diffLimits).toEqual({ maxFiles: 50, maxDiffBytes: 1000 });
+  });
+
+  it("lets a CLI --min-severity override the config", () => {
+    const resolved = resolveReviewOptions({ minSeverity: "critical" }, { review: { minSeverity: "minor" } }, env);
+    expect(resolved.minSeverity).toBe("critical");
+  });
+
+  it("lets CLI disable flags win over an enabling config", () => {
+    const config: ProwlReviewConfig = { context: { enabled: true }, grounding: { enabled: true } };
+    const resolved = resolveReviewOptions({ context: false, grounding: false, verify: false }, config, env);
+    expect(resolved.skipContext).toBe(true);
+    expect(resolved.skipGrounding).toBe(true);
+    expect(resolved.verify).toBe(false);
+  });
+
+  it("lets a CLI --trust-workspace win over config and env", () => {
+    expect(resolveReviewOptions({ trustWorkspace: true }, { grounding: { trustWorkspace: false } }, env).trustWorkspace).toBe(true);
+  });
+
+  it("uses the env trust flag only when neither CLI nor config decide", () => {
+    expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
+    expect(resolveReviewOptions({}, { grounding: { trustWorkspace: false } }, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(false);
+  });
+});
+
+describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () => {
+  it("uses config provider/model when the env vars are absent", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "openai", model: "gpt-x" });
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-x");
+  });
+
+  it("lets env provider/model win over the config defaults", () => {
+    const cfg = resolveProviderConfig(
+      { PROWL_AI_KEY: "k", PROWL_AI_PROVIDER: "gemini", PROWL_AI_MODEL: "g-env" } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-x" }
+    );
+    expect(cfg.provider).toBe("gemini");
+    expect(cfg.model).toBe("g-env");
+  });
+
+  it("falls back to the provider's default model when neither env nor config set one", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "anthropic" });
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBeTruthy();
   });
 });
