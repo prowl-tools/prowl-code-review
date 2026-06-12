@@ -4,6 +4,15 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- LLM resilience: retry with backoff (`src/providers/retry.ts`, backlog #17 core): the review's
+  default provider calls now retry transient failures — 429/408/425, 5xx, and network/timeout
+  errors — with exponential backoff + full jitter, so a provider blip no longer degrades or sinks a
+  review. Only transient errors retry (a 4xx or empty-content fails fast); `sleep`/`random` are
+  injectable for deterministic tests. Applied transparently to specialist passes, the verification
+  pass, and agentic context retrieval (an injected completion is used as-is). Cross-generation
+  failback + heartbeat progress logs remain open under #17.
+
 ### Fixed
 - Gemini "returned no content" failures (`src/providers/gemini.ts`, toward backlog #17): the default
   `maxOutputTokens` was 4096, but Gemini 2.5 "thinking" tokens count against that budget — on a full
