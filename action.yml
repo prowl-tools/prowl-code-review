@@ -82,4 +82,4 @@ runs:
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
-      run: node "$GITHUB_ACTION_PATH/dist/cli.js" review
+      run: node "${{ github.action_path }}/dist/cli.js" review

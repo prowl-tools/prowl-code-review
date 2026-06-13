@@ -309,6 +309,6 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
-    expect(reviewStep?.run).toBe("node \"$GITHUB_ACTION_PATH/dist/cli.js\" review");
+    expect(reviewStep?.run).toBe('node "${{ github.action_path }}/dist/cli.js" review');
   });
 });
