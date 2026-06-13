@@ -123,6 +123,7 @@ export {
   buildInlineComments,
   buildReviewPayload,
   formatFindingComment,
+  type FindingCommentOptions,
   type ReviewComment,
   type ReviewEvent,
   type ReviewSide,
