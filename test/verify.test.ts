@@ -54,6 +54,24 @@ describe("parseVerdicts", () => {
   it("returns [] for an oversized verifier response", () => {
     expect(parseVerdicts(`[${" ".repeat(1_048_576)}]`)).toEqual([]);
   });
+
+  it("handles brackets inside verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "contains ] in text" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false, reason: "contains ] in text" });
+  });
+
+  it("ignores trailing prose with bracket characters after the first JSON array", () => {
+    const verdicts = parseVerdicts(
+      `${JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }])}\nIgnore this trailing ] prose.`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: true });
+  });
 });
 
 describe("verifyFindings", () => {

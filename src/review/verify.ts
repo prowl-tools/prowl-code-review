@@ -161,15 +161,48 @@ export function buildVerifyPrompt(input: {
   return sections.join("\n\n");
 }
 
-/** Strip markdown fences and isolate the outermost JSON array, if present. */
+function findJsonArrayEnd(text: string, start: number): number | null {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const char = text[i];
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+      } else if (char === "\\") {
+        escaped = true;
+      } else if (char === "\"") {
+        inString = false;
+      }
+      continue;
+    }
+    if (char === "\"") {
+      inString = true;
+    } else if (char === "[") {
+      depth += 1;
+    } else if (char === "]") {
+      depth -= 1;
+      if (depth === 0) {
+        return i;
+      }
+    }
+  }
+  return null;
+}
+
+/** Strip markdown fences and isolate the first complete JSON array, if present. */
 function extractJsonArray(text: string): string | null {
   if (text.length > MAX_VERDICT_RESPONSE_CHARS) {
     return null;
   }
   const withoutFences = text.replace(/```(?:json)?/gi, "");
   const start = withoutFences.indexOf("[");
-  const end = withoutFences.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) {
+  if (start === -1) {
+    return null;
+  }
+  const end = findJsonArrayEnd(withoutFences, start);
+  if (end === null) {
     return null;
   }
   const json = withoutFences.slice(start, end + 1);
