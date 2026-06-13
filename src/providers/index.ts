@@ -41,18 +41,34 @@ export function getProvider(name: ProviderName): Provider {
   return PROVIDERS[name];
 }
 
+/** Non-secret provider/model selection from the config file (#29). */
+export interface ProviderDefaults {
+  provider?: string;
+  model?: string;
+}
+
 /**
- * Resolve provider configuration from the environment (BYOK):
- * - `PROWL_AI_PROVIDER` — `anthropic` (default) | `openai` | `gemini`
+ * Resolve provider configuration (BYOK). Selection precedence is
+ * **env var > config default > built-in default**; blank env values are ignored.
+ * Config model defaults are used only when the config provider is the selected
+ * provider, so an out-of-band provider override cannot inherit another
+ * provider's model name. The schema rejects model-only config; this resolver
+ * also ignores model-only defaults defensively for direct callers.
+ * The API key is always read from the environment and never from config:
+ * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
  * - `PROWL_AI_KEY`      — the provider API key (required)
  * - `PROWL_AI_MODEL`    — optional model override (per-provider default otherwise)
  *
- * `env` is injectable for testing.
+ * `defaults` carries the `.prowl-review.yml` provider/model; `env` is injectable
+ * for testing.
  */
 export function resolveProviderConfig(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  defaults: ProviderDefaults = {}
 ): ProviderConfig {
-  const raw = (env.PROWL_AI_PROVIDER ?? "anthropic").toLowerCase();
+  const envProvider = env.PROWL_AI_PROVIDER?.trim().toLowerCase();
+  const defaultProvider = defaults.provider?.trim().toLowerCase();
+  const raw = envProvider || defaultProvider || "anthropic";
   if (!isProviderName(raw)) {
     throw new Error(
       `Unsupported AI provider: ${raw}. Use one of: ${PROVIDER_NAMES.join(", ")}.`
@@ -66,7 +82,9 @@ export function resolveProviderConfig(
     );
   }
 
-  const model = env.PROWL_AI_MODEL?.trim() || DEFAULT_MODELS[raw];
+  const configModelApplies = defaultProvider !== undefined && defaultProvider === raw;
+  const configModel = configModelApplies ? defaults.model?.trim() : undefined;
+  const model = env.PROWL_AI_MODEL?.trim() || configModel || DEFAULT_MODELS[raw];
 
   return { provider: raw, model, apiKey };
 }

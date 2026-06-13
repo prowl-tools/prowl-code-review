@@ -1,16 +1,22 @@
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   loadGuidelines,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
+  resolveConfigLoadOptions,
+  resolveDryRun,
   resolvePullNumber,
   resolveRepo,
+  resolveReviewOptions,
   resolveTrustWorkspace,
   resolveWorkspace
 } from "../src/cli/commands/review.js";
+import { resolveProviderConfig } from "../src/providers/index.js";
+import type { ProwlReviewConfig } from "../src/config/schema.js";
 
 const ORIGINAL_ENV = process.env;
 let tempDirs: string[] = [];
@@ -88,6 +94,7 @@ describe("review command helpers", () => {
   it("parses and validates min severity", () => {
     expect(parseMinSeverity(undefined)).toBeUndefined();
     expect(parseMinSeverity("major")).toBe("major");
+    expect(parseMinSeverity(" major ")).toBe("major");
     expect(() => parseMinSeverity("urgent")).toThrow(/Invalid --min-severity/);
   });
 
@@ -139,10 +146,169 @@ describe("review command helpers", () => {
     expect(resolveTrustWorkspace()).toBe(false);
   });
 
+  it.each(["true", "TRUE", "1", "yes", "YES", " true "])(
+    "resolves injected PROWL_TRUST_WORKSPACE=%s as trusted",
+    (value) => {
+      expect(resolveTrustWorkspace({ PROWL_TRUST_WORKSPACE: value } as NodeJS.ProcessEnv)).toBe(true);
+    }
+  );
+
   it("resolves workspace execution trust to false for other env values", () => {
     for (const value of ["0", "no", "falsey", "", "y", "t", "on"]) {
       process.env.PROWL_TRUST_WORKSPACE = value;
       expect(resolveTrustWorkspace()).toBe(false);
     }
+  });
+});
+
+describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () => {
+  const env = {} as NodeJS.ProcessEnv;
+
+  it("falls back to built-in defaults (undefined) when neither CLI nor config set a value", () => {
+    const resolved = resolveReviewOptions({}, {}, env);
+    expect(resolved.minSeverity).toBeUndefined();
+    expect(resolved.minConfidence).toBeUndefined();
+    expect(resolved.maxFindings).toBeUndefined();
+    expect(resolved.verify).toBeUndefined();
+    expect(resolved.skipContext).toBeUndefined();
+    expect(resolved.skipGrounding).toBeUndefined();
+    expect(resolved.contextLimits).toBeUndefined();
+    expect(resolved.diffLimits).toBeUndefined();
+    expect(resolved.trustWorkspace).toBe(false);
+  });
+
+  it("applies safe config values when the CLI is silent", () => {
+    const config: ProwlReviewConfig = {
+      review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
+      context: { enabled: false, maxRounds: 3, maxFiles: 8 },
+      grounding: { enabled: false },
+      diff: { maxFiles: 50, maxBytes: 1000 }
+    };
+    const resolved = resolveReviewOptions({}, config, env);
+    expect(resolved.minSeverity).toBe("major");
+    expect(resolved.minConfidence).toBe(0.7);
+    expect(resolved.maxFindings).toBe(10);
+    expect(resolved.verify).toBe(false);
+    expect(resolved.verifyConfidence).toBe(0.9);
+    expect(resolved.skipContext).toBe(true);
+    expect(resolved.contextLimits).toEqual({ maxRounds: 3, maxFiles: 8 });
+    expect(resolved.skipGrounding).toBe(true);
+    expect(resolved.trustWorkspace).toBe(false);
+    expect(resolved.diffLimits).toEqual({ maxFiles: 50, maxDiffBytes: 1000 });
+  });
+
+  it("lets a CLI --min-severity override the config", () => {
+    const resolved = resolveReviewOptions({ minSeverity: "critical" }, { review: { minSeverity: "minor" } }, env);
+    expect(resolved.minSeverity).toBe("critical");
+  });
+
+  it("lets trusted action env min severity override the config when CLI is silent", () => {
+    const resolved = resolveReviewOptions(
+      {},
+      { review: { minSeverity: "minor" } },
+      { PROWL_MIN_SEVERITY: "major" } as NodeJS.ProcessEnv
+    );
+    expect(resolved.minSeverity).toBe("major");
+  });
+
+  it("lets CLI disable flags win over an enabling config", () => {
+    const config: ProwlReviewConfig = { context: { enabled: true }, grounding: { enabled: true } };
+    const resolved = resolveReviewOptions({ context: false, grounding: false, verify: false }, config, env);
+    expect(resolved.skipContext).toBe(true);
+    expect(resolved.skipGrounding).toBe(true);
+    expect(resolved.verify).toBe(false);
+  });
+
+  it("lets a CLI --trust-workspace win over config and env", () => {
+    expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
+  });
+
+  it("uses only out-of-band inputs to enable workspace execution trust", () => {
+    expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
+    expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
+  });
+});
+
+describe("review command action env helpers", () => {
+  it("disables config loading when the action marks repo config untrusted", () => {
+    expect(resolveConfigLoadOptions({}, "/repo", { PROWL_NO_CONFIG: "true" } as NodeJS.ProcessEnv)).toEqual({
+      cwd: "/repo",
+      disabled: true
+    });
+  });
+
+  it("loads an explicit trusted config path from action env", () => {
+    expect(
+      resolveConfigLoadOptions(
+        {},
+        "/repo",
+        { PROWL_NO_CONFIG: "true", PROWL_CONFIG_PATH: " /trusted/.prowl-review.yml " } as NodeJS.ProcessEnv
+      )
+    ).toEqual({ cwd: "/repo", configPath: "/trusted/.prowl-review.yml" });
+  });
+
+  it("lets CLI --no-config override an action config path", () => {
+    expect(
+      resolveConfigLoadOptions(
+        { config: false },
+        "/repo",
+        { PROWL_CONFIG_PATH: "/trusted/.prowl-review.yml" } as NodeJS.ProcessEnv
+      )
+    ).toEqual({ cwd: "/repo", disabled: true });
+  });
+
+  it("uses trusted action env for dry-run mode", () => {
+    expect(resolveDryRun({}, { PROWL_DRY_RUN: "true" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(resolveDryRun({}, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(false);
+    expect(resolveDryRun({ dryRun: true }, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(true);
+  });
+});
+
+describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () => {
+  it("uses config provider/model when the env vars are absent", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "openai", model: "gpt-x" });
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-x");
+  });
+
+  it("lets env provider/model win over the config defaults", () => {
+    const cfg = resolveProviderConfig(
+      { PROWL_AI_KEY: "k", PROWL_AI_PROVIDER: "gemini", PROWL_AI_MODEL: "g-env" } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-x" }
+    );
+    expect(cfg.provider).toBe("gemini");
+    expect(cfg.model).toBe("g-env");
+  });
+
+  it("ignores blank env provider/model values so config defaults can apply", () => {
+    const cfg = resolveProviderConfig(
+      { PROWL_AI_KEY: "k", PROWL_AI_PROVIDER: "", PROWL_AI_MODEL: "   " } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-x" }
+    );
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-x");
+  });
+
+  it("falls back to the provider's default model when neither env nor config set one", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "anthropic" });
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBeTruthy();
+  });
+});
+
+describe("GitHub Action provider metadata", () => {
+  it("keeps provider and config policy in out-of-band action inputs", () => {
+    const action = parseYaml(readFileSync(join(process.cwd(), "action.yml"), "utf8")) as {
+      inputs?: Record<string, { default?: unknown }>;
+      runs?: { steps?: Array<{ id?: string; env?: Record<string, string>; run?: string }> };
+    };
+    const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
+
+    expect(action.inputs?.["ai-provider"]?.default).toBe("anthropic");
+    expect(action.inputs?.["config-path"]?.default).toBe("");
+    expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
+    expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
+    expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.run).toBe('node "${{ github.action_path }}/dist/cli.js" review');
   });
 });
