@@ -33,6 +33,19 @@ All notable changes to Prowl Review will be documented in this file.
   pass, and agentic context retrieval (an injected completion is used as-is). Cross-generation
   failback + heartbeat progress logs remain open under #17.
 
+### Changed
+- Verification now re-checks every inline-posted finding, not just low-confidence ones
+  (`src/review/verify.ts`, #8/#58 noise follow-up): a finding is a verification candidate when it is
+  **blocking (major+) OR below `verifyConfidence`**. Previously only sub-0.8 findings were verified, so a
+  confident-but-wrong `major` finding skipped the skeptical pass and posted as a loud inline comment —
+  the dominant noise on PR #27 (a hallucinated "path traversal", a "fails on spaces" on an
+  already-quoted command, a self-contradicting "verify flag" finding). Blocking findings are exactly the
+  ones that post inline, so they now get the skeptical look regardless of confidence; non-blocking,
+  high-confidence findings stay trusted, so the pass is still risk-tiered (zero candidates → zero cost).
+  The verifier prompt is also hardened to drop findings that reference code/identifiers not present in
+  the diff/context (hallucinations), describe already-intended/documented behavior, or are
+  self-contradictory / require no concrete change. `isBlockingFinding` is now exported.
+
 ### Fixed
 - Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
   a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
