@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { Finding } from "./findings.js";
+import { REVIEW_MARKER } from "./walkthrough.js";
 
 /**
  * Review state persistence (backlog #12) — the store that makes the Action's
@@ -100,6 +101,25 @@ export function fitStateWithinCommentLimit(state: ReviewState, maxLength: number
   return { ...base, postedFindings: kept };
 }
 
+/** Keep enough room for required body markers before fitting the serialized state marker. */
+export function fitStateForBody(body: string, state: ReviewState, maxLength: number): ReviewState {
+  const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
+  const separator = "\n\n";
+  const preservedPrefix = stripped.startsWith(REVIEW_MARKER) ? REVIEW_MARKER : "";
+  const stateMaxLength = preservedPrefix
+    ? maxLength - preservedPrefix.length - separator.length
+    : maxLength;
+  if (stateMaxLength <= 0) {
+    throw new Error("prowl-review state marker cannot fit with the required summary marker");
+  }
+
+  const fittedState = fitStateWithinCommentLimit(state, stateMaxLength);
+  if (serializeState(fittedState).length > stateMaxLength) {
+    throw new Error("prowl-review state marker cannot fit with the required summary marker");
+  }
+  return fittedState;
+}
+
 /**
  * Extract and validate persisted state from a comment body, or null when the
  * body has no (valid) state marker. Tolerant: a malformed/old marker parses to
@@ -128,10 +148,11 @@ export function parseState(body: string | null | undefined): ReviewState | null 
  * the end so it never disturbs the rendered Markdown above it.
  */
 export function embedState(body: string, state: ReviewState, maxLength?: number): string {
-  const fittedState = maxLength === undefined ? state : fitStateWithinCommentLimit(state, maxLength);
-  const marker = serializeState(fittedState);
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
-  const embedded = `${stripped}\n\n${marker}`;
+  const separator = "\n\n";
+  const fittedState = maxLength === undefined ? state : fitStateForBody(stripped, state, maxLength);
+  const marker = serializeState(fittedState);
+  const embedded = `${stripped}${separator}${marker}`;
   if (maxLength === undefined || embedded.length <= maxLength) {
     return embedded;
   }
@@ -143,7 +164,6 @@ export function embedState(body: string, state: ReviewState, maxLength?: number)
     throw new Error("prowl-review state marker exceeds the GitHub comment body limit");
   }
 
-  const separator = "\n\n";
   const maxBodyLength = maxLength - marker.length - separator.length;
   if (maxBodyLength <= 0) {
     return marker;
