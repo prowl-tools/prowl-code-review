@@ -79,28 +79,25 @@ export function fitStateWithinCommentLimit(state: ReviewState, maxLength: number
     return state;
   }
 
-  let low = 0;
-  let high = state.postedFindings.length;
-  let best: string[] = [];
-  while (low <= high) {
-    const keep = Math.floor((low + high) / 2);
-    const candidateFindings = state.postedFindings.slice(state.postedFindings.length - keep);
-    const candidate = { ...state, postedFindings: candidateFindings };
-    if (serializeState(candidate).length <= maxLength) {
-      best = candidateFindings;
-      low = keep + 1;
-    } else {
-      high = keep - 1;
+  let base: ReviewState = { ...state, postedFindings: [] };
+  if (serializeState(base).length > maxLength) {
+    base = { v: state.v, postedFindings: [] };
+  }
+
+  let currentLength = serializeState(base).length;
+  const kept: string[] = [];
+  for (let index = state.postedFindings.length - 1; index >= 0; index -= 1) {
+    const fingerprint = state.postedFindings[index];
+    const nextLength = currentLength + JSON.stringify(fingerprint).length + (kept.length === 0 ? 0 : 1);
+    if (nextLength > maxLength) {
+      break;
     }
+    kept.push(fingerprint);
+    currentLength = nextLength;
   }
 
-  let fitted: ReviewState = { ...state, postedFindings: best };
-  if (serializeState(fitted).length <= maxLength) {
-    return fitted;
-  }
-
-  fitted = { v: state.v, postedFindings: best };
-  return serializeState(fitted).length <= maxLength ? fitted : { v: state.v, postedFindings: [] };
+  kept.reverse();
+  return { ...base, postedFindings: kept };
 }
 
 /**

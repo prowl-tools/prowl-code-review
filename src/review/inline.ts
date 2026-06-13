@@ -229,23 +229,14 @@ function fitAgentPromptBlock(content: string, maxChars?: number): string | undef
   }
 
   const suffix = `\n\n${AGENT_PROMPT_TRUNCATION_NOTICE}\n\n${AGENT_PROMPT_INSTRUCTION}`;
-  let low = 0;
-  let high = content.length;
-  let best: string | undefined;
-
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const candidateContent = `${content.slice(0, mid).trimEnd()}${suffix}`;
-    const candidate = agentPromptDetailsBlock(candidateContent, fence);
-    if (candidate.length <= maxChars) {
-      best = candidate;
-      low = mid + 1;
-    } else {
-      high = mid - 1;
-    }
+  const fixedOverhead = agentPromptDetailsBlock("", fence).length + suffix.length;
+  const budgetForContent = maxChars - fixedOverhead;
+  if (budgetForContent <= 0) {
+    return undefined;
   }
 
-  return best;
+  const truncatedContent = `${content.slice(0, budgetForContent).trimEnd()}${suffix}`;
+  return agentPromptDetailsBlock(truncatedContent, fence);
 }
 
 /**
