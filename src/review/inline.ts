@@ -65,6 +65,14 @@ const SEVERITY_BADGE: Record<Severity, string> = {
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 const PROWL_REVIEW_STATE_MARKER_RE = /<!--\s*prowl-review:state\b[\s\S]*?-->/gi;
+const GITHUB_COMMENT_BODY_LIMIT = 65_536;
+const INLINE_FINGERPRINT_MARKER_HEADROOM = 128;
+const SUMMARY_STATE_MARKER_HEADROOM = 4_096;
+const INLINE_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - INLINE_FINGERPRINT_MARKER_HEADROOM;
+const SUMMARY_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - SUMMARY_STATE_MARKER_HEADROOM;
+const MIN_AGENT_PROMPT_BLOCK_CHARS = 512;
+const AGENT_PROMPT_TRUNCATION_NOTICE =
+  "[truncated to keep the GitHub comment within the body size limit]";
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -198,6 +206,49 @@ function suggestionBlock(code: string): string {
   return `${fence}suggestion\n${code.replace(/\n$/, "")}\n${fence}`;
 }
 
+/** Wrap sanitized prompt content in a collapsed fenced block. */
+function agentPromptDetailsBlock(content: string): string {
+  const fence = fenceFor(content);
+  return [
+    "<details>",
+    "<summary>🤖 Resolve with an AI agent</summary>",
+    "",
+    `${fence}text\n${content}\n${fence}`,
+    "",
+    "</details>"
+  ].join("\n");
+}
+
+/** Fit a prompt block into the available published-comment budget, or omit it. */
+function fitAgentPromptBlock(content: string, maxChars?: number): string | undefined {
+  const full = agentPromptDetailsBlock(content);
+  if (maxChars === undefined || full.length <= maxChars) {
+    return full;
+  }
+  if (maxChars < MIN_AGENT_PROMPT_BLOCK_CHARS) {
+    return undefined;
+  }
+
+  const suffix = `\n\n${AGENT_PROMPT_TRUNCATION_NOTICE}\n\n${AGENT_PROMPT_INSTRUCTION}`;
+  let low = 0;
+  let high = content.length;
+  let best: string | undefined;
+
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidateContent = `${content.slice(0, mid).trimEnd()}${suffix}`;
+    const candidate = agentPromptDetailsBlock(candidateContent);
+    if (candidate.length <= maxChars) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+
+  return best;
+}
+
 /**
  * Strip control characters so untrusted finding text can't break out of a code
  * fence or smuggle terminal/markup escapes. Newlines and tabs are preserved
@@ -237,10 +288,11 @@ const AGENT_PROMPT_INSTRUCTION =
  * ready-to-copy, fenced (non-rendered) prompt carrying the finding's location,
  * severity, category, title, body, and committable suggestion (when present),
  * plus a fixed verify-or-fix instruction. Untrusted finding text is
- * control-char sanitized and the fence is widened past any backtick run in it,
- * so it cannot escape the code block or inject markdown/HTML.
+ * control-char sanitized, the fence is widened past any backtick run in it, and
+ * the copied text is truncated or omitted when needed so prompt duplication
+ * does not push the published GitHub comment over its body limit.
  */
-function agentPromptBlock(finding: Finding): string {
+function agentPromptBlock(finding: Finding, maxChars?: number): string | undefined {
   const lines = [
     "Resolve this prowl-review finding.",
     "",
@@ -258,15 +310,7 @@ function agentPromptBlock(finding: Finding): string {
   lines.push("", AGENT_PROMPT_INSTRUCTION);
 
   const content = sanitizeForCodeFence(lines.join("\n"));
-  const fence = fenceFor(content);
-  return [
-    "<details>",
-    "<summary>🤖 Resolve with an AI agent</summary>",
-    "",
-    `${fence}text\n${content}\n${fence}`,
-    "",
-    "</details>"
-  ].join("\n");
+  return fitAgentPromptBlock(content, maxChars);
 }
 
 /** Return true when a finding includes a non-empty committable suggestion. */
@@ -286,8 +330,13 @@ export interface FindingCommentOptions {
   agentPrompt?: boolean;
 }
 
+interface FindingCommentRenderOptions extends FindingCommentOptions {
+  /** Maximum published body length; prompt text is truncated or omitted to fit. */
+  maxBodyChars?: number;
+}
+
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
-export function formatFindingComment(finding: Finding, options: FindingCommentOptions = {}): string {
+function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     "",
@@ -296,11 +345,23 @@ export function formatFindingComment(finding: Finding, options: FindingCommentOp
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
   }
+  const body = parts.join("\n");
   // Default on: a copy-paste prompt so a coding agent can verify-and-fix (#57).
   if (options.agentPrompt !== false) {
-    parts.push("", agentPromptBlock(finding));
+    const separator = "\n\n";
+    const maxPromptChars =
+      options.maxBodyChars === undefined ? undefined : options.maxBodyChars - body.length - separator.length;
+    const prompt = agentPromptBlock(finding, maxPromptChars);
+    if (prompt) {
+      return `${body}${separator}${prompt}`;
+    }
   }
-  return parts.join("\n");
+  return body;
+}
+
+/** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
+export function formatFindingComment(finding: Finding, options: FindingCommentOptions = {}): string {
+  return formatFindingCommentInternal(finding, { ...options, maxBodyChars: INLINE_COMMENT_BODY_BUDGET });
 }
 
 /** Format the most specific location available for a finding. */
@@ -315,30 +376,59 @@ function findingLocation(finding: Finding): string {
 }
 
 /** Format a finding that could not be emitted as an inline GitHub comment. */
-function formatUnmappedFinding(finding: Finding, options: FindingCommentOptions): string {
-  return [`### ${escapeMarkdownText(findingLocation(finding))}`, "", formatFindingComment(finding, options)].join("\n");
+function formatUnmappedFinding(finding: Finding, options: FindingCommentRenderOptions): string {
+  return [
+    `### ${escapeMarkdownText(findingLocation(finding))}`,
+    "",
+    formatFindingCommentInternal(finding, options)
+  ].join("\n");
 }
 
 /** Build the fallback review-body section for findings outside changed diff lines. */
-function formatUnmappedFindings(findings: Finding[], options: FindingCommentOptions): string {
+function formatUnmappedFindings(
+  findings: Finding[],
+  options: FindingCommentOptions,
+  initialLength = 0
+): string {
   if (findings.length === 0) {
     return "";
   }
 
-  const entries = findings.map((finding) => formatUnmappedFinding(finding, options)).join("\n\n");
-  return [
+  const parts = [
     "## Unmapped findings",
     "",
-    "These findings could not be anchored to changed diff lines, so they are included here instead.",
-    "",
-    entries
-  ].join("\n");
+    "These findings could not be anchored to changed diff lines, so they are included here instead."
+  ];
+  let section = parts.join("\n");
+  const visibleEntries = findings.map((finding) => formatUnmappedFinding(finding, { ...options, agentPrompt: false }));
+  const remainingVisibleLengths = new Array<number>(visibleEntries.length + 1).fill(0);
+  for (let index = visibleEntries.length - 1; index >= 0; index -= 1) {
+    remainingVisibleLengths[index] = remainingVisibleLengths[index + 1] + 2 + visibleEntries[index].length;
+  }
+
+  for (const [index, finding] of findings.entries()) {
+    const separator = "\n\n";
+    const heading = `### ${escapeMarkdownText(findingLocation(finding))}`;
+    const commentPrefixLength = heading.length + 2;
+    const existingLength = initialLength + section.length + separator.length;
+    const remainingForEntry =
+      SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLengths[index + 1];
+    const comment = formatFindingCommentInternal(finding, {
+      ...options,
+      maxBodyChars: remainingForEntry - commentPrefixLength
+    });
+    section = `${section}${separator}${heading}\n\n${comment}`;
+  }
+
+  return section;
 }
 
 /** Append unmapped findings to the review body without changing inline comments. */
 function withUnmappedFindings(summaryBody: string, unmapped: Finding[], options: FindingCommentOptions): string {
-  const section = formatUnmappedFindings(unmapped, options);
-  return [summaryBody.trimEnd(), section].filter(Boolean).join("\n\n");
+  const trimmed = summaryBody.trimEnd();
+  const separator = trimmed ? "\n\n" : "";
+  const section = formatUnmappedFindings(unmapped, options, trimmed.length + separator.length);
+  return [trimmed, section].filter(Boolean).join(separator);
 }
 
 /**
