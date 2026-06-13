@@ -5,6 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Per-finding "Resolve with an AI agent" prompt (backlog #57): every finding comment — inline and
+  the summary's "Unmapped findings" alike — now carries a collapsed `<details>🤖 Resolve with an AI
+  agent</details>` block with a ready-to-copy, fenced (non-rendered) prompt containing the finding's
+  location, severity, category, title, body, and committable suggestion (when present), plus a fixed
+  *verify-then-fix-or-explain* instruction. Appended from a single insertion point (`formatFindingComment`
+  in `src/review/inline.ts`). Untrusted finding text is control-char sanitized and the fence is widened
+  past any backtick run, so it can't escape the code block or inject markdown/HTML. Default on; turn it
+  off via `agentPrompt: false` in `.prowl-review.yml` or `--no-agent-prompt`.
 - `.prowl-review.yml` config + `prowl-review init` (backlog #29, the config keystone): a Zod-validated,
   fully-optional per-repo config (`src/config/`) so a repo with no file still reviews with the documented
   defaults — the GitHub Action works out of the box. Tunes provider/model selection, the review floors
