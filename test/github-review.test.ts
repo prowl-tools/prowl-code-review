@@ -111,6 +111,23 @@ describe("planPublish", () => {
     expect(plan.newInlineComments.map((c) => c.fingerprint)).toEqual(["fp-b"]);
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
+
+  it("caps the summary body against the actual persisted state marker size", () => {
+    const priorPostedFindings = Array.from({ length: 400 }, (_, index) => `fp-${index.toString().padStart(4, "0")}`);
+    const plan = planPublish({
+      payload: payload({
+        body: `${REVIEW_MARKER}\n${"x".repeat(65_000)}`,
+        comments: []
+      }),
+      priorComment: null,
+      priorPostedFindings,
+      headSha: "sha1"
+    });
+
+    expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
+    expect(plan.summaryBody).toContain("[summary truncated to keep the GitHub comment within the body size limit]");
+    expect(parseState(plan.summaryBody)).toEqual(plan.state);
+  });
 });
 
 describe("submitReview", () => {
