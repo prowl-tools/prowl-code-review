@@ -2,13 +2,15 @@
 export const DEFAULT_MAX_JSON_ARRAY_CHARS = 1_048_576;
 
 /**
- * Find the closing bracket for a JSON array, ignoring brackets inside strings.
+ * Map JSON array opening brackets to their closing brackets in one pass,
+ * ignoring bracket characters inside strings.
  */
-function findJsonArrayEnd(text: string, start: number): number | null {
-  let depth = 0;
+function findJsonArrayEnds(text: string): Map<number, number> {
+  const starts: number[] = [];
+  const ends = new Map<number, number>();
   let inString = false;
   let escaped = false;
-  for (let i = start; i < text.length; i += 1) {
+  for (let i = 0; i < text.length; i += 1) {
     const char = text[i];
     if (inString) {
       if (escaped) {
@@ -23,33 +25,48 @@ function findJsonArrayEnd(text: string, start: number): number | null {
     if (char === "\"") {
       inString = true;
     } else if (char === "[") {
-      depth += 1;
+      starts.push(i);
     } else if (char === "]") {
-      depth -= 1;
-      if (depth === 0) {
-        return i;
+      const start = starts.pop();
+      if (start !== undefined) {
+        ends.set(start, i);
       }
     }
   }
-  return null;
+  return ends;
+}
+
+export interface ExtractedJsonArray {
+  json: string;
+  value: unknown[];
+}
+
+export interface ExtractJsonArrayOptions {
+  maxChars?: number;
+  accept?: (value: unknown[]) => boolean;
 }
 
 /**
- * Strip markdown fences and isolate the first valid JSON array, if present.
+ * Strip markdown fences and isolate the first acceptable JSON array, if present.
  */
-export function extractJsonArray(text: string, maxChars = DEFAULT_MAX_JSON_ARRAY_CHARS): string | null {
+export function extractJsonArrayCandidate(
+  text: string,
+  options: ExtractJsonArrayOptions = {}
+): ExtractedJsonArray | null {
+  const maxChars = options.maxChars ?? DEFAULT_MAX_JSON_ARRAY_CHARS;
   if (text.length > maxChars) {
     return null;
   }
   const withoutFences = text.replace(/```(?:json)?/gi, "");
+  const ends = findJsonArrayEnds(withoutFences);
   let searchFrom = 0;
   while (searchFrom < withoutFences.length) {
     const start = withoutFences.indexOf("[", searchFrom);
     if (start === -1) {
       return null;
     }
-    const end = findJsonArrayEnd(withoutFences, start);
-    if (end === null) {
+    const end = ends.get(start);
+    if (end === undefined) {
       searchFrom = start + 1;
       continue;
     }
@@ -57,8 +74,8 @@ export function extractJsonArray(text: string, maxChars = DEFAULT_MAX_JSON_ARRAY
     if (json.length <= maxChars) {
       try {
         const parsed: unknown = JSON.parse(json);
-        if (Array.isArray(parsed)) {
-          return json;
+        if (Array.isArray(parsed) && (!options.accept || options.accept(parsed))) {
+          return { json, value: parsed };
         }
       } catch {
         // Keep scanning; this bracketed region was prose, not JSON.
@@ -67,4 +84,11 @@ export function extractJsonArray(text: string, maxChars = DEFAULT_MAX_JSON_ARRAY
     searchFrom = start + 1;
   }
   return null;
+}
+
+/**
+ * Strip markdown fences and isolate the first valid JSON array, if present.
+ */
+export function extractJsonArray(text: string, maxChars = DEFAULT_MAX_JSON_ARRAY_CHARS): string | null {
+  return extractJsonArrayCandidate(text, { maxChars })?.json ?? null;
 }

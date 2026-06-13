@@ -9,7 +9,7 @@ import {
   type TokenUsage
 } from "../providers/index.js";
 import { isBlockingFinding, type Finding } from "./findings.js";
-import { DEFAULT_MAX_JSON_ARRAY_CHARS, extractJsonArray } from "./json-output.js";
+import { DEFAULT_MAX_JSON_ARRAY_CHARS, extractJsonArrayCandidate } from "./json-output.js";
 
 /**
  * False-positive verification pass (backlog #8, broadened per the #58 noise
@@ -55,6 +55,10 @@ export const VerdictSchema = z.object({
 });
 
 export type Verdict = z.infer<typeof VerdictSchema>;
+
+function hasValidVerdictEntry(value: unknown[]): boolean {
+  return value.some((entry) => VerdictSchema.safeParse(entry).success);
+}
 
 export interface VerifyInput {
   /** The (size-guarded) unified diff under review. */
@@ -166,21 +170,15 @@ export function buildVerifyPrompt(input: {
  * verdict doesn't sink the pass (the affected finding is simply kept as-is).
  */
 export function parseVerdicts(text: string): Verdict[] {
-  const json = extractJsonArray(text, DEFAULT_MAX_JSON_ARRAY_CHARS);
-  if (!json) {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) {
+  const candidate = extractJsonArrayCandidate(text, {
+    maxChars: DEFAULT_MAX_JSON_ARRAY_CHARS,
+    accept: hasValidVerdictEntry
+  });
+  if (!candidate) {
     return [];
   }
   const verdicts: Verdict[] = [];
-  for (const entry of parsed) {
+  for (const entry of candidate.value) {
     const result = VerdictSchema.safeParse(entry);
     if (result.success) {
       verdicts.push(result.data);
