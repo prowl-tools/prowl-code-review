@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { extractJsonArray } from "./json-output.js";
 
 /**
  * Findings schema (backlog #7) — the structured output of a review pass.
@@ -38,17 +39,6 @@ export const FindingSchema = z.object({
 });
 
 export type Finding = z.infer<typeof FindingSchema>;
-
-/** Strip markdown code fences and isolate the outermost JSON array, if present. */
-function extractJsonArray(text: string): string | null {
-  const withoutFences = text.replace(/```(?:json)?/gi, "");
-  const start = withoutFences.indexOf("[");
-  const end = withoutFences.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) {
-    return null;
-  }
-  return withoutFences.slice(start, end + 1);
-}
 
 /**
  * Parse a model response into validated findings. Tolerant of prose/markdown

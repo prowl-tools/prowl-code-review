@@ -64,6 +64,24 @@ describe("parseVerdicts", () => {
     expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false, reason: "contains ] in text" });
   });
 
+  it("handles nested bracket text in verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "nested [[data]]" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, reason: "nested [[data]]" });
+  });
+
+  it("handles escaped quotes in verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "text with \" quote" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, reason: "text with \" quote" });
+  });
+
   it("ignores trailing prose with bracket characters after the first JSON array", () => {
     const verdicts = parseVerdicts(
       `${JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }])}\nIgnore this trailing ] prose.`
