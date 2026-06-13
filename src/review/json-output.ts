@@ -35,21 +35,36 @@ function findJsonArrayEnd(text: string, start: number): number | null {
 }
 
 /**
- * Strip markdown fences and isolate the first complete JSON array, if present.
+ * Strip markdown fences and isolate the first valid JSON array, if present.
  */
 export function extractJsonArray(text: string, maxChars = DEFAULT_MAX_JSON_ARRAY_CHARS): string | null {
   if (text.length > maxChars) {
     return null;
   }
   const withoutFences = text.replace(/```(?:json)?/gi, "");
-  const start = withoutFences.indexOf("[");
-  if (start === -1) {
-    return null;
+  let searchFrom = 0;
+  while (searchFrom < withoutFences.length) {
+    const start = withoutFences.indexOf("[", searchFrom);
+    if (start === -1) {
+      return null;
+    }
+    const end = findJsonArrayEnd(withoutFences, start);
+    if (end === null) {
+      searchFrom = start + 1;
+      continue;
+    }
+    const json = withoutFences.slice(start, end + 1);
+    if (json.length <= maxChars) {
+      try {
+        const parsed: unknown = JSON.parse(json);
+        if (Array.isArray(parsed)) {
+          return json;
+        }
+      } catch {
+        // Keep scanning; this bracketed region was prose, not JSON.
+      }
+    }
+    searchFrom = start + 1;
   }
-  const end = findJsonArrayEnd(withoutFences, start);
-  if (end === null) {
-    return null;
-  }
-  const json = withoutFences.slice(start, end + 1);
-  return json.length <= maxChars ? json : null;
+  return null;
 }

@@ -56,6 +56,8 @@ All notable changes to Prowl Review will be documented in this file.
   findings.
 - Model JSON-array extraction now scans for the first complete array while respecting JSON strings and escapes,
   so trailing prose or bracket characters inside verifier verdicts or specialist findings do not corrupt parsing.
+- Model JSON-array extraction now skips non-JSON bracketed preambles and returns the first bracketed payload that
+  actually parses to an array.
 - Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
   a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
   was flipping the summary to "⚠️ Review incomplete — coverage degraded" even when all specialist

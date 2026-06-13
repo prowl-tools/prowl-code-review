@@ -37,6 +37,13 @@ describe("parseFindings", () => {
     expect(findings[0].body).toBe("Array-like text [value] in the body");
   });
 
+  it("skips bracketed prose before the first valid findings array", () => {
+    const findings = parseFindings(`Summary [not JSON]\n${JSON.stringify([VALID])}`);
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0]).toMatchObject({ title: "Bug" });
+  });
+
   it("drops invalid entries but keeps valid ones", () => {
     const findings = parseFindings(JSON.stringify([VALID, { file: "x" }, { ...VALID, severity: "bogus" }]));
     expect(findings).toHaveLength(1);
