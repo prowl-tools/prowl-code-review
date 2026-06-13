@@ -257,8 +257,8 @@ function sanitizeForCodeFence(value: string): string {
   const sanitized = value
     .replaceAll("\r\n", "\n")
     .replaceAll("\r", "\n")
-    .replace(PROWL_REVIEW_STATE_MARKER_RE, "[removed prowl-review state marker]")
-    .replace(PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE, "[removed prowl-review finding marker]");
+    .replaceAll(PROWL_REVIEW_STATE_MARKER_RE, "[removed prowl-review state marker]")
+    .replaceAll(PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE, "[removed prowl-review finding marker]");
   for (const char of sanitized) {
     const code = char.charCodeAt(0);
     if (code === 0x09 || code === 0x0a) {

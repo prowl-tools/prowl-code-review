@@ -3,7 +3,7 @@ import type { PullRequestRef } from "./diff.js";
 import type { ReviewComment, ReviewPayload } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
-  embedState,
+  embedStateWithFittedState,
   GITHUB_COMMENT_BODY_LIMIT,
   parseState,
   REVIEW_STATE_VERSION,
@@ -91,11 +91,11 @@ export function planPublish(input: {
     ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
     postedFindings
   };
-  const summaryBody = embedState(input.payload.body, requestedState, GITHUB_COMMENT_BODY_LIMIT);
-  const state = parseState(summaryBody);
-  if (!state) {
-    throw new Error("prowl-review state marker missing after embedding summary body");
-  }
+  const { body: summaryBody, state } = embedStateWithFittedState(
+    input.payload.body,
+    requestedState,
+    GITHUB_COMMENT_BODY_LIMIT
+  );
 
   return {
     priorCommentId: input.priorComment?.id,
