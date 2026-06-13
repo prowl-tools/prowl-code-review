@@ -152,6 +152,12 @@ describe("formatFindingComment", () => {
     expect(body).not.toContain("@team");
   });
 
+  it("treats agentPrompt undefined as default on", () => {
+    const body = formatFindingComment(f({ title: "Default prompt" }), { agentPrompt: undefined });
+
+    expect(body).toContain("Resolve with an AI agent");
+  });
+
   it("preserves escaped line breaks in finding bodies", () => {
     const body = formatFindingComment(f({ body: "First line\n- second line\n1. third line" }));
 
