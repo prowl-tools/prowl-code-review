@@ -50,6 +50,9 @@ export interface ProviderDefaults {
 /**
  * Resolve provider configuration (BYOK). Selection precedence is
  * **env var > config default > built-in default**; blank env values are ignored.
+ * Config model defaults are used only when they are compatible with the selected
+ * provider, so an out-of-band provider override cannot inherit another
+ * provider's model name.
  * The API key is always read from the environment and never from config:
  * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
  * - `PROWL_AI_KEY`      — the provider API key (required)
@@ -62,7 +65,9 @@ export function resolveProviderConfig(
   env: NodeJS.ProcessEnv = process.env,
   defaults: ProviderDefaults = {}
 ): ProviderConfig {
-  const raw = (env.PROWL_AI_PROVIDER?.trim() || defaults.provider || "anthropic").toLowerCase();
+  const envProvider = env.PROWL_AI_PROVIDER?.trim().toLowerCase();
+  const defaultProvider = defaults.provider?.trim().toLowerCase();
+  const raw = envProvider || defaultProvider || "anthropic";
   if (!isProviderName(raw)) {
     throw new Error(
       `Unsupported AI provider: ${raw}. Use one of: ${PROVIDER_NAMES.join(", ")}.`
@@ -76,7 +81,9 @@ export function resolveProviderConfig(
     );
   }
 
-  const model = env.PROWL_AI_MODEL?.trim() || defaults.model?.trim() || DEFAULT_MODELS[raw];
+  const configModelApplies = !defaultProvider || defaultProvider === raw;
+  const configModel = configModelApplies ? defaults.model?.trim() : undefined;
+  const model = env.PROWL_AI_MODEL?.trim() || configModel || DEFAULT_MODELS[raw];
 
   return { provider: raw, model, apiKey };
 }
