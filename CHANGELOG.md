@@ -13,13 +13,15 @@ All notable changes to Prowl Review will be documented in this file.
   guards. Precedence is **CLI flag > config file > built-in default**; for the provider, non-empty BYOK
   env vars (`PROWL_AI_PROVIDER`/`PROWL_AI_MODEL`) still win and the API key is never read from the
   file. The GitHub Action supplies `PROWL_AI_PROVIDER` from its trusted `ai-provider` input, which
-  defaults to `anthropic`, so an untrusted repo config cannot redirect the provider endpoint. Workspace
-  execution trust stays out-of-band via `--trust-workspace`, `PROWL_TRUST_WORKSPACE`, or the Action
-  input, so an untrusted repo config cannot enable local code execution. The loader searches
+  defaults to `anthropic`, so an untrusted repo config cannot redirect the provider endpoint. The
+  Action also ignores repo config by default; workflows can opt into a trusted config via the
+  `config-path` input. Workspace execution trust stays out-of-band via `--trust-workspace`,
+  `PROWL_TRUST_WORKSPACE`, or the Action input, so an untrusted repo config cannot enable local code
+  execution. The loader searches
   upward for `.prowl-review.yml`/`.yaml`, parses + validates with readable
   per-field errors (`.strict()` so a typo is a loud error, not a silent no-op), and never silently falls
   back to defaults on a malformed/invalid file. New `prowl-review init` scaffolds a commented config
-  (refuses to clobber without `--force`); `review` gains `--config <path>` / `--no-config`. 29 new tests.
+  (refuses to clobber without `--force`); `review` gains `--config <path>` / `--no-config`. Expanded tests.
   This unblocks the deferred config toggles that ride on #29 (#56 `noFindingsComment`, #58 nitpick
   threshold, #57 `agentPrompt`, #25 inline cap, #19 ignore globs, #30 guidelines/learnings).
 - LLM resilience: retry with backoff (`src/providers/retry.ts`, backlog #17 core): the review's

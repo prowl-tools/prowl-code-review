@@ -7,6 +7,8 @@ import {
   loadGuidelines,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
+  resolveConfigLoadOptions,
+  resolveDryRun,
   resolvePullNumber,
   resolveRepo,
   resolveReviewOptions,
@@ -92,6 +94,7 @@ describe("review command helpers", () => {
   it("parses and validates min severity", () => {
     expect(parseMinSeverity(undefined)).toBeUndefined();
     expect(parseMinSeverity("major")).toBe("major");
+    expect(parseMinSeverity(" major ")).toBe("major");
     expect(() => parseMinSeverity("urgent")).toThrow(/Invalid --min-severity/);
   });
 
@@ -199,6 +202,15 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolved.minSeverity).toBe("critical");
   });
 
+  it("lets trusted action env min severity override the config when CLI is silent", () => {
+    const resolved = resolveReviewOptions(
+      {},
+      { review: { minSeverity: "minor" } },
+      { PROWL_MIN_SEVERITY: "major" } as NodeJS.ProcessEnv
+    );
+    expect(resolved.minSeverity).toBe("major");
+  });
+
   it("lets CLI disable flags win over an enabling config", () => {
     const config: ProwlReviewConfig = { context: { enabled: true }, grounding: { enabled: true } };
     const resolved = resolveReviewOptions({ context: false, grounding: false, verify: false }, config, env);
@@ -214,6 +226,41 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   it("uses only out-of-band inputs to enable workspace execution trust", () => {
     expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
+  });
+});
+
+describe("review command action env helpers", () => {
+  it("disables config loading when the action marks repo config untrusted", () => {
+    expect(resolveConfigLoadOptions({}, "/repo", { PROWL_NO_CONFIG: "true" } as NodeJS.ProcessEnv)).toEqual({
+      cwd: "/repo",
+      disabled: true
+    });
+  });
+
+  it("loads an explicit trusted config path from action env", () => {
+    expect(
+      resolveConfigLoadOptions(
+        {},
+        "/repo",
+        { PROWL_NO_CONFIG: "true", PROWL_CONFIG_PATH: " /trusted/.prowl-review.yml " } as NodeJS.ProcessEnv
+      )
+    ).toEqual({ cwd: "/repo", configPath: "/trusted/.prowl-review.yml" });
+  });
+
+  it("lets CLI --no-config override an action config path", () => {
+    expect(
+      resolveConfigLoadOptions(
+        { config: false },
+        "/repo",
+        { PROWL_CONFIG_PATH: "/trusted/.prowl-review.yml" } as NodeJS.ProcessEnv
+      )
+    ).toEqual({ cwd: "/repo", disabled: true });
+  });
+
+  it("uses trusted action env for dry-run mode", () => {
+    expect(resolveDryRun({}, { PROWL_DRY_RUN: "true" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(resolveDryRun({}, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(false);
+    expect(resolveDryRun({ dryRun: true }, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(true);
   });
 });
 
@@ -250,14 +297,18 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
 });
 
 describe("GitHub Action provider metadata", () => {
-  it("defaults provider selection to an out-of-band action input", () => {
+  it("keeps provider and config policy in out-of-band action inputs", () => {
     const action = parseYaml(readFileSync(join(process.cwd(), "action.yml"), "utf8")) as {
       inputs?: Record<string, { default?: unknown }>;
-      runs?: { steps?: Array<{ id?: string; env?: Record<string, string> }> };
+      runs?: { steps?: Array<{ id?: string; env?: Record<string, string>; run?: string }> };
     };
     const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
 
     expect(action.inputs?.["ai-provider"]?.default).toBe("anthropic");
+    expect(action.inputs?.["config-path"]?.default).toBe("");
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
+    expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
+    expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.run).toBe("node \"$GITHUB_ACTION_PATH/dist/cli.js\" review");
   });
 });

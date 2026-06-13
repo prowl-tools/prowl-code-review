@@ -14,7 +14,8 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Provider -----------------------------------------------------------------
 # Which LLM to use. The API key still comes from PROWL_AI_KEY; the matching
 # Non-empty PROWL_AI_PROVIDER / PROWL_AI_MODEL env vars override these when set.
-# In GitHub Actions, prefer the ai-provider input for untrusted PR checkouts.
+# In GitHub Actions, use a trusted config-path input if you want Action config;
+# the Action ignores repo config by default for untrusted PR checkouts.
 # provider: anthropic        # anthropic | openai | gemini
 # model: <provider default>  # e.g. claude-... / gpt-... / gemini-...
 

@@ -17,6 +17,10 @@ inputs:
     description: "Optional model override (per-provider default otherwise)."
     required: false
     default: ""
+  config-path:
+    description: "Explicit trusted .prowl-review.yml path. Leave empty to ignore repo config in the Action."
+    required: false
+    default: ""
   min-severity:
     description: "Drop findings below this severity (critical|major|minor|trivial|info)."
     required: false
@@ -71,13 +75,11 @@ runs:
         PROWL_AI_KEY: ${{ inputs.ai-key }}
         PROWL_AI_PROVIDER: ${{ inputs.ai-provider }}
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
+        PROWL_CONFIG_PATH: ${{ inputs.config-path }}
+        PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
-      run: |
-        ARGS=()
-        [ -n "$PROWL_MIN_SEVERITY" ] && ARGS+=(--min-severity "$PROWL_MIN_SEVERITY")
-        [ "$PROWL_DRY_RUN" = "true" ] && ARGS+=(--dry-run)
-        node "$GITHUB_ACTION_PATH/dist/cli.js" review "${ARGS[@]}"
+      run: node "$GITHUB_ACTION_PATH/dist/cli.js" review
