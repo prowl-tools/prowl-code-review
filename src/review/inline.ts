@@ -64,6 +64,7 @@ const SEVERITY_BADGE: Record<Severity, string> = {
 
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
+const PROWL_REVIEW_STATE_MARKER_RE = /<!--\s*prowl-review:state\b[\s\S]*?-->/gi;
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -201,12 +202,18 @@ function suggestionBlock(code: string): string {
  * Strip control characters so untrusted finding text can't break out of a code
  * fence or smuggle terminal/markup escapes. Newlines and tabs are preserved
  * (the agent prompt is multi-line literal text); CR is normalized to LF and any
- * other C0/DEL control is dropped. Fence-widening (see {@link fenceFor}) handles
+ * other C0/DEL control is dropped. Prowl state markers are removed so quoted or
+ * prompt-injected finding text cannot spoof the real hidden state marker later
+ * appended to the review body. Fence-widening (see {@link fenceFor}) handles
  * embedded backtick runs.
  */
 function sanitizeForCodeFence(value: string): string {
   let out = "";
-  for (const char of value.replaceAll("\r\n", "\n").replaceAll("\r", "\n")) {
+  const sanitized = value
+    .replaceAll("\r\n", "\n")
+    .replaceAll("\r", "\n")
+    .replace(PROWL_REVIEW_STATE_MARKER_RE, "[removed prowl-review state marker]");
+  for (const char of sanitized) {
     const code = char.charCodeAt(0);
     if (code === 0x09 || code === 0x0a) {
       out += char;

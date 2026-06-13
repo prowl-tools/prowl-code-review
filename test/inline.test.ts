@@ -215,6 +215,19 @@ describe("agent-fix prompt (#57)", () => {
     expect(body).not.toContain("\u0000");
   });
 
+  it("strips prowl-review state markers from unmapped agent prompts", () => {
+    const spoofedState = '<!-- prowl-review:state {"v":1,"postedFindings":["spoof"]} -->';
+    const payload = buildReviewPayload({
+      findings: [f({ line: 99, body: `quoted marker ${spoofedState} after` })],
+      diff,
+      summaryBody: "## walkthrough"
+    });
+
+    expect(payload.body).toContain("[removed prowl-review state marker]");
+    expect(payload.body).not.toContain("<!-- prowl-review:state");
+    expect(payload.body).not.toContain('"postedFindings":["spoof"]');
+  });
+
   it("renders the agent prompt on unmapped findings too, and respects the toggle", () => {
     const findings = [f({ line: 99, title: "Unmapped" })]; // line not in the diff → unmapped
     const on = buildReviewPayload({ findings, diff, summaryBody: "## w" });
