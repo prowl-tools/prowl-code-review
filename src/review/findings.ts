@@ -44,13 +44,26 @@ function hasValidFindingEntry(value: unknown[]): boolean {
   return value.some((entry) => FindingSchema.safeParse(entry).success);
 }
 
+function mayContainFindingEntry(json: string): boolean {
+  return (
+    json.includes('"file"') &&
+    json.includes('"severity"') &&
+    json.includes('"category"') &&
+    json.includes('"title"') &&
+    json.includes('"body"')
+  );
+}
+
 /**
  * Parse a model response into validated findings. Tolerant of prose/markdown
  * around the JSON; invalid entries are dropped rather than throwing, so one
  * malformed finding doesn't sink the whole pass.
  */
 export function parseFindings(text: string): Finding[] {
-  const candidate = extractJsonArrayCandidate(text, { accept: hasValidFindingEntry });
+  const candidate = extractJsonArrayCandidate(text, {
+    acceptJson: mayContainFindingEntry,
+    accept: hasValidFindingEntry
+  });
   if (!candidate) {
     return [];
   }

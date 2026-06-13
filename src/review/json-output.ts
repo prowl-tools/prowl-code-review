@@ -43,6 +43,7 @@ export interface ExtractedJsonArray {
 
 export interface ExtractJsonArrayOptions {
   maxChars?: number;
+  acceptJson?: (json: string) => boolean;
   accept?: (value: unknown[]) => boolean;
 }
 
@@ -71,7 +72,7 @@ export function extractJsonArrayCandidate(
       continue;
     }
     const json = withoutFences.slice(start, end + 1);
-    if (json.length <= maxChars) {
+    if (json.length <= maxChars && (!options.acceptJson || options.acceptJson(json))) {
       try {
         const parsed: unknown = JSON.parse(json);
         if (Array.isArray(parsed) && (!options.accept || options.accept(parsed))) {
