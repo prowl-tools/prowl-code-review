@@ -110,6 +110,15 @@ describe("parseVerdicts", () => {
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
   });
+
+  it("skips nested schema-invalid arrays before the first valid verdict array", () => {
+    const verdicts = parseVerdicts(
+      `${JSON.stringify([[[[[]]]]])}\n${JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8 }])}`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
 });
 
 describe("verifyFindings", () => {

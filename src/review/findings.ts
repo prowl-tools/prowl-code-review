@@ -40,10 +40,12 @@ export const FindingSchema = z.object({
 
 export type Finding = z.infer<typeof FindingSchema>;
 
+/** Return true when a parsed candidate array has at least one valid finding. */
 function hasValidFindingEntry(value: unknown[]): boolean {
   return value.some((entry) => FindingSchema.safeParse(entry).success);
 }
 
+/** Cheaply reject bracketed prose before paying JSON.parse/schema-validation cost. */
 function mayContainFindingEntry(json: string): boolean {
   return (
     json.includes('"file"') &&

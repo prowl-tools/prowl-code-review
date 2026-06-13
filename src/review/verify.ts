@@ -56,10 +56,12 @@ export const VerdictSchema = z.object({
 
 export type Verdict = z.infer<typeof VerdictSchema>;
 
+/** Return true when a parsed candidate array has at least one valid verifier verdict. */
 function hasValidVerdictEntry(value: unknown[]): boolean {
   return value.some((entry) => VerdictSchema.safeParse(entry).success);
 }
 
+/** Cheaply reject bracketed prose before paying JSON.parse/schema-validation cost. */
 function mayContainVerdictEntry(json: string): boolean {
   return json.includes('"index"') && json.includes('"falsePositive"') && json.includes('"confidence"');
 }
