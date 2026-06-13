@@ -235,6 +235,13 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).not.toContain('"postedFindings":["spoof"]');
   });
 
+  it("escapes HTML-sensitive characters inside agent prompt fences", () => {
+    const body = formatFindingComment(f({ body: "</details><script>alert(1)</script> & value" }));
+
+    expect(body).toContain("&lt;/details&gt;&lt;script&gt;alert(1)&lt;/script&gt; &amp; value");
+    expect(body).not.toContain("</details><script>");
+  });
+
   it("truncates copied finding text in large inline agent prompts", () => {
     const body = formatFindingComment(f({ body: "detail ".repeat(7000) }));
 
