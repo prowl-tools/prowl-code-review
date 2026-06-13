@@ -151,6 +151,7 @@ export {
   FindingSchema,
   parseFindings,
   findingKey,
+  isBlockingFinding,
   SEVERITIES,
   SEVERITY_ORDER,
   type Finding,
