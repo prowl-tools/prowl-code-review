@@ -20,6 +20,19 @@ function existingConfigError(target: string): Error {
   return new Error(`${CONFIG_FILENAME} already exists at ${target}. Use --force to overwrite.`);
 }
 
+function assertNoSymlinkTarget(target: string): void {
+  try {
+    if (lstatSync(target).isSymbolicLink()) {
+      throw new Error(`Refusing to write ${CONFIG_FILENAME} through symlinked config target: ${target}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+
 function assertNoSymlinkPath(root: string, targetDir: string): void {
   const rel = relative(root, targetDir);
   if (!rel) {
@@ -59,6 +72,7 @@ function resolveTargetDir(dir: string, workspace: string): string {
 /** Write the config template to `dir`; returns the path written. Pure-ish for tests. */
 export function writeConfigTemplate(dir: string, force: boolean, workspace = process.cwd()): string {
   const target = join(resolveTargetDir(dir, workspace), CONFIG_FILENAME);
+  assertNoSymlinkTarget(target);
   try {
     writeFileSync(target, CONFIG_TEMPLATE, { encoding: "utf8", flag: force ? "w" : "wx" });
   } catch (error) {

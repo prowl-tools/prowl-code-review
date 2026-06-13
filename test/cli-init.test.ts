@@ -71,4 +71,19 @@ describe("prowl-review init (#29)", () => {
 
     expect(() => writeConfigTemplate("linked", false, dir)).toThrow(/symlinked path/);
   });
+
+  it("refuses to overwrite a symlinked config target with --force", () => {
+    const dir = tempDir();
+    const outside = tempDir();
+    const outsideConfig = join(outside, CONFIG_FILENAME);
+    writeFileSync(outsideConfig, "provider: openai\n");
+    try {
+      symlinkSync(outsideConfig, join(dir, CONFIG_FILENAME), "file");
+    } catch {
+      return;
+    }
+
+    expect(() => writeConfigTemplate(".", true, dir)).toThrow(/symlinked config target/);
+    expect(readFileSync(outsideConfig, "utf8")).toBe("provider: openai\n");
+  });
 });
