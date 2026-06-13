@@ -42,6 +42,14 @@ export const ReviewStateSchema = z.object({
 /** Parsed review state loaded from a prior prowl-review summary comment. */
 export type ReviewState = z.infer<typeof ReviewStateSchema>;
 
+/** Summary body plus the fitted state actually persisted inside it. */
+export interface EmbeddedState {
+  /** Summary body with the refreshed state marker embedded. */
+  body: string;
+  /** State serialized into `body` after any size-based pruning. */
+  state: ReviewState;
+}
+
 /** Normalize prose fields used by finding fingerprints without preserving cosmetic drift. */
 function normalizeFingerprintText(value: string): string {
   return value.trim().toLowerCase().replace(/\r\n/g, "\n").replace(/\s+/g, " ");
@@ -161,18 +169,18 @@ export function parseState(body: string | null | undefined): ReviewState | null 
  * Embed (or replace) the state marker in a summary body. Kept on its own line at
  * the end so it never disturbs the rendered Markdown above it.
  */
-export function embedState(body: string, state: ReviewState, maxLength?: number): string {
+export function embedStateWithFittedState(body: string, state: ReviewState, maxLength?: number): EmbeddedState {
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
   const separator = "\n\n";
   const fittedState = maxLength === undefined ? state : fitStateForBody(stripped, state, maxLength);
   const marker = serializeState(fittedState);
   const embedded = `${stripped}${separator}${marker}`;
   if (maxLength === undefined || embedded.length <= maxLength) {
-    return embedded;
+    return { body: embedded, state: fittedState };
   }
 
   if (marker.length === maxLength) {
-    return marker;
+    return { body: marker, state: fittedState };
   }
   if (marker.length > maxLength) {
     throw new Error("prowl-review state marker exceeds the GitHub comment body limit");
@@ -180,7 +188,7 @@ export function embedState(body: string, state: ReviewState, maxLength?: number)
 
   const maxBodyLength = maxLength - marker.length - separator.length;
   if (maxBodyLength <= 0) {
-    return marker;
+    return { body: marker, state: fittedState };
   }
 
   const notice = `\n\n${SUMMARY_BODY_TRUNCATION_NOTICE}`;
@@ -189,5 +197,13 @@ export function embedState(body: string, state: ReviewState, maxLength?: number)
     truncatedLength > 0
       ? `${stripped.slice(0, truncatedLength).trimEnd()}${notice}`
       : stripped.slice(0, maxBodyLength).trimEnd();
-  return `${truncated}${separator}${marker}`;
+  return { body: `${truncated}${separator}${marker}`, state: fittedState };
+}
+
+/**
+ * Embed (or replace) the state marker in a summary body. Kept on its own line at
+ * the end so it never disturbs the rendered Markdown above it.
+ */
+export function embedState(body: string, state: ReviewState, maxLength?: number): string {
+  return embedStateWithFittedState(body, state, maxLength).body;
 }
