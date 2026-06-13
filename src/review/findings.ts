@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { extractJsonArray } from "./json-output.js";
+import { extractJsonArrayCandidate } from "./json-output.js";
 
 /**
  * Findings schema (backlog #7) — the structured output of a review pass.
@@ -40,27 +40,22 @@ export const FindingSchema = z.object({
 
 export type Finding = z.infer<typeof FindingSchema>;
 
+function hasValidFindingEntry(value: unknown[]): boolean {
+  return value.some((entry) => FindingSchema.safeParse(entry).success);
+}
+
 /**
  * Parse a model response into validated findings. Tolerant of prose/markdown
  * around the JSON; invalid entries are dropped rather than throwing, so one
  * malformed finding doesn't sink the whole pass.
  */
 export function parseFindings(text: string): Finding[] {
-  const json = extractJsonArray(text);
-  if (!json) {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) {
+  const candidate = extractJsonArrayCandidate(text, { accept: hasValidFindingEntry });
+  if (!candidate) {
     return [];
   }
   const findings: Finding[] = [];
-  for (const entry of parsed) {
+  for (const entry of candidate.value) {
     const result = FindingSchema.safeParse(entry);
     if (result.success) {
       findings.push(result.data);

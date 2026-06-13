@@ -145,6 +145,18 @@ describe("buildWalkthrough", () => {
     expect(md).not.toContain("Encoded &#x3C;script&#x3E;");
   });
 
+  it("escapes raw HTML in finding titles and bodies", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("minor", { title: "<b>Title</b>", body: "See <script>alert(1)</script> & fix" })],
+      files
+    });
+
+    expect(md).toContain("&lt;b&gt;Title&lt;/b&gt;");
+    expect(md).toContain("See &lt;script&gt;alert\\(1\\)&lt;/script&gt; &amp; fix");
+    expect(md).not.toContain("<b>Title</b>");
+    expect(md).not.toContain("<script>alert(1)</script>");
+  });
+
   it("marks binary files instead of showing line deltas", () => {
     const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
     expect(md).toContain("`img.png` — modified (binary)");
