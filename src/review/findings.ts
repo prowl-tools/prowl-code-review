@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { extractJsonArrayCandidate } from "./json-output.js";
 
 /**
  * Findings schema (backlog #7) — the structured output of a review pass.
@@ -39,15 +40,20 @@ export const FindingSchema = z.object({
 
 export type Finding = z.infer<typeof FindingSchema>;
 
-/** Strip markdown code fences and isolate the outermost JSON array, if present. */
-function extractJsonArray(text: string): string | null {
-  const withoutFences = text.replace(/```(?:json)?/gi, "");
-  const start = withoutFences.indexOf("[");
-  const end = withoutFences.lastIndexOf("]");
-  if (start === -1 || end === -1 || end < start) {
-    return null;
-  }
-  return withoutFences.slice(start, end + 1);
+/** Return true when a parsed candidate array has at least one valid finding. */
+function hasValidFindingEntry(value: unknown[]): boolean {
+  return value.some((entry) => FindingSchema.safeParse(entry).success);
+}
+
+/** Cheaply reject bracketed prose before paying JSON.parse/schema-validation cost. */
+function mayContainFindingEntry(json: string): boolean {
+  return (
+    json.includes('"file"') &&
+    json.includes('"severity"') &&
+    json.includes('"category"') &&
+    json.includes('"title"') &&
+    json.includes('"body"')
+  );
 }
 
 /**
@@ -56,21 +62,15 @@ function extractJsonArray(text: string): string | null {
  * malformed finding doesn't sink the whole pass.
  */
 export function parseFindings(text: string): Finding[] {
-  const json = extractJsonArray(text);
-  if (!json) {
-    return [];
-  }
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(json);
-  } catch {
-    return [];
-  }
-  if (!Array.isArray(parsed)) {
+  const candidate = extractJsonArrayCandidate(text, {
+    acceptJson: mayContainFindingEntry,
+    accept: hasValidFindingEntry
+  });
+  if (!candidate) {
     return [];
   }
   const findings: Finding[] = [];
-  for (const entry of parsed) {
+  for (const entry of candidate.value) {
     const result = FindingSchema.safeParse(entry);
     if (result.success) {
       findings.push(result.data);

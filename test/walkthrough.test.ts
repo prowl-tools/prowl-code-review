@@ -145,6 +145,37 @@ describe("buildWalkthrough", () => {
     expect(md).not.toContain("Encoded &#x3C;script&#x3E;");
   });
 
+  it("escapes raw HTML in finding titles and bodies", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("minor", { title: "<b>Title</b>", body: "See <script>alert(1)</script> & fix" })],
+      files
+    });
+
+    expect(md).toContain("&lt;b&gt;Title&lt;/b&gt;");
+    expect(md).toContain("See &lt;script&gt;alert\\(1\\)&lt;/script&gt; &amp; fix");
+    expect(md).not.toContain("<b>Title</b>");
+    expect(md).not.toContain("<script>alert(1)</script>");
+  });
+
+  it("escapes Markdown metacharacters and mentions in finding titles and bodies", () => {
+    const md = buildWalkthrough({
+      findings: [
+        makeFinding("minor", {
+          title: "Notify @team *important* | #123",
+          body: "Use [link](url)\n- item one\n1. item two\ncc @some-user"
+        })
+      ],
+      files
+    });
+
+    expect(md).toContain("Notify &#64;team \\*important\\* \\| \\#123");
+    expect(md).toContain("Use \\[link\\]\\(url\\)\n\\- item one\n1\\. item two\ncc &#64;some-user");
+    expect(md).not.toContain("@team");
+    expect(md).not.toContain("@some-user");
+    expect(md).not.toContain("\n- item one");
+    expect(md).not.toContain("\n1. item two");
+  });
+
   it("marks binary files instead of showing line deltas", () => {
     const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
     expect(md).toContain("`img.png` — modified (binary)");
@@ -226,7 +257,7 @@ describe("buildWalkthrough", () => {
   describe("comment states (#56)", () => {
     it("renders a compact clean state when healthy with no findings", () => {
       const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
-      expect(md).toContain("✅ No issues found 🦝");
+      expect(md).toContain("✅ No issues found 🚀");
       // Review info is collapsed, with the pass count.
       expect(md).toContain("<summary><b>Review info</b></summary>");
       expect(md).toContain("4/4 passes");
@@ -246,7 +277,7 @@ describe("buildWalkthrough", () => {
         skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
       });
       // Partial coverage on a healthy review: clean + honest caveat, not degraded.
-      expect(md).toContain("✅ No issues found in reviewed files 🦝");
+      expect(md).toContain("✅ No issues found in reviewed files 🚀");
       expect(md).toContain("Not reviewed");
       expect(md).toContain("huge.lock");
       expect(md).not.toContain("Review incomplete");

@@ -54,6 +54,71 @@ describe("parseVerdicts", () => {
   it("returns [] for an oversized verifier response", () => {
     expect(parseVerdicts(`[${" ".repeat(1_048_576)}]`)).toEqual([]);
   });
+
+  it("handles brackets inside verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "contains ] in text" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false, reason: "contains ] in text" });
+  });
+
+  it("handles nested bracket text in verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "nested [[data]]" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, reason: "nested [[data]]" });
+  });
+
+  it("handles escaped quotes in verifier string fields", () => {
+    const verdicts = parseVerdicts(
+      JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8, reason: "text with \" quote" }])
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, reason: "text with \" quote" });
+  });
+
+  it("ignores trailing prose with bracket characters after the first JSON array", () => {
+    const verdicts = parseVerdicts(
+      `${JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }])}\nIgnore this trailing ] prose.`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: true });
+  });
+
+  it("skips bracketed prose before the first valid verdict array", () => {
+    const verdicts = parseVerdicts(
+      `Reasoning [not JSON]\n${JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8 }])}`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
+
+  it("skips schema-invalid arrays before the first valid verdict array", () => {
+    const verdicts = parseVerdicts(
+      `For candidate [0], reviewed files: ${JSON.stringify(["src/a.ts"])}\n${JSON.stringify([
+        { index: 0, falsePositive: false, confidence: 0.8 }
+      ])}`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
+
+  it("skips nested schema-invalid arrays before the first valid verdict array", () => {
+    const verdicts = parseVerdicts(
+      `${JSON.stringify([[[[[]]]]])}\n${JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.8 }])}`
+    );
+
+    expect(verdicts).toHaveLength(1);
+    expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
 });
 
 describe("verifyFindings", () => {
