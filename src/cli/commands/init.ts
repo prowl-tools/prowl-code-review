@@ -79,7 +79,7 @@ export function buildInitCommand(): Command {
     .option("--dir <path>", "directory to write the config into (defaults to the current directory)")
     .option("--force", "overwrite an existing config file")
     .action((options: InitCommandOptions) => {
-      const target = writeConfigTemplate(options.dir ?? process.cwd(), Boolean(options.force));
+      const target = writeConfigTemplate(options.dir ?? ".", Boolean(options.force));
       console.log(`prowl-review: wrote ${target}`);
     });
 

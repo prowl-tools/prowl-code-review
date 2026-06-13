@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { createOctokit } from "../../github/client.js";
 import { reviewPullRequest, type ReviewPullRequestOptions } from "../../pipeline.js";
 import { resolveProviderConfig } from "../../providers/index.js";
-import { loadConfig } from "../../config/loader.js";
+import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
 
@@ -75,13 +75,14 @@ export function loadGuidelines(root: string): string | undefined {
 
 /** Parse an optional severity threshold for filtering findings. */
 export function parseMinSeverity(value: string | undefined): Severity | undefined {
-  if (!value) {
+  const normalized = value?.trim();
+  if (!normalized) {
     return undefined;
   }
-  if (!(SEVERITIES as readonly string[]).includes(value)) {
+  if (!(SEVERITIES as readonly string[]).includes(normalized)) {
     throw new Error(`Invalid --min-severity: ${value} (use one of ${SEVERITIES.join(", ")}).`);
   }
-  return value as Severity;
+  return normalized as Severity;
 }
 
 /** Resolve the repository checkout used by context retrieval. */
@@ -134,6 +135,45 @@ function compact<T extends Record<string, unknown>>(obj: T): T | undefined {
   return entries.length > 0 ? (Object.fromEntries(entries) as T) : undefined;
 }
 
+function truthyEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function envString(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
+/** Resolve config-loading inputs from CLI flags and trusted Action env. */
+export function resolveConfigLoadOptions(
+  cli: ReviewCommandOptions,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
+): LoadConfigOptions {
+  if (cli.config === false) {
+    return { cwd, disabled: true };
+  }
+
+  const configPath = typeof cli.config === "string" ? cli.config : envString(env.PROWL_CONFIG_PATH);
+  if (configPath) {
+    return { cwd, configPath };
+  }
+
+  if (truthyEnv(env.PROWL_NO_CONFIG)) {
+    return { cwd, disabled: true };
+  }
+
+  return { cwd };
+}
+
+/** Resolve whether the review should publish or just render output. */
+export function resolveDryRun(
+  cli: ReviewCommandOptions,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return Boolean(cli.dryRun) || truthyEnv(env.PROWL_DRY_RUN);
+}
+
 /**
  * Merge CLI flags with the `.prowl-review.yml` config into pipeline options.
  * Precedence is **CLI flag > config file > built-in default**: an omitted value
@@ -148,8 +188,10 @@ export function resolveReviewOptions(
   config: ProwlReviewConfig,
   env: NodeJS.ProcessEnv = process.env
 ): ResolvedReviewOptions {
+  const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
+
   return {
-    minSeverity: parseMinSeverity(cli.minSeverity) ?? config.review?.minSeverity,
+    minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
     minConfidence: config.review?.minConfidence,
     maxFindings: config.review?.maxFindings,
     verify: cli.verify === false ? false : config.review?.verify,
@@ -199,12 +241,7 @@ export function buildReviewCommand(): Command {
       const guidelinesRoot = resolveGuidelinesWorkspace();
       const guidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
 
-      // `--no-config` makes commander set options.config to `false`.
-      const { config } = loadConfig({
-        cwd: root,
-        configPath: typeof options.config === "string" ? options.config : undefined,
-        disabled: options.config === false
-      });
+      const { config } = loadConfig(resolveConfigLoadOptions(options, root));
       const providerConfig = resolveProviderConfig(process.env, {
         provider: config.provider,
         model: config.model
@@ -220,7 +257,7 @@ export function buildReviewCommand(): Command {
           config: providerConfig,
           toolkitRoot: root,
           guidelines,
-          dryRun: Boolean(options.dryRun)
+          dryRun: resolveDryRun(options)
         }
       );
 
