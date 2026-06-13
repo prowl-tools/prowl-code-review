@@ -50,6 +50,10 @@ describe("parseVerdicts", () => {
     expect(parseVerdicts("no json here")).toEqual([]);
     expect(parseVerdicts("{not: array}")).toEqual([]);
   });
+
+  it("returns [] for an oversized verifier response", () => {
+    expect(parseVerdicts(`[${" ".repeat(1_048_576)}]`)).toEqual([]);
+  });
 });
 
 describe("verifyFindings", () => {
@@ -117,6 +121,25 @@ describe("verifyFindings", () => {
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       expect(request.prompt).toContain("confident-fp.ts"); // blocking → verified despite 0.95
       expect(request.prompt).not.toContain("trusted.ts"); // non-blocking + high conf → trusted
+      return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    });
+
+    const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.verified).toBe(1);
+    expect(result.droppedFalsePositive).toBe(1);
+    expect(result.findings.map((f) => f.title)).toEqual(["trusted-minor"]);
+  });
+
+  it("verifies a confident critical finding and drops it as a false positive", async () => {
+    const findings = [
+      finding({ file: "confident-fp.ts", severity: "critical", confidence: 0.95, title: "confident-bogus" }),
+      finding({ file: "trusted.ts", severity: "minor", confidence: 0.95, title: "trusted-minor" })
+    ];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      expect(request.prompt).toContain("confident-fp.ts");
+      expect(request.prompt).not.toContain("trusted.ts");
       return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
     });
 

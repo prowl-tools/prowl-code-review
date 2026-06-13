@@ -26,7 +26,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   minConfidence: 0.5       # drop non-critical findings below this confidence (0–1)
 #   maxFindings: 25          # cap the number of findings surfaced
 #   verify: true             # run the skeptical false-positive verification pass
-#   verifyConfidence: 0.8    # findings at/above this confidence skip verification (0–1)
+#   verifyConfidence: 0.8    # non-blocking findings at/above this confidence skip verification (0–1)
 
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:

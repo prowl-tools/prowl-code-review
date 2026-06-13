@@ -25,7 +25,7 @@ import {
  *
  * Runs each specialist as its own pass with stable instructions in `system`
  * and untrusted PR content in `prompt`, collects structured findings, re-checks
- * the low-confidence ones with a skeptical verification pass, then consolidates
+ * blocking and low-confidence ones with a skeptical verification pass, then consolidates
  * what survives with the deterministic judge. Specialist failures degrade
  * gracefully and are reported.
  */
@@ -58,7 +58,7 @@ export interface RunReviewOptions {
   maxFindings?: number;
   /** Run the skeptical false-positive verification pass. Default `true` (#8). */
   verify?: boolean;
-  /** Findings at/above this confidence skip verification. Default 0.8 (#8). */
+  /** Non-blocking findings at/above this confidence skip verification. Default 0.8 (#8). */
   verifyConfidence?: number;
   /** Injectable completion (defaults to the provider dispatcher, wrapped in retry). */
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
