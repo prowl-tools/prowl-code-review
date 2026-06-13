@@ -34,6 +34,9 @@ All notable changes to Prowl Review will be documented in this file.
   failback + heartbeat progress logs remain open under #17.
 
 ### Changed
+- Swapped the clean "No issues found" headline emoji from the raccoon to a "ship it" rocket 🚀
+  (`src/review/walkthrough.ts`): the clean state now reads `✅ No issues found 🚀` (and
+  `✅ No issues found in reviewed files 🚀` when files were skipped).
 - Verification now re-checks every inline-posted finding, not just low-confidence ones
   (`src/review/verify.ts`, #8/#58 noise follow-up): a finding is a verification candidate when it is
   **blocking (major+) OR below `verifyConfidence`**. Previously only sub-0.8 findings were verified, so a
@@ -51,6 +54,14 @@ All notable changes to Prowl Review will be documented in this file.
   public docs and review-note wording with the blocking-or-low-confidence verification rule, bounded verifier
   verdict parsing to reject oversized responses safely, and added explicit coverage for confident `critical`
   findings.
+- Model JSON-array extraction now scans for the first complete array while respecting JSON strings and escapes,
+  so trailing prose or bracket characters inside verifier verdicts or specialist findings do not corrupt parsing.
+- Model JSON-array extraction now skips non-JSON bracketed preambles and returns the first bracketed payload that
+  actually parses to an array.
+- Model JSON-array extraction now skips schema-invalid preamble arrays (for example `Reviewed files: ["a.ts"]`)
+  before verifier verdicts or specialist findings, cheaply filters candidates by required schema keys before
+  parsing, skips nested children inside rejected arrays, and bracket matching runs in a single pass to avoid
+  repeated rescans of malformed bracket-heavy output.
 - Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
   a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
   was flipping the summary to "⚠️ Review incomplete — coverage degraded" even when all specialist
@@ -80,7 +91,7 @@ All notable changes to Prowl Review will be documented in this file.
   of peppering the diff. (Tune/verify the false-alarm drop with the eval harness #13.)
 - Three distinct review-comment states (`src/review/walkthrough.ts`, backlog #56): the summary now
   renders differently by outcome instead of always a full report. **Clean** (healthy + nothing
-  found) → a compact `✅ No issues found 🦝` with impact/effort/passes and the changed-files list
+  found) → a compact `✅ No issues found 🚀` with impact/effort/passes and the changed-files list
   tucked into collapsed `<details>` (no more `Findings: none` banner); when guardrails skipped
   files the review is still healthy but partial, so it stays clean with an honest caveat headline
   (`✅ No issues found in reviewed files`) + the "Not reviewed" note — not an alarming
