@@ -76,6 +76,8 @@ export const configSchema = z
     provider: z.enum(PROVIDER_NAMES as [string, ...string[]]).optional(),
     /** Model override for the configured provider; the provider's default model is used when omitted. */
     model: z.string().min(1).optional(),
+    /** Append a copy-paste "Resolve with an AI agent" prompt to each finding. Default true (#57). */
+    agentPrompt: z.boolean().optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

@@ -227,6 +227,13 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
   });
+
+  it("keeps the agent prompt on by default and disables it from CLI or config (#57)", () => {
+    expect(resolveReviewOptions({}, {}, env).agentPrompt).toBeUndefined(); // default on (pipeline default)
+    expect(resolveReviewOptions({ agentPrompt: false }, {}, env).agentPrompt).toBe(false); // --no-agent-prompt
+    expect(resolveReviewOptions({}, { agentPrompt: false }, env).agentPrompt).toBe(false); // config off
+    expect(resolveReviewOptions({}, { agentPrompt: true }, env).agentPrompt).toBeUndefined(); // explicit on stays default
+  });
 });
 
 describe("review command action env helpers", () => {
