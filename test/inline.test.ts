@@ -268,6 +268,18 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).toContain("src/a\\.ts:100");
   });
 
+  it("omits unmapped agent prompts when the remaining budget is too small", () => {
+    const payload = buildReviewPayload({
+      findings: [f({ line: 99, body: "small unmapped finding" })],
+      diff,
+      summaryBody: "x".repeat(61_000)
+    });
+
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("small unmapped finding");
+    expect(payload.body).not.toContain("Resolve with an AI agent");
+  });
+
   it("renders the agent prompt on unmapped findings too, and respects the toggle", () => {
     const findings = [f({ line: 99, title: "Unmapped" })]; // line not in the diff → unmapped
     const on = buildReviewPayload({ findings, diff, summaryBody: "## w" });
