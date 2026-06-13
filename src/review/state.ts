@@ -18,9 +18,12 @@ import type { Finding } from "./findings.js";
 
 /** Bump when the persisted shape changes incompatibly. */
 export const REVIEW_STATE_VERSION = 1;
+export const GITHUB_COMMENT_BODY_LIMIT = 65_536;
 
 const STATE_MARKER_PREFIX = "<!-- prowl-review:state ";
 const STATE_MARKER_SUFFIX = " -->";
+const SUMMARY_BODY_TRUNCATION_NOTICE =
+  "[summary truncated to keep the GitHub comment within the body size limit]";
 
 /** Matches the persisted state marker and captures its JSON payload. */
 const STATE_MARKER_RE = /<!-- prowl-review:state ([\s\S]*?) -->/;
@@ -97,8 +100,29 @@ export function parseState(body: string | null | undefined): ReviewState | null 
  * Embed (or replace) the state marker in a summary body. Kept on its own line at
  * the end so it never disturbs the rendered Markdown above it.
  */
-export function embedState(body: string, state: ReviewState): string {
+export function embedState(body: string, state: ReviewState, maxLength?: number): string {
   const marker = serializeState(state);
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
-  return `${stripped}\n\n${marker}`;
+  const embedded = `${stripped}\n\n${marker}`;
+  if (maxLength === undefined || embedded.length <= maxLength) {
+    return embedded;
+  }
+
+  if (marker.length >= maxLength) {
+    return marker;
+  }
+
+  const separator = "\n\n";
+  const maxBodyLength = maxLength - marker.length - separator.length;
+  if (maxBodyLength <= 0) {
+    return marker;
+  }
+
+  const notice = `\n\n${SUMMARY_BODY_TRUNCATION_NOTICE}`;
+  const truncatedLength = maxBodyLength - notice.length;
+  const truncated =
+    truncatedLength > 0
+      ? `${stripped.slice(0, truncatedLength).trimEnd()}${notice}`
+      : stripped.slice(0, maxBodyLength).trimEnd();
+  return `${truncated}${separator}${marker}`;
 }

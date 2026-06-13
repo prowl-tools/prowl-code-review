@@ -1,7 +1,7 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { isBlockingFinding } from "./findings.js";
-import { findingFingerprint } from "./state.js";
+import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
 
 /**
  * Inline comments + committable suggestions (backlog #10).
@@ -65,7 +65,6 @@ const SEVERITY_BADGE: Record<Severity, string> = {
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
 const PROWL_REVIEW_STATE_MARKER_RE = /<!--\s*prowl-review:state\b[\s\S]*?-->/gi;
-const GITHUB_COMMENT_BODY_LIMIT = 65_536;
 const INLINE_FINGERPRINT_MARKER_HEADROOM = 128;
 const SUMMARY_STATE_MARKER_HEADROOM = 4_096;
 const INLINE_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - INLINE_FINGERPRINT_MARKER_HEADROOM;
@@ -208,12 +207,11 @@ function suggestionBlock(code: string): string {
 
 /** Wrap sanitized prompt content in a collapsed fenced block. */
 function agentPromptDetailsBlock(content: string, fence = fenceFor(content)): string {
-  const escapedContent = content.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   return [
     "<details>",
     "<summary>🤖 Resolve with an AI agent</summary>",
     "",
-    `${fence}text\n${escapedContent}\n${fence}`,
+    `${fence}text\n${content}\n${fence}`,
     "",
     "</details>"
   ].join("\n");
