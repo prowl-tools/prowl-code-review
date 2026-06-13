@@ -101,14 +101,28 @@ export function fitStateWithinCommentLimit(state: ReviewState, maxLength: number
   return { ...base, postedFindings: kept };
 }
 
+/** Smallest useful persisted state shape, used to reserve room for visible summary content. */
+function minimalStateForLimit(state: ReviewState, maxLength: number): ReviewState {
+  const base = { ...state, postedFindings: [] };
+  if (serializeState(base).length <= maxLength) {
+    return base;
+  }
+  return { v: state.v, postedFindings: [] };
+}
+
 /** Keep enough room for required body markers before fitting the serialized state marker. */
 function fitStateForBody(body: string, state: ReviewState, maxLength: number): ReviewState {
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
   const separator = "\n\n";
   const preservedPrefix = stripped.startsWith(REVIEW_MARKER) ? REVIEW_MARKER : "";
-  const stateMaxLength = preservedPrefix
-    ? maxLength - preservedPrefix.length - separator.length
-    : maxLength;
+  const minimalStateLength = serializeState(minimalStateForLimit(state, maxLength)).length;
+  const maxBodyLength = maxLength - minimalStateLength - separator.length;
+  if (maxBodyLength < preservedPrefix.length) {
+    throw new Error("prowl-review state marker cannot fit with the required summary marker");
+  }
+
+  const reservedBodyLength = Math.min(stripped.length, maxBodyLength);
+  const stateMaxLength = maxLength - reservedBodyLength - separator.length;
   if (stateMaxLength <= 0) {
     throw new Error("prowl-review state marker cannot fit with the required summary marker");
   }

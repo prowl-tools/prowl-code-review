@@ -112,7 +112,7 @@ describe("planPublish", () => {
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
 
-  it("caps the summary body against the actual persisted state marker size", () => {
+  it("prunes state history before truncating visible summary content", () => {
     const priorPostedFindings = Array.from({ length: 400 }, (_, index) => `fp-${index.toString().padStart(4, "0")}`);
     const plan = planPublish({
       payload: payload({
@@ -125,7 +125,8 @@ describe("planPublish", () => {
     });
 
     expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
-    expect(plan.summaryBody).toContain("[summary truncated to keep the GitHub comment within the body size limit]");
+    expect(plan.summaryBody).not.toContain("[summary truncated to keep the GitHub comment within the body size limit]");
+    expect(plan.state.postedFindings.length).toBeLessThan(priorPostedFindings.length);
     expect(parseState(plan.summaryBody)).toEqual(plan.state);
   });
 
@@ -146,6 +147,7 @@ describe("planPublish", () => {
 
     expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
     expect(plan.summaryBody.startsWith(REVIEW_MARKER)).toBe(true);
+    expect(plan.summaryBody).toContain("summary");
     expect(plan.state.postedFindings.length).toBeLessThan(priorPostedFindings.length);
     expect(plan.state.postedFindings.at(-1)).toBe(priorPostedFindings.at(-1));
     expect(plan.state.postedFindings).not.toContain(priorPostedFindings[0]);
