@@ -53,9 +53,12 @@ describe("parseVerdicts", () => {
 });
 
 describe("verifyFindings", () => {
-  it("skips the call entirely when nothing is below the confidence threshold", async () => {
+  it("skips the call when every finding is non-blocking and above the confidence threshold", async () => {
     const complete = vi.fn(async () => reply("[]"));
-    const findings = [finding({ confidence: 0.9 }), finding({ confidence: DEFAULT_VERIFY_CONFIDENCE })];
+    const findings = [
+      finding({ severity: "minor", confidence: 0.9 }),
+      finding({ severity: "info", confidence: DEFAULT_VERIFY_CONFIDENCE })
+    ];
     const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
 
     expect(complete).not.toHaveBeenCalled();
@@ -64,15 +67,15 @@ describe("verifyFindings", () => {
     expect(result.ok).toBe(true);
   });
 
-  it("only sends sub-threshold findings, drops false positives, and adjusts confidence", async () => {
+  it("sends candidate findings, drops false positives, and adjusts confidence", async () => {
     const findings = [
-      finding({ file: "keep.ts", confidence: 0.95, title: "trusted" }), // not a candidate
+      finding({ file: "keep.ts", severity: "minor", confidence: 0.95, title: "trusted" }), // non-blocking + high conf → not a candidate
       finding({ file: "fp.ts", confidence: 0.4, title: "false-positive" }), // candidate 0
       finding({ file: "demote.ts", confidence: 0.7, title: "weakened" }), // candidate 1
       finding({ file: "confirm.ts", confidence: 0.6, title: "confirmed" }) // candidate 2
     ];
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
-      // Only the three sub-0.8 findings should be presented.
+      // Only the three candidate findings should be presented (keep.ts is trusted).
       expect(request.prompt).toContain("fp.ts");
       expect(request.prompt).toContain("demote.ts");
       expect(request.prompt).toContain("confirm.ts");
@@ -103,6 +106,28 @@ describe("verifyFindings", () => {
     expect(result.findings.map((f) => f.title)).toEqual(["trusted", "weakened", "confirmed"]);
   });
 
+  it("verifies a confident blocking finding and drops it as a false positive (#58/PR #27)", async () => {
+    // A `major` finding the model rated highly confident skips verification under
+    // the old confidence-only rule. Blocking findings post inline, so they must
+    // be verified regardless of confidence — this is the noise fix.
+    const findings = [
+      finding({ file: "confident-fp.ts", severity: "major", confidence: 0.95, title: "confident-bogus" }),
+      finding({ file: "trusted.ts", severity: "minor", confidence: 0.95, title: "trusted-minor" })
+    ];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      expect(request.prompt).toContain("confident-fp.ts"); // blocking → verified despite 0.95
+      expect(request.prompt).not.toContain("trusted.ts"); // non-blocking + high conf → trusted
+      return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    });
+
+    const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
+
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(result.verified).toBe(1);
+    expect(result.droppedFalsePositive).toBe(1);
+    expect(result.findings.map((f) => f.title)).toEqual(["trusted-minor"]);
+  });
+
   it("keeps a candidate the verifier returns no verdict for (counted unverified)", async () => {
     const findings = [finding({ confidence: 0.3, title: "orphan" })];
     const complete = vi.fn(async () => reply("[]"));
@@ -127,10 +152,10 @@ describe("verifyFindings", () => {
     expect(result.findings).toEqual(findings); // nothing dropped
   });
 
-  it("honors a custom verifyConfidence threshold", async () => {
-    const findings = [finding({ confidence: 0.6 })];
+  it("honors a custom verifyConfidence threshold for non-blocking findings", async () => {
+    const findings = [finding({ severity: "minor", confidence: 0.6 })];
     const complete = vi.fn(async () => reply("[]"));
-    // Threshold 0.5 → the 0.6 finding is now trusted, no call.
+    // Threshold 0.5 → the non-blocking 0.6 finding is now trusted, no call.
     const result = await verifyFindings(findings, { diff: "d" }, { config, complete, verifyConfidence: 0.5 });
     expect(complete).not.toHaveBeenCalled();
     expect(result.verified).toBe(0);
@@ -142,6 +167,7 @@ describe("verify prompt construction", () => {
     const system = buildVerifySystem();
     expect(system).toContain("false-positive verifier");
     expect(system).toContain("hypothetical"); // drops doesn't-happen-now findings (#58)
+    expect(system).toContain("does not appear in the diff"); // drops hallucinated findings (PR #27)
     expect(system).not.toContain("SECRET_DIFF");
 
     const prompt = buildVerifyPrompt({

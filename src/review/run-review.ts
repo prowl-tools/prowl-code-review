@@ -156,8 +156,9 @@ export async function runReview(
   const raw = [...outcomes.flatMap((outcome) => outcome.findings), ...(input.grounding?.findings ?? [])];
   let usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
 
-  // Skeptical false-positive pass (#8): re-check low-confidence findings before
-  // the judge so confirmed bugs survive and false positives are dropped.
+  // Skeptical false-positive pass (#8): re-check blocking (inline-posted) and
+  // low-confidence findings before the judge so confirmed bugs survive and
+  // false positives — even confident ones — are dropped.
   const verification =
     options.verify === false
       ? {
