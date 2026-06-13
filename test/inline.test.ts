@@ -235,6 +235,30 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).not.toContain('"postedFindings":["spoof"]');
   });
 
+  it("truncates copied finding text in large inline agent prompts", () => {
+    const body = formatFindingComment(f({ body: "detail ".repeat(7000) }));
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("[truncated to keep the GitHub comment within the body size limit]");
+    expect(body).toContain("Instructions: verify the finding against the current code");
+  });
+
+  it("budgets agent prompts across large unmapped findings in the summary body", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 99, body: "first ".repeat(4000) }),
+        f({ line: 100, body: "second ".repeat(4000) })
+      ],
+      diff,
+      summaryBody: "## walkthrough"
+    });
+
+    expect(payload.body.length).toBeLessThanOrEqual(65_536);
+    expect(payload.body).toContain("[truncated to keep the GitHub comment within the body size limit]");
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("src/a\\.ts:100");
+  });
+
   it("renders the agent prompt on unmapped findings too, and respects the toggle", () => {
     const findings = [f({ line: 99, title: "Unmapped" })]; // line not in the diff → unmapped
     const on = buildReviewPayload({ findings, diff, summaryBody: "## w" });
