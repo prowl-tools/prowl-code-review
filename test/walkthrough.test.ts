@@ -226,8 +226,7 @@ describe("buildWalkthrough", () => {
   describe("comment states (#56)", () => {
     it("renders a compact clean state when healthy with no findings", () => {
       const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
-      expect(md).toContain("✅ No issues found");
-      expect(md).not.toContain("🦝");
+      expect(md).toContain("✅ No issues found 🎉");
       // Review info is collapsed, with the pass count.
       expect(md).toContain("<summary><b>Review info</b></summary>");
       expect(md).toContain("4/4 passes");
@@ -247,7 +246,7 @@ describe("buildWalkthrough", () => {
         skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
       });
       // Partial coverage on a healthy review: clean + honest caveat, not degraded.
-      expect(md).toContain("✅ No issues found in reviewed files");
+      expect(md).toContain("✅ No issues found in reviewed files 🎉");
       expect(md).toContain("Not reviewed");
       expect(md).toContain("huge.lock");
       expect(md).not.toContain("Review incomplete");
