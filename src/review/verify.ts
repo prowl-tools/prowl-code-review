@@ -9,6 +9,7 @@ import {
   type TokenUsage
 } from "../providers/index.js";
 import { isBlockingFinding, type Finding } from "./findings.js";
+import { DEFAULT_MAX_JSON_ARRAY_CHARS, extractJsonArray } from "./json-output.js";
 
 /**
  * False-positive verification pass (backlog #8, broadened per the #58 noise
@@ -100,8 +101,6 @@ const OUTPUT_SPEC = [
   "If the diff and context do not clearly support a finding, mark it falsePositive."
 ].join("\n");
 
-const MAX_VERDICT_RESPONSE_CHARS = 1_048_576;
-
 /**
  * Build the shared (cacheable) verifier system block. Trusted instructions only;
  * the diff, context, and candidate findings are untrusted data in the prompt.
@@ -161,61 +160,13 @@ export function buildVerifyPrompt(input: {
   return sections.join("\n\n");
 }
 
-function findJsonArrayEnd(text: string, start: number): number | null {
-  let depth = 0;
-  let inString = false;
-  let escaped = false;
-  for (let i = start; i < text.length; i += 1) {
-    const char = text[i];
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-      } else if (char === "\\") {
-        escaped = true;
-      } else if (char === "\"") {
-        inString = false;
-      }
-      continue;
-    }
-    if (char === "\"") {
-      inString = true;
-    } else if (char === "[") {
-      depth += 1;
-    } else if (char === "]") {
-      depth -= 1;
-      if (depth === 0) {
-        return i;
-      }
-    }
-  }
-  return null;
-}
-
-/** Strip markdown fences and isolate the first complete JSON array, if present. */
-function extractJsonArray(text: string): string | null {
-  if (text.length > MAX_VERDICT_RESPONSE_CHARS) {
-    return null;
-  }
-  const withoutFences = text.replace(/```(?:json)?/gi, "");
-  const start = withoutFences.indexOf("[");
-  if (start === -1) {
-    return null;
-  }
-  const end = findJsonArrayEnd(withoutFences, start);
-  if (end === null) {
-    return null;
-  }
-  const json = withoutFences.slice(start, end + 1);
-  return json.length <= MAX_VERDICT_RESPONSE_CHARS ? json : null;
-}
-
 /**
  * Parse a verifier response into verdicts. Tolerant of prose/markdown around the
  * JSON; invalid entries are dropped rather than throwing, so one malformed
  * verdict doesn't sink the pass (the affected finding is simply kept as-is).
  */
 export function parseVerdicts(text: string): Verdict[] {
-  const json = extractJsonArray(text);
+  const json = extractJsonArray(text, DEFAULT_MAX_JSON_ARRAY_CHARS);
   if (!json) {
     return [];
   }

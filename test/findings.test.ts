@@ -28,6 +28,15 @@ describe("parseFindings", () => {
     expect(findings).toHaveLength(1);
   });
 
+  it("handles brackets inside finding string fields", () => {
+    const findings = parseFindings(
+      `${JSON.stringify([{ ...VALID, body: "Array-like text [value] in the body" }])}\nTrailing prose ] ignored.`
+    );
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].body).toBe("Array-like text [value] in the body");
+  });
+
   it("drops invalid entries but keeps valid ones", () => {
     const findings = parseFindings(JSON.stringify([VALID, { file: "x" }, { ...VALID, severity: "bogus" }]));
     expect(findings).toHaveLength(1);

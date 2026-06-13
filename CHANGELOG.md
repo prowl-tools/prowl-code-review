@@ -54,8 +54,8 @@ All notable changes to Prowl Review will be documented in this file.
   public docs and review-note wording with the blocking-or-low-confidence verification rule, bounded verifier
   verdict parsing to reject oversized responses safely, and added explicit coverage for confident `critical`
   findings.
-- Verifier verdict extraction now scans for the first complete JSON array while respecting JSON strings and
-  escapes, so trailing prose or bracket characters inside verifier reasons do not corrupt parsing.
+- Model JSON-array extraction now scans for the first complete array while respecting JSON strings and escapes,
+  so trailing prose or bracket characters inside verifier verdicts or specialist findings do not corrupt parsing.
 - Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
   a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
   was flipping the summary to "⚠️ Review incomplete — coverage degraded" even when all specialist
@@ -85,7 +85,7 @@ All notable changes to Prowl Review will be documented in this file.
   of peppering the diff. (Tune/verify the false-alarm drop with the eval harness #13.)
 - Three distinct review-comment states (`src/review/walkthrough.ts`, backlog #56): the summary now
   renders differently by outcome instead of always a full report. **Clean** (healthy + nothing
-  found) → a compact `✅ No issues found 🦝` with impact/effort/passes and the changed-files list
+  found) → a compact `✅ No issues found 🚀` with impact/effort/passes and the changed-files list
   tucked into collapsed `<details>` (no more `Findings: none` banner); when guardrails skipped
   files the review is still healthy but partial, so it stays clean with an honest caveat headline
   (`✅ No issues found in reviewed files`) + the "Not reviewed" note — not an alarming
