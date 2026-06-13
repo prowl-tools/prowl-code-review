@@ -73,6 +73,36 @@ export function serializeState(state: ReviewState): string {
   return `${STATE_MARKER_PREFIX}${JSON.stringify(state)}${STATE_MARKER_SUFFIX}`;
 }
 
+/** Keep as many recent posted fingerprints as will fit in the serialized state marker. */
+export function fitStateWithinCommentLimit(state: ReviewState, maxLength: number): ReviewState {
+  if (serializeState(state).length <= maxLength) {
+    return state;
+  }
+
+  let low = 0;
+  let high = state.postedFindings.length;
+  let best: string[] = [];
+  while (low <= high) {
+    const keep = Math.floor((low + high) / 2);
+    const candidateFindings = state.postedFindings.slice(state.postedFindings.length - keep);
+    const candidate = { ...state, postedFindings: candidateFindings };
+    if (serializeState(candidate).length <= maxLength) {
+      best = candidateFindings;
+      low = keep + 1;
+    } else {
+      high = keep - 1;
+    }
+  }
+
+  let fitted: ReviewState = { ...state, postedFindings: best };
+  if (serializeState(fitted).length <= maxLength) {
+    return fitted;
+  }
+
+  fitted = { v: state.v, postedFindings: best };
+  return serializeState(fitted).length <= maxLength ? fitted : { v: state.v, postedFindings: [] };
+}
+
 /**
  * Extract and validate persisted state from a comment body, or null when the
  * body has no (valid) state marker. Tolerant: a malformed/old marker parses to
@@ -101,15 +131,19 @@ export function parseState(body: string | null | undefined): ReviewState | null 
  * the end so it never disturbs the rendered Markdown above it.
  */
 export function embedState(body: string, state: ReviewState, maxLength?: number): string {
-  const marker = serializeState(state);
+  const fittedState = maxLength === undefined ? state : fitStateWithinCommentLimit(state, maxLength);
+  const marker = serializeState(fittedState);
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
   const embedded = `${stripped}\n\n${marker}`;
   if (maxLength === undefined || embedded.length <= maxLength) {
     return embedded;
   }
 
-  if (marker.length >= maxLength) {
+  if (marker.length === maxLength) {
     return marker;
+  }
+  if (marker.length > maxLength) {
+    throw new Error("prowl-review state marker exceeds the GitHub comment body limit");
   }
 
   const separator = "\n\n";
