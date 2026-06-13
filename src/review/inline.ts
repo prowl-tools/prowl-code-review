@@ -64,8 +64,8 @@ const SEVERITY_BADGE: Record<Severity, string> = {
 
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
-const PROWL_REVIEW_STATE_MARKER_RE = /<!--\s*prowl-review:state\b[\s\S]*?-->/gi;
-const PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE = /<!--\s*prowl-review:finding\b[\s\S]*?-->/gi;
+const PROWL_REVIEW_STATE_MARKER_RE = /<\s*!\s*--\s*prowl-review:state\b[\s\S]*?--\s*>/gi;
+const PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE = /<\s*!\s*--\s*prowl-review:finding\b[\s\S]*?--\s*>/gi;
 const INLINE_FINGERPRINT_MARKER_HEADROOM = 128;
 const SUMMARY_STATE_MARKER_HEADROOM = 4_096;
 const INLINE_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - INLINE_FINGERPRINT_MARKER_HEADROOM;
@@ -256,9 +256,7 @@ function sanitizeForCodeFence(value: string): string {
   let out = "";
   const sanitized = value
     .replaceAll("\r\n", "\n")
-    .replaceAll("\r", "\n")
-    .replaceAll(PROWL_REVIEW_STATE_MARKER_RE, "[removed prowl-review state marker]")
-    .replaceAll(PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE, "[removed prowl-review finding marker]");
+    .replaceAll("\r", "\n");
   for (const char of sanitized) {
     const code = char.charCodeAt(0);
     if (code === 0x09 || code === 0x0a) {
@@ -269,7 +267,9 @@ function sanitizeForCodeFence(value: string): string {
       out += char;
     }
   }
-  return out;
+  return out
+    .replaceAll(PROWL_REVIEW_STATE_MARKER_RE, "[removed prowl-review state marker]")
+    .replaceAll(PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE, "[removed prowl-review finding marker]");
 }
 
 /** Fixed instruction appended to every agent-fix prompt (#57). */
@@ -408,18 +408,19 @@ function formatUnmappedFindings(
       length: heading.length + 2 + comment.length
     };
   });
-  const remainingVisibleLengths = new Array<number>(visibleEntries.length + 1).fill(0);
-  for (let index = visibleEntries.length - 1; index >= 0; index -= 1) {
-    remainingVisibleLengths[index] = remainingVisibleLengths[index + 1] + 2 + visibleEntries[index].length;
-  }
+  const separatorLength = 2;
+  let remainingVisibleLength = visibleEntries.reduce(
+    (sum, visibleEntry) => sum + separatorLength + visibleEntry.length,
+    0
+  );
 
   for (const [index, finding] of findings.entries()) {
     const separator = "\n\n";
     const visibleEntry = visibleEntries[index];
+    remainingVisibleLength -= separator.length + visibleEntry.length;
     const commentPrefixLength = visibleEntry.heading.length + 2;
     const existingLength = initialLength + section.length + separator.length;
-    const remainingForEntry =
-      SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLengths[index + 1];
+    const remainingForEntry = SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLength;
     const comment = appendAgentPrompt(visibleEntry.comment, finding, {
       ...options,
       maxBodyChars: remainingForEntry - commentPrefixLength
