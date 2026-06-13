@@ -140,6 +140,17 @@ describe("resolveProviderConfig", () => {
     expect(cfg.model).toBe("gpt-custom");
   });
 
+  it("ignores config model when config provider is absent", () => {
+    const cfg = resolveProviderConfig(
+      {
+        PROWL_AI_KEY: "k"
+      } as NodeJS.ProcessEnv,
+      { model: "gpt-custom" }
+    );
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe(DEFAULT_MODELS.anthropic);
+  });
+
   it("uses a published OpenAI default model", () => {
     const cfg = resolveProviderConfig({
       PROWL_AI_PROVIDER: "openai",

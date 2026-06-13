@@ -16,6 +16,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # Non-empty PROWL_AI_PROVIDER / PROWL_AI_MODEL env vars override these when set.
 # In GitHub Actions, use a trusted config-path input if you want Action config;
 # the Action ignores repo config by default for untrusted PR checkouts.
+# Set provider whenever you set model, because model names are provider-specific.
 # provider: anthropic        # anthropic | openai | gemini
 # model: <provider default>  # e.g. claude-... / gpt-... / gemini-...
 

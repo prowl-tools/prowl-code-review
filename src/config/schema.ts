@@ -14,7 +14,8 @@ import { PROVIDER_NAMES } from "../providers/index.js";
  *
  * Secrets never live here: the provider API key always comes from `PROWL_AI_KEY`
  * in the environment, never the repo. Only the non-secret provider/model
- * *selection* is configurable.
+ * *selection* is configurable. A config `model` must be paired with `provider`
+ * so provider-specific model names are never guessed.
  *
  * The schema is `.strict()` at every level so a typo (e.g. `minSeverty`) is a
  * loud validation error rather than a silently-ignored key.
@@ -73,14 +74,23 @@ export const configSchema = z
   .object({
     /** Provider selection (the API key always comes from `PROWL_AI_KEY`). */
     provider: z.enum(PROVIDER_NAMES as [string, ...string[]]).optional(),
-    /** Model override; the provider's default model is used when omitted. */
+    /** Model override for the configured provider; the provider's default model is used when omitted. */
     model: z.string().min(1).optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
     diff: diffSchema.optional()
   })
-  .strict();
+  .strict()
+  .superRefine((config, ctx) => {
+    if (config.model && !config.provider) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["model"],
+        message: "model requires provider so model names stay provider-scoped"
+      });
+    }
+  });
 
 /** A parsed (not-yet-defaulted) config, exactly as it appears in the file. */
 export type ProwlReviewConfig = z.infer<typeof configSchema>;

@@ -50,9 +50,10 @@ export interface ProviderDefaults {
 /**
  * Resolve provider configuration (BYOK). Selection precedence is
  * **env var > config default > built-in default**; blank env values are ignored.
- * Config model defaults are used only when they are compatible with the selected
+ * Config model defaults are used only when the config provider is the selected
  * provider, so an out-of-band provider override cannot inherit another
- * provider's model name.
+ * provider's model name. The schema rejects model-only config; this resolver
+ * also ignores model-only defaults defensively for direct callers.
  * The API key is always read from the environment and never from config:
  * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
  * - `PROWL_AI_KEY`      — the provider API key (required)
@@ -81,7 +82,7 @@ export function resolveProviderConfig(
     );
   }
 
-  const configModelApplies = !defaultProvider || defaultProvider === raw;
+  const configModelApplies = defaultProvider !== undefined && defaultProvider === raw;
   const configModel = configModelApplies ? defaults.model?.trim() : undefined;
   const model = env.PROWL_AI_MODEL?.trim() || configModel || DEFAULT_MODELS[raw];
 
