@@ -34,6 +34,10 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ provider: "llama" })).toThrow();
   });
 
+  it("rejects model without provider so model names stay provider-scoped", () => {
+    expect(() => configSchema.parse({ model: "gpt-custom" })).toThrow(/model requires provider/);
+  });
+
   it("rejects workspace trust from repo config", () => {
     expect(() => configSchema.parse({ grounding: { trustWorkspace: true } })).toThrow();
   });

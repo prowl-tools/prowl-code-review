@@ -13,7 +13,8 @@ All notable changes to Prowl Review will be documented in this file.
   guards. Precedence is **CLI flag > config file > built-in default**; for the provider, non-empty BYOK
   env vars (`PROWL_AI_PROVIDER`/`PROWL_AI_MODEL`) still win and the API key is never read from the
   file. The GitHub Action supplies `PROWL_AI_PROVIDER` from its trusted `ai-provider` input, which
-  defaults to `anthropic`, so an untrusted repo config cannot redirect the provider endpoint. The
+  defaults to `anthropic`, so an untrusted repo config cannot redirect the provider endpoint. Config
+  model overrides must be paired with a config provider, keeping provider-specific model names scoped. The
   Action also ignores repo config by default; workflows can opt into a trusted config via the
   `config-path` input. Workspace execution trust stays out-of-band via `--trust-workspace`,
   `PROWL_TRUST_WORKSPACE`, or the Action input, so an untrusted repo config cannot enable local code

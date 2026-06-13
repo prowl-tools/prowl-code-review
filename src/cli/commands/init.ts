@@ -40,7 +40,7 @@ function assertNoSymlinkPath(root: string, targetDir: string): void {
   }
 
   let current = root;
-  for (const part of rel.split(/[\\/]+/)) {
+  for (const part of rel.split(sep)) {
     current = join(current, part);
     try {
       if (lstatSync(current).isSymbolicLink()) {

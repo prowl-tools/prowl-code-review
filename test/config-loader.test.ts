@@ -57,8 +57,8 @@ describe("loadConfig (#29)", () => {
 
   it("accepts the .yaml extension too", () => {
     const dir = tempDir();
-    writeFileSync(join(dir, ".prowl-review.yaml"), "model: gemini-x\n");
-    expect(loadConfig({ cwd: dir }).config).toEqual({ model: "gemini-x" });
+    writeFileSync(join(dir, ".prowl-review.yaml"), "provider: gemini\nmodel: gemini-x\n");
+    expect(loadConfig({ cwd: dir }).config).toEqual({ provider: "gemini", model: "gemini-x" });
   });
 
   it("throws a readable error on a schema violation", () => {
