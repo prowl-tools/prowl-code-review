@@ -129,7 +129,7 @@ function verificationNotes(reviewResult: ReviewResult): string[] {
   if (!ok) {
     notes.push(
       truncateNote(
-        `False-positive verification failed; low-confidence findings kept unverified: ${error ?? "unknown error"}`
+        `False-positive verification failed; candidate findings kept unverified: ${error ?? "unknown error"}`
       )
     );
     return notes;
@@ -141,7 +141,7 @@ function verificationNotes(reviewResult: ReviewResult): string[] {
     notes.push(`Lowered confidence on ${demoted} finding(s) after skeptical verification.`);
   }
   if (unverified > 0) {
-    notes.push(`${unverified} low-confidence finding(s) could not be verified and were kept as-is.`);
+    notes.push(`${unverified} candidate finding(s) could not be verified and were kept as-is.`);
   }
   return notes;
 }

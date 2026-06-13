@@ -100,6 +100,8 @@ const OUTPUT_SPEC = [
   "If the diff and context do not clearly support a finding, mark it falsePositive."
 ].join("\n");
 
+const MAX_VERDICT_RESPONSE_CHARS = 1_048_576;
+
 /**
  * Build the shared (cacheable) verifier system block. Trusted instructions only;
  * the diff, context, and candidate findings are untrusted data in the prompt.
@@ -161,13 +163,17 @@ export function buildVerifyPrompt(input: {
 
 /** Strip markdown fences and isolate the outermost JSON array, if present. */
 function extractJsonArray(text: string): string | null {
+  if (text.length > MAX_VERDICT_RESPONSE_CHARS) {
+    return null;
+  }
   const withoutFences = text.replace(/```(?:json)?/gi, "");
   const start = withoutFences.indexOf("[");
   const end = withoutFences.lastIndexOf("]");
   if (start === -1 || end === -1 || end < start) {
     return null;
   }
-  return withoutFences.slice(start, end + 1);
+  const json = withoutFences.slice(start, end + 1);
+  return json.length <= MAX_VERDICT_RESPONSE_CHARS ? json : null;
 }
 
 /**
