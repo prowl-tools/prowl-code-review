@@ -207,8 +207,7 @@ function suggestionBlock(code: string): string {
 }
 
 /** Wrap sanitized prompt content in a collapsed fenced block. */
-function agentPromptDetailsBlock(content: string): string {
-  const fence = fenceFor(content);
+function agentPromptDetailsBlock(content: string, fence = fenceFor(content)): string {
   const escapedContent = content.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   return [
     "<details>",
@@ -222,7 +221,8 @@ function agentPromptDetailsBlock(content: string): string {
 
 /** Fit a prompt block into the available published-comment budget, or omit it. */
 function fitAgentPromptBlock(content: string, maxChars?: number): string | undefined {
-  const full = agentPromptDetailsBlock(content);
+  const fence = fenceFor(content);
+  const full = agentPromptDetailsBlock(content, fence);
   if (maxChars === undefined || full.length <= maxChars) {
     return full;
   }
@@ -238,7 +238,7 @@ function fitAgentPromptBlock(content: string, maxChars?: number): string | undef
   while (low <= high) {
     const mid = Math.floor((low + high) / 2);
     const candidateContent = `${content.slice(0, mid).trimEnd()}${suffix}`;
-    const candidate = agentPromptDetailsBlock(candidateContent);
+    const candidate = agentPromptDetailsBlock(candidateContent, fence);
     if (candidate.length <= maxChars) {
       best = candidate;
       low = mid + 1;
