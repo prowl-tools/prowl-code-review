@@ -209,11 +209,12 @@ function suggestionBlock(code: string): string {
 /** Wrap sanitized prompt content in a collapsed fenced block. */
 function agentPromptDetailsBlock(content: string): string {
   const fence = fenceFor(content);
+  const escapedContent = content.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
   return [
     "<details>",
     "<summary>🤖 Resolve with an AI agent</summary>",
     "",
-    `${fence}text\n${content}\n${fence}`,
+    `${fence}text\n${escapedContent}\n${fence}`,
     "",
     "</details>"
   ].join("\n");
@@ -335,8 +336,8 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
   maxBodyChars?: number;
 }
 
-/** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
-function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
+/** Format the visible finding body without the optional agent prompt. */
+function formatFindingCommentBody(finding: Finding): string {
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     "",
@@ -345,7 +346,15 @@ function formatFindingCommentInternal(finding: Finding, options: FindingCommentR
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
   }
-  const body = parts.join("\n");
+  return parts.join("\n");
+}
+
+/** Append a budgeted agent prompt to an already-rendered finding body. */
+function appendAgentPrompt(
+  body: string,
+  finding: Finding,
+  options: FindingCommentRenderOptions = {}
+): string {
   // Default on: a copy-paste prompt so a coding agent can verify-and-fix (#57).
   if (options.agentPrompt !== false) {
     const separator = "\n\n";
@@ -357,6 +366,11 @@ function formatFindingCommentInternal(finding: Finding, options: FindingCommentR
     }
   }
   return body;
+}
+
+/** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
+function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
+  return appendAgentPrompt(formatFindingCommentBody(finding), finding, options);
 }
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
@@ -375,15 +389,6 @@ function findingLocation(finding: Finding): string {
   return `${finding.file}:${finding.line}`;
 }
 
-/** Format a finding that could not be emitted as an inline GitHub comment. */
-function formatUnmappedFinding(finding: Finding, options: FindingCommentRenderOptions): string {
-  return [
-    `### ${escapeMarkdownText(findingLocation(finding))}`,
-    "",
-    formatFindingCommentInternal(finding, options)
-  ].join("\n");
-}
-
 /** Build the fallback review-body section for findings outside changed diff lines. */
 function formatUnmappedFindings(
   findings: Finding[],
@@ -400,7 +405,15 @@ function formatUnmappedFindings(
     "These findings could not be anchored to changed diff lines, so they are included here instead."
   ];
   let section = parts.join("\n");
-  const visibleEntries = findings.map((finding) => formatUnmappedFinding(finding, { ...options, agentPrompt: false }));
+  const visibleEntries = findings.map((finding) => {
+    const heading = `### ${escapeMarkdownText(findingLocation(finding))}`;
+    const comment = formatFindingCommentBody(finding);
+    return {
+      heading,
+      comment,
+      length: heading.length + 2 + comment.length
+    };
+  });
   const remainingVisibleLengths = new Array<number>(visibleEntries.length + 1).fill(0);
   for (let index = visibleEntries.length - 1; index >= 0; index -= 1) {
     remainingVisibleLengths[index] = remainingVisibleLengths[index + 1] + 2 + visibleEntries[index].length;
@@ -408,16 +421,16 @@ function formatUnmappedFindings(
 
   for (const [index, finding] of findings.entries()) {
     const separator = "\n\n";
-    const heading = `### ${escapeMarkdownText(findingLocation(finding))}`;
-    const commentPrefixLength = heading.length + 2;
+    const visibleEntry = visibleEntries[index];
+    const commentPrefixLength = visibleEntry.heading.length + 2;
     const existingLength = initialLength + section.length + separator.length;
     const remainingForEntry =
       SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLengths[index + 1];
-    const comment = formatFindingCommentInternal(finding, {
+    const comment = appendAgentPrompt(visibleEntry.comment, finding, {
       ...options,
       maxBodyChars: remainingForEntry - commentPrefixLength
     });
-    section = `${section}${separator}${heading}\n\n${comment}`;
+    section = `${section}${separator}${visibleEntry.heading}\n\n${comment}`;
   }
 
   return section;
