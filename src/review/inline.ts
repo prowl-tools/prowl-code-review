@@ -196,7 +196,10 @@ function escapeMarkdownParagraphBlock(value: string): string {
 
 /** Pick a backtick fence longer than any run inside `content`, so it can't break out. */
 function fenceFor(content: string): string {
-  const longestRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (m) => m[0].length));
+  let longestRun = 0;
+  for (const match of content.matchAll(/`+/g)) {
+    longestRun = Math.max(longestRun, match[0].length);
+  }
   return "`".repeat(Math.max(3, longestRun + 1));
 }
 

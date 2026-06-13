@@ -4,7 +4,6 @@ import type { ReviewComment, ReviewPayload } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
   embedState,
-  fitStateForBody,
   GITHUB_COMMENT_BODY_LIMIT,
   parseState,
   REVIEW_STATE_VERSION,
@@ -87,19 +86,20 @@ export function planPublish(input: {
     ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
-  const state = fitStateForBody(
-    input.payload.body,
-    {
-      v: REVIEW_STATE_VERSION,
-      ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
-      postedFindings
-    },
-    GITHUB_COMMENT_BODY_LIMIT
-  );
+  const requestedState: ReviewState = {
+    v: REVIEW_STATE_VERSION,
+    ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
+    postedFindings
+  };
+  const summaryBody = embedState(input.payload.body, requestedState, GITHUB_COMMENT_BODY_LIMIT);
+  const state = parseState(summaryBody);
+  if (!state) {
+    throw new Error("prowl-review state marker missing after embedding summary body");
+  }
 
   return {
     priorCommentId: input.priorComment?.id,
-    summaryBody: embedState(input.payload.body, state, GITHUB_COMMENT_BODY_LIMIT),
+    summaryBody,
     newInlineComments,
     state
   };

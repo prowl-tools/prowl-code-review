@@ -102,7 +102,7 @@ export function fitStateWithinCommentLimit(state: ReviewState, maxLength: number
 }
 
 /** Keep enough room for required body markers before fitting the serialized state marker. */
-export function fitStateForBody(body: string, state: ReviewState, maxLength: number): ReviewState {
+function fitStateForBody(body: string, state: ReviewState, maxLength: number): ReviewState {
   const stripped = body.replace(STATE_MARKER_RE, "").trimEnd();
   const separator = "\n\n";
   const preservedPrefix = stripped.startsWith(REVIEW_MARKER) ? REVIEW_MARKER : "";
