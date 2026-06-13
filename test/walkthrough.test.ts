@@ -157,6 +157,25 @@ describe("buildWalkthrough", () => {
     expect(md).not.toContain("<script>alert(1)</script>");
   });
 
+  it("escapes Markdown metacharacters and mentions in finding titles and bodies", () => {
+    const md = buildWalkthrough({
+      findings: [
+        makeFinding("minor", {
+          title: "Notify @team *important* | #123",
+          body: "Use [link](url)\n- item one\n1. item two\ncc @some-user"
+        })
+      ],
+      files
+    });
+
+    expect(md).toContain("Notify &#64;team \\*important\\* \\| \\#123");
+    expect(md).toContain("Use \\[link\\]\\(url\\)\n\\- item one\n1\\. item two\ncc &#64;some-user");
+    expect(md).not.toContain("@team");
+    expect(md).not.toContain("@some-user");
+    expect(md).not.toContain("\n- item one");
+    expect(md).not.toContain("\n1. item two");
+  });
+
   it("marks binary files instead of showing line deltas", () => {
     const md = buildWalkthrough({ findings: [], files: [makeFile("img.png", 0, 0, { binary: true, hunks: [] })] });
     expect(md).toContain("`img.png` — modified (binary)");

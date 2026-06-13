@@ -59,8 +59,8 @@ All notable changes to Prowl Review will be documented in this file.
 - Model JSON-array extraction now skips non-JSON bracketed preambles and returns the first bracketed payload that
   actually parses to an array.
 - Model JSON-array extraction now skips schema-invalid preamble arrays (for example `Reviewed files: ["a.ts"]`)
-  before verifier verdicts or specialist findings, and bracket matching runs in a single pass to avoid repeated
-  rescans of malformed bracket-heavy output.
+  before verifier verdicts or specialist findings, cheaply filters candidates by required schema keys before
+  parsing, and bracket matching runs in a single pass to avoid repeated rescans of malformed bracket-heavy output.
 - Benign context truncation no longer downgrades the whole review (`src/pipeline.ts`, backlog #56):
   a bounded agentic-retrieval hit — max rounds/files reached, or a truncated search/list result —
   was flipping the summary to "⚠️ Review incomplete — coverage degraded" even when all specialist

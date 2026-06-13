@@ -60,6 +60,10 @@ function hasValidVerdictEntry(value: unknown[]): boolean {
   return value.some((entry) => VerdictSchema.safeParse(entry).success);
 }
 
+function mayContainVerdictEntry(json: string): boolean {
+  return json.includes('"index"') && json.includes('"falsePositive"') && json.includes('"confidence"');
+}
+
 export interface VerifyInput {
   /** The (size-guarded) unified diff under review. */
   diff: string;
@@ -172,6 +176,7 @@ export function buildVerifyPrompt(input: {
 export function parseVerdicts(text: string): Verdict[] {
   const candidate = extractJsonArrayCandidate(text, {
     maxChars: DEFAULT_MAX_JSON_ARRAY_CHARS,
+    acceptJson: mayContainVerdictEntry,
     accept: hasValidVerdictEntry
   });
   if (!candidate) {
