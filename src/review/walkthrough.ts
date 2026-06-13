@@ -405,8 +405,8 @@ function notesSection(notes: string[] | undefined): string {
   ].join("\n");
 }
 
-/** Celebration emoji for a genuinely clean review. */
-const CLEAN_EMOJI = "🎉";
+/** Celebration emoji for a genuinely clean review (a "ship it" rocket, not CodeRabbit's 🎉). */
+const CLEAN_EMOJI = "🚀";
 
 /** The three distinct shapes a review comment can take (backlog #56). */
 export type ReviewCommentState = "findings" | "clean" | "degraded";
