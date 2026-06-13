@@ -2,7 +2,10 @@ import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { createOctokit } from "../../github/client.js";
-import { reviewPullRequest } from "../../pipeline.js";
+import { reviewPullRequest, type ReviewPullRequestOptions } from "../../pipeline.js";
+import { resolveProviderConfig } from "../../providers/index.js";
+import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
+import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
 
 /**
@@ -72,13 +75,14 @@ export function loadGuidelines(root: string): string | undefined {
 
 /** Parse an optional severity threshold for filtering findings. */
 export function parseMinSeverity(value: string | undefined): Severity | undefined {
-  if (!value) {
+  const normalized = value?.trim();
+  if (!normalized) {
     return undefined;
   }
-  if (!(SEVERITIES as readonly string[]).includes(value)) {
+  if (!(SEVERITIES as readonly string[]).includes(normalized)) {
     throw new Error(`Invalid --min-severity: ${value} (use one of ${SEVERITIES.join(", ")}).`);
   }
-  return value as Severity;
+  return normalized as Severity;
 }
 
 /** Resolve the repository checkout used by context retrieval. */
@@ -92,8 +96,8 @@ export function resolveGuidelinesWorkspace(): string | undefined {
 }
 
 /** Resolve whether repo-local tooling may execute in the review workspace. */
-export function resolveTrustWorkspace(): boolean {
-  const value = process.env.PROWL_TRUST_WORKSPACE?.trim().toLowerCase();
+export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boolean {
+  const value = env.PROWL_TRUST_WORKSPACE?.trim().toLowerCase();
   return value === "true" || value === "1" || value === "yes";
 }
 
@@ -106,6 +110,107 @@ interface ReviewCommandOptions {
   grounding?: boolean;
   trustWorkspace?: boolean;
   dryRun?: boolean;
+  /** `--config <path>` → string; `--no-config` → false; otherwise true/undefined. */
+  config?: string | boolean;
+}
+
+/** The pipeline-tuning options derived from CLI flags + the config file. */
+type ResolvedReviewOptions = Pick<
+  ReviewPullRequestOptions,
+  | "minSeverity"
+  | "minConfidence"
+  | "maxFindings"
+  | "verify"
+  | "verifyConfidence"
+  | "skipContext"
+  | "contextLimits"
+  | "skipGrounding"
+  | "trustWorkspace"
+  | "diffLimits"
+>;
+
+/** Drop undefined entries so an object of all-undefined collapses to undefined. */
+function compact<T extends Record<string, unknown>>(obj: T): T | undefined {
+  const entries = Object.entries(obj).filter(([, v]) => v !== undefined);
+  return entries.length > 0 ? (Object.fromEntries(entries) as T) : undefined;
+}
+
+function truthyEnv(value: string | undefined): boolean {
+  const normalized = value?.trim().toLowerCase();
+  return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function envString(value: string | undefined): string | undefined {
+  return value?.trim() || undefined;
+}
+
+/** Resolve config-loading inputs from CLI flags and trusted Action env. */
+export function resolveConfigLoadOptions(
+  cli: ReviewCommandOptions,
+  cwd: string,
+  env: NodeJS.ProcessEnv = process.env
+): LoadConfigOptions {
+  if (cli.config === false) {
+    return { cwd, disabled: true };
+  }
+
+  const configPath = typeof cli.config === "string" ? cli.config : envString(env.PROWL_CONFIG_PATH);
+  if (configPath) {
+    return { cwd, configPath };
+  }
+
+  if (truthyEnv(env.PROWL_NO_CONFIG)) {
+    return { cwd, disabled: true };
+  }
+
+  return { cwd };
+}
+
+/** Resolve whether the review should publish or just render output. */
+export function resolveDryRun(
+  cli: ReviewCommandOptions,
+  env: NodeJS.ProcessEnv = process.env
+): boolean {
+  return Boolean(cli.dryRun) || truthyEnv(env.PROWL_DRY_RUN);
+}
+
+/**
+ * Merge CLI flags with the `.prowl-review.yml` config into pipeline options.
+ * Precedence is **CLI flag > config file > built-in default**: an omitted value
+ * stays `undefined` so the pipeline/judge applies its own default. A disable
+ * from either the CLI or the config switches a stage off (the CLI has no
+ * positive re-enable flag). Workspace trust is intentionally out-of-band:
+ * only the CLI flag or environment may enable repo-local code execution.
+ * Pure and env-injectable for testing.
+ */
+export function resolveReviewOptions(
+  cli: ReviewCommandOptions,
+  config: ProwlReviewConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ResolvedReviewOptions {
+  const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
+
+  return {
+    minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
+    minConfidence: config.review?.minConfidence,
+    maxFindings: config.review?.maxFindings,
+    verify: cli.verify === false ? false : config.review?.verify,
+    verifyConfidence: config.review?.verifyConfidence,
+    skipContext:
+      cli.context === false || config.context?.enabled === false ? true : undefined,
+    contextLimits: compact({
+      maxRounds: config.context?.maxRounds,
+      maxFiles: config.context?.maxFiles
+    }),
+    skipGrounding:
+      cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
+    trustWorkspace:
+      cli.trustWorkspace ?? resolveTrustWorkspace(env),
+    diffLimits: compact({
+      maxFiles: config.diff?.maxFiles,
+      maxDiffBytes: config.diff?.maxBytes
+    })
+  };
 }
 
 /** Build the `review` CLI command wired to the end-to-end GitHub review pipeline. */
@@ -121,6 +226,8 @@ export function buildReviewCommand(): Command {
     .option("--no-grounding", "skip linter/SAST grounding")
     .option("--trust-workspace", "allow repo-local linter/SAST tools to execute in the workspace")
     .option("--no-verify", "skip the skeptical false-positive verification pass")
+    .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
+    .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
     .option("--dry-run", "build the review but do not publish it")
     .action(async (options: ReviewCommandOptions) => {
       const token = process.env.GITHUB_TOKEN;
@@ -134,19 +241,23 @@ export function buildReviewCommand(): Command {
       const guidelinesRoot = resolveGuidelinesWorkspace();
       const guidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
 
+      const { config } = loadConfig(resolveConfigLoadOptions(options, root));
+      const providerConfig = resolveProviderConfig(process.env, {
+        provider: config.provider,
+        model: config.model
+      });
+      const resolved = resolveReviewOptions(options, config);
+
       const octokit = createOctokit(token);
       const result = await reviewPullRequest(
         octokit,
         { owner, repo, pull_number: pullNumber },
         {
+          ...resolved,
+          config: providerConfig,
           toolkitRoot: root,
-          skipContext: options.context === false,
-          skipGrounding: options.grounding === false,
-          trustWorkspace: options.trustWorkspace ?? resolveTrustWorkspace(),
-          verify: options.verify !== false,
-          minSeverity: parseMinSeverity(options.minSeverity),
           guidelines,
-          dryRun: Boolean(options.dryRun)
+          dryRun: resolveDryRun(options)
         }
       );
 

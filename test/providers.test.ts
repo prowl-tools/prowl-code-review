@@ -116,6 +116,41 @@ describe("resolveProviderConfig", () => {
     expect(cfg.model).toBe(DEFAULT_MODELS.gemini);
   });
 
+  it("ignores config model when env provider overrides a different config provider", () => {
+    const cfg = resolveProviderConfig(
+      {
+        PROWL_AI_PROVIDER: "anthropic",
+        PROWL_AI_KEY: "k"
+      } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-5.2" }
+    );
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe(DEFAULT_MODELS.anthropic);
+  });
+
+  it("uses config model when env provider matches the config provider", () => {
+    const cfg = resolveProviderConfig(
+      {
+        PROWL_AI_PROVIDER: "openai",
+        PROWL_AI_KEY: "k"
+      } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-custom" }
+    );
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-custom");
+  });
+
+  it("ignores config model when config provider is absent", () => {
+    const cfg = resolveProviderConfig(
+      {
+        PROWL_AI_KEY: "k"
+      } as NodeJS.ProcessEnv,
+      { model: "gpt-custom" }
+    );
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe(DEFAULT_MODELS.anthropic);
+  });
+
   it("uses a published OpenAI default model", () => {
     const cfg = resolveProviderConfig({
       PROWL_AI_PROVIDER: "openai",
