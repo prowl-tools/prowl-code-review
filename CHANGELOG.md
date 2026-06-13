@@ -34,9 +34,9 @@ All notable changes to Prowl Review will be documented in this file.
   failback + heartbeat progress logs remain open under #17.
 
 ### Changed
-- Swapped the clean "No issues found" headline emoji from the raccoon to a celebration 🎉
-  (`src/review/walkthrough.ts`): the clean state now reads `✅ No issues found 🎉` (and
-  `✅ No issues found in reviewed files 🎉` when files were skipped).
+- Swapped the clean "No issues found" headline emoji from the raccoon to a "ship it" rocket 🚀
+  (`src/review/walkthrough.ts`): the clean state now reads `✅ No issues found 🚀` (and
+  `✅ No issues found in reviewed files 🚀` when files were skipped).
 - Verification now re-checks every inline-posted finding, not just low-confidence ones
   (`src/review/verify.ts`, #8/#58 noise follow-up): a finding is a verification candidate when it is
   **blocking (major+) OR below `verifyConfidence`**. Previously only sub-0.8 findings were verified, so a
