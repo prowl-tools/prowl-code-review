@@ -164,13 +164,20 @@ describe("runReview", () => {
     expect(result.judge.belowThreshold).toBeGreaterThan(0);
   });
 
-  it("runs the verification pass on low-confidence findings and drops false positives", async () => {
-    // One specialist emits a high-confidence keeper and a low-confidence suspect.
+  it("verifies all blocking findings — even confident ones — and drops false positives", async () => {
+    // Both findings are `major` (they post inline), so both are verified regardless
+    // of the 0.95 confidence on "real" that previously bought a skip past verification.
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       const prompt = request.prompt;
       if (request.system?.includes("false-positive verifier")) {
-        // Verifier sees a single candidate (the 0.4 suspect) → call it a false positive.
-        return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+        expect(prompt).toContain("real"); // confident major is still verified now
+        expect(prompt).toContain("bogus");
+        return reply(
+          JSON.stringify([
+            { index: 0, falsePositive: false, confidence: 0.95 },
+            { index: 1, falsePositive: true, confidence: 0.1 }
+          ])
+        );
       }
       if (prompt.includes("Correctness reviewer")) {
         return reply(
@@ -185,8 +192,8 @@ describe("runReview", () => {
 
     const result = await runReview({ diff: "d" }, { config, complete });
 
-    // Verifier saw exactly the one sub-threshold finding and dropped it.
-    expect(result.verification.verified).toBe(1);
+    // Both blocking findings were verified; the bogus one was dropped.
+    expect(result.verification.verified).toBe(2);
     expect(result.verification.droppedFalsePositive).toBe(1);
     expect(result.raw).toHaveLength(2); // raw is pre-verification
     expect(result.findings).toHaveLength(1);
