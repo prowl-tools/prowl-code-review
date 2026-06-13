@@ -185,11 +185,81 @@ function escapeMarkdownParagraphBlock(value: string): string {
   return value.split(/\r\n|\r|\n/).map(escapeMarkdownParagraph).join("\n");
 }
 
+/** Pick a backtick fence longer than any run inside `content`, so it can't break out. */
+function fenceFor(content: string): string {
+  const longestRun = Math.max(0, ...Array.from(content.matchAll(/`+/g), (m) => m[0].length));
+  return "`".repeat(Math.max(3, longestRun + 1));
+}
+
 /** Wrap suggested code in a ```suggestion fence longer than any backtick run in it. */
 function suggestionBlock(code: string): string {
-  const longestRun = Math.max(0, ...Array.from(code.matchAll(/`+/g), (m) => m[0].length));
-  const fence = "`".repeat(Math.max(3, longestRun + 1));
+  const fence = fenceFor(code);
   return `${fence}suggestion\n${code.replace(/\n$/, "")}\n${fence}`;
+}
+
+/**
+ * Strip control characters so untrusted finding text can't break out of a code
+ * fence or smuggle terminal/markup escapes. Newlines and tabs are preserved
+ * (the agent prompt is multi-line literal text); CR is normalized to LF and any
+ * other C0/DEL control is dropped. Fence-widening (see {@link fenceFor}) handles
+ * embedded backtick runs.
+ */
+function sanitizeForCodeFence(value: string): string {
+  let out = "";
+  for (const char of value.replaceAll("\r\n", "\n").replaceAll("\r", "\n")) {
+    const code = char.charCodeAt(0);
+    if (code === 0x09 || code === 0x0a) {
+      out += char;
+    } else if (code <= 0x1f || code === 0x7f) {
+      // drop other control characters
+    } else {
+      out += char;
+    }
+  }
+  return out;
+}
+
+/** Fixed instruction appended to every agent-fix prompt (#57). */
+const AGENT_PROMPT_INSTRUCTION =
+  "Instructions: verify the finding against the current code; if it is valid, apply the smallest " +
+  "change that resolves it without altering unrelated behavior and re-run the build and tests; if it " +
+  "is not valid, leave the code unchanged and explain why.";
+
+/**
+ * Build the collapsed "Resolve with an AI agent" block for a finding (#57): a
+ * ready-to-copy, fenced (non-rendered) prompt carrying the finding's location,
+ * severity, category, title, body, and committable suggestion (when present),
+ * plus a fixed verify-or-fix instruction. Untrusted finding text is
+ * control-char sanitized and the fence is widened past any backtick run in it,
+ * so it cannot escape the code block or inject markdown/HTML.
+ */
+function agentPromptBlock(finding: Finding): string {
+  const lines = [
+    "Resolve this prowl-review finding.",
+    "",
+    `Location: ${findingLocation(finding)}`,
+    `Severity: ${finding.severity}`,
+    `Category: ${finding.category}`,
+    `Title: ${finding.title}`,
+    "",
+    "Details:",
+    finding.body
+  ];
+  if (hasSuggestion(finding)) {
+    lines.push("", "Suggested fix:", finding.suggestion ?? "");
+  }
+  lines.push("", AGENT_PROMPT_INSTRUCTION);
+
+  const content = sanitizeForCodeFence(lines.join("\n"));
+  const fence = fenceFor(content);
+  return [
+    "<details>",
+    "<summary>🤖 Resolve with an AI agent</summary>",
+    "",
+    `${fence}text\n${content}\n${fence}`,
+    "",
+    "</details>"
+  ].join("\n");
 }
 
 /** Return true when a finding includes a non-empty committable suggestion. */
@@ -203,8 +273,14 @@ function hasMultiLineSuggestion(finding: Finding): boolean {
   return suggestion.includes("\n");
 }
 
-/** Format one finding as an inline comment body (severity badge + optional fix). */
-export function formatFindingComment(finding: Finding): string {
+/** Options governing how a finding comment is rendered. */
+export interface FindingCommentOptions {
+  /** Append the "Resolve with an AI agent" prompt block (#57). Default true. */
+  agentPrompt?: boolean;
+}
+
+/** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
+export function formatFindingComment(finding: Finding, options: FindingCommentOptions = {}): string {
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     "",
@@ -212,6 +288,10 @@ export function formatFindingComment(finding: Finding): string {
   ];
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
+  }
+  // Default on: a copy-paste prompt so a coding agent can verify-and-fix (#57).
+  if (options.agentPrompt !== false) {
+    parts.push("", agentPromptBlock(finding));
   }
   return parts.join("\n");
 }
@@ -228,17 +308,17 @@ function findingLocation(finding: Finding): string {
 }
 
 /** Format a finding that could not be emitted as an inline GitHub comment. */
-function formatUnmappedFinding(finding: Finding): string {
-  return [`### ${escapeMarkdownText(findingLocation(finding))}`, "", formatFindingComment(finding)].join("\n");
+function formatUnmappedFinding(finding: Finding, options: FindingCommentOptions): string {
+  return [`### ${escapeMarkdownText(findingLocation(finding))}`, "", formatFindingComment(finding, options)].join("\n");
 }
 
 /** Build the fallback review-body section for findings outside changed diff lines. */
-function formatUnmappedFindings(findings: Finding[]): string {
+function formatUnmappedFindings(findings: Finding[], options: FindingCommentOptions): string {
   if (findings.length === 0) {
     return "";
   }
 
-  const entries = findings.map(formatUnmappedFinding).join("\n\n");
+  const entries = findings.map((finding) => formatUnmappedFinding(finding, options)).join("\n\n");
   return [
     "## Unmapped findings",
     "",
@@ -249,8 +329,8 @@ function formatUnmappedFindings(findings: Finding[]): string {
 }
 
 /** Append unmapped findings to the review body without changing inline comments. */
-function withUnmappedFindings(summaryBody: string, unmapped: Finding[]): string {
-  const section = formatUnmappedFindings(unmapped);
+function withUnmappedFindings(summaryBody: string, unmapped: Finding[], options: FindingCommentOptions): string {
+  const section = formatUnmappedFindings(unmapped, options);
   return [summaryBody.trimEnd(), section].filter(Boolean).join("\n\n");
 }
 
@@ -260,7 +340,11 @@ function withUnmappedFindings(summaryBody: string, unmapped: Finding[]): string 
  * become ranges when every line sits inside the same diff hunk. Everything else
  * is `unmapped`.
  */
-export function buildInlineComments(findings: Finding[], diff: ParsedDiff): InlineMapping {
+export function buildInlineComments(
+  findings: Finding[],
+  diff: ParsedDiff,
+  options: FindingCommentOptions = {}
+): InlineMapping {
   const lines = newSideLineHunks(diff);
   const comments: ReviewComment[] = [];
   const unmapped: Finding[] = [];
@@ -285,7 +369,7 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
       path: finding.file,
       line: finding.line,
       side: "RIGHT",
-      body: formatFindingComment(finding),
+      body: formatFindingComment(finding, options),
       fingerprint: findingFingerprint(finding)
     };
 
@@ -309,17 +393,22 @@ export function buildInlineComments(findings: Finding[], diff: ParsedDiff): Inli
  * Only blocking findings (`major`+) become inline/unmapped comments; nitpicks
  * (`minor` and below) live in the summary's collapsed nitpick section instead of
  * peppering the diff (#58).
+ *
+ * `agentPrompt` (default on) appends a copy-paste "Resolve with an AI agent"
+ * block to every finding comment — inline and unmapped alike (#57).
  */
 export function buildReviewPayload(input: {
   findings: Finding[];
   diff: ParsedDiff;
   summaryBody: string;
   event?: ReviewEvent;
+  agentPrompt?: boolean;
 }): ReviewPayload {
+  const commentOptions: FindingCommentOptions = { agentPrompt: input.agentPrompt };
   const blocking = input.findings.filter(isBlockingFinding);
-  const { comments, unmapped } = buildInlineComments(blocking, input.diff);
+  const { comments, unmapped } = buildInlineComments(blocking, input.diff, commentOptions);
   return {
-    body: withUnmappedFindings(input.summaryBody, unmapped),
+    body: withUnmappedFindings(input.summaryBody, unmapped, commentOptions),
     event: input.event ?? "COMMENT",
     comments
   };

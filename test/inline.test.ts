@@ -140,7 +140,12 @@ describe("formatFindingComment", () => {
   });
 
   it("escapes markdown and neutralizes mentions in finding text", () => {
-    const body = formatFindingComment(f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }));
+    // agentPrompt off so this isolates the rendered comment (the agent block keeps
+    // raw text literal inside a code fence, where GitHub suppresses mentions/markdown).
+    const body = formatFindingComment(
+      f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }),
+      { agentPrompt: false }
+    );
 
     expect(body).toContain("Ping &#64;team \\*now\\* &amp; later");
     expect(body).toContain("1\\. &#64;team &lt;script&gt; &amp;\\#x3C;img&amp;\\#x3E; \\*bold\\*");
@@ -167,6 +172,56 @@ describe("formatFindingComment", () => {
 
   it("omits the suggestion block when there is no fix", () => {
     expect(formatFindingComment(f())).not.toContain("```suggestion");
+  });
+});
+
+describe("agent-fix prompt (#57)", () => {
+  it("appends a collapsed copy-paste agent prompt by default", () => {
+    const body = formatFindingComment(
+      f({ severity: "major", category: "security", title: "SQLi", body: "Concatenated query", line: 6, endLine: 7 })
+    );
+    expect(body).toContain("<summary>🤖 Resolve with an AI agent</summary>");
+    expect(body).toContain("Resolve this prowl-review finding.");
+    expect(body).toContain("Location: src/a.ts:6-7");
+    expect(body).toContain("Severity: major");
+    expect(body).toContain("Category: security");
+    expect(body).toContain("Title: SQLi");
+    expect(body).toContain("Concatenated query");
+    expect(body).toContain("Instructions: verify the finding against the current code");
+  });
+
+  it("omits the agent prompt when disabled", () => {
+    const body = formatFindingComment(f(), { agentPrompt: false });
+    expect(body).not.toContain("Resolve with an AI agent");
+  });
+
+  it("includes the committable suggestion inside the agent prompt when present", () => {
+    const body = formatFindingComment(f({ suggestion: "const safe = escape(x);" }));
+    expect(body).toContain("Suggested fix:");
+    expect(body).toContain("const safe = escape(x);");
+  });
+
+  it("widens the agent-prompt fence past any backtick run in the finding text", () => {
+    // A finding whose body embeds a ``` fence must not let the agent block be closed early.
+    const body = formatFindingComment(f({ body: "see ```js\ncode\n``` here" }));
+    expect(body).toContain("````text"); // fence widened to 4 backticks
+  });
+
+  it("sanitizes control characters out of the agent prompt (no fence break-out)", () => {
+    const body = formatFindingComment(f({ title: "weird\u0007\u0000 title" }));
+    // Bell/NUL are dropped; the visible characters survive.
+    expect(body).toContain("Title: weird title");
+    expect(body).not.toContain("\u0007");
+    expect(body).not.toContain("\u0000");
+  });
+
+  it("renders the agent prompt on unmapped findings too, and respects the toggle", () => {
+    const findings = [f({ line: 99, title: "Unmapped" })]; // line not in the diff → unmapped
+    const on = buildReviewPayload({ findings, diff, summaryBody: "## w" });
+    expect(on.body).toContain("🤖 Resolve with an AI agent");
+
+    const off = buildReviewPayload({ findings, diff, summaryBody: "## w", agentPrompt: false });
+    expect(off.body).not.toContain("Resolve with an AI agent");
   });
 });
 
