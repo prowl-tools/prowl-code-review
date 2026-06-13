@@ -37,13 +37,18 @@ function findJsonArrayEnds(text: string): Map<number, number> {
 }
 
 export interface ExtractedJsonArray {
+  /** Raw JSON array slice isolated from the model response. */
   json: string;
+  /** Parsed value for the isolated JSON array. */
   value: unknown[];
 }
 
 export interface ExtractJsonArrayOptions {
+  /** Maximum full response and candidate payload size to consider. */
   maxChars?: number;
+  /** Cheap raw-string predicate used before attempting JSON.parse. */
   acceptJson?: (json: string) => boolean;
+  /** Parsed-array predicate used to reject schema-invalid arrays. */
   accept?: (value: unknown[]) => boolean;
 }
 
@@ -72,17 +77,23 @@ export function extractJsonArrayCandidate(
       continue;
     }
     const json = withoutFences.slice(start, end + 1);
+    let skipNestedCandidates = false;
     if (json.length <= maxChars && (!options.acceptJson || options.acceptJson(json))) {
       try {
         const parsed: unknown = JSON.parse(json);
-        if (Array.isArray(parsed) && (!options.accept || options.accept(parsed))) {
-          return { json, value: parsed };
+        if (Array.isArray(parsed)) {
+          if (!options.accept || options.accept(parsed)) {
+            return { json, value: parsed };
+          }
+          skipNestedCandidates = true;
         }
       } catch {
         // Keep scanning; this bracketed region was prose, not JSON.
       }
+    } else if (json.length <= maxChars && options.acceptJson) {
+      skipNestedCandidates = true;
     }
-    searchFrom = start + 1;
+    searchFrom = skipNestedCandidates ? end + 1 : start + 1;
   }
   return null;
 }
