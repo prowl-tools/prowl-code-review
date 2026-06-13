@@ -405,6 +405,9 @@ function notesSection(notes: string[] | undefined): string {
   ].join("\n");
 }
 
+/** Celebration emoji for a genuinely clean review. */
+const CLEAN_EMOJI = "🎉";
+
 /** The three distinct shapes a review comment can take (backlog #56). */
 export type ReviewCommentState = "findings" | "clean" | "degraded";
 
@@ -469,8 +472,8 @@ export function buildWalkthrough(input: WalkthroughInput): string {
     // (the "Not reviewed" note below lists what was skipped). (#56)
     const headline =
       (input.skipped?.length ?? 0) > 0
-        ? "✅ No issues found in reviewed files"
-        : "✅ No issues found";
+        ? `✅ No issues found in reviewed files ${CLEAN_EMOJI}`
+        : `✅ No issues found ${CLEAN_EMOJI}`;
     sections.push(headline, reviewInfoDetails(input, impact, effort), changedFilesSection(input.files, lineDeltas));
   } else if (state === "degraded") {
     const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
