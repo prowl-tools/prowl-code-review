@@ -145,6 +145,7 @@ describe("planPublish", () => {
     });
 
     expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
+    expect(plan.summaryBody.startsWith(REVIEW_MARKER)).toBe(true);
     expect(plan.state.postedFindings.length).toBeLessThan(priorPostedFindings.length);
     expect(plan.state.postedFindings.at(-1)).toBe(priorPostedFindings.at(-1));
     expect(plan.state.postedFindings).not.toContain(priorPostedFindings[0]);

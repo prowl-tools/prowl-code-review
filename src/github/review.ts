@@ -4,7 +4,7 @@ import type { ReviewComment, ReviewPayload } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
   embedState,
-  fitStateWithinCommentLimit,
+  fitStateForBody,
   GITHUB_COMMENT_BODY_LIMIT,
   parseState,
   REVIEW_STATE_VERSION,
@@ -87,11 +87,15 @@ export function planPublish(input: {
     ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
-  const state = fitStateWithinCommentLimit({
-    v: REVIEW_STATE_VERSION,
-    ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
-    postedFindings
-  }, GITHUB_COMMENT_BODY_LIMIT);
+  const state = fitStateForBody(
+    input.payload.body,
+    {
+      v: REVIEW_STATE_VERSION,
+      ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
+      postedFindings
+    },
+    GITHUB_COMMENT_BODY_LIMIT
+  );
 
   return {
     priorCommentId: input.priorComment?.id,
