@@ -273,7 +273,7 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
       state.sinceMs = tsMs;
       state.since = record.ts;
     }
-    if (state.untilMs === undefined || tsMs >= state.untilMs) {
+    if (state.untilMs === undefined || tsMs > state.untilMs) {
       state.untilMs = tsMs;
       state.until = record.ts;
     }
