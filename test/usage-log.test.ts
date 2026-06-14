@@ -177,12 +177,12 @@ describe("aggregateUsage", () => {
     expect(agg.until).toBe("2026-06-13T23:00:00Z");
   });
 
-  it("keeps the first timestamp string when parsed timestamps tie", () => {
+  it("keeps the last timestamp string when parsed timestamps tie for until", () => {
     const agg = aggregateUsage([
       record({ ts: "2026-06-14T00:00:00Z" }),
       record({ ts: "2026-06-13T19:00:00-05:00" })
     ]);
     expect(agg.since).toBe("2026-06-14T00:00:00Z");
-    expect(agg.until).toBe("2026-06-14T00:00:00Z");
+    expect(agg.until).toBe("2026-06-13T19:00:00-05:00");
   });
 });
