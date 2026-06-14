@@ -1,12 +1,19 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOctokit } from "../../github/client.js";
-import { reviewPullRequest, type ReviewPullRequestOptions } from "../../pipeline.js";
-import { resolveProviderConfig } from "../../providers/index.js";
+import {
+  ReviewPublishError,
+  reviewPullRequest,
+  type ReviewPullRequestOptions,
+  type ReviewPullRequestResult
+} from "../../pipeline.js";
+import { resolveProviderConfig, type ProviderConfig } from "../../providers/index.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
+import { estimateCost, formatCostLine, type PriceOverrides } from "../../cost/pricing.js";
+import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 
 /**
  * `prowl-review review` — review a pull request and publish findings.
@@ -179,6 +186,30 @@ export function resolveDryRun(
 }
 
 /**
+ * Resolve where (if anywhere) to append the per-run usage record (#36).
+ * `PROWL_USAGE_LOG` wins when it stays inside the workspace; otherwise local
+ * runs log under the workspace, while ephemeral GitHub Actions runs skip the
+ * log (cost still goes to the logs + job summary) since the file wouldn't
+ * survive the runner.
+ */
+export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const workspaceRoot = resolve(workspace);
+  const explicit = envString(env.PROWL_USAGE_LOG);
+  if (explicit) {
+    const explicitPath = resolve(workspaceRoot, explicit);
+    const relativePath = relative(workspaceRoot, explicitPath);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      return null;
+    }
+    return explicitPath;
+  }
+  if (env.GITHUB_ACTIONS === "true") {
+    return null;
+  }
+  return defaultUsageLogPath(workspaceRoot);
+}
+
+/**
  * Merge CLI flags with the `.prowl-review.yml` config into pipeline options.
  * Precedence is **CLI flag > config file > built-in default**: an omitted value
  * stays `undefined` so the pipeline/judge applies its own default. A disable
@@ -222,6 +253,82 @@ export function resolveReviewOptions(
   };
 }
 
+interface ReportReviewCommandResultOptions {
+  owner: string;
+  repo: string;
+  pullNumber: number;
+  root: string;
+  providerConfig: ProviderConfig;
+  pricing?: PriceOverrides;
+  env?: NodeJS.ProcessEnv;
+  now?: () => Date;
+  publishFailed?: boolean;
+}
+
+export function reportReviewCommandResult(
+  result: ReviewPullRequestResult,
+  options: ReportReviewCommandResultOptions
+): void {
+  const env = options.env ?? process.env;
+  const count = result.review.findings.length;
+  const inline = result.payload.comments.length;
+  const publishStatus = result.posted
+    ? "— posted"
+    : options.publishFailed
+      ? "— publish failed (not posted)"
+      : "— dry run (not posted)";
+
+  console.log(
+    `prowl-review: ${count} finding(s), ${inline} inline, ${result.contextFiles} context file(s) on ` +
+      `${options.owner}/${options.repo}#${options.pullNumber} ${publishStatus}`
+  );
+
+  const outputPath = env.GITHUB_OUTPUT;
+  if (outputPath) {
+    try {
+      appendFileSync(outputPath, `findings=${count}\nposted=${result.posted}\n`);
+    } catch {
+      // non-fatal: output file unavailable
+    }
+  }
+
+  // Per-review cost transparency (#36): emit to logs + the Action job summary
+  // (never the PR comment), and append to the local usage log for `costs`.
+  const cost = estimateCost(
+    result.usage,
+    options.providerConfig.provider,
+    options.providerConfig.model,
+    options.pricing ?? {}
+  );
+  console.log(`prowl-review cost: ${formatCostLine(cost)}`);
+
+  const summaryPath = env.GITHUB_STEP_SUMMARY;
+  if (summaryPath) {
+    try {
+      appendFileSync(summaryPath, `### prowl-review cost\n\n- ${formatCostLine(cost)}\n`);
+    } catch {
+      // non-fatal: job summary unavailable
+    }
+  }
+
+  const usageLogPath = resolveUsageLogPath(options.root, env);
+  if (usageLogPath) {
+    try {
+      appendUsageRecord(
+        usageLogPath,
+        toUsageRecord(cost, {
+          ts: (options.now?.() ?? new Date()).toISOString(),
+          repo: `${options.owner}/${options.repo}`,
+          pr: options.pullNumber
+        }),
+        { workspace: options.root }
+      );
+    } catch {
+      // non-fatal: usage log unavailable
+    }
+  }
+}
+
 /** Build the `review` CLI command wired to the end-to-end GitHub review pipeline. */
 export function buildReviewCommand(): Command {
   const command = new Command("review");
@@ -259,32 +366,37 @@ export function buildReviewCommand(): Command {
       const resolved = resolveReviewOptions(options, config);
 
       const octokit = createOctokit(token);
-      const result = await reviewPullRequest(
-        octokit,
-        { owner, repo, pull_number: pullNumber },
-        {
-          ...resolved,
-          config: providerConfig,
-          toolkitRoot: root,
-          guidelines,
-          dryRun: resolveDryRun(options)
-        }
-      );
+      const reviewOptions = {
+        ...resolved,
+        config: providerConfig,
+        toolkitRoot: root,
+        guidelines,
+        dryRun: resolveDryRun(options)
+      };
 
-      const count = result.review.findings.length;
-      const inline = result.payload.comments.length;
-      console.log(
-        `prowl-review: ${count} finding(s), ${inline} inline, ${result.contextFiles} context file(s) on ` +
-          `${owner}/${repo}#${pullNumber} ${result.posted ? "— posted" : "— dry run (not posted)"}`
-      );
-
-      const outputPath = process.env.GITHUB_OUTPUT;
-      if (outputPath) {
-        try {
-          appendFileSync(outputPath, `findings=${count}\nposted=${result.posted}\n`);
-        } catch {
-          // non-fatal: output file unavailable
+      try {
+        const result = await reviewPullRequest(octokit, { owner, repo, pull_number: pullNumber }, reviewOptions);
+        reportReviewCommandResult(result, {
+          owner,
+          repo,
+          pullNumber,
+          root,
+          providerConfig,
+          pricing: config.pricing ?? {}
+        });
+      } catch (error) {
+        if (error instanceof ReviewPublishError) {
+          reportReviewCommandResult(error.result, {
+            owner,
+            repo,
+            pullNumber,
+            root,
+            providerConfig,
+            pricing: config.pricing ?? {},
+            publishFailed: true
+          });
         }
+        throw error;
       }
     });
 

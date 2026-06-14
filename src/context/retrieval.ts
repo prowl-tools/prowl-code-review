@@ -123,16 +123,32 @@ export interface GatherContextParams {
   retry?: RetryOptions;
 }
 
+export class ContextRetrievalError extends Error {
+  readonly usage: TokenUsage;
+  readonly rounds: number;
+  readonly notes: string[];
+
+  constructor(message: string, options: { usage: TokenUsage; rounds: number; notes: string[] }) {
+    super(message);
+    this.name = "ContextRetrievalError";
+    this.usage = options.usage;
+    this.rounds = options.rounds;
+    this.notes = [...options.notes];
+  }
+}
+
 interface ExecutedTool {
   content: string;
   reachedLimit: boolean;
 }
 
 function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
   return {
     inputTokens: a.inputTokens + b.inputTokens,
     outputTokens: a.outputTokens + b.outputTokens,
-    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
   };
 }
 
@@ -283,10 +299,16 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
     }
     rounds += 1;
 
-    const result = await run(
-      { system: params.system, messages, tools: REVIEW_TOOLS },
-      config
-    );
+    let result: ToolCompletionResult;
+    try {
+      result = await run(
+        { system: params.system, messages, tools: REVIEW_TOOLS },
+        config
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ContextRetrievalError(message, { usage, rounds, notes });
+    }
     usage = addUsage(usage, result.usage);
 
     if (result.stopReason !== "tool_use" || result.toolCalls.length === 0) {

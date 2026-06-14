@@ -188,7 +188,7 @@ describe("anthropic provider", () => {
     });
   });
 
-  it("counts cache creation tokens as uncached input", async () => {
+  it("tracks cache creation tokens separately from uncached input", async () => {
     const fn = mockFetch({
       content: [{ type: "text", text: "review" }],
       usage: {
@@ -203,9 +203,10 @@ describe("anthropic provider", () => {
 
     expect(urlOf(fn)).toBe("https://api.anthropic.com/v1/messages");
     expect(result.usage).toEqual({
-      inputTokens: 400,
+      inputTokens: 100,
       outputTokens: 20,
-      cachedInputTokens: 900
+      cachedInputTokens: 900,
+      cacheWriteInputTokens: 300
     });
   });
 
@@ -345,7 +346,8 @@ describe("gemini provider", () => {
       usageMetadata: {
         promptTokenCount: 500,
         candidatesTokenCount: 40,
-        cachedContentTokenCount: 100
+        cachedContentTokenCount: 100,
+        thoughtsTokenCount: 7
       }
     });
 
@@ -361,7 +363,7 @@ describe("gemini provider", () => {
     expect(result.text).toBe("review");
     expect(result.usage).toEqual({
       inputTokens: 400,
-      outputTokens: 40,
+      outputTokens: 47,
       cachedInputTokens: 100
     });
   });

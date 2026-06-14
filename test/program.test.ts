@@ -8,10 +8,12 @@ describe("buildProgram", () => {
     expect(CLI_VERSION).toMatch(/^\d+\.\d+\.\d+/);
   });
 
-  it("registers the review and eval commands", () => {
+  it("registers the review, eval, init, and costs commands", () => {
     const program = buildProgram();
     const names = program.commands.map((command) => command.name());
     expect(names).toContain("review");
     expect(names).toContain("eval");
+    expect(names).toContain("init");
+    expect(names).toContain("costs");
   });
 });

@@ -46,10 +46,12 @@ export interface CompletionRequest {
 export interface TokenUsage {
   /** Uncached input tokens (billed at full rate). */
   inputTokens: number;
-  /** Generated output tokens. */
+  /** Billed generated response tokens, including provider-reported thinking tokens when applicable. */
   outputTokens: number;
   /** Input tokens served from cache (billed at the discounted read rate). */
   cachedInputTokens: number;
+  /** Input tokens written to a provider cache, when reported separately. */
+  cacheWriteInputTokens?: number;
 }
 
 export interface CompletionResult {
