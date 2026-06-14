@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { findUsageLog, readUsageRecords, aggregateUsage, type UsageRecord } from "../../cost/usage-log.js";
+import { findUsageLog, readUsageRecords, aggregateUsage, aggregateUsageAsync, type UsageRecord } from "../../cost/usage-log.js";
 import { renderCostReportMarkdown, renderCostReportJson } from "../../cost/report.js";
 
 /**
@@ -38,6 +38,17 @@ export function filterRecordsSince(records: UsageRecord[], cutoff: string | unde
   return records.filter((record) => typeof record.ts === "string" && record.ts >= cutoff);
 }
 
+async function* filterRecordsSinceAsync(
+  records: AsyncIterable<UsageRecord>,
+  cutoff: string | undefined
+): AsyncGenerator<UsageRecord> {
+  for await (const record of records) {
+    if (!cutoff || (typeof record.ts === "string" && record.ts >= cutoff)) {
+      yield record;
+    }
+  }
+}
+
 export interface CostsCommandDeps {
   /** Resolve the usage-log path; defaults to an upward search from cwd. */
   resolveLogPath?: (cliPath: string | undefined) => string | null;
@@ -52,8 +63,9 @@ export async function runCostsCommand(options: CostsCommandOptions, deps: CostsC
   const logPath = resolveLogPath(options.log);
 
   const cutoff = parseSinceDays(options.since, now);
-  const records = logPath ? filterRecordsSince(await readUsageRecords(logPath), cutoff) : [];
-  const aggregate = aggregateUsage(records);
+  const aggregate = logPath
+    ? await aggregateUsageAsync(filterRecordsSinceAsync(readUsageRecords(logPath), cutoff))
+    : aggregateUsage([]);
 
   const output = options.json ? renderCostReportJson(aggregate) : renderCostReportMarkdown(aggregate);
   console.log(output);

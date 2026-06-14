@@ -153,6 +153,7 @@ export {
   appendUsageRecord,
   readUsageRecords,
   aggregateUsage,
+  aggregateUsageAsync,
   toUsageRecord,
   defaultUsageLogPath,
   findUsageLog,
