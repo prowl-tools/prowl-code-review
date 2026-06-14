@@ -11,6 +11,14 @@ function markdownTableCell(value: string): string {
   return escapeMarkdownDisplayText(value);
 }
 
+function markdownTimestamp(value: string): string {
+  const parsed = Date.parse(value);
+  if (Number.isFinite(parsed)) {
+    return new Date(parsed).toISOString();
+  }
+  return escapeMarkdownDisplayText(value);
+}
+
 /** Render the usage aggregate as a markdown summary for the terminal. */
 export function renderCostReportMarkdown(aggregate: UsageAggregate): string {
   if (aggregate.runs === 0) {
@@ -18,7 +26,9 @@ export function renderCostReportMarkdown(aggregate: UsageAggregate): string {
   }
 
   const window =
-    aggregate.since && aggregate.until ? `${aggregate.since} → ${aggregate.until}` : "—";
+    aggregate.since && aggregate.until
+      ? `${markdownTimestamp(aggregate.since)} → ${markdownTimestamp(aggregate.until)}`
+      : "—";
   const estimate = aggregate.priced ? "" : " (partial — some runs had no known price)";
   const lines = [
     "# prowl-review cost report",
