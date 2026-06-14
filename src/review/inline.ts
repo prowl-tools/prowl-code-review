@@ -496,6 +496,11 @@ export interface BuildInlineCommentsOptions extends FindingCommentOptions {
   maxComments?: number;
 }
 
+/**
+ * Convert ranked blocking findings into GitHub inline comments up to the
+ * configured cap, returning unanchored findings separately from cap overflow so
+ * callers can preserve both groups in the summary body.
+ */
 export function buildInlineComments(
   findings: Finding[],
   diff: ParsedDiff,

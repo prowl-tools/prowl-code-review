@@ -469,6 +469,32 @@ describe("inline-comment cap (#25)", () => {
     expect(payload.body).not.toContain("Finding 1"); // stayed inline, not in overflow
   });
 
+  it("groups overflow findings by severity in the summary", () => {
+    const findings = [
+      f({ line: 1, severity: "critical", title: "Finding 1" }),
+      f({ line: 2, severity: "major", title: "Finding 2" }),
+      f({ line: 3, severity: "critical", title: "Finding 3" }),
+      f({ line: 4, severity: "major", title: "Finding 4" })
+    ];
+    const payload = buildReviewPayload({
+      findings,
+      diff: wideDiff,
+      summaryBody: "## w",
+      maxInlineComments: 1,
+      agentPrompt: false
+    });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].line).toBe(1);
+    expect(payload.body).toContain("3 more findings (inline comment cap: 1)");
+    expect(payload.body).toMatch(/\*\*🔴 critical \(1\)\*\*/);
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).toMatch(/\*\*🟠 major \(2\)\*\*/);
+    expect(payload.body).toContain("src/a\\.ts:2 — Finding 2");
+    expect(payload.body).toContain("src/a\\.ts:4 — Finding 4");
+    expect(payload.body).not.toContain("Finding 1"); // stayed inline
+  });
+
   it("applies the default cap when none is given", () => {
     const findings = majors(DEFAULT_MAX_INLINE_COMMENTS + 3);
     // Only 6 lines are anchorable, so at most 6 could be inline anyway — widen the diff.
