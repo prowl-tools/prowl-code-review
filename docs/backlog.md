@@ -15,11 +15,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    - Acceptance: language-agnostic parsing via tree-sitter grammars (TS/JS, Python, Go, Ruby, Java, etc.) feeding caller/definition lookup for #4.
    - Acceptance: per-language linter auto-selection in grounding (#16); graceful degradation for unsupported languages (still reviews via the LLM, just without AST-assisted context).
 
-7. **Findings structured-output hardening** *(schema + base prompts delivered with #6)*
-   As a maintainer, I want robust structured output from review passes, so that findings parse reliably even when a model returns malformed or empty JSON.
-   - Acceptance: retry a pass once on unparseable/empty output before giving up (today `parseFindings` just drops invalid entries).
-   - Acceptance: use providers' native structured-output / JSON mode where available, instead of prompt-instructed JSON.
-
 51. **Custom / configurable specialist reviewers**
     As a team, I want to define my own review lenses beyond the built-ins, so that `prowl-review` enforces my org's specific standards (e.g. an internal-RFC "compliance" pass) without me building the orchestration — the customization Cloudflare hard-coded for themselves, made generic and BYOK.
     - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.
