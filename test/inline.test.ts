@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildInlineComments, buildReviewPayload, formatFindingComment } from "../src/review/inline.js";
+import { buildInlineComments, buildReviewPayload, formatFindingComment, DEFAULT_MAX_INLINE_COMMENTS } from "../src/review/inline.js";
 import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
@@ -423,5 +423,91 @@ describe("buildReviewPayload", () => {
     expect(payload.body).toContain("Nitpicks");
     expect(payload.body).toContain("nit");
     expect(payload.body).toContain("Fix the lint warning.");
+  });
+});
+
+describe("inline-comment cap (#25)", () => {
+  // A diff whose new-side lines 1..6 are all anchorable.
+  const wideDiff: ParsedDiff = {
+    files: [
+      {
+        path: "src/a.ts",
+        status: "modified",
+        binary: false,
+        byteSize: 0,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 0,
+            newStart: 1,
+            newLines: 6,
+            section: "",
+            lines: Array.from({ length: 6 }, (_, i) => ({ type: "add" as const, content: `l${i + 1}`, newLine: i + 1 }))
+          }
+        ]
+      }
+    ]
+  };
+
+  function majors(n: number): Finding[] {
+    return Array.from({ length: n }, (_, i) =>
+      f({ line: i + 1, severity: i === 0 ? "critical" : "major", title: `Finding ${i + 1}` })
+    );
+  }
+
+  it("caps inline comments and rolls the ranked overflow into a grouped summary section", () => {
+    const findings = majors(5);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 2, agentPrompt: false });
+
+    expect(payload.comments).toHaveLength(2); // first two ranked findings stay inline
+    expect(payload.comments.map((c) => c.line)).toEqual([1, 2]);
+
+    // The remaining three are reported in the summary, grouped by severity, with the cap + count.
+    expect(payload.body).toContain("3 more findings (inline comment cap: 2)");
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).toContain("src/a\\.ts:5 — Finding 5");
+    expect(payload.body).not.toContain("Finding 1"); // stayed inline, not in overflow
+  });
+
+  it("applies the default cap when none is given", () => {
+    const findings = majors(DEFAULT_MAX_INLINE_COMMENTS + 3);
+    // Only 6 lines are anchorable, so at most 6 could be inline anyway — widen the diff.
+    const bigDiff: ParsedDiff = {
+      files: [
+        {
+          path: "src/a.ts",
+          status: "modified",
+          binary: false,
+          byteSize: 0,
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 0,
+              newStart: 1,
+              newLines: findings.length,
+              section: "",
+              lines: findings.map((_, i) => ({ type: "add" as const, content: `l${i + 1}`, newLine: i + 1 }))
+            }
+          ]
+        }
+      ]
+    };
+    const payload = buildReviewPayload({ findings, diff: bigDiff, summaryBody: "## w", agentPrompt: false });
+    expect(payload.comments).toHaveLength(DEFAULT_MAX_INLINE_COMMENTS);
+    expect(payload.body).toContain(`3 more findings (inline comment cap: ${DEFAULT_MAX_INLINE_COMMENTS})`);
+  });
+
+  it("puts every blocking finding in the summary when the cap is 0", () => {
+    const findings = majors(3);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 0, agentPrompt: false });
+    expect(payload.comments).toHaveLength(0);
+    expect(payload.body).toContain("3 more findings (inline comment cap: 0)");
+  });
+
+  it("adds no overflow section when findings fit under the cap", () => {
+    const findings = majors(2);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 5, agentPrompt: false });
+    expect(payload.comments).toHaveLength(2);
+    expect(payload.body).not.toContain("inline comment cap");
   });
 });

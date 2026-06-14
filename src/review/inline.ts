@@ -36,12 +36,17 @@ export interface ReviewComment {
   fingerprint: string;
 }
 
+/** Default ceiling on inline comments per review, so a big PR isn't carpet-bombed (#25). */
+export const DEFAULT_MAX_INLINE_COMMENTS = 20;
+
 /** Result of mapping findings into inline comments. */
 export interface InlineMapping {
   /** Findings successfully anchored as GitHub inline review comments. */
   comments: ReviewComment[];
   /** Findings that couldn't be anchored to a changed line. */
   unmapped: Finding[];
+  /** Mappable findings dropped from inline because the volume cap was reached (#25). */
+  overflow: Finding[];
 }
 
 /** Complete review payload ready to publish to GitHub. */
@@ -431,6 +436,47 @@ function formatUnmappedFindings(
   return section;
 }
 
+/**
+ * Render the inline-cap overflow as a compact section grouped by severity (#25):
+ * one line per finding (`badge location — title`), so a large PR's extra
+ * findings are reported in the summary without re-bloating it with full bodies.
+ * Returns "" when nothing overflowed.
+ */
+function formatOverflowFindings(overflow: Finding[], cap: number): string {
+  if (overflow.length === 0) {
+    return "";
+  }
+
+  const lines = [
+    `## ${overflow.length} more finding${overflow.length === 1 ? "" : "s"} (inline comment cap: ${cap})`,
+    "",
+    "The inline-comment cap was reached; these additional findings are listed here instead of on the diff."
+  ];
+
+  // Group by severity in precedence order; only severities that occur are shown.
+  for (const severity of Object.keys(SEVERITY_BADGE) as Severity[]) {
+    const group = overflow.filter((finding) => finding.severity === severity);
+    if (group.length === 0) {
+      continue;
+    }
+    lines.push("", `**${SEVERITY_BADGE[severity]} ${severity} (${group.length})**`);
+    for (const finding of group) {
+      lines.push(
+        `- ${escapeMarkdownText(findingLocation(finding))} — ${escapeMarkdownText(finding.title)}`
+      );
+    }
+  }
+
+  return lines.join("\n");
+}
+
+/** Append the overflow section to the review body. */
+function withOverflowFindings(summaryBody: string, overflow: Finding[], cap: number): string {
+  const trimmed = summaryBody.trimEnd();
+  const section = formatOverflowFindings(overflow, cap);
+  return [trimmed, section].filter(Boolean).join("\n\n");
+}
+
 /** Append unmapped findings to the review body without changing inline comments. */
 function withUnmappedFindings(summaryBody: string, unmapped: Finding[], options: FindingCommentOptions): string {
   const trimmed = summaryBody.trimEnd();
@@ -445,14 +491,21 @@ function withUnmappedFindings(summaryBody: string, unmapped: Finding[], options:
  * become ranges when every line sits inside the same diff hunk. Everything else
  * is `unmapped`.
  */
+export interface BuildInlineCommentsOptions extends FindingCommentOptions {
+  /** Max inline comments to emit; mappable findings beyond it become `overflow` (#25). */
+  maxComments?: number;
+}
+
 export function buildInlineComments(
   findings: Finding[],
   diff: ParsedDiff,
-  options: FindingCommentOptions = {}
+  options: BuildInlineCommentsOptions = {}
 ): InlineMapping {
   const lines = newSideLineHunks(diff);
+  const maxComments = options.maxComments ?? Infinity;
   const comments: ReviewComment[] = [];
   const unmapped: Finding[] = [];
+  const overflow: Finding[] = [];
 
   for (const finding of findings) {
     const fileLines = lines.get(finding.file);
@@ -467,6 +520,13 @@ export function buildInlineComments(
 
     if (hasSuggestion(finding) && !canAnchorRange && (hasRange || hasMultiLineSuggestion(finding))) {
       unmapped.push(finding);
+      continue;
+    }
+
+    // The volume cap (#25): findings are ranked, so the first `maxComments` keep
+    // their inline comments and the rest roll into the summary's overflow section.
+    if (comments.length >= maxComments) {
+      overflow.push(finding);
       continue;
     }
 
@@ -487,7 +547,7 @@ export function buildInlineComments(
     comments.push(comment);
   }
 
-  return { comments, unmapped };
+  return { comments, unmapped, overflow };
 }
 
 /**
@@ -501,6 +561,10 @@ export function buildInlineComments(
  *
  * `agentPrompt` (default on) appends a copy-paste "Resolve with an AI agent"
  * block to every finding comment — inline and unmapped alike (#57).
+ *
+ * `maxInlineComments` (default {@link DEFAULT_MAX_INLINE_COMMENTS}) caps inline
+ * comments so a large PR isn't carpet-bombed; ranked overflow rolls into a
+ * compact severity-grouped summary section that reports the cap + count (#25).
  */
 export function buildReviewPayload(input: {
   findings: Finding[];
@@ -508,12 +572,18 @@ export function buildReviewPayload(input: {
   summaryBody: string;
   event?: ReviewEvent;
   agentPrompt?: boolean;
+  maxInlineComments?: number;
 }): ReviewPayload {
   const commentOptions: FindingCommentOptions = { agentPrompt: input.agentPrompt };
+  const cap = input.maxInlineComments ?? DEFAULT_MAX_INLINE_COMMENTS;
   const blocking = input.findings.filter(isBlockingFinding);
-  const { comments, unmapped } = buildInlineComments(blocking, input.diff, commentOptions);
+  const { comments, unmapped, overflow } = buildInlineComments(blocking, input.diff, {
+    ...commentOptions,
+    maxComments: cap
+  });
+  const withUnmapped = withUnmappedFindings(input.summaryBody, unmapped, commentOptions);
   return {
-    body: withUnmappedFindings(input.summaryBody, unmapped, commentOptions),
+    body: withOverflowFindings(withUnmapped, overflow, cap),
     event: input.event ?? "COMMENT",
     comments
   };
