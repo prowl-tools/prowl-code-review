@@ -38,10 +38,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: per-model-family failback (fall back to an older generation on persistent overload, not across providers); failback only on retryable errors (429/503) after retries are exhausted.
     - Acceptance: heartbeat progress logs so long model "thinking" isn't mistaken for a hung job (wire the existing `onRetry` hook + a periodic tick).
 
-18. **Per-PR budget cap**
-    As a developer, I want a max-spend ceiling per review, so that a huge PR can't quietly cost me real money.
-    - Acceptance: configurable token/cost cap; when exceeded, the tool trims scope (or posts a "review truncated — raise the cap" note) instead of running unbounded.
-
 20. **Fork-PR handling / security model**
     As an OSS maintainer, I want defined behavior on fork PRs, so that the tool degrades safely when secrets and write tokens aren't available.
     - Acceptance: detect fork PRs (read-only token / no `PROWL_AI_KEY`); fall back to a documented mode (e.g. summary-only via `pull_request_target` guidance, or skip with a clear message). No secret leakage to fork code.

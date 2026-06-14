@@ -202,6 +202,58 @@ export function estimateCost(
   };
 }
 
+/** Sum every token kind in a usage record (the unit the budget cap counts, #18). */
+export function totalTokens(usage: TokenUsage): number {
+  return (
+    usage.inputTokens +
+    usage.outputTokens +
+    usage.cachedInputTokens +
+    (usage.cacheWriteInputTokens ?? 0)
+  );
+}
+
+/** A per-PR spend ceiling (#18); set either or both. */
+export interface Budget {
+  /** Max total tokens (input+output+cached+cache-write) across the review. */
+  maxTokens?: number;
+  /** Max estimated USD; converted to a token ceiling via the model's input rate. */
+  maxUsd?: number;
+}
+
+/**
+ * Resolve a {@link Budget} into an effective max-token ceiling for mid-run
+ * enforcement. `maxUsd` is converted to tokens via the model's **input** rate
+ * (review spend is input-dominated) — an estimate, like all #36 figures — and
+ * is dropped with a note when the model has no known price. With both set, the
+ * tighter ceiling wins.
+ */
+export function resolveTokenBudget(
+  budget: Budget | undefined,
+  provider: ProviderName,
+  model: string,
+  overrides: PriceOverrides = {}
+): { tokens: number | null; notes: string[] } {
+  if (!budget) {
+    return { tokens: null, notes: [] };
+  }
+  const ceilings: number[] = [];
+  const notes: string[] = [];
+  if (typeof budget.maxTokens === "number") {
+    ceilings.push(budget.maxTokens);
+  }
+  if (typeof budget.maxUsd === "number") {
+    const price = resolveModelPrice(provider, model, overrides);
+    if (price && price.input > 0) {
+      ceilings.push(Math.floor((budget.maxUsd / price.input) * 1_000_000));
+    } else {
+      notes.push(
+        `Budget maxUsd ignored: no known price for ${provider}/${model} — set pricing in config or use maxTokens.`
+      );
+    }
+  }
+  return { tokens: ceilings.length > 0 ? Math.min(...ceilings) : null, notes };
+}
+
 /** Format a USD amount for display (more precision for sub-dollar amounts). */
 export function formatUsd(usd: number | null): string {
   if (usd === null) {

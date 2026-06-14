@@ -12,6 +12,7 @@ import {
 import { type Finding, type Severity, parseFindings } from "./findings.js";
 import { judgeFindings, type JudgeResult } from "./judge.js";
 import { verifyFindings, type VerifyResult } from "./verify.js";
+import { totalTokens } from "../cost/pricing.js";
 import {
   DEFAULT_SPECIALISTS,
   buildSpecialistPrompt,
@@ -60,6 +61,8 @@ export interface RunReviewOptions {
   verify?: boolean;
   /** Non-blocking findings at/above this confidence skip verification. Default 0.8 (#8). */
   verifyConfidence?: number;
+  /** Token budget (#18): when the specialist passes have already spent it, skip verification. */
+  maxTokens?: number;
   /** Injectable completion (defaults to the provider dispatcher, wrapped in retry). */
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
   /** Retry/backoff config for transient provider errors (#17). Applied to the default completion. */
@@ -160,23 +163,26 @@ export async function runReview(
 
   // Skeptical false-positive pass (#8): re-check blocking (inline-posted) and
   // low-confidence findings before the judge so confirmed bugs survive and
-  // false positives — even confident ones — are dropped.
-  const verification =
-    options.verify === false
-      ? {
-          findings: raw,
-          verified: 0,
-          droppedFalsePositive: 0,
-          demoted: 0,
-          unverified: 0,
-          ok: true,
-          usage: emptyUsage()
-        }
-      : await verifyFindings(
-          raw,
-          { diff: input.diff, context: input.context },
-          { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
-        );
+  // false positives — even confident ones — are dropped. Skipped when the token
+  // budget (#18) is already spent by the specialist passes.
+  const budgetSpent = options.maxTokens !== undefined && totalTokens(usage) >= options.maxTokens;
+  const skipVerification = options.verify === false || budgetSpent;
+  const verification = skipVerification
+    ? {
+        findings: raw,
+        verified: 0,
+        droppedFalsePositive: 0,
+        demoted: 0,
+        unverified: 0,
+        ok: true,
+        usage: emptyUsage(),
+        skippedForBudget: budgetSpent || undefined
+      }
+    : await verifyFindings(
+        raw,
+        { diff: input.diff, context: input.context },
+        { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
+      );
   usage = addUsage(usage, verification.usage);
   const verificationReport = {
     verified: verification.verified,
@@ -184,7 +190,8 @@ export async function runReview(
     demoted: verification.demoted,
     unverified: verification.unverified,
     ok: verification.ok,
-    error: verification.error
+    error: verification.error,
+    skippedForBudget: verification.skippedForBudget
   };
 
   const { findings, ...judge } = judgeFindings(verification.findings, {
