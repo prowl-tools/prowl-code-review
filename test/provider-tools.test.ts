@@ -139,7 +139,7 @@ describe("gemini completeWithTools", () => {
           }
         }
       ],
-      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5 }
+      usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, thoughtsTokenCount: 3 }
     });
 
     const result = await completeWithTools(
@@ -151,6 +151,7 @@ describe("gemini completeWithTools", () => {
     expect(body.tools[0].functionDeclarations).toHaveLength(1);
     expect(result.stopReason).toBe("tool_use");
     expect(result.toolCalls).toEqual([{ id: "call_1", name: "read_file", input: { path: "a.ts" } }]);
+    expect(result.usage).toEqual({ inputTokens: 10, outputTokens: 8, cachedInputTokens: 0 });
   });
 
   it("sends safety settings and bounded thinking config for tool requests", async () => {

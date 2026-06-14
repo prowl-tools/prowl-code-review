@@ -346,7 +346,8 @@ describe("gemini provider", () => {
       usageMetadata: {
         promptTokenCount: 500,
         candidatesTokenCount: 40,
-        cachedContentTokenCount: 100
+        cachedContentTokenCount: 100,
+        thoughtsTokenCount: 7
       }
     });
 
@@ -362,7 +363,7 @@ describe("gemini provider", () => {
     expect(result.text).toBe("review");
     expect(result.usage).toEqual({
       inputTokens: 400,
-      outputTokens: 40,
+      outputTokens: 47,
       cachedInputTokens: 100
     });
   });
