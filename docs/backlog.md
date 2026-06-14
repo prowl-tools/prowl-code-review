@@ -20,11 +20,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
    - Acceptance: retry a pass once on unparseable/empty output before giving up (today `parseFindings` just drops invalid entries).
    - Acceptance: use providers' native structured-output / JSON mode where available, instead of prompt-instructed JSON.
 
-14. **Security hardening: prompt-injection resistance + agent tool sandboxing**
-    As a maintainer, I want the reviewer hardened against malicious PR content, so that an untrusted diff/comment can't hijack the review, its retrieval tools, or its commands.
-    - Acceptance: all PR content (diff, code, comments, titles, branch names) is treated as untrusted **data, not instructions**; the system prompt enforces this; detected injection attempts are ignored and may be surfaced as a finding.
-    - Acceptance: the agentic retrieval tools (#4) are confined to the repo checkout — no reads outside the workspace, no network exfiltration; bot commands (#24) authorize only a known verb allowlist.
-
 51. **Custom / configurable specialist reviewers**
     As a team, I want to define my own review lenses beyond the built-ins, so that `prowl-review` enforces my org's specific standards (e.g. an internal-RFC "compliance" pass) without me building the orchestration — the customization Cloudflare hard-coded for themselves, made generic and BYOK.
     - Acceptance: `.prowl-review.yml` accepts additional reviewers, each with a name, focus prompt, optional severity floor, and optional model; they run as extra passes in the #6 multi-pass set and feed the same judge/dedup.

@@ -135,6 +135,7 @@ export {
 export { parseDiff } from "./review/parse-diff.js";
 export { applyDiffLimits, describeSkipped } from "./review/size-guards.js";
 export { filterIgnoredDiffFiles, isIgnoredPath, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
+export { detectInjectionAttempts, injectionNotes, looksLikeInjection, type InjectionHit } from "./review/injection.js";
 export type {
   ParsedDiff,
   DiffFile,
