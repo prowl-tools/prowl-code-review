@@ -144,12 +144,15 @@ export { detectInjectionAttempts, injectionNotes, looksLikeInjection, type Injec
 export {
   estimateCost,
   resolveModelPrice,
+  resolveTokenBudget,
+  totalTokens,
   formatUsd,
   formatCostLine,
   DEFAULT_PRICES,
   type ModelPrice,
   type PriceOverrides,
-  type CostEstimate
+  type CostEstimate,
+  type Budget
 } from "./cost/pricing.js";
 export {
   appendUsageRecord,

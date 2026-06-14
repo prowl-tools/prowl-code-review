@@ -378,4 +378,22 @@ describe("gatherContext", () => {
     expect(file?.content).toContain("[REDACTED");
     expect(result.notes.some((n) => n.includes("Redacted"))).toBe(true);
   });
+
+  it("stops the retrieval loop once the token budget is spent (#18)", async () => {
+    // Each round spends USAGE (2 tokens). The agent keeps requesting tools, but a
+    // 3-token budget halts the loop after the second round (accumulated 4 ≥ 3).
+    const run = scripted([toolUse([{ id: "c1", name: "read_file", input: { path: "src/a.ts" } }])]);
+
+    const result = await gatherContext({
+      toolkit: { root },
+      changedPaths: ["src/a.ts"],
+      config,
+      runCompletion: run,
+      limits: { maxTokens: 3 }
+    });
+
+    expect(result.rounds).toBe(2);
+    expect(result.reachedLimit).toBe(true);
+    expect(result.notes.some((n) => n.includes("context token budget"))).toBe(true);
+  });
 });

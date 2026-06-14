@@ -201,6 +201,33 @@ describe("runReview", () => {
     expect(result.findings[0].title).toBe("real");
   });
 
+  it("skips verification when the token budget is already spent (#18)", async () => {
+    let verifierCalled = false;
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.system?.includes("false-positive verifier")) {
+        verifierCalled = true; // would drop the finding if reached
+        return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+      }
+      if (request.prompt.includes("Correctness reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "suspect", body: "x", confidence: 0.6 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+
+    // maxTokens 1 is spent by the specialist passes, so verification is skipped.
+    const result = await runReview({ diff: "d" }, { config, complete, maxTokens: 1 });
+
+    expect(verifierCalled).toBe(false);
+    expect(result.verification.skippedForBudget).toBe(true);
+    expect(result.verification.verified).toBe(0);
+    expect(result.findings).toHaveLength(1); // survives because verification was skipped
+    expect(result.findings[0].title).toBe("suspect");
+  });
+
   it("keeps findings when the verification call fails (no silent drop)", async () => {
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       if (request.system?.includes("false-positive verifier")) {
