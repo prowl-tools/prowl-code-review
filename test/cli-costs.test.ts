@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { parseSinceDays, filterRecordsSince, runCostsCommand } from "../src/cli/commands/costs.js";
+import { parseSinceDays, resolveCostsLogPath, filterRecordsSince, runCostsCommand } from "../src/cli/commands/costs.js";
 import { appendUsageRecord, defaultUsageLogPath, type UsageRecord } from "../src/cost/usage-log.js";
 
 let logSpy: ReturnType<typeof vi.spyOn>;
@@ -48,6 +48,23 @@ describe("parseSinceDays", () => {
   it("rejects non-positive / non-numeric values", () => {
     expect(() => parseSinceDays("0", now)).toThrow(/Invalid --since/);
     expect(() => parseSinceDays("x", now)).toThrow(/Invalid --since/);
+  });
+});
+
+describe("resolveCostsLogPath", () => {
+  it("resolves explicit log paths inside the workspace and rejects traversal", () => {
+    const root = tempDir();
+    expect(resolveCostsLogPath("logs/u.jsonl", root)).toBe(join(root, "logs", "u.jsonl"));
+    expect(resolveCostsLogPath(join(root, "tmp", "u.jsonl"), root)).toBe(join(root, "tmp", "u.jsonl"));
+    expect(resolveCostsLogPath("../u.jsonl", root)).toBeNull();
+    expect(resolveCostsLogPath(join(tempDir(), "u.jsonl"), root)).toBeNull();
+  });
+
+  it("finds the default usage log when no explicit path is supplied", () => {
+    const root = tempDir();
+    const path = defaultUsageLogPath(root);
+    appendUsageRecord(path, record());
+    expect(resolveCostsLogPath(undefined, join(root, "nested"))).toBe(path);
   });
 });
 

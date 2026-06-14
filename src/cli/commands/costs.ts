@@ -1,4 +1,5 @@
 import { Command } from "commander";
+import { isAbsolute, relative, resolve } from "node:path";
 import { findUsageLog, readUsageRecords, aggregateUsage, aggregateUsageAsync, type UsageRecord } from "../../cost/usage-log.js";
 import { renderCostReportMarkdown, renderCostReportJson } from "../../cost/report.js";
 
@@ -28,6 +29,20 @@ export function parseSinceDays(value: string | undefined, now: Date): string | u
     throw new Error(`Invalid --since: ${value} (use a positive number of days).`);
   }
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
+}
+
+/** Resolve `--log` inside `cwd`; without it, search upward for the default log. */
+export function resolveCostsLogPath(cliPath: string | undefined, cwd: string): string | null {
+  const workspaceRoot = resolve(cwd);
+  if (!cliPath) {
+    return findUsageLog(workspaceRoot);
+  }
+  const explicitPath = resolve(workspaceRoot, cliPath);
+  const relativePath = relative(workspaceRoot, explicitPath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return null;
+  }
+  return explicitPath;
 }
 
 /** Keep only records at/after `cutoff`; all records when no cutoff. */
@@ -72,7 +87,7 @@ export interface CostsCommandDeps {
 export async function runCostsCommand(options: CostsCommandOptions, deps: CostsCommandDeps = {}): Promise<string> {
   const now = deps.now?.() ?? new Date();
   const resolveLogPath =
-    deps.resolveLogPath ?? ((cliPath) => cliPath ?? findUsageLog(process.cwd()));
+    deps.resolveLogPath ?? ((cliPath) => resolveCostsLogPath(cliPath, process.cwd()));
   const logPath = resolveLogPath(options.log);
 
   const cutoff = parseSinceDays(options.since, now);
