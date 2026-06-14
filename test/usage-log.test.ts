@@ -124,6 +124,25 @@ describe("usage log round-trip", () => {
     expect(records[0].pr).toBe(7);
   });
 
+  it("skips records with negative usage or cost values", async () => {
+    const dir = tempDir();
+    mkdirSync(join(dir, USAGE_LOG_DIR), { recursive: true });
+    const path = join(dir, USAGE_LOG_DIR, USAGE_LOG_FILENAME);
+    const lines = [
+      record({ pr: 7 }),
+      record({ inputTokens: -1 }),
+      record({ outputTokens: -1 }),
+      record({ cachedInputTokens: -1 }),
+      record({ cacheWriteInputTokens: -1 }),
+      record({ usd: -0.01 })
+    ];
+    writeFileSync(path, `${lines.map((line) => JSON.stringify(line)).join("\n")}\n`);
+
+    const records = await collect(readUsageRecords(path));
+    expect(records).toHaveLength(1);
+    expect(records[0].pr).toBe(7);
+  });
+
   it("returns [] for a missing log", async () => {
     await expect(collect(readUsageRecords(join(tempDir(), "nope.jsonl")))).resolves.toEqual([]);
   });

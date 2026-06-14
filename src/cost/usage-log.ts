@@ -235,6 +235,11 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/** True when a decoded JSON value is a finite non-negative number. */
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return isFiniteNumber(value) && value >= 0;
+}
+
 /** Runtime guard for provider names persisted in usage logs. */
 function isProviderName(value: unknown): value is ProviderName {
   return typeof value === "string" && (PROVIDER_NAMES as readonly string[]).includes(value);
@@ -251,11 +256,11 @@ function isUsageRecord(value: unknown): value is UsageRecord {
     isProviderName(record.provider) &&
     typeof record.model === "string" &&
     record.model.length > 0 &&
-    isFiniteNumber(record.inputTokens) &&
-    isFiniteNumber(record.outputTokens) &&
-    isFiniteNumber(record.cachedInputTokens) &&
-    (record.cacheWriteInputTokens === undefined || isFiniteNumber(record.cacheWriteInputTokens)) &&
-    (record.usd === null || isFiniteNumber(record.usd)) &&
+    isNonNegativeFiniteNumber(record.inputTokens) &&
+    isNonNegativeFiniteNumber(record.outputTokens) &&
+    isNonNegativeFiniteNumber(record.cachedInputTokens) &&
+    (record.cacheWriteInputTokens === undefined || isNonNegativeFiniteNumber(record.cacheWriteInputTokens)) &&
+    (record.usd === null || isNonNegativeFiniteNumber(record.usd)) &&
     (record.repo === undefined || typeof record.repo === "string") &&
     (record.pr === undefined || isFiniteNumber(record.pr))
   );

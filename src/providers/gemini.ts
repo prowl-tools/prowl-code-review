@@ -23,6 +23,7 @@ interface GeminiUsage {
   promptTokenCount?: number;
   candidatesTokenCount?: number;
   cachedContentTokenCount?: number;
+  thoughtsTokenCount?: number;
 }
 
 interface GeminiResponse {
@@ -133,9 +134,10 @@ function geminiHeaders(apiKey: string): Record<string, string> {
 function mapUsage(usage: GeminiUsage | undefined): TokenUsage {
   const cachedInputTokens = usage?.cachedContentTokenCount ?? 0;
   const promptTokens = usage?.promptTokenCount ?? 0;
+  const outputTokens = (usage?.candidatesTokenCount ?? 0) + (usage?.thoughtsTokenCount ?? 0);
   return {
     inputTokens: Math.max(promptTokens - cachedInputTokens, 0),
-    outputTokens: usage?.candidatesTokenCount ?? 0,
+    outputTokens,
     cachedInputTokens
   };
 }
