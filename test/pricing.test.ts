@@ -7,6 +7,8 @@ const usage: TokenUsage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cac
 describe("resolveModelPrice", () => {
   it("matches a model by built-in prefix", () => {
     expect(resolveModelPrice("anthropic", "claude-sonnet-4-6")).toEqual({ input: 3, output: 15, cachedInput: 0.3 });
+    expect(resolveModelPrice("anthropic", "claude-opus-4-8")).toEqual({ input: 5, output: 25, cachedInput: 0.5 });
+    expect(resolveModelPrice("anthropic", "claude-haiku-4-5-20251001")).toEqual({ input: 1, output: 5, cachedInput: 0.1 });
     expect(resolveModelPrice("openai", "gpt-5.2")).toEqual({ input: 1.25, output: 10, cachedInput: 0.125 });
   });
 
@@ -29,6 +31,7 @@ describe("resolveModelPrice", () => {
 
   it("returns null for an unknown model", () => {
     expect(resolveModelPrice("anthropic", "mystery-model")).toBeNull();
+    expect(resolveModelPrice("anthropic", "claude-opus-4-9")).toBeNull();
   });
 });
 
@@ -94,5 +97,15 @@ describe("formatUsd / formatCostLine", () => {
       model: "gpt|spoof"
     });
     expect(line).toContain("openai/gpt\\|spoof");
+  });
+
+  it("removes line breaks from model names in cost lines", () => {
+    const line = formatCostLine({
+      ...estimateCost(usage, "openai", "gpt-5"),
+      model: "gpt\nspoof\rline"
+    });
+    expect(line).toContain("openai/gpt spoof line");
+    expect(line).not.toContain("\n");
+    expect(line).not.toContain("\r");
   });
 });

@@ -75,15 +75,24 @@ export function escapeMarkdownDisplayText(value: string): string {
 }
 
 /**
- * Built-in price table, keyed by a model-id **prefix** (longest match wins), so
- * `claude-sonnet-4-6` resolves via the `claude-sonnet` entry. Estimates as of
- * 2026; override in config if a rate is stale. USD per 1M tokens.
+ * Built-in price table, keyed by a model-id **prefix** (longest match wins).
+ * For providers with versioned model families, entries stay version-specific so
+ * unknown future models return `n/a` until listed or overridden in config.
+ * Estimates as of 2026; override in config if a rate is stale. USD per 1M tokens.
  */
 export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = {
   anthropic: {
-    "claude-opus": { input: 15, output: 75, cachedInput: 1.5 },
-    "claude-sonnet": { input: 3, output: 15, cachedInput: 0.3 },
-    "claude-haiku": { input: 0.8, output: 4, cachedInput: 0.08 }
+    "claude-fable-5": { input: 10, output: 50, cachedInput: 1 },
+    "claude-mythos-5": { input: 10, output: 50, cachedInput: 1 },
+    "claude-opus-4-8": { input: 5, output: 25, cachedInput: 0.5 },
+    "claude-opus-4-7": { input: 5, output: 25, cachedInput: 0.5 },
+    "claude-opus-4-6": { input: 5, output: 25, cachedInput: 0.5 },
+    "claude-opus-4-5": { input: 5, output: 25, cachedInput: 0.5 },
+    "claude-opus-4-1": { input: 15, output: 75, cachedInput: 1.5 },
+    "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 },
+    "claude-sonnet-4-5": { input: 3, output: 15, cachedInput: 0.3 },
+    "claude-haiku-4-5": { input: 1, output: 5, cachedInput: 0.1 },
+    "claude-haiku-3-5": { input: 0.8, output: 4, cachedInput: 0.08 }
   },
   openai: {
     "gpt-5-mini": { input: 0.25, output: 2, cachedInput: 0.025 },
@@ -172,5 +181,6 @@ export function formatCostLine(estimate: CostEstimate): string {
   const tokens =
     `in ${estimate.inputTokens.toLocaleString()} / out ${estimate.outputTokens.toLocaleString()} / ` +
     `cached ${estimate.cachedInputTokens.toLocaleString()} tok`;
-  return `${cost} · ${estimate.provider}/${escapeMarkdownDisplayText(estimate.model)} · ${tokens} [estimated]`;
+  const model = escapeMarkdownDisplayText(estimate.model.replaceAll("\r", " ").replaceAll("\n", " "));
+  return `${cost} · ${estimate.provider}/${model} · ${tokens} [estimated]`;
 }
