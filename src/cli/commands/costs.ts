@@ -30,20 +30,33 @@ export function parseSinceDays(value: string | undefined, now: Date): string | u
   return new Date(now.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
-/** Keep only records at/after `cutoff` (ISO compare); all records when no cutoff. */
+/** Keep only records at/after `cutoff`; all records when no cutoff. */
 export function filterRecordsSince(records: UsageRecord[], cutoff: string | undefined): UsageRecord[] {
   if (!cutoff) {
     return records;
   }
-  return records.filter((record) => typeof record.ts === "string" && record.ts >= cutoff);
+  const cutoffMs = Date.parse(cutoff);
+  if (!Number.isFinite(cutoffMs)) {
+    return [];
+  }
+  return records.filter((record) => {
+    const tsMs = Date.parse(record.ts);
+    return Number.isFinite(tsMs) && tsMs >= cutoffMs;
+  });
 }
 
+/** Stream records at/after `cutoff` without buffering the log. */
 async function* filterRecordsSinceAsync(
   records: AsyncIterable<UsageRecord>,
   cutoff: string | undefined
 ): AsyncGenerator<UsageRecord> {
+  const cutoffMs = cutoff ? Date.parse(cutoff) : undefined;
+  if (cutoffMs !== undefined && !Number.isFinite(cutoffMs)) {
+    return;
+  }
   for await (const record of records) {
-    if (!cutoff || (typeof record.ts === "string" && record.ts >= cutoff)) {
+    const tsMs = Date.parse(record.ts);
+    if (cutoffMs === undefined || (Number.isFinite(tsMs) && tsMs >= cutoffMs)) {
       yield record;
     }
   }

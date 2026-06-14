@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parseSinceDays, filterRecordsSince, runCostsCommand } from "../src/cli/commands/costs.js";
 import { appendUsageRecord, defaultUsageLogPath, type UsageRecord } from "../src/cost/usage-log.js";
 
@@ -58,6 +58,15 @@ describe("filterRecordsSince", () => {
     expect(kept).toHaveLength(1);
     expect(kept[0].ts).toBe("2026-06-13T00:00:00Z");
   });
+  it("compares parsed timestamps, including offsets", () => {
+    const records = [
+      record({ ts: "2026-06-14T00:30:00+02:00" }),
+      record({ ts: "2026-06-13T23:00:00Z" })
+    ];
+    const kept = filterRecordsSince(records, "2026-06-13T22:45:00Z");
+    expect(kept).toHaveLength(1);
+    expect(kept[0].ts).toBe("2026-06-13T23:00:00Z");
+  });
   it("returns all records when there is no cutoff", () => {
     const records = [record(), record()];
     expect(filterRecordsSince(records, undefined)).toHaveLength(2);
@@ -89,6 +98,15 @@ describe("runCostsCommand", () => {
 
   it("reports an empty state when there is no log", async () => {
     const out = await runCostsCommand({}, { resolveLogPath: () => null });
+    expect(out).toContain("No local usage recorded yet");
+  });
+
+  it("reports an empty state when the log file exists but is empty", async () => {
+    const path = defaultUsageLogPath(tempDir());
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, "", "utf8");
+
+    const out = await runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
     expect(out).toContain("No local usage recorded yet");
   });
 

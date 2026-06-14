@@ -78,6 +78,7 @@ describe("formatUsd / formatCostLine", () => {
 
   it("sanitizes model names for human-readable output", () => {
     expect(sanitizeDisplayText("gpt\u001b[31m-red\u001b[0m<script>")).toBe("gpt-redscript");
+    expect(sanitizeDisplayText("\u001b[31")).toBe("[31");
     const line = formatCostLine({
       ...estimateCost(usage, "openai", "gpt-5"),
       model: "gpt\u001b[31m-red\u001b[0m<script>"
@@ -85,5 +86,13 @@ describe("formatUsd / formatCostLine", () => {
     expect(line).toContain("openai/gpt-redscript");
     expect(line).not.toContain("\u001b[31m");
     expect(line).not.toContain("<script>");
+  });
+
+  it("escapes markdown table metacharacters in model names", () => {
+    const line = formatCostLine({
+      ...estimateCost(usage, "openai", "gpt-5"),
+      model: "gpt|spoof"
+    });
+    expect(line).toContain("openai/gpt\\|spoof");
   });
 });
