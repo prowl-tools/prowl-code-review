@@ -66,7 +66,7 @@ export function sanitizeDisplayText(value: string): string {
 
 /** Escape sanitized display text for inline Markdown and table cells. */
 export function escapeMarkdownDisplayText(value: string): string {
-  const markdownChars = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|"]);
+  const markdownChars = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|", "~"]);
   let escaped = "";
   for (const char of sanitizeDisplayText(value)) {
     escaped += markdownChars.has(char) ? `\\${char}` : char;

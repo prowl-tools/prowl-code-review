@@ -148,4 +148,12 @@ describe("runCostsCommand", () => {
     expect(out).not.toContain("\u001b[31m");
     expect(out).not.toContain("<script>");
   });
+
+  it("escapes markdown formatting characters in report model names", async () => {
+    const path = defaultUsageLogPath(tempDir());
+    appendUsageRecord(path, record({ model: "~~claude~~" }));
+
+    const out = await runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
+    expect(out).toContain("anthropic/\\~\\~claude\\~\\~");
+  });
 });
