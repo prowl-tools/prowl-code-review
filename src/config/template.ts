@@ -20,6 +20,9 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # provider: anthropic        # anthropic | openai | gemini
 # model: <provider default>  # e.g. claude-... / gpt-... / gemini-...
 
+# --- Presentation -------------------------------------------------------------
+# agentPrompt: true          # append a copy-paste "Resolve with an AI agent" prompt to each finding
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info

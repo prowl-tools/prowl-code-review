@@ -140,11 +140,22 @@ describe("formatFindingComment", () => {
   });
 
   it("escapes markdown and neutralizes mentions in finding text", () => {
-    const body = formatFindingComment(f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }));
+    // agentPrompt off so this isolates the rendered comment (the agent block keeps
+    // raw text literal inside a code fence, where GitHub suppresses mentions/markdown).
+    const body = formatFindingComment(
+      f({ title: "Ping @team *now* & later", body: "1. @team <script> &#x3C;img&#x3E; *bold*" }),
+      { agentPrompt: false }
+    );
 
     expect(body).toContain("Ping &#64;team \\*now\\* &amp; later");
     expect(body).toContain("1\\. &#64;team &lt;script&gt; &amp;\\#x3C;img&amp;\\#x3E; \\*bold\\*");
     expect(body).not.toContain("@team");
+  });
+
+  it("treats agentPrompt undefined as default on", () => {
+    const body = formatFindingComment(f({ title: "Default prompt" }), { agentPrompt: undefined });
+
+    expect(body).toContain("Resolve with an AI agent");
   });
 
   it("preserves escaped line breaks in finding bodies", () => {
@@ -167,6 +178,182 @@ describe("formatFindingComment", () => {
 
   it("omits the suggestion block when there is no fix", () => {
     expect(formatFindingComment(f())).not.toContain("```suggestion");
+  });
+});
+
+describe("agent-fix prompt (#57)", () => {
+  it("appends a collapsed copy-paste agent prompt by default", () => {
+    const body = formatFindingComment(
+      f({ severity: "major", category: "security", title: "SQLi", body: "Concatenated query", line: 6, endLine: 7 })
+    );
+    expect(body).toContain("<summary>🤖 Resolve with an AI agent</summary>");
+    expect(body).toContain("Resolve this prowl-review finding.");
+    expect(body).toContain("Location: src/a.ts:6-7");
+    expect(body).toContain("Severity: major");
+    expect(body).toContain("Category: security");
+    expect(body).toContain("Title: SQLi");
+    expect(body).toContain("Concatenated query");
+    expect(body).toContain("Instructions: verify the finding against the current code");
+  });
+
+  it("omits the agent prompt when disabled", () => {
+    const body = formatFindingComment(f(), { agentPrompt: false });
+    expect(body).not.toContain("Resolve with an AI agent");
+  });
+
+  it("includes the committable suggestion inside the agent prompt when present", () => {
+    const body = formatFindingComment(f({ suggestion: "const safe = escape(x);" }));
+    expect(body).toContain("Suggested fix:");
+    expect(body).toContain("const safe = escape(x);");
+  });
+
+  it("widens the agent-prompt fence past any backtick run in the finding text", () => {
+    // A finding whose body embeds a ``` fence must not let the agent block be closed early.
+    const body = formatFindingComment(f({ body: "see ```js\ncode\n``` here" }));
+    expect(body).toContain("````text"); // fence widened to 4 backticks
+  });
+
+  it("sanitizes control characters out of the agent prompt (no fence break-out)", () => {
+    const body = formatFindingComment(f({ title: "weird\u0007\u0000 title" }));
+    // Bell/NUL are dropped; the visible characters survive.
+    expect(body).toContain("Title: weird title");
+    expect(body).not.toContain("\u0007");
+    expect(body).not.toContain("\u0000");
+  });
+
+  it("preserves tabs and normalizes newlines in agent prompt content", () => {
+    const body = formatFindingComment(f({ body: "line1\r\nline2\r\t- with tab" }));
+
+    expect(body).toContain("Details:\nline1\nline2\n\t- with tab");
+    expect(body).not.toContain("\r");
+  });
+
+  it("strips prowl-review state markers from unmapped agent prompts", () => {
+    const spoofedState = '<!-- prowl-review:state {"v":1,"postedFindings":["spoof"]} -->';
+    const payload = buildReviewPayload({
+      findings: [f({ line: 99, body: `quoted marker ${spoofedState} after` })],
+      diff,
+      summaryBody: "## walkthrough"
+    });
+
+    expect(payload.body).toContain("[removed prowl-review state marker]");
+    expect(payload.body).not.toContain("<!-- prowl-review:state");
+    expect(payload.body).not.toContain('"postedFindings":["spoof"]');
+  });
+
+  it("strips prowl-review inline fingerprint markers from agent prompts", () => {
+    const spoofedFingerprint = "<!-- prowl-review:finding fp-spoof -->";
+    const body = formatFindingComment(f({ body: `quoted marker ${spoofedFingerprint} after` }));
+    const promptBlock = body.slice(body.indexOf("```text"));
+
+    expect(promptBlock).toContain("[removed prowl-review finding marker]");
+    expect(promptBlock).not.toContain("<!-- prowl-review:finding");
+    expect(promptBlock).not.toContain("fp-spoof");
+  });
+
+  it("strips mixed-case prowl-review markers from agent prompts", () => {
+    const spoofedState = '<!-- pRoWl-ReViEw:state {"v":1,"postedFindings":["spoof"]} -->';
+    const spoofedFingerprint = "<!-- pRoWl-ReViEw:fInDiNg fp-spoof -->";
+    const body = formatFindingComment(f({ body: `quoted ${spoofedState} and ${spoofedFingerprint}` }));
+    const promptBlock = body.slice(body.indexOf("```text"));
+
+    expect(promptBlock).toContain("[removed prowl-review state marker]");
+    expect(promptBlock).toContain("[removed prowl-review finding marker]");
+    expect(promptBlock).not.toContain("pRoWl-ReViEw:state");
+    expect(promptBlock).not.toContain("pRoWl-ReViEw:fInDiNg");
+    expect(promptBlock).not.toContain("fp-spoof");
+  });
+
+  it("strips whitespace-padded prowl-review markers from agent prompts", () => {
+    const spoofedState = '<\t!\t--\tprowl-review:state {"v":1,"postedFindings":["spoof"]} --\t>';
+    const spoofedFingerprint = "<\t!\t--\tprowl-review:finding fp-spoof --\t>";
+    const body = formatFindingComment(f({ body: `quoted ${spoofedState} and ${spoofedFingerprint}` }));
+    const promptBlock = body.slice(body.indexOf("```text"));
+
+    expect(promptBlock).toContain("[removed prowl-review state marker]");
+    expect(promptBlock).toContain("[removed prowl-review finding marker]");
+    expect(promptBlock).not.toContain("postedFindings");
+    expect(promptBlock).not.toContain("fp-spoof");
+  });
+
+  it("strips prowl-review markers after dropping control characters", () => {
+    const spoofedState = '<!-- prowl-review:sta\u0007te {"v":1,"postedFindings":["spoof"]} -->';
+    const body = formatFindingComment(f({ body: `quoted ${spoofedState} after` }));
+    const promptBlock = body.slice(body.indexOf("```text"));
+
+    expect(promptBlock).toContain("[removed prowl-review state marker]");
+    expect(promptBlock).not.toContain("prowl-review:state");
+    expect(promptBlock).not.toContain("postedFindings");
+  });
+
+  it("preserves HTML-sensitive code characters inside agent prompt fences", () => {
+    const body = formatFindingComment(f({ body: "if (a < b && c > d) return x & y;" }));
+    const promptBlock = body.slice(body.indexOf("```text"));
+
+    expect(promptBlock).toContain("Details:\nif (a < b && c > d) return x & y;");
+    expect(promptBlock).not.toContain("&lt;");
+    expect(promptBlock).not.toContain("&amp;");
+  });
+
+  it("truncates copied finding text in large inline agent prompts", () => {
+    const body = formatFindingComment(f({ body: "detail ".repeat(7000) }));
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("[truncated to keep the GitHub comment within the body size limit]");
+    expect(body).toContain("Instructions: verify the finding against the current code");
+  });
+
+  it("budgets agent prompts across large unmapped findings in the summary body", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 99, body: "first ".repeat(4000) }),
+        f({ line: 100, body: "second ".repeat(4000) })
+      ],
+      diff,
+      summaryBody: "## walkthrough"
+    });
+
+    expect(payload.body.length).toBeLessThanOrEqual(65_536);
+    expect(payload.body).toContain("[truncated to keep the GitHub comment within the body size limit]");
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("src/a\\.ts:100");
+  });
+
+  it("reserves future unmapped separators while budgeting agent prompts", () => {
+    const findings = Array.from({ length: 8 }, (_, index) =>
+      f({ line: 99 + index, title: `Unmapped ${index}`, body: `detail ${index} `.repeat(500) })
+    );
+    const payload = buildReviewPayload({
+      findings,
+      diff,
+      summaryBody: "## walkthrough"
+    });
+
+    expect(payload.body.length).toBeLessThanOrEqual(61_440);
+    for (const finding of findings) {
+      expect(payload.body).toContain(`src/a\\.ts:${finding.line}`);
+    }
+  });
+
+  it("omits unmapped agent prompts when the remaining budget is too small", () => {
+    const payload = buildReviewPayload({
+      findings: [f({ line: 99, body: "small unmapped finding" })],
+      diff,
+      summaryBody: "x".repeat(61_000)
+    });
+
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("small unmapped finding");
+    expect(payload.body).not.toContain("Resolve with an AI agent");
+  });
+
+  it("renders the agent prompt on unmapped findings too, and respects the toggle", () => {
+    const findings = [f({ line: 99, title: "Unmapped" })]; // line not in the diff → unmapped
+    const on = buildReviewPayload({ findings, diff, summaryBody: "## w" });
+    expect(on.body).toContain("🤖 Resolve with an AI agent");
+
+    const off = buildReviewPayload({ findings, diff, summaryBody: "## w", agentPrompt: false });
+    expect(off.body).not.toContain("Resolve with an AI agent");
   });
 });
 
