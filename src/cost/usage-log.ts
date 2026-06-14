@@ -92,10 +92,50 @@ function assertNotSymlink(path: string): void {
   }
 }
 
+/** Require an existing directory and reject a symlinked final component. */
+function assertExistingDirectory(path: string): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Usage log path must not be a symlink: ${path}`);
+  }
+  if (!stat.isDirectory()) {
+    throw new Error(`Usage log directory path must be a directory: ${path}`);
+  }
+}
+
 /** Reject symlinked log directories/files before reading or returning a log path. */
 function assertNotSymlinkedLogPath(path: string): void {
   assertNotSymlink(dirname(path));
   assertNotSymlink(path);
+}
+
+/** Create a log directory one level at a time, re-checking each created component. */
+function mkdirNoSymlinkRecursive(path: string): void {
+  const target = resolve(path);
+  const missing: string[] = [];
+  let current = target;
+  while (!existsSync(current)) {
+    missing.push(current);
+    const parent = dirname(current);
+    if (parent === current) {
+      break;
+    }
+    current = parent;
+  }
+
+  assertExistingDirectory(current);
+  for (let index = missing.length - 1; index >= 0; index -= 1) {
+    const next = missing[index];
+    try {
+      mkdirSync(next);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+        throw error;
+      }
+    }
+    assertExistingDirectory(next);
+  }
+  assertExistingDirectory(target);
 }
 
 const NO_FOLLOW_FLAG = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
@@ -120,11 +160,9 @@ function appendLineNoFollow(path: string, line: string): void {
 /** Append one record as a JSON line, creating the directory if needed. */
 export function appendUsageRecord(path: string, record: UsageRecord): void {
   const dir = dirname(path);
-  assertNotSymlink(dir);
   assertNotSymlink(path);
-  mkdirSync(dir, { recursive: true });
-  assertNotSymlink(dir);
-  assertNotSymlink(path);
+  mkdirNoSymlinkRecursive(dir);
+  assertNotSymlinkedLogPath(path);
   appendLineNoFollow(path, `${JSON.stringify(record)}\n`);
 }
 

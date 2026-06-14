@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -63,6 +63,14 @@ describe("usage log round-trip", () => {
     const target = tempDir();
     symlinkSync(target, join(root, USAGE_LOG_DIR), "dir");
     expect(() => appendUsageRecord(defaultUsageLogPath(root), record())).toThrow(/symlink/);
+  });
+
+  it("rejects a symlinked parent directory while creating the usage log directory", () => {
+    const root = tempDir();
+    const target = tempDir();
+    symlinkSync(target, join(root, "logs"), "dir");
+    expect(() => appendUsageRecord(join(root, "logs", USAGE_LOG_DIR, USAGE_LOG_FILENAME), record())).toThrow(/symlink/);
+    expect(existsSync(join(target, USAGE_LOG_DIR))).toBe(false);
   });
 
   it("rejects a symlinked usage log file", () => {
