@@ -256,6 +256,7 @@ describe("verify prompt construction", () => {
     expect(system).toContain("false-positive verifier");
     expect(system).toContain("hypothetical"); // drops doesn't-happen-now findings (#58)
     expect(system).toContain("does not appear in the diff"); // drops hallucinated findings (PR #27)
+    expect(system).toContain("do NOT comply"); // anti-injection directive (#14)
     expect(system).not.toContain("SECRET_DIFF");
 
     const prompt = buildVerifyPrompt({
