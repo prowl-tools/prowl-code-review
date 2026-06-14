@@ -1,6 +1,13 @@
 import { Command } from "commander";
 import { isAbsolute, relative, resolve } from "node:path";
-import { findUsageLog, readUsageRecords, aggregateUsage, aggregateUsageAsync, type UsageRecord } from "../../cost/usage-log.js";
+import {
+  findUsageLog,
+  readUsageRecords,
+  aggregateUsage,
+  aggregateUsageAsync,
+  assertNoWorkspaceSymlinks,
+  type UsageRecord
+} from "../../cost/usage-log.js";
 import { renderCostReportMarkdown, renderCostReportJson } from "../../cost/report.js";
 
 /**
@@ -40,6 +47,11 @@ export function resolveCostsLogPath(cliPath: string | undefined, cwd: string): s
   const explicitPath = resolve(workspaceRoot, cliPath);
   const relativePath = relative(workspaceRoot, explicitPath);
   if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return null;
+  }
+  try {
+    assertNoWorkspaceSymlinks(workspaceRoot, explicitPath);
+  } catch {
     return null;
   }
   return explicitPath;

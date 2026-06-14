@@ -154,6 +154,7 @@ export {
   readUsageRecords,
   aggregateUsage,
   aggregateUsageAsync,
+  assertNoWorkspaceSymlinks,
   toUsageRecord,
   defaultUsageLogPath,
   findUsageLog,
