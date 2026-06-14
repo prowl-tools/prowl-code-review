@@ -78,6 +78,11 @@ export const configSchema = z
     model: z.string().min(1).optional(),
     /** Append a copy-paste "Resolve with an AI agent" prompt to each finding. Default true (#57). */
     agentPrompt: z.boolean().optional(),
+    /**
+     * Glob patterns for generated/vendored files to skip (#19). Replaces the
+     * built-in defaults when set; `[]` ignores nothing. Omit to use the defaults.
+     */
+    ignore: z.array(z.string().min(1)).optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

@@ -129,6 +129,7 @@ type ResolvedReviewOptions = Pick<
   | "trustWorkspace"
   | "diffLimits"
   | "agentPrompt"
+  | "ignore"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -213,7 +214,9 @@ export function resolveReviewOptions(
       maxDiffBytes: config.diff?.maxBytes
     }),
     // Default on; CLI `--no-agent-prompt` (or `agentPrompt: false` in config) turns it off.
-    agentPrompt: cli.agentPrompt === false || config.agentPrompt === false ? false : undefined
+    agentPrompt: cli.agentPrompt === false || config.agentPrompt === false ? false : undefined,
+    // Omitted → built-in defaults; an explicit list (including []) replaces them (#19).
+    ignore: config.ignore
   };
 }
 

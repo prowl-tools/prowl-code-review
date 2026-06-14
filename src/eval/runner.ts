@@ -22,6 +22,7 @@ import type { DiffFile, DiffLimits, SkippedFile } from "../review/diff-types.js"
 import { renderGuardedDiff } from "../review/render-diff.js";
 import { redactSecrets } from "../review/redact.js";
 import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
+import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../review/ignore.js";
 import { scoreCase, erroredCase } from "./match.js";
 import { aggregate } from "./metrics.js";
 import { promptFingerprint } from "./version.js";
@@ -58,6 +59,8 @@ export interface RunBenchmarkOptions {
   config?: ProviderConfig;
   /** Diff size limits applied before rendering, mirroring the production review path. */
   diffLimits?: DiffLimits;
+  /** Ignore globs applied before diff limits. Omitted -> production defaults; [] disables ignores. */
+  ignore?: string[];
   /** Finding↔bug matching configuration. */
   match?: MatchOptions;
   /** Review knobs applied to every case (defaults to the pipeline defaults). */
@@ -177,9 +180,11 @@ export async function runBenchmark(
       const parsed = parseDiff(benchmarkCase.diff);
       validateParsedBenchmarkDiff(parsed.files);
       const safeDiff = filterSensitiveDiffFiles(parsed.files);
-      const guarded = applyDiffLimits({ files: safeDiff.files }, options.diffLimits);
+      const ignoredDiff = filterIgnoredDiffFiles(safeDiff.files, options.ignore ?? DEFAULT_IGNORE_GLOBS);
+      const guarded = applyDiffLimits({ files: ignoredDiff.files }, options.diffLimits);
       validateExpectedFilesVisible(benchmarkCase, guarded.files, [
         ...safeDiff.skipped,
+        ...ignoredDiff.skipped,
         ...guarded.skipped
       ]);
       validateReviewableDiff(guarded.files);
