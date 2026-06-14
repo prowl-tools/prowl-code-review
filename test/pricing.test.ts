@@ -30,6 +30,13 @@ describe("resolveModelPrice", () => {
     expect(resolveModelPrice("anthropic", "claude-sonnet-4-6", overrides)).toEqual({ input: 3, output: 15, cachedInput: 0.3 });
   });
 
+  it("ignores magic model keys even when they are own override properties", () => {
+    const overrides = Object.create(null) as Record<string, { input: number; output: number }>;
+    overrides["__proto__"] = { input: 99, output: 199 };
+    expect(resolveModelPrice("anthropic", "__proto__", overrides)).toBeNull();
+    expect(resolveModelPrice("anthropic", "constructor", { constructor: { input: 99, output: 199 } })).toBeNull();
+  });
+
   it("returns null for an unknown model", () => {
     expect(resolveModelPrice("anthropic", "mystery-model")).toBeNull();
     expect(resolveModelPrice("anthropic", "claude-opus-4-9")).toBeNull();

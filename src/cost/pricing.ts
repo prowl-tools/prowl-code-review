@@ -109,6 +109,8 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
   }
 };
 
+const UNSAFE_MODEL_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 /** True when `model` is a dated snapshot of a known model id, e.g. `gpt-4o-2024-05-13`. */
 function isDatedSnapshotMatch(model: string, key: string): boolean {
   if (!model.startsWith(`${key}-`)) {
@@ -140,6 +142,9 @@ export function resolveModelPrice(
   model: string,
   overrides: PriceOverrides = {}
 ): ModelPrice | null {
+  if (UNSAFE_MODEL_KEYS.has(model)) {
+    return null;
+  }
   if (Object.prototype.hasOwnProperty.call(overrides, model)) {
     return overrides[model] ?? null;
   }
