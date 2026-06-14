@@ -359,12 +359,18 @@ export async function reviewPullRequest(
   let contextDegraded = false;
   if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
     try {
+      const contextMaxTokens =
+        options.budgetTokens === undefined
+          ? options.contextLimits?.maxTokens
+          : options.contextLimits?.maxTokens === undefined
+            ? options.budgetTokens
+            : Math.min(options.budgetTokens, options.contextLimits.maxTokens);
       const gathered = await gather({
         toolkit: { root: options.toolkitRoot },
         changedPaths: reviewFiles.map((file) => file.path),
         config,
-        // Cap the (otherwise unbounded) retrieval loop at the token budget (#18).
-        limits: { ...options.contextLimits, maxTokens: options.budgetTokens }
+        // Cap the (otherwise unbounded) retrieval loop at the tighter explicit context or review budget (#18).
+        limits: { ...options.contextLimits, maxTokens: contextMaxTokens }
       });
       contextFiles = gathered.files.length;
       contextUsage = gathered.usage;
