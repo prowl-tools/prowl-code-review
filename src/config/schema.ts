@@ -71,6 +71,15 @@ const diffSchema = z
   })
   .strict();
 
+/** USD-per-1M-token price override for one model (#36). */
+const modelPriceSchema = z
+  .object({
+    input: z.number().nonnegative(),
+    output: z.number().nonnegative(),
+    cachedInput: z.number().nonnegative().optional()
+  })
+  .strict();
+
 /** Full `.prowl-review.yml` schema. */
 export const configSchema = z
   .object({
@@ -85,6 +94,11 @@ export const configSchema = z
      * built-in defaults when set; `[]` ignores nothing. Omit to use the defaults.
      */
     ignore: z.array(z.string().min(1)).optional(),
+    /**
+     * Per-model cost override (#36), keyed by model id, USD per 1M tokens. Merged
+     * over the built-in estimate table; cost figures are always estimates.
+     */
+    pricing: z.record(z.string().min(1), modelPriceSchema).optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
