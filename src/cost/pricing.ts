@@ -24,6 +24,54 @@ export interface ModelPrice {
 /** Per-model overrides keyed by exact model id (from `.prowl-review.yml`). */
 export type PriceOverrides = Record<string, ModelPrice>;
 
+function ansiSequenceEnd(value: string, start: number): number {
+  const next = value.charCodeAt(start + 1);
+  if (next === 0x5B) {
+    for (let index = start + 2; index < value.length; index += 1) {
+      const code = value.charCodeAt(index);
+      if (code >= 0x40 && code <= 0x7E) {
+        return index;
+      }
+    }
+    return value.length - 1;
+  }
+  if (next >= 0x40 && next <= 0x5F) {
+    return start + 1;
+  }
+  return start;
+}
+
+/** Strip terminal/HTML-sensitive characters from untrusted display text. */
+export function sanitizeDisplayText(value: string): string {
+  let sanitized = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    const char = value[index];
+    if (code === 0x1B) {
+      index = ansiSequenceEnd(value, index);
+      continue;
+    }
+    if (code < 0x20 || code === 0x7F) {
+      sanitized += " ";
+      continue;
+    }
+    if (char === "<" || char === ">") {
+      continue;
+    }
+    sanitized += char;
+  }
+  return sanitized.replace(/\s+/g, " ").trim();
+}
+
+export function escapeMarkdownDisplayText(value: string): string {
+  const markdownChars = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|"]);
+  let escaped = "";
+  for (const char of sanitizeDisplayText(value)) {
+    escaped += markdownChars.has(char) ? `\\${char}` : char;
+  }
+  return escaped;
+}
+
 /**
  * Built-in price table, keyed by a model-id **prefix** (longest match wins), so
  * `claude-sonnet-4-6` resolves via the `claude-sonnet` entry. Estimates as of
@@ -67,8 +115,8 @@ export function resolveModelPrice(
   model: string,
   overrides: PriceOverrides = {}
 ): ModelPrice | null {
-  if (overrides[model]) {
-    return overrides[model];
+  if (Object.prototype.hasOwnProperty.call(overrides, model)) {
+    return overrides[model] ?? null;
   }
   const table = DEFAULT_PRICES[provider] ?? {};
   let best: { key: string; price: ModelPrice } | null = null;
@@ -122,5 +170,5 @@ export function formatCostLine(estimate: CostEstimate): string {
   const tokens =
     `in ${estimate.inputTokens.toLocaleString()} / out ${estimate.outputTokens.toLocaleString()} / ` +
     `cached ${estimate.cachedInputTokens.toLocaleString()} tok`;
-  return `${cost} · ${estimate.provider}/${estimate.model} · ${tokens} [estimated]`;
+  return `${cost} · ${estimate.provider}/${escapeMarkdownDisplayText(estimate.model)} · ${tokens} [estimated]`;
 }

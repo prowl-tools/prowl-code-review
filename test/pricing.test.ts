@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveModelPrice, estimateCost, formatUsd, formatCostLine } from "../src/cost/pricing.js";
+import { resolveModelPrice, estimateCost, formatUsd, formatCostLine, sanitizeDisplayText } from "../src/cost/pricing.js";
 import type { TokenUsage } from "../src/providers/index.js";
 
 const usage: TokenUsage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cachedInputTokens: 1_000_000 };
@@ -18,6 +18,13 @@ describe("resolveModelPrice", () => {
   it("lets an exact config override win over the table", () => {
     const override = { "claude-sonnet-4-6": { input: 99, output: 199 } };
     expect(resolveModelPrice("anthropic", "claude-sonnet-4-6", override)).toEqual({ input: 99, output: 199 });
+  });
+
+  it("ignores inherited override properties", () => {
+    const overrides = Object.create({
+      "claude-sonnet-4-6": { input: 99, output: 199 }
+    }) as Record<string, { input: number; output: number }>;
+    expect(resolveModelPrice("anthropic", "claude-sonnet-4-6", overrides)).toEqual({ input: 3, output: 15, cachedInput: 0.3 });
   });
 
   it("returns null for an unknown model", () => {
@@ -67,5 +74,16 @@ describe("formatUsd / formatCostLine", () => {
   it("flags an unpriced model in the cost line", () => {
     const line = formatCostLine(estimateCost(usage, "anthropic", "mystery-model"));
     expect(line).toContain("set pricing in config");
+  });
+
+  it("sanitizes model names for human-readable output", () => {
+    expect(sanitizeDisplayText("gpt\u001b[31m-red\u001b[0m<script>")).toBe("gpt-redscript");
+    const line = formatCostLine({
+      ...estimateCost(usage, "openai", "gpt-5"),
+      model: "gpt\u001b[31m-red\u001b[0m<script>"
+    });
+    expect(line).toContain("openai/gpt-redscript");
+    expect(line).not.toContain("\u001b[31m");
+    expect(line).not.toContain("<script>");
   });
 });

@@ -42,26 +42,27 @@ function record(over: Partial<UsageRecord> = {}): UsageRecord {
 }
 
 describe("usage log round-trip", () => {
-  it("appends JSON lines and reads them back, creating the directory", () => {
+  it("appends JSON lines and reads them back, creating the directory", async () => {
     const path = defaultUsageLogPath(tempDir());
     appendUsageRecord(path, record({ pr: 1 }));
     appendUsageRecord(path, record({ pr: 2 }));
-    const records = readUsageRecords(path);
+    const records = await readUsageRecords(path);
     expect(records.map((r) => r.pr)).toEqual([1, 2]);
   });
 
-  it("skips blank and malformed lines without throwing", () => {
+  it("skips blank and malformed lines without throwing", async () => {
     const dir = tempDir();
     mkdirSync(join(dir, USAGE_LOG_DIR), { recursive: true });
     const path = join(dir, USAGE_LOG_DIR, USAGE_LOG_FILENAME);
-    writeFileSync(path, `${JSON.stringify(record({ pr: 7 }))}\n\nnot-json\n{"partial":true}\n`);
-    const records = readUsageRecords(path);
+    const partial = { provider: "anthropic", model: "claude-sonnet-4-6", inputTokens: 100 };
+    writeFileSync(path, `${JSON.stringify(record({ pr: 7 }))}\n\nnot-json\n{"partial":true}\n${JSON.stringify(partial)}\n`);
+    const records = await readUsageRecords(path);
     expect(records).toHaveLength(1);
     expect(records[0].pr).toBe(7);
   });
 
-  it("returns [] for a missing log", () => {
-    expect(readUsageRecords(join(tempDir(), "nope.jsonl"))).toEqual([]);
+  it("returns [] for a missing log", async () => {
+    await expect(readUsageRecords(join(tempDir(), "nope.jsonl"))).resolves.toEqual([]);
   });
 
   it("finds a log by searching upward", () => {

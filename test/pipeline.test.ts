@@ -285,6 +285,28 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
   });
 
+  it("includes context retrieval usage in the total pipeline usage", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
+      rounds: 1,
+      usage: { inputTokens: 5, outputTokens: 7, cachedInputTokens: 11 },
+      reachedLimit: false,
+      notes: [],
+      toolOutputs: []
+    });
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        usage: { inputTokens: 2, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.review.usage).toEqual({ inputTokens: 2, outputTokens: 3, cachedInputTokens: 4 });
+    expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 10, cachedInputTokens: 15 });
+  });
+
   it("falls back to diff-only review when context retrieval fails", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockRejectedValue(new Error("provider timeout"));
