@@ -454,9 +454,19 @@ function formatOverflowFindings(overflow: Finding[], cap: number): string {
   ];
 
   // Group by severity in precedence order; only severities that occur are shown.
+  const groups = new Map<Severity, Finding[]>();
+  for (const finding of overflow) {
+    const group = groups.get(finding.severity);
+    if (group) {
+      group.push(finding);
+    } else {
+      groups.set(finding.severity, [finding]);
+    }
+  }
+
   for (const severity of Object.keys(SEVERITY_BADGE) as Severity[]) {
-    const group = overflow.filter((finding) => finding.severity === severity);
-    if (group.length === 0) {
+    const group = groups.get(severity);
+    if (!group) {
       continue;
     }
     lines.push("", `**${SEVERITY_BADGE[severity]} ${severity} (${group.length})**`);
