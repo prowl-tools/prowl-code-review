@@ -75,7 +75,8 @@ export function escapeMarkdownDisplayText(value: string): string {
 }
 
 /**
- * Built-in price table, keyed by a model-id **prefix** (longest match wins).
+ * Built-in price table, keyed by model id. Exact matches win; dated snapshot
+ * suffixes use the longest matching model-id prefix.
  * For providers with versioned model families, entries stay version-specific so
  * unknown future models return `n/a` until listed or overridden in config.
  * Estimates as of 2026; override in config if a rate is stale. USD per 1M tokens.
@@ -95,8 +96,11 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
     "claude-haiku-3-5": { input: 0.8, output: 4, cachedInput: 0.08 }
   },
   openai: {
+    "gpt-5.5": { input: 5, output: 30, cachedInput: 0.5 },
+    "gpt-5.4-mini": { input: 0.75, output: 4.5, cachedInput: 0.075 },
+    "gpt-5.4": { input: 2.5, output: 15, cachedInput: 0.25 },
+    "gpt-5.2": { input: 1.25, output: 10, cachedInput: 0.125 },
     "gpt-5-mini": { input: 0.25, output: 2, cachedInput: 0.025 },
-    "gpt-5": { input: 1.25, output: 10, cachedInput: 0.125 },
     "gpt-4o": { input: 2.5, output: 10, cachedInput: 1.25 }
   },
   gemini: {
@@ -104,6 +108,15 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
     "gemini-2.5-pro": { input: 1.25, output: 10, cachedInput: 0.31 }
   }
 };
+
+/** True when `model` is a dated snapshot of a known model id, e.g. `gpt-4o-2024-05-13`. */
+function isDatedSnapshotMatch(model: string, key: string): boolean {
+  if (!model.startsWith(`${key}-`)) {
+    return false;
+  }
+  const firstSuffixCode = model.charCodeAt(key.length + 1);
+  return firstSuffixCode >= 0x30 && firstSuffixCode <= 0x39;
+}
 
 /** A per-review cost estimate; `usd` is null when no price is known for the model. */
 export interface CostEstimate {
@@ -118,8 +131,9 @@ export interface CostEstimate {
 }
 
 /**
- * Resolve the price for `model`: an exact config override wins; otherwise the
- * longest matching built-in prefix for the provider. Returns null when unknown.
+ * Resolve the price for `model`: an exact config override wins; otherwise an
+ * exact built-in model id or dated snapshot prefix for the provider. Returns
+ * null when unknown.
  */
 export function resolveModelPrice(
   provider: ProviderName,
@@ -130,9 +144,12 @@ export function resolveModelPrice(
     return overrides[model] ?? null;
   }
   const table = DEFAULT_PRICES[provider] ?? {};
+  if (Object.prototype.hasOwnProperty.call(table, model)) {
+    return table[model] ?? null;
+  }
   let best: { key: string; price: ModelPrice } | null = null;
   for (const [key, price] of Object.entries(table)) {
-    if (model.startsWith(key) && (!best || key.length > best.key.length)) {
+    if (isDatedSnapshotMatch(model, key) && (!best || key.length > best.key.length)) {
       best = { key, price };
     }
   }

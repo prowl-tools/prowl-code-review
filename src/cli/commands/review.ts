@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOctokit } from "../../github/client.js";
 import { reviewPullRequest, type ReviewPullRequestOptions } from "../../pipeline.js";
 import { resolveProviderConfig } from "../../providers/index.js";
@@ -182,19 +182,26 @@ export function resolveDryRun(
 
 /**
  * Resolve where (if anywhere) to append the per-run usage record (#36).
- * `PROWL_USAGE_LOG` wins; otherwise local runs log under the workspace, while
- * ephemeral GitHub Actions runs skip the log (cost still goes to the logs +
- * job summary) since the file wouldn't survive the runner.
+ * `PROWL_USAGE_LOG` wins when it stays inside the workspace; otherwise local
+ * runs log under the workspace, while ephemeral GitHub Actions runs skip the
+ * log (cost still goes to the logs + job summary) since the file wouldn't
+ * survive the runner.
  */
 export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = process.env): string | null {
+  const workspaceRoot = resolve(workspace);
   const explicit = envString(env.PROWL_USAGE_LOG);
   if (explicit) {
-    return resolve(explicit);
+    const explicitPath = resolve(workspaceRoot, explicit);
+    const relativePath = relative(workspaceRoot, explicitPath);
+    if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+      return null;
+    }
+    return explicitPath;
   }
   if (env.GITHUB_ACTIONS === "true") {
     return null;
   }
-  return defaultUsageLogPath(workspace);
+  return defaultUsageLogPath(workspaceRoot);
 }
 
 /**

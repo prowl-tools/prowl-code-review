@@ -10,11 +10,12 @@ describe("resolveModelPrice", () => {
     expect(resolveModelPrice("anthropic", "claude-opus-4-8")).toEqual({ input: 5, output: 25, cachedInput: 0.5 });
     expect(resolveModelPrice("anthropic", "claude-haiku-4-5-20251001")).toEqual({ input: 1, output: 5, cachedInput: 0.1 });
     expect(resolveModelPrice("openai", "gpt-5.2")).toEqual({ input: 1.25, output: 10, cachedInput: 0.125 });
+    expect(resolveModelPrice("openai", "gpt-5.4-mini")).toEqual({ input: 0.75, output: 4.5, cachedInput: 0.075 });
   });
 
   it("prefers the longest matching prefix", () => {
-    // "gpt-5-mini" must win over "gpt-5" for a mini model.
-    expect(resolveModelPrice("openai", "gpt-5-mini-2026")).toEqual({ input: 0.25, output: 2, cachedInput: 0.025 });
+    // "gpt-5.4-mini" must win over "gpt-5.4" for a dated mini snapshot.
+    expect(resolveModelPrice("openai", "gpt-5.4-mini-2026")).toEqual({ input: 0.75, output: 4.5, cachedInput: 0.075 });
   });
 
   it("lets an exact config override win over the table", () => {
@@ -32,6 +33,7 @@ describe("resolveModelPrice", () => {
   it("returns null for an unknown model", () => {
     expect(resolveModelPrice("anthropic", "mystery-model")).toBeNull();
     expect(resolveModelPrice("anthropic", "claude-opus-4-9")).toBeNull();
+    expect(resolveModelPrice("openai", "gpt-5.4-nano")).toBeNull();
   });
 });
 
