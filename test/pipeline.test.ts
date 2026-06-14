@@ -215,6 +215,37 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.payload.body).toContain("treated as data and ignored");
   });
 
+  it("caps context retrieval and notes an over-budget run (#18)", async () => {
+    const deps = makeDeps();
+    // Context spends 60 tokens; the review spends another chunk → over a 50-token budget.
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "x", truncated: false }],
+      rounds: 1,
+      usage: { inputTokens: 40, outputTokens: 20, cachedInputTokens: 0 },
+      reachedLimit: true,
+      notes: ["Reached context token budget (50)."],
+      toolOutputs: []
+    });
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        usage: { inputTokens: 30, outputTokens: 10, cachedInputTokens: 0 },
+        verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true, skippedForBudget: true }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, budgetTokens: 50 });
+
+    // The budget is threaded into the retrieval limits...
+    expect(deps.gatherContext).toHaveBeenCalledWith(
+      expect.objectContaining({ limits: expect.objectContaining({ maxTokens: 50 }) })
+    );
+    // ...and into the review's verify gate, net of context spend (50 - 60 → 0).
+    expect(deps.runReview.mock.calls[0][1]).toEqual(expect.objectContaining({ maxTokens: 0 }));
+    // Over-budget + verification-skipped surface as notes (no silent truncation).
+    expect(result.payload.body).toContain("over the configured budget");
+    expect(result.payload.body).toContain("Skipped false-positive verification to stay within the token budget");
+  });
+
   it("skips agentic context when asked", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipContext: true });

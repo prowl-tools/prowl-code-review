@@ -24,6 +24,15 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();
   });
 
+  it("accepts a budget cap and rejects malformed values (#18)", () => {
+    expect(configSchema.parse({ budget: { maxTokens: 200000 } })).toEqual({ budget: { maxTokens: 200000 } });
+    expect(configSchema.parse({ budget: { maxUsd: 0.5 } })).toEqual({ budget: { maxUsd: 0.5 } });
+    expect(configSchema.parse({ budget: { maxTokens: 100, maxUsd: 1 } })).toEqual({ budget: { maxTokens: 100, maxUsd: 1 } });
+    expect(() => configSchema.parse({ budget: { maxTokens: 0 } })).toThrow(); // positive
+    expect(() => configSchema.parse({ budget: { maxUsd: -1 } })).toThrow();
+    expect(() => configSchema.parse({ budget: { nope: 1 } })).toThrow(); // strict
+  });
+
   it("accepts a pricing override map and rejects malformed entries (#36)", () => {
     const pricing = { "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 } };
     expect(configSchema.parse({ pricing })).toEqual({ pricing });
