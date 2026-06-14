@@ -64,6 +64,16 @@ describe("estimateCost", () => {
     expect(formatCostLine(cost)).toContain("cache write 1,000,000");
   });
 
+  it("prices non-Anthropic cache writes at the input rate", () => {
+    const cost = estimateCost(
+      { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 1_000_000 },
+      "openai",
+      "gpt-5.2"
+    );
+    expect(cost.usd).toBeCloseTo(1.25, 5);
+    expect(cost.totalTokens).toBe(1_000_000);
+  });
+
   it("falls back to the input rate when no cached rate is set", () => {
     const cost = estimateCost(
       { inputTokens: 0, outputTokens: 0, cachedInputTokens: 1_000_000 },
