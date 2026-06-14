@@ -71,6 +71,8 @@ export interface ReviewPullRequestOptions {
   verifyConfidence?: number;
   guidelines?: string;
   event?: ReviewEvent;
+  /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
+  agentPrompt?: boolean;
   /** Skip agentic cross-file context retrieval (e.g. fork PRs / cost control). */
   skipContext?: boolean;
   /** Skip linter/SAST grounding (#16). */
@@ -349,7 +351,8 @@ export async function reviewPullRequest(
     findings: reviewResult.findings,
     diff: { files: reviewFiles },
     summaryBody,
-    event: options.event
+    event: options.event,
+    agentPrompt: options.agentPrompt
   });
 
   let posted = false;

@@ -109,6 +109,7 @@ interface ReviewCommandOptions {
   verify?: boolean;
   grounding?: boolean;
   trustWorkspace?: boolean;
+  agentPrompt?: boolean;
   dryRun?: boolean;
   /** `--config <path>` → string; `--no-config` → false; otherwise true/undefined. */
   config?: string | boolean;
@@ -127,6 +128,7 @@ type ResolvedReviewOptions = Pick<
   | "skipGrounding"
   | "trustWorkspace"
   | "diffLimits"
+  | "agentPrompt"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -209,7 +211,9 @@ export function resolveReviewOptions(
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes
-    })
+    }),
+    // Default on; CLI `--no-agent-prompt` (or `agentPrompt: false` in config) turns it off.
+    agentPrompt: cli.agentPrompt === false || config.agentPrompt === false ? false : undefined
   };
 }
 
@@ -226,6 +230,7 @@ export function buildReviewCommand(): Command {
     .option("--no-grounding", "skip linter/SAST grounding")
     .option("--trust-workspace", "allow repo-local linter/SAST tools to execute in the workspace")
     .option("--no-verify", "skip the skeptical false-positive verification pass")
+    .option("--no-agent-prompt", "omit the per-finding \"Resolve with an AI agent\" prompt")
     .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
     .option("--dry-run", "build the review but do not publish it")

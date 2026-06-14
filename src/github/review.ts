@@ -2,7 +2,13 @@ import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
 import type { ReviewComment, ReviewPayload } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
-import { embedState, parseState, REVIEW_STATE_VERSION, type ReviewState } from "../review/state.js";
+import {
+  embedStateWithFittedState,
+  GITHUB_COMMENT_BODY_LIMIT,
+  parseState,
+  REVIEW_STATE_VERSION,
+  type ReviewState
+} from "../review/state.js";
 
 /**
  * Publish the review with update-not-duplicate semantics (backlog #12 + #22).
@@ -80,15 +86,20 @@ export function planPublish(input: {
     ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
-  const state: ReviewState = {
+  const requestedState: ReviewState = {
     v: REVIEW_STATE_VERSION,
     ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
     postedFindings
   };
+  const { body: summaryBody, state } = embedStateWithFittedState(
+    input.payload.body,
+    requestedState,
+    GITHUB_COMMENT_BODY_LIMIT
+  );
 
   return {
     priorCommentId: input.priorComment?.id,
-    summaryBody: embedState(input.payload.body, state),
+    summaryBody,
     newInlineComments,
     state
   };

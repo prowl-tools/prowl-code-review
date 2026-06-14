@@ -111,6 +111,48 @@ describe("planPublish", () => {
     expect(plan.newInlineComments.map((c) => c.fingerprint)).toEqual(["fp-b"]);
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
+
+  it("prunes state history before truncating visible summary content", () => {
+    const priorPostedFindings = Array.from({ length: 400 }, (_, index) => `fp-${index.toString().padStart(4, "0")}`);
+    const plan = planPublish({
+      payload: payload({
+        body: `${REVIEW_MARKER}\n${"x".repeat(65_000)}`,
+        comments: []
+      }),
+      priorComment: null,
+      priorPostedFindings,
+      headSha: "sha1"
+    });
+
+    expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
+    expect(plan.summaryBody).not.toContain("[summary truncated to keep the GitHub comment within the body size limit]");
+    expect(plan.state.postedFindings.length).toBeLessThan(priorPostedFindings.length);
+    expect(parseState(plan.summaryBody)).toEqual(plan.state);
+  });
+
+  it("prunes old fingerprints when the state marker alone would exceed the comment limit", () => {
+    const priorPostedFindings = Array.from(
+      { length: 5_000 },
+      (_, index) => `fp-${index.toString().padStart(14, "0")}`
+    );
+    const plan = planPublish({
+      payload: payload({
+        body: `${REVIEW_MARKER}\nsummary`,
+        comments: []
+      }),
+      priorComment: null,
+      priorPostedFindings,
+      headSha: "sha1"
+    });
+
+    expect(plan.summaryBody.length).toBeLessThanOrEqual(65_536);
+    expect(plan.summaryBody.startsWith(REVIEW_MARKER)).toBe(true);
+    expect(plan.summaryBody).toContain("summary");
+    expect(plan.state.postedFindings.length).toBeLessThan(priorPostedFindings.length);
+    expect(plan.state.postedFindings.at(-1)).toBe(priorPostedFindings.at(-1));
+    expect(plan.state.postedFindings).not.toContain(priorPostedFindings[0]);
+    expect(parseState(plan.summaryBody)).toEqual(plan.state);
+  });
 });
 
 describe("submitReview", () => {

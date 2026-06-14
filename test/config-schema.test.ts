@@ -10,12 +10,18 @@ describe("configSchema (#29)", () => {
     const input = {
       provider: "openai",
       model: "gpt-x",
+      agentPrompt: false,
       review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
       context: { enabled: false, maxRounds: 3, maxFiles: 8 },
       grounding: { enabled: true },
       diff: { maxFiles: 50, maxBytes: 100000 }
     };
     expect(configSchema.parse(input)).toEqual(input);
+  });
+
+  it("accepts the agentPrompt toggle and rejects a non-boolean (#57)", () => {
+    expect(configSchema.parse({ agentPrompt: true })).toEqual({ agentPrompt: true });
+    expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();
   });
 
   it("rejects an unknown top-level key (strict — catches typos)", () => {
