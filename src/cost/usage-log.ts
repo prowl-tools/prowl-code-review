@@ -107,12 +107,11 @@ function isUsageRecord(value: unknown): value is UsageRecord {
   );
 }
 
-/** Read + parse usage records, skipping blank/malformed lines (never throws on bad data). */
-export async function readUsageRecords(path: string): Promise<UsageRecord[]> {
+/** Stream usage records, skipping blank/malformed lines (never throws on bad data). */
+export async function* readUsageRecords(path: string): AsyncGenerator<UsageRecord> {
   if (!existsSync(path)) {
-    return [];
+    return;
   }
-  const records: UsageRecord[] = [];
   const lines = createInterface({
     input: createReadStream(path, { encoding: "utf8" }),
     crlfDelay: Infinity
@@ -125,13 +124,12 @@ export async function readUsageRecords(path: string): Promise<UsageRecord[]> {
     try {
       const parsed = JSON.parse(trimmed) as unknown;
       if (isUsageRecord(parsed)) {
-        records.push(parsed);
+        yield parsed;
       }
     } catch {
       // skip a malformed line rather than sinking the whole read
     }
   }
-  return records;
 }
 
 /** Per-provider/model aggregate of usage records. */
@@ -164,54 +162,64 @@ export interface UsageAggregate {
   until?: string;
 }
 
-/** Aggregate usage records into totals + a per provider/model breakdown. */
-export function aggregateUsage(records: UsageRecord[]): UsageAggregate {
-  const groups = new Map<string, UsageGroup>();
-  const total = { runs: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, usd: 0, priced: true };
-  let since: string | undefined;
-  let until: string | undefined;
+interface UsageAggregateState {
+  groups: Map<string, UsageGroup>;
+  total: { runs: number; inputTokens: number; outputTokens: number; cachedInputTokens: number; usd: number; priced: boolean };
+  since?: string;
+  until?: string;
+}
 
-  for (const record of records) {
-    total.runs += 1;
-    total.inputTokens += record.inputTokens;
-    total.outputTokens += record.outputTokens;
-    total.cachedInputTokens += record.cachedInputTokens;
-    total.usd += record.usd ?? 0;
-    if (record.usd === null) {
-      total.priced = false;
-    }
-    if (typeof record.ts === "string") {
-      if (since === undefined || record.ts < since) {
-        since = record.ts;
-      }
-      if (until === undefined || record.ts > until) {
-        until = record.ts;
-      }
-    }
+function createAggregateState(): UsageAggregateState {
+  return {
+    groups: new Map<string, UsageGroup>(),
+    total: { runs: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, usd: 0, priced: true }
+  };
+}
 
-    const key = `${record.provider}/${record.model}`;
-    const group = groups.get(key) ?? {
-      key,
-      provider: record.provider,
-      model: record.model,
-      runs: 0,
-      inputTokens: 0,
-      outputTokens: 0,
-      cachedInputTokens: 0,
-      usd: 0,
-      priced: true
-    };
-    group.runs += 1;
-    group.inputTokens += record.inputTokens;
-    group.outputTokens += record.outputTokens;
-    group.cachedInputTokens += record.cachedInputTokens;
-    group.usd += record.usd ?? 0;
-    if (record.usd === null) {
-      group.priced = false;
+function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): void {
+  const { total, groups } = state;
+  total.runs += 1;
+  total.inputTokens += record.inputTokens;
+  total.outputTokens += record.outputTokens;
+  total.cachedInputTokens += record.cachedInputTokens;
+  total.usd += record.usd ?? 0;
+  if (record.usd === null) {
+    total.priced = false;
+  }
+  if (typeof record.ts === "string") {
+    if (state.since === undefined || record.ts < state.since) {
+      state.since = record.ts;
     }
-    groups.set(key, group);
+    if (state.until === undefined || record.ts > state.until) {
+      state.until = record.ts;
+    }
   }
 
+  const key = `${record.provider}/${record.model}`;
+  const group = groups.get(key) ?? {
+    key,
+    provider: record.provider,
+    model: record.model,
+    runs: 0,
+    inputTokens: 0,
+    outputTokens: 0,
+    cachedInputTokens: 0,
+    usd: 0,
+    priced: true
+  };
+  group.runs += 1;
+  group.inputTokens += record.inputTokens;
+  group.outputTokens += record.outputTokens;
+  group.cachedInputTokens += record.cachedInputTokens;
+  group.usd += record.usd ?? 0;
+  if (record.usd === null) {
+    group.priced = false;
+  }
+  groups.set(key, group);
+}
+
+function finishAggregate(state: UsageAggregateState): UsageAggregate {
+  const { total, groups, since, until } = state;
   return {
     runs: total.runs,
     inputTokens: total.inputTokens,
@@ -224,4 +232,22 @@ export function aggregateUsage(records: UsageRecord[]): UsageAggregate {
     since,
     until
   };
+}
+
+/** Aggregate usage records into totals + a per provider/model breakdown. */
+export function aggregateUsage(records: Iterable<UsageRecord>): UsageAggregate {
+  const state = createAggregateState();
+  for (const record of records) {
+    addRecordToAggregate(state, record);
+  }
+  return finishAggregate(state);
+}
+
+/** Aggregate streamed usage records without buffering the full log. */
+export async function aggregateUsageAsync(records: AsyncIterable<UsageRecord>): Promise<UsageAggregate> {
+  const state = createAggregateState();
+  for await (const record of records) {
+    addRecordToAggregate(state, record);
+  }
+  return finishAggregate(state);
 }
