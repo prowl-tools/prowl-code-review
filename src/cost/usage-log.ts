@@ -1,5 +1,5 @@
 import { closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, writeSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { PROVIDER_NAMES, type ProviderName } from "../providers/index.js";
 import type { CostEstimate } from "./pricing.js";
@@ -35,6 +35,11 @@ export interface UsageRecord {
   cacheWriteInputTokens?: number;
   /** Estimated USD, or null when the model had no known price. */
   usd: number | null;
+}
+
+export interface AppendUsageRecordOptions {
+  /** Workspace root used to reject symlinked in-workspace path components. */
+  workspace?: string;
 }
 
 /** Default usage-log path under a workspace root. */
@@ -109,8 +114,52 @@ function assertNotSymlinkedLogPath(path: string): void {
   assertNotSymlink(path);
 }
 
+function workspaceRelativeParts(workspace: string, target: string): string[] {
+  const workspaceRoot = resolve(workspace);
+  const targetPath = resolve(target);
+  const relativePath = relative(workspaceRoot, targetPath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    throw new Error(`Usage log path escapes workspace: ${target}`);
+  }
+  return relativePath ? relativePath.split(/[\\/]+/).filter(Boolean) : [];
+}
+
+/** Reject symlinked path components under a known workspace root. */
+function assertNoWorkspaceSymlinks(workspace: string, target: string): void {
+  const workspaceRoot = resolve(workspace);
+  assertExistingDirectory(workspaceRoot);
+  let current = workspaceRoot;
+  for (const part of workspaceRelativeParts(workspaceRoot, target)) {
+    current = join(current, part);
+    assertNotSymlink(current);
+  }
+}
+
 /** Create a log directory one level at a time, re-checking each created component. */
-function mkdirNoSymlinkRecursive(path: string): void {
+function mkdirNoSymlinkRecursive(path: string, workspace?: string): void {
+  if (workspace) {
+    const workspaceRoot = resolve(workspace);
+    assertExistingDirectory(workspaceRoot);
+    let current = workspaceRoot;
+    for (const part of workspaceRelativeParts(workspaceRoot, path)) {
+      current = join(current, part);
+      assertNotSymlink(current);
+      if (existsSync(current)) {
+        assertExistingDirectory(current);
+        continue;
+      }
+      try {
+        mkdirSync(current);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
+          throw error;
+        }
+      }
+      assertExistingDirectory(current);
+    }
+    return;
+  }
+
   const target = resolve(path);
   const missing: string[] = [];
   let current = target;
@@ -158,10 +207,13 @@ function appendLineNoFollow(path: string, line: string): void {
 }
 
 /** Append one record as a JSON line, creating the directory if needed. */
-export function appendUsageRecord(path: string, record: UsageRecord): void {
+export function appendUsageRecord(path: string, record: UsageRecord, options: AppendUsageRecordOptions = {}): void {
   const dir = dirname(path);
   assertNotSymlink(path);
-  mkdirNoSymlinkRecursive(dir);
+  mkdirNoSymlinkRecursive(dir, options.workspace);
+  if (options.workspace) {
+    assertNoWorkspaceSymlinks(options.workspace, path);
+  }
   assertNotSymlinkedLogPath(path);
   appendLineNoFollow(path, `${JSON.stringify(record)}\n`);
 }

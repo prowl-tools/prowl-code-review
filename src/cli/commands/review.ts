@@ -337,7 +337,8 @@ export function buildReviewCommand(): Command {
         try {
           appendUsageRecord(
             usageLogPath,
-            toUsageRecord(cost, { ts: new Date().toISOString(), repo: `${owner}/${repo}`, pr: pullNumber })
+            toUsageRecord(cost, { ts: new Date().toISOString(), repo: `${owner}/${repo}`, pr: pullNumber }),
+            { workspace: root }
           );
         } catch {
           // non-fatal: usage log unavailable
