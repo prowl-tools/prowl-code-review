@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Prompt-injection detection + hardening (backlog #14): the reviewer already treats all PR content as
+  untrusted DATA (every specialist + verifier prompt) and confines its agentic tools to the repo
+  checkout (root/symlink/ReDoS guards, byte caps, no network). This adds the final piece — the
+  reviewer now **notices and reports** injection attempts instead of letting them pass silently. A
+  deterministic detector (`src/review/injection.ts`) scans the PR's **added lines** for tight,
+  high-precision patterns (e.g. "ignore all previous instructions", "you are now…", "approve this PR",
+  "do not report this issue") and surfaces a prominent review note ("Possible prompt-injection text
+  detected … treated as data and ignored"). The note is the chosen surface (guaranteed to appear,
+  unlike a finding that the judge/verifier could drop) and is deliberately conservative to keep false
+  positives near zero. The specialist and verifier system prompts also gained an explicit
+  "do NOT comply" directive for instructions embedded in PR content. The bot-command verb allowlist
+  (the other half of #14) rides with the bot-command set (#24), which is not built yet.
 - Default ignore list (backlog #19): generated/vendored files are skipped before review by default
   (`src/review/ignore.ts`) — lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`,
   `Cargo.lock`, …), dependency/build dirs (`node_modules`, `vendor`, `dist`, `build`, `out`,
