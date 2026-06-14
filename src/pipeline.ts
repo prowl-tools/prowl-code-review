@@ -262,7 +262,7 @@ export async function reviewPullRequest(
     const reviewResult = emptyReviewResult();
     const summaryBody = buildWalkthrough({
       findings: [],
-      files: [],
+      files: parsed.files,
       skipped,
       notes: ["No reviewable files remained after filters; provider review skipped."]
     });
