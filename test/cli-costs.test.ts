@@ -159,6 +159,16 @@ describe("runCostsCommand", () => {
     expect(out).not.toContain("<script>");
   });
 
+  it("normalizes parseable timestamps before rendering the markdown window", async () => {
+    const path = defaultUsageLogPath(tempDir());
+    appendUsageRecord(path, record({ ts: "Sun Jun 14 2026 00:00:00 GMT+0000 (\u001b[31mred)" }));
+
+    const out = await runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
+    expect(out).toContain("2026-06-14T00:00:00.000Z");
+    expect(out).not.toContain("\u001b[31m");
+    expect(out).not.toContain("red)");
+  });
+
   it("escapes markdown formatting characters in report model names", async () => {
     const path = defaultUsageLogPath(tempDir());
     appendUsageRecord(path, record({ model: "~~claude~~" }));
