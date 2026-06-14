@@ -45,14 +45,14 @@ export interface CostsCommandDeps {
 }
 
 /** Run the costs command and return the rendered report (also printed to stdout). */
-export function runCostsCommand(options: CostsCommandOptions, deps: CostsCommandDeps = {}): string {
+export async function runCostsCommand(options: CostsCommandOptions, deps: CostsCommandDeps = {}): Promise<string> {
   const now = deps.now?.() ?? new Date();
   const resolveLogPath =
     deps.resolveLogPath ?? ((cliPath) => cliPath ?? findUsageLog(process.cwd()));
   const logPath = resolveLogPath(options.log);
 
   const cutoff = parseSinceDays(options.since, now);
-  const records = logPath ? filterRecordsSince(readUsageRecords(logPath), cutoff) : [];
+  const records = logPath ? filterRecordsSince(await readUsageRecords(logPath), cutoff) : [];
   const aggregate = aggregateUsage(records);
 
   const output = options.json ? renderCostReportJson(aggregate) : renderCostReportMarkdown(aggregate);
@@ -69,8 +69,8 @@ export function buildCostsCommand(): Command {
     .option("--log <path>", "path to a usage.jsonl log (defaults to an upward search)")
     .option("--since <days>", "only include runs from the last N days")
     .option("--json", "output the aggregate as JSON")
-    .action((options: CostsCommandOptions) => {
-      runCostsCommand(options);
+    .action(async (options: CostsCommandOptions) => {
+      await runCostsCommand(options);
     });
 
   return command;

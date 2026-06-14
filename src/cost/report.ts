@@ -1,4 +1,4 @@
-import { formatUsd } from "./pricing.js";
+import { escapeMarkdownDisplayText, formatUsd } from "./pricing.js";
 import type { UsageAggregate } from "./usage-log.js";
 
 /**
@@ -6,6 +6,10 @@ import type { UsageAggregate } from "./usage-log.js";
  * Mirrors the eval report's two-function style (markdown for the terminal, JSON
  * for agents/diffing).
  */
+
+function markdownTableCell(value: string): string {
+  return escapeMarkdownDisplayText(value);
+}
 
 /** Render the usage aggregate as a markdown summary for the terminal. */
 export function renderCostReportMarkdown(aggregate: UsageAggregate): string {
@@ -32,8 +36,9 @@ export function renderCostReportMarkdown(aggregate: UsageAggregate): string {
   ];
   for (const group of aggregate.groups) {
     const cost = group.priced ? `~${formatUsd(group.usd)}` : "n/a";
+    const providerModel = markdownTableCell(`${group.provider}/${group.model}`);
     lines.push(
-      `| ${group.key} | ${group.runs} | ${group.inputTokens.toLocaleString()} | ` +
+      `| ${providerModel} | ${group.runs} | ${group.inputTokens.toLocaleString()} | ` +
         `${group.outputTokens.toLocaleString()} | ${group.cachedInputTokens.toLocaleString()} | ${cost} |`
     );
   }

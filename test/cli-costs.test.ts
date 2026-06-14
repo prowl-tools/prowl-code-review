@@ -65,42 +65,52 @@ describe("filterRecordsSince", () => {
 });
 
 describe("runCostsCommand", () => {
-  it("renders a markdown report from the log", () => {
+  it("renders a markdown report from the log", async () => {
     const path = defaultUsageLogPath(tempDir());
     appendUsageRecord(path, record());
     appendUsageRecord(path, record({ usd: 0.02 }));
 
-    const out = runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
+    const out = await runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
     expect(out).toContain("# prowl-review cost report");
     expect(out).toContain("**Runs:** 2");
     expect(out).toContain("anthropic/claude-sonnet-4-6");
     expect(logSpy).toHaveBeenCalledWith(out);
   });
 
-  it("renders JSON when --json is set", () => {
+  it("renders JSON when --json is set", async () => {
     const path = defaultUsageLogPath(tempDir());
     appendUsageRecord(path, record());
 
-    const out = runCostsCommand({ log: path, json: true }, { resolveLogPath: (p) => p ?? null });
+    const out = await runCostsCommand({ log: path, json: true }, { resolveLogPath: (p) => p ?? null });
     const parsed = JSON.parse(out);
     expect(parsed.runs).toBe(1);
     expect(parsed.groups[0].key).toBe("anthropic/claude-sonnet-4-6");
   });
 
-  it("reports an empty state when there is no log", () => {
-    const out = runCostsCommand({}, { resolveLogPath: () => null });
+  it("reports an empty state when there is no log", async () => {
+    const out = await runCostsCommand({}, { resolveLogPath: () => null });
     expect(out).toContain("No local usage recorded yet");
   });
 
-  it("applies --since using the injected clock", () => {
+  it("applies --since using the injected clock", async () => {
     const path = defaultUsageLogPath(tempDir());
     appendUsageRecord(path, record({ ts: "2026-06-01T00:00:00.000Z", usd: 1 }));
     appendUsageRecord(path, record({ ts: "2026-06-14T00:00:00.000Z", usd: 2 }));
 
-    const out = runCostsCommand(
+    const out = await runCostsCommand(
       { log: path, since: "3", json: true },
       { resolveLogPath: (p) => p ?? null, now: () => new Date("2026-06-14T12:00:00.000Z") }
     );
     expect(JSON.parse(out).runs).toBe(1); // only the 2026-06-14 record is within 3 days
+  });
+
+  it("sanitizes terminal control characters in markdown output", async () => {
+    const path = defaultUsageLogPath(tempDir());
+    appendUsageRecord(path, record({ model: "claude|\u001b[31mred\u001b[0m<script>" }));
+
+    const out = await runCostsCommand({ log: path }, { resolveLogPath: (p) => p ?? null });
+    expect(out).toContain("anthropic/claude\\|redscript");
+    expect(out).not.toContain("\u001b[31m");
+    expect(out).not.toContain("<script>");
   });
 });

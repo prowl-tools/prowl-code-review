@@ -309,7 +309,7 @@ export function buildReviewCommand(): Command {
       // Per-review cost transparency (#36): emit to logs + the Action job summary
       // (never the PR comment), and append to the local usage log for `costs`.
       const cost = estimateCost(
-        result.review.usage,
+        result.usage,
         providerConfig.provider,
         providerConfig.model,
         config.pricing ?? {}

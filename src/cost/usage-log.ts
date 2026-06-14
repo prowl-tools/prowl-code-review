@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, appendFileSync, readFileSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
-import type { ProviderName } from "../providers/index.js";
+import { createInterface } from "node:readline";
+import { PROVIDER_NAMES, type ProviderName } from "../providers/index.js";
 import type { CostEstimate } from "./pricing.js";
 
 /**
@@ -79,25 +80,52 @@ export function appendUsageRecord(path: string, record: UsageRecord): void {
   appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function isProviderName(value: unknown): value is ProviderName {
+  return typeof value === "string" && (PROVIDER_NAMES as readonly string[]).includes(value);
+}
+
+function isUsageRecord(value: unknown): value is UsageRecord {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const record = value as Partial<UsageRecord>;
+  return (
+    typeof record.ts === "string" &&
+    isProviderName(record.provider) &&
+    typeof record.model === "string" &&
+    record.model.length > 0 &&
+    isFiniteNumber(record.inputTokens) &&
+    isFiniteNumber(record.outputTokens) &&
+    isFiniteNumber(record.cachedInputTokens) &&
+    (record.usd === null || isFiniteNumber(record.usd)) &&
+    (record.repo === undefined || typeof record.repo === "string") &&
+    (record.pr === undefined || isFiniteNumber(record.pr))
+  );
+}
+
 /** Read + parse usage records, skipping blank/malformed lines (never throws on bad data). */
-export function readUsageRecords(path: string): UsageRecord[] {
+export async function readUsageRecords(path: string): Promise<UsageRecord[]> {
   if (!existsSync(path)) {
     return [];
   }
   const records: UsageRecord[] = [];
-  for (const line of readFileSync(path, "utf8").split("\n")) {
+  const lines = createInterface({
+    input: createReadStream(path, { encoding: "utf8" }),
+    crlfDelay: Infinity
+  });
+  for await (const line of lines) {
     const trimmed = line.trim();
     if (!trimmed) {
       continue;
     }
     try {
-      const parsed = JSON.parse(trimmed) as Partial<UsageRecord>;
-      if (
-        typeof parsed.provider === "string" &&
-        typeof parsed.model === "string" &&
-        typeof parsed.inputTokens === "number"
-      ) {
-        records.push(parsed as UsageRecord);
+      const parsed = JSON.parse(trimmed) as unknown;
+      if (isUsageRecord(parsed)) {
+        records.push(parsed);
       }
     } catch {
       // skip a malformed line rather than sinking the whole read
