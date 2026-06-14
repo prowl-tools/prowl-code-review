@@ -84,6 +84,7 @@ export {
   type SearchResult
 } from "./context/tools.js";
 export {
+  ContextRetrievalError,
   gatherContext,
   REVIEW_TOOLS,
   type GatherContextParams,

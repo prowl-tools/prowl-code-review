@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { reviewPullRequest } from "../src/pipeline.js";
+import { ContextRetrievalError } from "../src/context/retrieval.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
 import type { ReviewResult } from "../src/review/run-review.js";
@@ -319,6 +320,28 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.contextFiles).toBe(0);
     expect(result.payload.body).toContain("Context retrieval failed");
     expect(result.payload.body).toContain("provider timeout");
+  });
+
+  it("includes partial context retrieval usage when context retrieval fails", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockRejectedValue(
+      new ContextRetrievalError("provider timeout", {
+        usage: { inputTokens: 5, outputTokens: 7, cachedInputTokens: 11 },
+        rounds: 2,
+        notes: []
+      })
+    );
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        usage: { inputTokens: 2, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.contextFiles).toBe(0);
+    expect(result.payload.body).toContain("Context retrieval failed");
+    expect(result.usage).toEqual({ inputTokens: 7, outputTokens: 10, cachedInputTokens: 15 });
   });
 
   it("renders context retrieval failures as degraded when no findings remain", async () => {
