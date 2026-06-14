@@ -80,20 +80,22 @@ function matchSegmentGlob(segment: string, pattern: string): boolean {
     }
 
     let result: boolean;
-    const token = pattern[patternIndex];
     if (patternIndex === pattern.length) {
       result = segmentIndex === segment.length;
-    } else if (token === "*") {
-      result =
-        match(segmentIndex, patternIndex + 1) ||
-        (segmentIndex < segment.length && match(segmentIndex + 1, patternIndex));
-    } else if (token === "?") {
-      result = segmentIndex < segment.length && match(segmentIndex + 1, patternIndex + 1);
     } else {
-      result =
-        segmentIndex < segment.length &&
-        segment[segmentIndex] === token &&
-        match(segmentIndex + 1, patternIndex + 1);
+      const token = pattern[patternIndex];
+      if (token === "*") {
+        result =
+          match(segmentIndex, patternIndex + 1) ||
+          (segmentIndex < segment.length && match(segmentIndex + 1, patternIndex));
+      } else if (token === "?") {
+        result = segmentIndex < segment.length && match(segmentIndex + 1, patternIndex + 1);
+      } else {
+        result =
+          segmentIndex < segment.length &&
+          segment[segmentIndex] === token &&
+          match(segmentIndex + 1, patternIndex + 1);
+      }
     }
 
     memo.set(key, result);
