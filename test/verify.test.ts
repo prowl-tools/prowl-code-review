@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   verifyFindings,
   parseVerdicts,
+  parseVerdictsResult,
   buildVerifyPrompt,
   buildVerifySystem,
   DEFAULT_VERIFY_CONFIDENCE
@@ -118,6 +119,38 @@ describe("parseVerdicts", () => {
 
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
+});
+
+describe("parseVerdictsResult (#7)", () => {
+  it("reports ok for a valid verdict array", () => {
+    const result = parseVerdictsResult(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    expect(result.ok).toBe(true);
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.invalid).toBe(0);
+  });
+
+  it("treats an explicit empty array as ok (not a retry)", () => {
+    expect(parseVerdictsResult("[]")).toEqual({ verdicts: [], ok: true, invalid: 0 });
+    expect(parseVerdictsResult("```json\n[]\n```")).toEqual({ verdicts: [], ok: true, invalid: 0 });
+  });
+
+  it("counts schema-invalid entries while still reporting ok", () => {
+    const result = parseVerdictsResult(
+      JSON.stringify([
+        { index: 0, falsePositive: true, confidence: 0.1 },
+        { index: 1, confidence: 0.5 },
+        { nope: true }
+      ])
+    );
+    expect(result.ok).toBe(true);
+    expect(result.verdicts).toHaveLength(1);
+    expect(result.invalid).toBe(2);
+  });
+
+  it("reports not-ok for unparseable output (the retry trigger)", () => {
+    expect(parseVerdictsResult("no json here")).toEqual({ verdicts: [], ok: false, invalid: 0 });
+    expect(parseVerdictsResult("{not: array}")).toEqual({ verdicts: [], ok: false, invalid: 0 });
   });
 });
 
@@ -238,6 +271,48 @@ describe("verifyFindings", () => {
     expect(result.error).toMatch(/provider exploded/);
     expect(result.unverified).toBe(1);
     expect(result.findings).toEqual(findings); // nothing dropped
+  });
+
+  it("retries the verification call once when the first response is unparseable (#7)", async () => {
+    const findings = [finding({ confidence: 0.3, title: "candidate" })];
+    let calls = 0;
+    const complete = vi.fn(async (): Promise<CompletionResult> => {
+      calls += 1;
+      if (calls === 1) {
+        return reply("Here is my reasoning, but no JSON array.");
+      }
+      return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    });
+
+    const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
+
+    expect(calls).toBe(2); // unparseable first → one retry
+    expect(result.ok).toBe(true);
+    expect(result.droppedFalsePositive).toBe(1);
+    expect(result.findings).toEqual([]); // dropped after the retry parsed
+    expect(result.usage.inputTokens).toBe(USAGE.inputTokens * 2); // both attempts counted
+  });
+
+  it("degrades gracefully if the verifier response is unparseable after one retry (#7)", async () => {
+    const findings = [finding({ confidence: 0.3, title: "candidate" })];
+    const complete = vi.fn(async (): Promise<CompletionResult> => reply("still no JSON here"));
+
+    const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
+
+    expect(complete).toHaveBeenCalledTimes(2);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/failed to return parseable verdicts/i);
+    expect(result.droppedFalsePositive).toBe(0);
+    expect(result.demoted).toBe(0);
+    expect(result.unverified).toBe(1);
+    expect(result.findings).toEqual(findings);
+    expect(result.usage.inputTokens).toBe(USAGE.inputTokens * 2);
+  });
+
+  it("requests native JSON output from the verifier (#7)", async () => {
+    const complete = vi.fn(async () => reply("[]"));
+    await verifyFindings([finding({ confidence: 0.3 })], { diff: "d" }, { config, complete });
+    expect((complete.mock.calls[0][0] as CompletionRequest).responseFormat).toBe("json");
   });
 
   it("honors a custom verifyConfidence threshold for non-blocking findings", async () => {

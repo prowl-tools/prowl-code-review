@@ -56,6 +56,17 @@ export const VerdictSchema = z.object({
 
 export type Verdict = z.infer<typeof VerdictSchema>;
 
+/** Sum two token-usage records (used when a verifier call is retried, #7). */
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
+  };
+}
+
 /** Return true when a parsed candidate array has at least one valid verifier verdict. */
 function hasValidVerdictEntry(value: unknown[]): boolean {
   return value.some((entry) => VerdictSchema.safeParse(entry).success);
@@ -174,28 +185,64 @@ export function buildVerifyPrompt(input: {
   return sections.join("\n\n");
 }
 
+/** A parsed verifier response: the verdicts plus whether the output was recognizable (#7). */
+export interface ParsedVerdicts {
+  /** Valid verdicts extracted from the response. */
+  verdicts: Verdict[];
+  /**
+   * True when the response contained a recognizable verdicts array — an explicit
+   * empty array or an array with at least one schema-valid verdict. False means
+   * no verdicts array could be isolated: the output was unparseable and the call
+   * should be retried once before giving up (#7).
+   */
+  ok: boolean;
+  /** Array entries that were present but failed schema validation (malformed). */
+  invalid: number;
+}
+
+/** Match a response whose only JSON content is an empty array (an explicit "no verdicts"). */
+function isEmptyVerdictsArray(text: string): boolean {
+  return /^\[\s*\]$/.test(text.replace(/```(?:json)?/gi, "").trim());
+}
+
 /**
- * Parse a verifier response into verdicts. Tolerant of prose/markdown around the
- * JSON; invalid entries are dropped rather than throwing, so one malformed
- * verdict doesn't sink the pass (the affected finding is simply kept as-is).
+ * Parse a verifier response into verdicts, reporting whether the output was a
+ * recognizable verdicts array (#7). Tolerant of prose/markdown around the JSON;
+ * invalid entries are dropped rather than throwing, so one malformed verdict
+ * doesn't sink the pass (the affected finding is simply kept as-is).
  */
-export function parseVerdicts(text: string): Verdict[] {
+export function parseVerdictsResult(text: string): ParsedVerdicts {
+  if (isEmptyVerdictsArray(text)) {
+    return { verdicts: [], ok: true, invalid: 0 };
+  }
   const candidate = extractJsonArrayCandidate(text, {
     maxChars: DEFAULT_MAX_JSON_ARRAY_CHARS,
     acceptJson: mayContainVerdictEntry,
     accept: hasValidVerdictEntry
   });
   if (!candidate) {
-    return [];
+    return { verdicts: [], ok: false, invalid: 0 };
   }
   const verdicts: Verdict[] = [];
+  let invalid = 0;
   for (const entry of candidate.value) {
     const result = VerdictSchema.safeParse(entry);
     if (result.success) {
       verdicts.push(result.data);
+    } else {
+      invalid += 1;
     }
   }
-  return verdicts;
+  return { verdicts, ok: true, invalid };
+}
+
+/**
+ * Parse a verifier response into verdicts. Tolerant of prose/markdown around the
+ * JSON; invalid entries are dropped rather than throwing, so one malformed
+ * verdict doesn't sink the pass (the affected finding is simply kept as-is).
+ */
+export function parseVerdicts(text: string): Verdict[] {
+  return parseVerdictsResult(text).verdicts;
 }
 
 /**
@@ -248,15 +295,37 @@ export async function verifyFindings(
   let verdicts: Verdict[];
   let usage: TokenUsage;
   try {
-    const result = await run(
-      {
-        system: buildVerifySystem(),
-        prompt: buildVerifyPrompt({ candidates, diff: input.diff, context: input.context })
-      },
-      config
-    );
-    verdicts = parseVerdicts(result.text);
+    const request: CompletionRequest = {
+      system: buildVerifySystem(),
+      prompt: buildVerifyPrompt({ candidates, diff: input.diff, context: input.context }),
+      // Native JSON output where the provider supports it (#7).
+      responseFormat: "json"
+    };
+    const result = await run(request, config);
+    let parsed = parseVerdictsResult(result.text);
     usage = result.usage;
+    if (!parsed.ok) {
+      // Unparseable verdicts — retry once before falling back to keeping candidates (#7).
+      const retry = await run(request, config);
+      usage = addUsage(usage, retry.usage);
+      const retryParsed = parseVerdictsResult(retry.text);
+      if (retryParsed.ok) {
+        parsed = retryParsed;
+      }
+    }
+    if (!parsed.ok) {
+      return {
+        findings,
+        verified: 0,
+        droppedFalsePositive: 0,
+        demoted: 0,
+        unverified: candidates.length,
+        ok: false,
+        error: "Verifier failed to return parseable verdicts after one retry.",
+        usage
+      };
+    }
+    verdicts = parsed.verdicts;
   } catch (error) {
     // Degrade gracefully: keep every candidate, surface the failure.
     return {
