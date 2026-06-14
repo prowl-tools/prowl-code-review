@@ -1,4 +1,4 @@
-import { appendFileSync, createReadStream, existsSync, lstatSync, mkdirSync } from "node:fs";
+import { closeSync, constants, createReadStream, existsSync, lstatSync, mkdirSync, openSync, writeSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { PROVIDER_NAMES, type ProviderName } from "../providers/index.js";
@@ -88,6 +88,19 @@ function assertNotSymlink(path: string): void {
   }
 }
 
+const NO_FOLLOW_FLAG = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+/** Append one JSON line without following a symlinked final path component. */
+function appendLineNoFollow(path: string, line: string): void {
+  const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | NO_FOLLOW_FLAG, 0o600);
+  try {
+    assertNotSymlink(path);
+    writeSync(fd, line, undefined, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /** Append one record as a JSON line, creating the directory if needed. */
 export function appendUsageRecord(path: string, record: UsageRecord): void {
   const dir = dirname(path);
@@ -96,7 +109,7 @@ export function appendUsageRecord(path: string, record: UsageRecord): void {
   mkdirSync(dir, { recursive: true });
   assertNotSymlink(dir);
   assertNotSymlink(path);
-  appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
+  appendLineNoFollow(path, `${JSON.stringify(record)}\n`);
 }
 
 /** True when a decoded JSON value is a finite number. */
