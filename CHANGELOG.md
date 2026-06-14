@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Findings structured-output hardening (backlog #7): review passes now survive a model that returns
+  malformed or empty JSON. Each specialist pass is **retried once** when its output isn't a parseable
+  findings array (`parseFindingsResult` distinguishes a genuine empty `[]` "no findings" — never
+  retried — from unparseable output); if even the retry fails, the pass is reported as **degraded**
+  (a coverage note + the incomplete badge) instead of silently contributing zero findings (#5). The
+  same retry guards the false-positive **verification pass**. Passes also request **native JSON output
+  where the provider supports it**: Anthropic prefills the assistant turn with `[` to force a JSON
+  array, and Gemini sets `responseMimeType: application/json`; OpenAI has no array-compatible native
+  mode (`json_object`/strict `json_schema` require an object root), so it relies on the prompt contract
+  plus the parse-and-retry. New `responseFormat: "json"` flag on `CompletionRequest`;
+  `parseFindingsResult`/`parseVerdictsResult` exported.
 - Per-PR budget cap (backlog #18): a configurable spend ceiling so a huge PR can't quietly cost real
   money. Set `budget.maxTokens` and/or `budget.maxUsd` in `.prowl-review.yml` (the tighter wins;
   `maxUsd` is converted to a token ceiling via the model's input rate — an estimate, like all #36
