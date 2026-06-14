@@ -19,6 +19,7 @@ import {
   type ToolkitOptions
 } from "./tools.js";
 import { isSensitiveFile, redactSecrets } from "../review/redact.js";
+import { totalTokens } from "../cost/pricing.js";
 
 /**
  * Agentic cross-file context retrieval (backlog #4, the #1 bug-catching lever).
@@ -73,6 +74,8 @@ export interface RetrievalLimits {
   maxRounds?: number;
   /** Max distinct files the agent may read. Default 20. */
   maxFiles?: number;
+  /** Token budget for this stage; the loop stops once accumulated usage hits it (#18). */
+  maxTokens?: number;
 }
 
 export interface RetrievedFile {
@@ -281,6 +284,7 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
   const config = params.config ?? resolveProviderConfig();
   const maxRounds = params.limits?.maxRounds ?? 6;
   const maxFiles = params.limits?.maxFiles ?? 20;
+  const maxTokens = params.limits?.maxTokens;
 
   const files = new Map<string, RetrievedFile>();
   const toolOutputs: RetrievedToolOutput[] = [];
@@ -310,6 +314,14 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
       throw new ContextRetrievalError(message, { usage, rounds, notes });
     }
     usage = addUsage(usage, result.usage);
+
+    // Stop the (otherwise unbounded) retrieval loop once it has spent its token
+    // budget, so a huge PR can't run up cost here (#18).
+    if (maxTokens !== undefined && totalTokens(usage) >= maxTokens) {
+      reachedLimit = true;
+      notes.push(`Reached context token budget (${maxTokens}).`);
+      break;
+    }
 
     if (result.stopReason !== "tool_use" || result.toolCalls.length === 0) {
       break;

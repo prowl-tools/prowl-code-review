@@ -23,6 +23,15 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Presentation -------------------------------------------------------------
 # agentPrompt: true          # append a copy-paste "Resolve with an AI agent" prompt to each finding
 
+# --- Budget cap ---------------------------------------------------------------
+# Per-PR spend ceiling. When hit, agentic context retrieval stops and the
+# verification pass is skipped (specialist passes still run); the over-budget
+# total is reported. Set maxTokens and/or maxUsd (the tighter wins). maxUsd is
+# converted to a token ceiling via the model's input rate (estimated).
+# budget:
+#   maxUsd: 0.50
+#   maxTokens: 200000
+
 # --- Cost estimate pricing ----------------------------------------------------
 # Per-review cost is estimated and emitted to the run logs + the GitHub Action
 # job summary (never the PR comment); "prowl-review costs" aggregates local runs.

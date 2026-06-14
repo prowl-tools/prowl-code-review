@@ -71,6 +71,16 @@ const diffSchema = z
   })
   .strict();
 
+/** Per-PR spend ceiling (#18); set either or both — the tighter wins. */
+const budgetSchema = z
+  .object({
+    /** Max total tokens across the review. */
+    maxTokens: z.number().int().positive().optional(),
+    /** Max estimated USD (converted to a token ceiling via the model's input rate). */
+    maxUsd: z.number().positive().optional()
+  })
+  .strict();
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -99,6 +109,8 @@ export const configSchema = z
      * over the built-in estimate table; cost figures are always estimates.
      */
     pricing: z.record(z.string().min(1), modelPriceSchema).optional(),
+    /** Per-PR spend ceiling (#18): caps context retrieval + skips verification when spent. */
+    budget: budgetSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

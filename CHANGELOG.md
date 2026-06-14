@@ -5,6 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Per-PR budget cap (backlog #18): a configurable spend ceiling so a huge PR can't quietly cost real
+  money. Set `budget.maxTokens` and/or `budget.maxUsd` in `.prowl-review.yml` (the tighter wins;
+  `maxUsd` is converted to a token ceiling via the model's input rate — an estimate, like all #36
+  figures). Enforcement trims the variable/optional spenders: agentic **context retrieval** stops
+  mid-loop once the budget is spent (the main "runs unbounded" risk), and the **verification pass** is
+  skipped when the specialists have already spent it — the **specialist passes always run** (they're
+  the core and already bounded by diff limits). It never blocks publishing; the over-budget total and
+  every trim are surfaced as review notes (no silent truncation, #5). Builds on the #36 cost estimator.
 - Token-usage + cost logging (backlog #36): per-review cost transparency that proves the BYOK
   "pennies, no cap" model. Each `review` run estimates its cost from the tracked token usage
   (input/output/cached) × a built-in price table (`src/cost/pricing.ts`, USD per 1M tokens,

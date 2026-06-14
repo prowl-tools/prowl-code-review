@@ -12,7 +12,7 @@ import { resolveProviderConfig, type ProviderConfig } from "../../providers/inde
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
-import { estimateCost, formatCostLine, type PriceOverrides } from "../../cost/pricing.js";
+import { estimateCost, formatCostLine, resolveTokenBudget, type PriceOverrides } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 
 /**
@@ -365,12 +365,24 @@ export function buildReviewCommand(): Command {
       });
       const resolved = resolveReviewOptions(options, config);
 
+      // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
+      const budget = resolveTokenBudget(
+        config.budget,
+        providerConfig.provider,
+        providerConfig.model,
+        config.pricing ?? {}
+      );
+      for (const note of budget.notes) {
+        console.warn(`prowl-review: ${note}`);
+      }
+
       const octokit = createOctokit(token);
       const reviewOptions = {
         ...resolved,
         config: providerConfig,
         toolkitRoot: root,
         guidelines,
+        budgetTokens: budget.tokens ?? undefined,
         dryRun: resolveDryRun(options)
       };
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { resolveModelPrice, estimateCost, formatUsd, formatCostLine, sanitizeDisplayText } from "../src/cost/pricing.js";
+import { resolveModelPrice, estimateCost, formatUsd, formatCostLine, sanitizeDisplayText, resolveTokenBudget, totalTokens } from "../src/cost/pricing.js";
 import type { TokenUsage } from "../src/providers/index.js";
 
 const usage: TokenUsage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cachedInputTokens: 1_000_000 };
@@ -169,5 +169,41 @@ describe("formatUsd / formatCostLine", () => {
     expect(line).not.toContain("<");
     expect(line).not.toContain(">");
     expect(line).not.toContain("&");
+  });
+});
+
+describe("totalTokens", () => {
+  it("sums every token kind incl. cache writes", () => {
+    expect(
+      totalTokens({ inputTokens: 1, outputTokens: 2, cachedInputTokens: 3, cacheWriteInputTokens: 4 })
+    ).toBe(10);
+    expect(totalTokens({ inputTokens: 5, outputTokens: 0, cachedInputTokens: 0 })).toBe(5);
+  });
+});
+
+describe("resolveTokenBudget (#18)", () => {
+  it("returns null when no budget is set", () => {
+    expect(resolveTokenBudget(undefined, "anthropic", "claude-sonnet-4-6").tokens).toBeNull();
+    expect(resolveTokenBudget({}, "anthropic", "claude-sonnet-4-6").tokens).toBeNull();
+  });
+
+  it("passes a maxTokens ceiling straight through", () => {
+    expect(resolveTokenBudget({ maxTokens: 50_000 }, "anthropic", "claude-sonnet-4-6").tokens).toBe(50_000);
+  });
+
+  it("converts maxUsd to tokens via the model input rate", () => {
+    // claude-sonnet input = $3/1M → $3 ÷ $3 * 1M = 1,000,000 tokens.
+    expect(resolveTokenBudget({ maxUsd: 3 }, "anthropic", "claude-sonnet-4-6").tokens).toBe(1_000_000);
+  });
+
+  it("uses the tighter ceiling when both are set", () => {
+    const result = resolveTokenBudget({ maxTokens: 40_000, maxUsd: 3 }, "anthropic", "claude-sonnet-4-6");
+    expect(result.tokens).toBe(40_000); // 40k < 1M from $3
+  });
+
+  it("drops maxUsd with a note when the model is unpriced (keeps maxTokens)", () => {
+    const result = resolveTokenBudget({ maxTokens: 10_000, maxUsd: 1 }, "anthropic", "mystery-model");
+    expect(result.tokens).toBe(10_000);
+    expect(result.notes[0]).toMatch(/maxUsd ignored/);
   });
 });
