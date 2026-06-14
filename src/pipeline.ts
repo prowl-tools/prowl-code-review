@@ -30,6 +30,7 @@ import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js
 import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
+import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
@@ -58,6 +59,11 @@ export interface ReviewPullRequestOptions {
   config?: ProviderConfig;
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
+  /**
+   * Glob patterns for generated/vendored files to skip (#19). Omitted →
+   * {@link DEFAULT_IGNORE_GLOBS}; an explicit list (including `[]`) replaces them.
+   */
+  ignore?: string[];
   diffLimits?: DiffLimits;
   contextLimits?: RetrievalLimits;
   minSeverity?: Severity;
@@ -230,10 +236,15 @@ export async function reviewPullRequest(
   const parsed = parseDiff(diff);
   // Keep sensitive files out of the review entirely and out of size budgets.
   const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(parsed.files);
-  const safeParsed = { files: safeFiles };
+  // Drop generated/vendored files (#19) before size guards so they don't burn the
+  // budget; reported as skipped, never dropped silently. Omitted config → built-in
+  // defaults; an explicit list (including []) replaces them.
+  const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
+  const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
+  const safeParsed = { files: keptFiles };
   const guarded = applyDiffLimits(safeParsed, options.diffLimits);
   const reviewFiles = guarded.files;
-  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped];
+  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped];
 
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
