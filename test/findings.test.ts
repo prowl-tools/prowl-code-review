@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseFindings, findingKey, FindingSchema, isBlockingFinding } from "../src/review/findings.js";
+import {
+  parseFindings,
+  parseFindingsResult,
+  findingKey,
+  FindingSchema,
+  isBlockingFinding
+} from "../src/review/findings.js";
 import type { Finding, Severity } from "../src/review/findings.js";
 
 const VALID = {
@@ -64,6 +70,34 @@ describe("parseFindings", () => {
 
   it("returns [] for an empty array", () => {
     expect(parseFindings("[]")).toEqual([]);
+  });
+});
+
+describe("parseFindingsResult (#7)", () => {
+  it("reports ok with findings for a valid array", () => {
+    const result = parseFindingsResult(JSON.stringify([VALID]));
+    expect(result.ok).toBe(true);
+    expect(result.findings).toHaveLength(1);
+    expect(result.invalid).toBe(0);
+  });
+
+  it("treats an explicit empty array as a valid 'no findings' result (not a retry)", () => {
+    expect(parseFindingsResult("[]")).toEqual({ findings: [], ok: true, invalid: 0 });
+    expect(parseFindingsResult("```json\n[]\n```")).toEqual({ findings: [], ok: true, invalid: 0 });
+    expect(parseFindingsResult("  [ ]  ")).toEqual({ findings: [], ok: true, invalid: 0 });
+  });
+
+  it("counts schema-invalid entries while still reporting ok", () => {
+    const result = parseFindingsResult(JSON.stringify([VALID, { file: "x" }, { ...VALID, severity: "bogus" }]));
+    expect(result.ok).toBe(true);
+    expect(result.findings).toHaveLength(1);
+    expect(result.invalid).toBe(2);
+  });
+
+  it("reports not-ok for unparseable output (the retry trigger)", () => {
+    expect(parseFindingsResult("no json here")).toEqual({ findings: [], ok: false, invalid: 0 });
+    expect(parseFindingsResult('{"file":"a"}')).toEqual({ findings: [], ok: false, invalid: 0 });
+    expect(parseFindingsResult("[not valid json")).toEqual({ findings: [], ok: false, invalid: 0 });
   });
 });
 
