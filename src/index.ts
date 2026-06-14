@@ -137,6 +137,32 @@ export { parseDiff } from "./review/parse-diff.js";
 export { applyDiffLimits, describeSkipped } from "./review/size-guards.js";
 export { filterIgnoredDiffFiles, isIgnoredPath, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 export { detectInjectionAttempts, injectionNotes, looksLikeInjection, type InjectionHit } from "./review/injection.js";
+
+// Token-usage + cost logging (estimate, local log, aggregation).
+export {
+  estimateCost,
+  resolveModelPrice,
+  formatUsd,
+  formatCostLine,
+  DEFAULT_PRICES,
+  type ModelPrice,
+  type PriceOverrides,
+  type CostEstimate
+} from "./cost/pricing.js";
+export {
+  appendUsageRecord,
+  readUsageRecords,
+  aggregateUsage,
+  toUsageRecord,
+  defaultUsageLogPath,
+  findUsageLog,
+  USAGE_LOG_DIR,
+  USAGE_LOG_FILENAME,
+  type UsageRecord,
+  type UsageGroup,
+  type UsageAggregate
+} from "./cost/usage-log.js";
+export { renderCostReportMarkdown, renderCostReportJson } from "./cost/report.js";
 export type {
   ParsedDiff,
   DiffFile,
