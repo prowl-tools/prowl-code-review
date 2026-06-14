@@ -430,8 +430,10 @@ export async function reviewPullRequest(
     options.budgetTokens === undefined
       ? undefined
       : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
+  const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
+  const reviewContext = contextSkippedForBudget ? undefined : context;
   const reviewResult = await review(
-    { diff: diffText, context, guidelines: options.guidelines, grounding },
+    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding },
     {
       config,
       minSeverity: options.minSeverity,
@@ -468,6 +470,9 @@ export async function reviewPullRequest(
       ...redactionNotes,
       ...contextNotes,
       ...groundingNotes,
+      ...(contextSkippedForBudget
+        ? ["Skipped optional context in specialist prompts because context retrieval exhausted the token budget."]
+        : []),
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
       ...reviewPassNotes(reviewResult),
