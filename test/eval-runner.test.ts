@@ -363,15 +363,30 @@ rename to config/example.txt
           "+a();"
         ].join("\n"),
         expected: []
+      },
+      {
+        id: "ignored-clean",
+        description: "d",
+        kind: "clean" as const,
+        diff: [
+          "diff --git a/package-lock.json b/package-lock.json",
+          "--- a/package-lock.json",
+          "+++ b/package-lock.json",
+          "@@ -1 +1,2 @@",
+          " {}",
+          "+{}"
+        ].join("\n"),
+        expected: []
       }
     ];
     const review = fakeReview(() => []);
     const report = await runBenchmark(cases, { config, runReview: review, diffLimits: { maxFiles: 0 } });
 
     expect(review).not.toHaveBeenCalled();
-    expect(report.errored).toBe(2);
+    expect(report.errored).toBe(3);
     expect(report.cases[0].error).toContain("no reviewable files");
     expect(report.cases[1].error).toContain("no reviewable files");
+    expect(report.cases[2].error).toContain("no reviewable files");
     expect(report.metrics.cleanCases).toBe(0); // excluded
   });
 
@@ -410,15 +425,30 @@ rename to config/example.txt
           "+b();"
         ].join("\n"),
         expected: [{ file: "b.ts", line: 2, note: "n" }]
+      },
+      {
+        id: "ignored-expected",
+        description: "d",
+        kind: "bug" as const,
+        diff: [
+          "diff --git a/package-lock.json b/package-lock.json",
+          "--- a/package-lock.json",
+          "+++ b/package-lock.json",
+          "@@ -1 +1,2 @@",
+          " {}",
+          "+{}"
+        ].join("\n"),
+        expected: [{ file: "package-lock.json", line: 2, note: "n" }]
       }
     ];
     const review = fakeReview(() => []);
     const report = await runBenchmark(cases, { config, runReview: review, diffLimits: { maxFiles: 1 } });
 
     expect(review).not.toHaveBeenCalled();
-    expect(report.errored).toBe(2);
+    expect(report.errored).toBe(3);
     expect(report.cases[0].error).toContain(".env (sensitive)");
     expect(report.cases[1].error).toContain("b.ts (maxFiles)");
+    expect(report.cases[2].error).toContain("package-lock.json (ignored)");
     expect(report.metrics.bugCases).toBe(0); // excluded
   });
 
