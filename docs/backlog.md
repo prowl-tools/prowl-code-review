@@ -101,10 +101,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer, I want to run the same reviewer locally against a branch/diff before pushing, so that I get two layers of review with no extra tooling.
     - Acceptance: `prowl-review review --base <ref> --head <ref>` prints findings (severity, file:line, suggestion) to the terminal without GitHub.
 
-36. **Token-usage + cost logging**
-    As a developer, I want per-review token/cost output (incl. cache hits), so that I can confirm I'm paying cents and there's no per-hour cap.
-    - Acceptance: logs input/output/cached tokens and estimated cost per provider per run.
-
 37. **Reusable org-level workflow**
     As an org owner, I want one reusable workflow referenced by all repos, so that "across all my projects" needs no YAML copy-paste.
     - Acceptance: documented `workflow_call` workflow (intended for `Prowl-qa/.github`) that any repo invokes in a few lines.

@@ -24,6 +24,14 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();
   });
 
+  it("accepts a pricing override map and rejects malformed entries (#36)", () => {
+    const pricing = { "claude-sonnet-4-6": { input: 3, output: 15, cachedInput: 0.3 } };
+    expect(configSchema.parse({ pricing })).toEqual({ pricing });
+    expect(configSchema.parse({ pricing: { m: { input: 1, output: 2 } } })).toEqual({ pricing: { m: { input: 1, output: 2 } } });
+    expect(() => configSchema.parse({ pricing: { m: { input: 1 } } })).toThrow(); // output required
+    expect(() => configSchema.parse({ pricing: { m: { input: -1, output: 2 } } })).toThrow(); // negative
+  });
+
   it("accepts maxInlineComments incl. 0 and rejects negative/non-int (#25)", () => {
     expect(configSchema.parse({ review: { maxInlineComments: 0 } })).toEqual({ review: { maxInlineComments: 0 } });
     expect(() => configSchema.parse({ review: { maxInlineComments: -1 } })).toThrow();
