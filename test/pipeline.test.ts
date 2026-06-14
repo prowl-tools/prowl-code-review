@@ -155,6 +155,7 @@ diff --git a/package-lock.json b/package-lock.json
     expect(deps.gatherGrounding).not.toHaveBeenCalled();
     expect(deps.runReview).not.toHaveBeenCalled();
     expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    expect(result.posted).toBe(true);
     expect(result.skipped).toContainEqual({ path: "package-lock.json", reason: "ignored" });
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
     expect(result.payload.body).toContain("No reviewable files remained after filters");
