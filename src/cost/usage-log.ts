@@ -125,7 +125,7 @@ function workspaceRelativeParts(workspace: string, target: string): string[] {
 }
 
 /** Reject symlinked path components under a known workspace root. */
-function assertNoWorkspaceSymlinks(workspace: string, target: string): void {
+export function assertNoWorkspaceSymlinks(workspace: string, target: string): void {
   const workspaceRoot = resolve(workspace);
   assertExistingDirectory(workspaceRoot);
   let current = workspaceRoot;

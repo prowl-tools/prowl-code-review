@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { parseSinceDays, resolveCostsLogPath, filterRecordsSince, runCostsCommand } from "../src/cli/commands/costs.js";
@@ -65,6 +65,16 @@ describe("resolveCostsLogPath", () => {
     const path = defaultUsageLogPath(root);
     appendUsageRecord(path, record());
     expect(resolveCostsLogPath(undefined, join(root, "nested"))).toBe(path);
+  });
+
+  it("rejects explicit logs behind symlinked workspace ancestors", () => {
+    const root = tempDir();
+    const target = tempDir();
+    mkdirSync(join(target, "sub"), { recursive: true });
+    writeFileSync(join(target, "sub", "usage.jsonl"), `${JSON.stringify(record())}\n`);
+    symlinkSync(target, join(root, "logs"), "dir");
+
+    expect(resolveCostsLogPath("logs/sub/usage.jsonl", root)).toBeNull();
   });
 });
 
