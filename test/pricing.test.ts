@@ -117,7 +117,7 @@ describe("formatUsd / formatCostLine", () => {
       ...estimateCost(usage, "openai", "gpt-5"),
       model: "gpt|spoof"
     });
-    expect(line).toContain("openai/gpt\\|spoof");
+    expect(line).toContain("openai/gptspoof");
   });
 
   it("removes line breaks from model names in cost lines", () => {
@@ -125,8 +125,19 @@ describe("formatUsd / formatCostLine", () => {
       ...estimateCost(usage, "openai", "gpt-5"),
       model: "gpt\nspoof\rline"
     });
-    expect(line).toContain("openai/gpt spoof line");
+    expect(line).toContain("openai/gptspoofline");
     expect(line).not.toContain("\n");
     expect(line).not.toContain("\r");
+  });
+
+  it("allowlists model-name characters in cost lines", () => {
+    const line = formatCostLine({
+      ...estimateCost(usage, "openai", "gpt-5"),
+      model: "gpt --><script>alert(1)</script>&"
+    });
+    expect(line).toContain("openai/gpt--scriptalert1script");
+    expect(line).not.toContain("<");
+    expect(line).not.toContain(">");
+    expect(line).not.toContain("&");
   });
 });

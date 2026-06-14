@@ -216,6 +216,7 @@ export function formatCostLine(estimate: CostEstimate): string {
   const tokens =
     `in ${estimate.inputTokens.toLocaleString()} / out ${estimate.outputTokens.toLocaleString()} / ` +
     `cached ${estimate.cachedInputTokens.toLocaleString()}${cacheWrite} tok`;
-  const model = escapeMarkdownDisplayText(estimate.model.replaceAll("\r", " ").replaceAll("\n", " "));
+  const safeModel = sanitizeDisplayText(estimate.model).replace(/[^a-zA-Z0-9._:-]/g, "");
+  const model = escapeMarkdownDisplayText(safeModel);
   return `${cost} · ${estimate.provider}/${model} · ${tokens} [estimated]`;
 }
