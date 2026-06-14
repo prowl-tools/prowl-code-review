@@ -33,6 +33,7 @@ import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
 import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 import { injectionNotes } from "./review/injection.js";
+import { totalTokens } from "./cost/pricing.js";
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
@@ -75,6 +76,12 @@ export interface ReviewPullRequestOptions {
   maxFindings?: number;
   /** Cap inline comments per review; overflow rolls into the summary (default 20, #25). */
   maxInlineComments?: number;
+  /**
+   * Per-review token budget (#18): caps agentic context retrieval and skips the
+   * verification pass once spent; the over-budget total is reported. Resolved
+   * from `budget.maxTokens`/`maxUsd` by the CLI. Specialist passes still run.
+   */
+  budgetTokens?: number;
   /** Run the skeptical false-positive verification pass (default true, #8). */
   verify?: boolean;
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
@@ -171,7 +178,10 @@ function reviewPassNotes(reviewResult: ReviewResult): string[] {
 /** Surface what the skeptical verification pass changed, so it isn't silent (#8). */
 function verificationNotes(reviewResult: ReviewResult): string[] {
   const notes: string[] = [];
-  const { droppedFalsePositive, demoted, unverified, ok, error } = reviewResult.verification;
+  const { droppedFalsePositive, demoted, unverified, ok, error, skippedForBudget } = reviewResult.verification;
+  if (skippedForBudget) {
+    notes.push("Skipped false-positive verification to stay within the token budget (#18); raise the budget for the extra precision pass.");
+  }
   if (!ok) {
     notes.push(
       truncateNote(
@@ -206,6 +216,22 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
     notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
   }
   return notes;
+}
+
+/** Note when the run's total tokens exceeded the configured budget (#18). */
+function budgetNotes(usage: TokenUsage, budgetTokens: number | undefined): string[] {
+  if (budgetTokens === undefined) {
+    return [];
+  }
+  const spent = totalTokens(usage);
+  if (spent <= budgetTokens) {
+    return [];
+  }
+  return [
+    `Review used ~${spent.toLocaleString()} tokens, over the configured budget of ` +
+      `${budgetTokens.toLocaleString()} (#18); optional stages were trimmed. Raise the budget or ` +
+      `tighten diff limits to review more.`
+  ];
 }
 
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
@@ -337,7 +363,8 @@ export async function reviewPullRequest(
         toolkit: { root: options.toolkitRoot },
         changedPaths: reviewFiles.map((file) => file.path),
         config,
-        limits: options.contextLimits
+        // Cap the (otherwise unbounded) retrieval loop at the token budget (#18).
+        limits: { ...options.contextLimits, maxTokens: options.budgetTokens }
       });
       contextFiles = gathered.files.length;
       contextUsage = gathered.usage;
@@ -391,6 +418,12 @@ export async function reviewPullRequest(
     }
   }
 
+  // The verification gate sees the budget net of what context retrieval already
+  // spent, so it skips the precision pass once the run is out of budget (#18).
+  const reviewBudgetTokens =
+    options.budgetTokens === undefined
+      ? undefined
+      : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
   const reviewResult = await review(
     { diff: diffText, context, guidelines: options.guidelines, grounding },
     {
@@ -399,7 +432,8 @@ export async function reviewPullRequest(
       minConfidence: options.minConfidence,
       maxFindings: options.maxFindings,
       verify: options.verify,
-      verifyConfidence: options.verifyConfidence
+      verifyConfidence: options.verifyConfidence,
+      maxTokens: reviewBudgetTokens
     }
   );
 
@@ -415,6 +449,8 @@ export async function reviewPullRequest(
   const degraded =
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
 
+  const totalUsage = addUsage(reviewResult.usage, contextUsage);
+
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
     files: reviewFiles,
@@ -428,7 +464,8 @@ export async function reviewPullRequest(
       ...groundingNotes,
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
-      ...reviewPassNotes(reviewResult)
+      ...reviewPassNotes(reviewResult),
+      ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note))
     ]
   });
 
@@ -445,7 +482,7 @@ export async function reviewPullRequest(
     meta,
     payload,
     review: reviewResult,
-    usage: addUsage(reviewResult.usage, contextUsage),
+    usage: totalUsage,
     skipped,
     contextFiles,
     posted: false
