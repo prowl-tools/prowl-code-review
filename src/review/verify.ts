@@ -196,6 +196,8 @@ export interface ParsedVerdicts {
    * should be retried once before giving up (#7).
    */
   ok: boolean;
+  /** Array entries that were present but failed schema validation (malformed). */
+  invalid: number;
 }
 
 /** Match a response whose only JSON content is an empty array (an explicit "no verdicts"). */
@@ -211,7 +213,7 @@ function isEmptyVerdictsArray(text: string): boolean {
  */
 export function parseVerdictsResult(text: string): ParsedVerdicts {
   if (isEmptyVerdictsArray(text)) {
-    return { verdicts: [], ok: true };
+    return { verdicts: [], ok: true, invalid: 0 };
   }
   const candidate = extractJsonArrayCandidate(text, {
     maxChars: DEFAULT_MAX_JSON_ARRAY_CHARS,
@@ -219,16 +221,19 @@ export function parseVerdictsResult(text: string): ParsedVerdicts {
     accept: hasValidVerdictEntry
   });
   if (!candidate) {
-    return { verdicts: [], ok: false };
+    return { verdicts: [], ok: false, invalid: 0 };
   }
   const verdicts: Verdict[] = [];
+  let invalid = 0;
   for (const entry of candidate.value) {
     const result = VerdictSchema.safeParse(entry);
     if (result.success) {
       verdicts.push(result.data);
+    } else {
+      invalid += 1;
     }
   }
-  return { verdicts, ok: true };
+  return { verdicts, ok: true, invalid };
 }
 
 /**
@@ -307,6 +312,18 @@ export async function verifyFindings(
       if (retryParsed.ok) {
         parsed = retryParsed;
       }
+    }
+    if (!parsed.ok) {
+      return {
+        findings,
+        verified: 0,
+        droppedFalsePositive: 0,
+        demoted: 0,
+        unverified: candidates.length,
+        ok: false,
+        error: "Verifier failed to return parseable verdicts after one retry.",
+        usage
+      };
     }
     verdicts = parsed.verdicts;
   } catch (error) {
