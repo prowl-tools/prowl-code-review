@@ -11,6 +11,7 @@ describe("resolveModelPrice", () => {
     expect(resolveModelPrice("anthropic", "claude-haiku-4-5-20251001")).toEqual({ input: 1, output: 5, cachedInput: 0.1 });
     expect(resolveModelPrice("openai", "gpt-5.2")).toEqual({ input: 1.25, output: 10, cachedInput: 0.125 });
     expect(resolveModelPrice("openai", "gpt-5.4-mini")).toEqual({ input: 0.75, output: 4.5, cachedInput: 0.075 });
+    expect(resolveModelPrice("gemini", "gemini-2.5-flash")).toEqual({ input: 0.3, output: 2.5, cachedInput: 0.03 });
   });
 
   it("prefers the longest matching prefix", () => {
@@ -42,6 +43,15 @@ describe("resolveModelPrice", () => {
     expect(resolveModelPrice("anthropic", "mystery-model")).toBeNull();
     expect(resolveModelPrice("anthropic", "claude-opus-4-9")).toBeNull();
     expect(resolveModelPrice("openai", "gpt-5.4-nano")).toBeNull();
+  });
+
+  it("leaves tiered Gemini Pro pricing unpriced without an exact override", () => {
+    expect(resolveModelPrice("gemini", "gemini-2.5-pro")).toBeNull();
+    expect(
+      resolveModelPrice("gemini", "gemini-2.5-pro", {
+        "gemini-2.5-pro": { input: 1.25, output: 10, cachedInput: 0.125 }
+      })
+    ).toEqual({ input: 1.25, output: 10, cachedInput: 0.125 });
   });
 });
 
@@ -88,6 +98,16 @@ describe("estimateCost", () => {
     const cost = estimateCost(usage, "anthropic", "mystery-model");
     expect(cost.usd).toBeNull();
     expect(cost.totalTokens).toBe(3_000_000);
+  });
+
+  it("uses Gemini Flash cached-input pricing from the Developer API table", () => {
+    const cost = estimateCost(usage, "gemini", "gemini-2.5-flash");
+    // 1M input*$0.30 + 1M output*$2.50 + 1M cached*$0.03 = 2.83
+    expect(cost.usd).toBeCloseTo(2.83, 5);
+  });
+
+  it("returns null usd for tiered Gemini Pro built-in pricing", () => {
+    expect(estimateCost(usage, "gemini", "gemini-2.5-pro").usd).toBeNull();
   });
 });
 

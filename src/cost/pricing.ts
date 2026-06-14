@@ -104,8 +104,10 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
     "gpt-4o": { input: 2.5, output: 10, cachedInput: 1.25 }
   },
   gemini: {
-    "gemini-2.5-flash": { input: 0.3, output: 2.5, cachedInput: 0.075 },
-    "gemini-2.5-pro": { input: 1.25, output: 10, cachedInput: 0.31 }
+    "gemini-2.5-flash": { input: 0.3, output: 2.5, cachedInput: 0.03 }
+    // Gemini 2.5 Pro has <=200K and >200K prompt-length tiers. Pipeline usage
+    // is aggregated across calls, so built-in pricing returns n/a; configure an
+    // exact override when the prompt tier is known.
   }
 };
 
