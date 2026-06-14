@@ -31,6 +31,7 @@ import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
 import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
+import { injectionNotes } from "./review/injection.js";
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
@@ -386,6 +387,7 @@ export async function reviewPullRequest(
     coverage,
     degraded,
     notes: [
+      ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
       ...redactionNotes,
       ...contextNotes,
       ...groundingNotes,
