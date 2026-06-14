@@ -64,10 +64,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As an org owner, I want a pass/fail status check with line annotations, so that critical findings can block merge.
     - Acceptance: create a Check Run (Checks API) with `conclusion` from severity (e.g. Critical → failure) + summary + up to 50 annotations/batch; configurable gating.
 
-25. **Inline-comment volume cap (noise ceiling)**
-    As a developer, I want a cap on inline comments per review, so that a large PR isn't carpet-bombed with comments.
-    - Acceptance: configurable max inline comments (sensible default); overflow findings roll into the summary grouped by severity/file; the cap and overflow count are reported.
-
 26. **Bot command set**
     As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
     - Acceptance: support `review` / `full review` (manual + full re-scan), `pause`/`resume`, `ignore`, `resolve`, `configure` via `@prowl-review <cmd>` comments (verb allowlist per #14).
