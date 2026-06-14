@@ -151,6 +151,64 @@ describe("runReview", () => {
     expect(result.passes.every((p) => p.ok)).toBe(true);
   });
 
+  it("requests native JSON output from each pass (#7)", async () => {
+    const complete = vi.fn(async (): Promise<CompletionResult> => reply("[]"));
+    await runReview({ diff: "d" }, { config, complete, verify: false });
+    for (const call of complete.mock.calls) {
+      expect((call[0] as CompletionRequest).responseFormat).toBe("json");
+    }
+  });
+
+  it("retries a pass once when its output is unparseable and recovers (#7)", async () => {
+    let correctnessCalls = 0;
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Correctness reviewer")) {
+        correctnessCalls += 1;
+        if (correctnessCalls === 1) {
+          return reply("Sorry — here is my analysis in prose, no JSON.");
+        }
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "real", body: "x", confidence: 0.9 }
+          ])
+        );
+      }
+      return reply("[]"); // other specialists legitimately find nothing
+    });
+
+    const result = await runReview({ diff: "d" }, { config, complete, verify: false });
+
+    expect(correctnessCalls).toBe(2); // first output unparseable → one retry
+    const correctness = result.passes.find((p) => p.specialist === "correctness");
+    expect(correctness?.ok).toBe(true);
+    expect(correctness?.retried).toBe(true);
+    expect(correctness?.findings).toBe(1);
+    // Passes that returned a valid "[]" on the first try are not retried.
+    expect(
+      result.passes.filter((p) => p.specialist !== "correctness").every((p) => !p.retried)
+    ).toBe(true);
+  });
+
+  it("reports a pass as degraded when output is unparseable after one retry (#7)", async () => {
+    let correctnessCalls = 0;
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Correctness reviewer")) {
+        correctnessCalls += 1;
+        return reply("still just prose, no JSON array here");
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview({ diff: "d" }, { config, complete, verify: false });
+
+    expect(correctnessCalls).toBe(2); // tried twice, both unparseable
+    const correctness = result.passes.find((p) => p.specialist === "correctness");
+    expect(correctness?.ok).toBe(false);
+    expect(correctness?.retried).toBe(true);
+    expect(correctness?.findings).toBe(0);
+    expect(correctness?.error).toMatch(/not parseable JSON/);
+  });
+
   it("applies the severity threshold via the judge", async () => {
     const complete = vi.fn(async (): Promise<CompletionResult> =>
       reply(

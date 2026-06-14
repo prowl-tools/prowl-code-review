@@ -56,27 +56,71 @@ function mayContainFindingEntry(json: string): boolean {
   );
 }
 
+/** A parsed review-pass response: the findings plus whether the output was recognizable (#7). */
+export interface ParsedFindings {
+  /** Valid findings extracted from the response. */
+  findings: Finding[];
+  /**
+   * True when the response contained a recognizable findings array — either an
+   * explicit empty array (the model genuinely found nothing) or an array with at
+   * least one schema-valid finding. False means no findings array could be
+   * isolated at all: the output was unparseable, so the caller should retry the
+   * pass once before giving up (#7).
+   */
+  ok: boolean;
+  /** Array entries that were present but failed schema validation (malformed). */
+  invalid: number;
+}
+
+/**
+ * Match a response whose only JSON content is an empty array — an explicit "no
+ * findings" answer. Distinguishing this from unparseable output lets the caller
+ * retry the latter without re-running a pass that legitimately found nothing.
+ */
+function isEmptyFindingsArray(text: string): boolean {
+  return /^\[\s*\]$/.test(text.replace(/```(?:json)?/gi, "").trim());
+}
+
+/**
+ * Parse a review-pass response into validated findings, reporting whether the
+ * output was a recognizable findings array (#7). Tolerant of prose/markdown
+ * around the JSON; invalid entries are dropped (counted in `invalid`) rather than
+ * throwing, so one malformed finding doesn't sink the whole pass. Use this when
+ * the caller needs to decide whether to retry; {@link parseFindings} is the thin
+ * findings-only wrapper.
+ */
+export function parseFindingsResult(text: string): ParsedFindings {
+  // An explicit empty array is a valid "no findings" answer, not a parse failure.
+  if (isEmptyFindingsArray(text)) {
+    return { findings: [], ok: true, invalid: 0 };
+  }
+  const candidate = extractJsonArrayCandidate(text, {
+    acceptJson: mayContainFindingEntry,
+    accept: hasValidFindingEntry
+  });
+  if (!candidate) {
+    return { findings: [], ok: false, invalid: 0 };
+  }
+  const findings: Finding[] = [];
+  let invalid = 0;
+  for (const entry of candidate.value) {
+    const result = FindingSchema.safeParse(entry);
+    if (result.success) {
+      findings.push(result.data);
+    } else {
+      invalid += 1;
+    }
+  }
+  return { findings, ok: true, invalid };
+}
+
 /**
  * Parse a model response into validated findings. Tolerant of prose/markdown
  * around the JSON; invalid entries are dropped rather than throwing, so one
  * malformed finding doesn't sink the whole pass.
  */
 export function parseFindings(text: string): Finding[] {
-  const candidate = extractJsonArrayCandidate(text, {
-    acceptJson: mayContainFindingEntry,
-    accept: hasValidFindingEntry
-  });
-  if (!candidate) {
-    return [];
-  }
-  const findings: Finding[] = [];
-  for (const entry of candidate.value) {
-    const result = FindingSchema.safeParse(entry);
-    if (result.success) {
-      findings.push(result.data);
-    }
-  }
-  return findings;
+  return parseFindingsResult(text).findings;
 }
 
 /** Stable dedup key: same file + line + category is considered the same issue. */
