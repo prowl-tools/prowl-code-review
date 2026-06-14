@@ -5,6 +5,13 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Inline-comment volume cap (backlog #25, the noise-ceiling capstone): a configurable maximum number of
+  inline review comments per run (`src/review/inline.ts`, default 20) so a large PR isn't carpet-bombed.
+  Findings are ranked, so the top N keep their inline comments and the rest roll into a compact
+  summary section grouped by severity (`badge file:line — title`) that reports the cap and the overflow
+  count ("N more findings (inline comment cap: M)") — no finding is dropped (#5). Configurable via
+  `review.maxInlineComments` in `.prowl-review.yml` (`0` puts everything in the summary). Completes the
+  noise-ceiling trilogy (comment states #56 → nitpicks #58 → cap #25).
 - Prompt-injection detection + hardening (backlog #14): the reviewer already treats all PR content as
   untrusted DATA (every specialist + verifier prompt) and confines its agentic tools to the repo
   checkout (root/symlink/ReDoS guards, byte caps, no network). This adds the final piece — the
