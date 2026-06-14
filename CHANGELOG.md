@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Default ignore list (backlog #19): generated/vendored files are skipped before review by default
+  (`src/review/ignore.ts`) — lockfiles (`package-lock.json`, `yarn.lock`, `pnpm-lock.yaml`, `go.sum`,
+  `Cargo.lock`, …), dependency/build dirs (`node_modules`, `vendor`, `dist`, `build`, `out`,
+  `coverage`, `.next`, `.turbo`), and test snapshots (`__snapshots__`, `*.snap`). Fewer files reviewed
+  means cheaper, less-noisy reviews. Skipped files are **reported** ("Not reviewed: ignored — matched
+  the ignore list"), never dropped silently (#5). Filtering runs before the size guards so ignored
+  files don't burn the budget. Overridable via a top-level `ignore` glob list in `.prowl-review.yml`,
+  which **replaces** the defaults (`[]` ignores nothing); a small dependency-free matcher supports
+  segment names, `*`/`**`/`?`, and path globs.
 - Per-finding "Resolve with an AI agent" prompt (backlog #57): every finding comment — inline and
   the summary's "Unmapped findings" alike — now carries a collapsed `<details>🤖 Resolve with an AI
   agent</details>` block with a ready-to-copy, fenced (non-rendered) prompt containing the finding's
