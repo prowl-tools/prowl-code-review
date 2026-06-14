@@ -319,6 +319,27 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).toContain("src/a\\.ts:100");
   });
 
+  it("budgets unmapped finding prompts after inline-cap overflow is added", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6, title: "Inline" }),
+        f({ line: 7, title: "Overflow" }),
+        f({ line: 99, title: "Unmapped 1", body: "first ".repeat(4000) }),
+        f({ line: 100, title: "Unmapped 2", body: "second ".repeat(4000) })
+      ],
+      diff,
+      summaryBody: "## walkthrough",
+      maxInlineComments: 1
+    });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.body.length).toBeLessThanOrEqual(65_536);
+    expect(payload.body).toContain("1 more finding (inline comment cap: 1)");
+    expect(payload.body).toContain("src/a\\.ts:7 — Overflow");
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("src/a\\.ts:100");
+  });
+
   it("reserves future unmapped separators while budgeting agent prompts", () => {
     const findings = Array.from({ length: 8 }, (_, index) =>
       f({ line: 99 + index, title: `Unmapped ${index}`, body: `detail ${index} `.repeat(500) })
@@ -528,6 +549,16 @@ describe("inline-comment cap (#25)", () => {
     const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 0, agentPrompt: false });
     expect(payload.comments).toHaveLength(0);
     expect(payload.body).toContain("3 more findings (inline comment cap: 0)");
+  });
+
+  it("uses singular finding text when exactly one finding overflows the cap", () => {
+    const findings = majors(3);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 2, agentPrompt: false });
+
+    expect(payload.comments).toHaveLength(2);
+    expect(payload.body).toContain("1 more finding (inline comment cap: 2)");
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).not.toContain("Finding 2"); // stayed inline
   });
 
   it("adds no overflow section when findings fit under the cap", () => {

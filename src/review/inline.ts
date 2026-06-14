@@ -586,9 +586,9 @@ export function buildReviewPayload(input: {
     ...commentOptions,
     maxComments: cap
   });
-  const withUnmapped = withUnmappedFindings(input.summaryBody, unmapped, commentOptions);
+  const withOverflow = withOverflowFindings(input.summaryBody, overflow, cap);
   return {
-    body: withOverflowFindings(withUnmapped, overflow, cap),
+    body: withUnmappedFindings(withOverflow, unmapped, commentOptions),
     event: input.event ?? "COMMENT",
     comments
   };
