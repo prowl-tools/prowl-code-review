@@ -105,6 +105,10 @@ async function completeOpenAi(
     max_completion_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS
   };
 
+  // `request.responseFormat === "json"` is intentionally not mapped: our review
+  // passes emit a top-level JSON array, and OpenAI's native modes (`json_object`
+  // and strict `json_schema`) both require an object root. So OpenAI relies on the
+  // prompt's JSON contract plus the caller's tolerant parse-and-retry (#7).
   if (request.temperature !== undefined) {
     body.temperature = request.temperature;
   }

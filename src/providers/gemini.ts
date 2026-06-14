@@ -85,12 +85,16 @@ function validThinkingBudget(model: string, maxOutputTokens: number): number | u
 function buildGenerationConfig(
   model: string,
   maxTokens: number | undefined,
-  temperature: number | undefined
+  temperature: number | undefined,
+  responseFormat?: "json"
 ): Record<string, unknown> {
   const maxOutputTokens = maxTokens ?? GEMINI_MAX_OUTPUT_TOKENS;
   const generationConfig: Record<string, unknown> = {
     maxOutputTokens,
-    ...(temperature !== undefined ? { temperature } : {})
+    ...(temperature !== undefined ? { temperature } : {}),
+    // Native JSON output (#7): constrain Gemini to syntactically valid JSON so a
+    // review pass can't return prose/fences that fail to parse.
+    ...(responseFormat === "json" ? { responseMimeType: "application/json" } : {})
   };
   if (supportsThinkingBudget(model)) {
     const thinkingBudget = validThinkingBudget(model, maxOutputTokens);
@@ -224,7 +228,12 @@ async function completeGemini(
 ): Promise<CompletionResult> {
   const body: Record<string, unknown> = {
     contents: [{ role: "user", parts: [{ text: request.prompt }] }],
-    generationConfig: buildGenerationConfig(config.model, request.maxTokens, request.temperature),
+    generationConfig: buildGenerationConfig(
+      config.model,
+      request.maxTokens,
+      request.temperature,
+      request.responseFormat
+    ),
     safetySettings: GEMINI_SAFETY_SETTINGS
   };
 

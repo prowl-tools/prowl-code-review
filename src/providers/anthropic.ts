@@ -96,10 +96,22 @@ async function completeAnthropic(
   request: CompletionRequest,
   config: ProviderConfig
 ): Promise<CompletionResult> {
+  // Native JSON output (#7): Anthropic has no response-format flag, so prefill the
+  // assistant turn with "[" — the documented way to force the model to continue a
+  // JSON array instead of wrapping it in prose/fences. The prefill is re-prepended
+  // to the response below since the API returns only the continuation.
+  const prefill = request.responseFormat === "json" ? "[" : undefined;
+  const messages: Array<{ role: string; content: string }> = [
+    { role: "user", content: request.prompt }
+  ];
+  if (prefill) {
+    messages.push({ role: "assistant", content: prefill });
+  }
+
   const body: Record<string, unknown> = {
     model: config.model,
     max_tokens: request.maxTokens ?? DEFAULT_MAX_TOKENS,
-    messages: [{ role: "user", content: request.prompt }]
+    messages
   };
 
   const system = systemBlocks(request.system);
@@ -129,7 +141,7 @@ async function completeAnthropic(
   }
 
   return {
-    text,
+    text: prefill ? prefill + text : text,
     provider: "anthropic",
     model: config.model,
     usage: mapUsage(data.usage)
