@@ -243,6 +243,25 @@ describe("anthropic provider", () => {
     expect(bodyOf(fn).system).toBeUndefined();
   });
 
+  it("prefills the assistant turn with '[' for native JSON output (#7)", async () => {
+    // The API returns only the continuation after the prefill.
+    const fn = mockFetch({ content: [{ type: "text", text: '{"file":"a.ts"}]' }] });
+    const result = await complete({ prompt: "diff", responseFormat: "json" }, config);
+    expect(bodyOf(fn).messages).toEqual([
+      { role: "user", content: "diff" },
+      { role: "assistant", content: "[" }
+    ]);
+    // The prefill is re-prepended so the caller sees a complete JSON array.
+    expect(result.text).toBe('[{"file":"a.ts"}]');
+  });
+
+  it("does not prefill when responseFormat is unset", async () => {
+    const fn = mockFetch({ content: [{ type: "text", text: "plain" }] });
+    const result = await complete({ prompt: "diff" }, config);
+    expect(bodyOf(fn).messages).toEqual([{ role: "user", content: "diff" }]);
+    expect(result.text).toBe("plain");
+  });
+
   it("throws on a non-ok response", async () => {
     mockFetch({ error: "bad" }, false, 429);
     await expect(complete({ prompt: "diff" }, config)).rejects.toThrow(/Anthropic API error \(429\)/);
@@ -366,6 +385,18 @@ describe("gemini provider", () => {
       outputTokens: 47,
       cachedInputTokens: 100
     });
+  });
+
+  it("sets responseMimeType for native JSON output (#7)", async () => {
+    const fn = mockFetch({ candidates: [{ content: { parts: [{ text: "[]" }] } }] });
+    await complete({ prompt: "diff", responseFormat: "json" }, config);
+    expect((bodyOf(fn).generationConfig as Json).responseMimeType).toBe("application/json");
+  });
+
+  it("omits responseMimeType when responseFormat is unset", async () => {
+    const fn = mockFetch({ candidates: [{ content: { parts: [{ text: "review" }] } }] });
+    await complete({ prompt: "diff" }, config);
+    expect((bodyOf(fn).generationConfig as Json).responseMimeType).toBeUndefined();
   });
 
   it("defaults missing cached content token count to zero cached input", async () => {

@@ -41,6 +41,16 @@ export interface CompletionRequest {
   maxTokens?: number;
   /** Sampling temperature. Provider default when omitted. */
   temperature?: number;
+  /**
+   * Request native JSON output where the provider supports it (#7). Our review
+   * passes emit a top-level JSON array, so each provider uses the technique that
+   * constrains it natively: Anthropic prefills the assistant turn with `[`;
+   * Gemini sets `responseMimeType: application/json`. OpenAI has no
+   * array-compatible native mode (`json_object` / strict `json_schema` both
+   * require an object root), so it falls back to the prompt contract plus the
+   * caller's parse-and-retry. Unset = plain text.
+   */
+  responseFormat?: "json";
 }
 
 export interface TokenUsage {
