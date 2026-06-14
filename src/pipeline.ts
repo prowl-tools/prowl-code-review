@@ -26,7 +26,7 @@ import {
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
-import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
+import { emptyUsage, resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
 import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
@@ -107,6 +107,18 @@ export interface ReviewPullRequestResult {
 /** Keep operational review notes compact enough for a readable summary. */
 function truncateNote(value: string, maxLength = 500): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+/** Review result used when filters leave no provider-reviewable files. */
+function emptyReviewResult(): ReviewResult {
+  return {
+    findings: [],
+    raw: [],
+    passes: [],
+    verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+    judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+    usage: emptyUsage()
+  };
 }
 
 /** Convert failed specialist passes into reviewer-visible coverage notes. */
@@ -245,6 +257,31 @@ export async function reviewPullRequest(
   const guarded = applyDiffLimits(safeParsed, options.diffLimits);
   const reviewFiles = guarded.files;
   const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped];
+
+  if (reviewFiles.length === 0) {
+    const reviewResult = emptyReviewResult();
+    const summaryBody = buildWalkthrough({
+      findings: [],
+      files: [],
+      skipped,
+      notes: ["No reviewable files remained after filters; provider review skipped."]
+    });
+    const payload = buildReviewPayload({
+      findings: [],
+      diff: { files: [] },
+      summaryBody,
+      event: options.event,
+      agentPrompt: options.agentPrompt
+    });
+
+    let posted = false;
+    if (!options.dryRun) {
+      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+      posted = true;
+    }
+
+    return { meta, payload, review: reviewResult, skipped, contextFiles: 0, posted };
+  }
 
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
