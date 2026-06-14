@@ -160,6 +160,7 @@ export {
   USAGE_LOG_DIR,
   USAGE_LOG_FILENAME,
   type UsageRecord,
+  type AppendUsageRecordOptions,
   type UsageGroup,
   type UsageAggregate
 } from "./cost/usage-log.js";

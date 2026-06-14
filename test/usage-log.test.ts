@@ -73,6 +73,17 @@ describe("usage log round-trip", () => {
     expect(existsSync(join(target, USAGE_LOG_DIR))).toBe(false);
   });
 
+  it("rejects a symlinked workspace ancestor while appending nested explicit logs", () => {
+    const root = tempDir();
+    const target = tempDir();
+    mkdirSync(join(target, "sub"), { recursive: true });
+    symlinkSync(target, join(root, "logs"), "dir");
+    expect(() =>
+      appendUsageRecord(join(root, "logs", "sub", USAGE_LOG_FILENAME), record(), { workspace: root })
+    ).toThrow(/symlink/);
+    expect(existsSync(join(target, "sub", USAGE_LOG_FILENAME))).toBe(false);
+  });
+
   it("rejects a symlinked usage log file", () => {
     const root = tempDir();
     const target = join(tempDir(), "target.jsonl");
