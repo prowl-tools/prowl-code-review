@@ -247,7 +247,11 @@ diff --git a/package-lock.json b/package-lock.json
     );
     // ...and into the review's verify gate, net of context spend.
     expect(deps.runReview.mock.calls[0][1]).toEqual(expect.objectContaining({ maxTokens: expectedReviewBudget }));
+    expect(deps.runReview.mock.calls[0][0].context).toBeUndefined();
     // Over-budget + verification-skipped surface as notes (no silent truncation).
+    expect(result.payload.body).toContain(
+      "Skipped optional context in specialist prompts because context retrieval exhausted the token budget"
+    );
     expect(result.payload.body).toContain("over the configured budget");
     expect(result.payload.body).toContain("Skipped false-positive verification to stay within the token budget");
   });
