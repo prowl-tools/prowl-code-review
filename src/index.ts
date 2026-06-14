@@ -123,6 +123,7 @@ export {
   buildInlineComments,
   buildReviewPayload,
   formatFindingComment,
+  DEFAULT_MAX_INLINE_COMMENTS,
   type FindingCommentOptions,
   type ReviewComment,
   type ReviewEvent,

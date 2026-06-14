@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildInlineComments, buildReviewPayload, formatFindingComment } from "../src/review/inline.js";
+import { buildInlineComments, buildReviewPayload, formatFindingComment, DEFAULT_MAX_INLINE_COMMENTS } from "../src/review/inline.js";
 import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
@@ -319,6 +319,27 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).toContain("src/a\\.ts:100");
   });
 
+  it("budgets unmapped finding prompts after inline-cap overflow is added", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6, title: "Inline" }),
+        f({ line: 7, title: "Overflow" }),
+        f({ line: 99, title: "Unmapped 1", body: "first ".repeat(4000) }),
+        f({ line: 100, title: "Unmapped 2", body: "second ".repeat(4000) })
+      ],
+      diff,
+      summaryBody: "## walkthrough",
+      maxInlineComments: 1
+    });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.body.length).toBeLessThanOrEqual(65_536);
+    expect(payload.body).toContain("1 more finding (inline comment cap: 1)");
+    expect(payload.body).toContain("src/a\\.ts:7 — Overflow");
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("src/a\\.ts:100");
+  });
+
   it("reserves future unmapped separators while budgeting agent prompts", () => {
     const findings = Array.from({ length: 8 }, (_, index) =>
       f({ line: 99 + index, title: `Unmapped ${index}`, body: `detail ${index} `.repeat(500) })
@@ -423,5 +444,127 @@ describe("buildReviewPayload", () => {
     expect(payload.body).toContain("Nitpicks");
     expect(payload.body).toContain("nit");
     expect(payload.body).toContain("Fix the lint warning.");
+  });
+});
+
+describe("inline-comment cap (#25)", () => {
+  // A diff whose new-side lines 1..6 are all anchorable.
+  const wideDiff: ParsedDiff = {
+    files: [
+      {
+        path: "src/a.ts",
+        status: "modified",
+        binary: false,
+        byteSize: 0,
+        hunks: [
+          {
+            oldStart: 1,
+            oldLines: 0,
+            newStart: 1,
+            newLines: 6,
+            section: "",
+            lines: Array.from({ length: 6 }, (_, i) => ({ type: "add" as const, content: `l${i + 1}`, newLine: i + 1 }))
+          }
+        ]
+      }
+    ]
+  };
+
+  function majors(n: number): Finding[] {
+    return Array.from({ length: n }, (_, i) =>
+      f({ line: i + 1, severity: i === 0 ? "critical" : "major", title: `Finding ${i + 1}` })
+    );
+  }
+
+  it("caps inline comments and rolls the ranked overflow into a grouped summary section", () => {
+    const findings = majors(5);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 2, agentPrompt: false });
+
+    expect(payload.comments).toHaveLength(2); // first two ranked findings stay inline
+    expect(payload.comments.map((c) => c.line)).toEqual([1, 2]);
+
+    // The remaining three are reported in the summary, grouped by severity, with the cap + count.
+    expect(payload.body).toContain("3 more findings (inline comment cap: 2)");
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).toContain("src/a\\.ts:5 — Finding 5");
+    expect(payload.body).not.toContain("Finding 1"); // stayed inline, not in overflow
+  });
+
+  it("groups overflow findings by severity in the summary", () => {
+    const findings = [
+      f({ line: 1, severity: "critical", title: "Finding 1" }),
+      f({ line: 2, severity: "major", title: "Finding 2" }),
+      f({ line: 3, severity: "critical", title: "Finding 3" }),
+      f({ line: 4, severity: "major", title: "Finding 4" })
+    ];
+    const payload = buildReviewPayload({
+      findings,
+      diff: wideDiff,
+      summaryBody: "## w",
+      maxInlineComments: 1,
+      agentPrompt: false
+    });
+
+    expect(payload.comments).toHaveLength(1);
+    expect(payload.comments[0].line).toBe(1);
+    expect(payload.body).toContain("3 more findings (inline comment cap: 1)");
+    expect(payload.body).toMatch(/\*\*🔴 critical \(1\)\*\*/);
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).toMatch(/\*\*🟠 major \(2\)\*\*/);
+    expect(payload.body).toContain("src/a\\.ts:2 — Finding 2");
+    expect(payload.body).toContain("src/a\\.ts:4 — Finding 4");
+    expect(payload.body).not.toContain("Finding 1"); // stayed inline
+  });
+
+  it("applies the default cap when none is given", () => {
+    const findings = majors(DEFAULT_MAX_INLINE_COMMENTS + 3);
+    // Only 6 lines are anchorable, so at most 6 could be inline anyway — widen the diff.
+    const bigDiff: ParsedDiff = {
+      files: [
+        {
+          path: "src/a.ts",
+          status: "modified",
+          binary: false,
+          byteSize: 0,
+          hunks: [
+            {
+              oldStart: 1,
+              oldLines: 0,
+              newStart: 1,
+              newLines: findings.length,
+              section: "",
+              lines: findings.map((_, i) => ({ type: "add" as const, content: `l${i + 1}`, newLine: i + 1 }))
+            }
+          ]
+        }
+      ]
+    };
+    const payload = buildReviewPayload({ findings, diff: bigDiff, summaryBody: "## w", agentPrompt: false });
+    expect(payload.comments).toHaveLength(DEFAULT_MAX_INLINE_COMMENTS);
+    expect(payload.body).toContain(`3 more findings (inline comment cap: ${DEFAULT_MAX_INLINE_COMMENTS})`);
+  });
+
+  it("puts every blocking finding in the summary when the cap is 0", () => {
+    const findings = majors(3);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 0, agentPrompt: false });
+    expect(payload.comments).toHaveLength(0);
+    expect(payload.body).toContain("3 more findings (inline comment cap: 0)");
+  });
+
+  it("uses singular finding text when exactly one finding overflows the cap", () => {
+    const findings = majors(3);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 2, agentPrompt: false });
+
+    expect(payload.comments).toHaveLength(2);
+    expect(payload.body).toContain("1 more finding (inline comment cap: 2)");
+    expect(payload.body).toContain("src/a\\.ts:3 — Finding 3");
+    expect(payload.body).not.toContain("Finding 2"); // stayed inline
+  });
+
+  it("adds no overflow section when findings fit under the cap", () => {
+    const findings = majors(2);
+    const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 5, agentPrompt: false });
+    expect(payload.comments).toHaveLength(2);
+    expect(payload.body).not.toContain("inline comment cap");
   });
 });
