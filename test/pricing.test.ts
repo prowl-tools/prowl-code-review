@@ -53,6 +53,17 @@ describe("estimateCost", () => {
     expect(cost.totalTokens).toBe(3_000_000);
   });
 
+  it("prices Anthropic cache writes at the 5-minute cache write multiplier", () => {
+    const cost = estimateCost(
+      { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 1_000_000 },
+      "anthropic",
+      "claude-sonnet-4-6"
+    );
+    expect(cost.usd).toBeCloseTo(3.75, 5); // $3 input * 1.25 cache write multiplier
+    expect(cost.totalTokens).toBe(1_000_000);
+    expect(formatCostLine(cost)).toContain("cache write 1,000,000");
+  });
+
   it("falls back to the input rate when no cached rate is set", () => {
     const cost = estimateCost(
       { inputTokens: 0, outputTokens: 0, cachedInputTokens: 1_000_000 },

@@ -74,6 +74,16 @@ describe("usage log round-trip", () => {
     expect(() => appendUsageRecord(defaultUsageLogPath(root), record())).toThrow(/symlink/);
   });
 
+  it("rejects a symlinked usage log when reading", async () => {
+    const root = tempDir();
+    const target = join(tempDir(), "target.jsonl");
+    writeFileSync(target, `${JSON.stringify(record())}\n`);
+    mkdirSync(join(root, USAGE_LOG_DIR), { recursive: true });
+    symlinkSync(target, defaultUsageLogPath(root));
+    await expect(collect(readUsageRecords(defaultUsageLogPath(root)))).rejects.toThrow(/symlink/);
+    expect(() => findUsageLog(root)).toThrow(/symlink/);
+  });
+
   it("skips blank and malformed lines without throwing", async () => {
     const dir = tempDir();
     mkdirSync(join(dir, USAGE_LOG_DIR), { recursive: true });
@@ -107,7 +117,8 @@ describe("toUsageRecord", () => {
       inputTokens: 1,
       outputTokens: 2,
       cachedInputTokens: 3,
-      totalTokens: 6,
+      cacheWriteInputTokens: 4,
+      totalTokens: 10,
       usd: 0.5
     };
     expect(toUsageRecord(estimate, { ts: "T", repo: "o/r", pr: 9 })).toEqual({
@@ -119,6 +130,7 @@ describe("toUsageRecord", () => {
       inputTokens: 1,
       outputTokens: 2,
       cachedInputTokens: 3,
+      cacheWriteInputTokens: 4,
       usd: 0.5
     });
   });
@@ -128,14 +140,17 @@ describe("aggregateUsage", () => {
   it("totals tokens/cost and groups by provider/model, most-expensive first", () => {
     const agg = aggregateUsage([
       record({ model: "claude-sonnet-4-6", usd: 0.02, inputTokens: 100 }),
-      record({ model: "claude-sonnet-4-6", usd: 0.03, inputTokens: 200 }),
+      record({ model: "claude-sonnet-4-6", usd: 0.03, inputTokens: 200, cacheWriteInputTokens: 30 }),
       record({ provider: "openai", model: "gpt-5.2", usd: 0.5, inputTokens: 10 })
     ]);
     expect(agg.runs).toBe(3);
     expect(agg.usd).toBeCloseTo(0.55, 5);
     expect(agg.inputTokens).toBe(310);
+    expect(agg.cacheWriteInputTokens).toBe(30);
+    expect(agg.totalTokens).toBe(520);
     expect(agg.groups[0].key).toBe("openai/gpt-5.2"); // highest cost first
     expect(agg.groups[1].runs).toBe(2);
+    expect(agg.groups[1].cacheWriteInputTokens).toBe(30);
     expect(agg.priced).toBe(true);
   });
 

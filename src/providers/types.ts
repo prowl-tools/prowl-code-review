@@ -50,6 +50,8 @@ export interface TokenUsage {
   outputTokens: number;
   /** Input tokens served from cache (billed at the discounted read rate). */
   cachedInputTokens: number;
+  /** Input tokens written to a provider cache, when reported separately. */
+  cacheWriteInputTokens?: number;
 }
 
 export interface CompletionResult {

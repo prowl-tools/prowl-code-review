@@ -110,6 +110,7 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
 };
 
 const UNSAFE_MODEL_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+const ANTHROPIC_CACHE_WRITE_MULTIPLIER = 1.25;
 
 /** True when config overrides contain prototype-sensitive keys. */
 function hasUnsafeOverrideKey(overrides: PriceOverrides): boolean {
@@ -132,6 +133,7 @@ export interface CostEstimate {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   totalTokens: number;
   /** Estimated USD, or null when the model has no known/overridden price. */
   usd: number | null;
@@ -174,14 +176,17 @@ export function estimateCost(
   overrides: PriceOverrides = {}
 ): CostEstimate {
   const price = resolveModelPrice(provider, model, overrides);
-  const totalTokens = usage.inputTokens + usage.outputTokens + usage.cachedInputTokens;
+  const cacheWriteInputTokens = usage.cacheWriteInputTokens ?? 0;
+  const totalTokens = usage.inputTokens + usage.outputTokens + usage.cachedInputTokens + cacheWriteInputTokens;
   let usd: number | null = null;
   if (price) {
     const cachedRate = price.cachedInput ?? price.input;
+    const cacheWriteRate = provider === "anthropic" ? price.input * ANTHROPIC_CACHE_WRITE_MULTIPLIER : price.input;
     usd =
       (usage.inputTokens / 1_000_000) * price.input +
       (usage.outputTokens / 1_000_000) * price.output +
-      (usage.cachedInputTokens / 1_000_000) * cachedRate;
+      (usage.cachedInputTokens / 1_000_000) * cachedRate +
+      (cacheWriteInputTokens / 1_000_000) * cacheWriteRate;
   }
   return {
     provider,
@@ -189,6 +194,7 @@ export function estimateCost(
     inputTokens: usage.inputTokens,
     outputTokens: usage.outputTokens,
     cachedInputTokens: usage.cachedInputTokens,
+    cacheWriteInputTokens,
     totalTokens,
     usd
   };
@@ -205,9 +211,11 @@ export function formatUsd(usd: number | null): string {
 /** Compact one-line cost summary, e.g. `~$0.0123 · anthropic/claude-… · in 12,345 / out 2,345 / cached 1,000 tok [estimated]`. */
 export function formatCostLine(estimate: CostEstimate): string {
   const cost = estimate.usd === null ? "n/a (set pricing in config)" : `~${formatUsd(estimate.usd)}`;
+  const cacheWrite =
+    estimate.cacheWriteInputTokens > 0 ? ` / cache write ${estimate.cacheWriteInputTokens.toLocaleString()}` : "";
   const tokens =
     `in ${estimate.inputTokens.toLocaleString()} / out ${estimate.outputTokens.toLocaleString()} / ` +
-    `cached ${estimate.cachedInputTokens.toLocaleString()} tok`;
+    `cached ${estimate.cachedInputTokens.toLocaleString()}${cacheWrite} tok`;
   const model = escapeMarkdownDisplayText(estimate.model.replaceAll("\r", " ").replaceAll("\n", " "));
   return `${cost} · ${estimate.provider}/${model} · ${tokens} [estimated]`;
 }

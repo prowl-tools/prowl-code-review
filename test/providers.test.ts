@@ -188,7 +188,7 @@ describe("anthropic provider", () => {
     });
   });
 
-  it("counts cache creation tokens as uncached input", async () => {
+  it("tracks cache creation tokens separately from uncached input", async () => {
     const fn = mockFetch({
       content: [{ type: "text", text: "review" }],
       usage: {
@@ -203,9 +203,10 @@ describe("anthropic provider", () => {
 
     expect(urlOf(fn)).toBe("https://api.anthropic.com/v1/messages");
     expect(result.usage).toEqual({
-      inputTokens: 400,
+      inputTokens: 100,
       outputTokens: 20,
-      cachedInputTokens: 900
+      cachedInputTokens: 900,
+      cacheWriteInputTokens: 300
     });
   });
 
