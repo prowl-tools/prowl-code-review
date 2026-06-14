@@ -47,10 +47,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer, I want a max-spend ceiling per review, so that a huge PR can't quietly cost me real money.
     - Acceptance: configurable token/cost cap; when exceeded, the tool trims scope (or posts a "review truncated — raise the cap" note) instead of running unbounded.
 
-19. **Default ignore list**
-    As a developer, I want generated/vendored files ignored by default, so that reviews aren't noisy or expensive.
-    - Acceptance: sensible built-in ignores (lockfiles, `dist/`/`build/`, snapshots, `node_modules`, vendored dirs), overridable via config.
-
 20. **Fork-PR handling / security model**
     As an OSS maintainer, I want defined behavior on fork PRs, so that the tool degrades safely when secrets and write tokens aren't available.
     - Acceptance: detect fork PRs (read-only token / no `PROWL_AI_KEY`); fall back to a documented mode (e.g. summary-only via `pull_request_target` guidance, or skip with a clear message). No secret leakage to fork code.
