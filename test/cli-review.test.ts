@@ -231,13 +231,16 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   });
 
   it("resolves the usage-log path: explicit env > local default > none in CI (#36)", () => {
-    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "/tmp/u.jsonl" } as NodeJS.ProcessEnv)).toBe("/tmp/u.jsonl");
+    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "logs/u.jsonl" } as NodeJS.ProcessEnv)).toBe("/ws/logs/u.jsonl");
+    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "/ws/tmp/u.jsonl" } as NodeJS.ProcessEnv)).toBe("/ws/tmp/u.jsonl");
+    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "../u.jsonl" } as NodeJS.ProcessEnv)).toBeNull();
+    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "/tmp/u.jsonl" } as NodeJS.ProcessEnv)).toBeNull();
     expect(resolveUsageLogPath("/ws", {} as NodeJS.ProcessEnv)).toBe(defaultUsageLogPath("/ws"));
     expect(resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true" } as NodeJS.ProcessEnv)).toBeNull();
-    // an explicit log path still wins inside CI
+    // an explicit in-workspace log path still wins inside CI
     expect(
-      resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true", PROWL_USAGE_LOG: "/tmp/u.jsonl" } as NodeJS.ProcessEnv)
-    ).toBe("/tmp/u.jsonl");
+      resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true", PROWL_USAGE_LOG: "ci/u.jsonl" } as NodeJS.ProcessEnv)
+    ).toBe("/ws/ci/u.jsonl");
   });
 
   it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {
