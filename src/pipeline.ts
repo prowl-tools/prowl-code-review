@@ -72,6 +72,8 @@ export interface ReviewPullRequestOptions {
   minConfidence?: number;
   /** Cap the number of findings surfaced (default 25, #55). */
   maxFindings?: number;
+  /** Cap inline comments per review; overflow rolls into the summary (default 20, #25). */
+  maxInlineComments?: number;
   /** Run the skeptical false-positive verification pass (default true, #8). */
   verify?: boolean;
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
@@ -402,7 +404,8 @@ export async function reviewPullRequest(
     diff: { files: reviewFiles },
     summaryBody,
     event: options.event,
-    agentPrompt: options.agentPrompt
+    agentPrompt: options.agentPrompt,
+    maxInlineComments: options.maxInlineComments
   });
 
   let posted = false;
