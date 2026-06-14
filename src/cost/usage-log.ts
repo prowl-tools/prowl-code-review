@@ -80,14 +80,17 @@ export function appendUsageRecord(path: string, record: UsageRecord): void {
   appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
 }
 
+/** True when a decoded JSON value is a finite number. */
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
+/** Runtime guard for provider names persisted in usage logs. */
 function isProviderName(value: unknown): value is ProviderName {
   return typeof value === "string" && (PROVIDER_NAMES as readonly string[]).includes(value);
 }
 
+/** Runtime guard for complete usage records before aggregation. */
 function isUsageRecord(value: unknown): value is UsageRecord {
   if (!value || typeof value !== "object") {
     return false;
@@ -164,11 +167,21 @@ export interface UsageAggregate {
 
 interface UsageAggregateState {
   groups: Map<string, UsageGroup>;
-  total: { runs: number; inputTokens: number; outputTokens: number; cachedInputTokens: number; usd: number; priced: boolean };
+  total: {
+    runs: number;
+    inputTokens: number;
+    outputTokens: number;
+    cachedInputTokens: number;
+    usd: number;
+    priced: boolean;
+  };
   since?: string;
+  sinceMs?: number;
   until?: string;
+  untilMs?: number;
 }
 
+/** Create mutable aggregation state shared by the sync and async reducers. */
 function createAggregateState(): UsageAggregateState {
   return {
     groups: new Map<string, UsageGroup>(),
@@ -176,6 +189,7 @@ function createAggregateState(): UsageAggregateState {
   };
 }
 
+/** Fold one usage record into the aggregate state. */
 function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): void {
   const { total, groups } = state;
   total.runs += 1;
@@ -186,11 +200,14 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
   if (record.usd === null) {
     total.priced = false;
   }
-  if (typeof record.ts === "string") {
-    if (state.since === undefined || record.ts < state.since) {
+  const tsMs = Date.parse(record.ts);
+  if (Number.isFinite(tsMs)) {
+    if (state.sinceMs === undefined || tsMs < state.sinceMs) {
+      state.sinceMs = tsMs;
       state.since = record.ts;
     }
-    if (state.until === undefined || record.ts > state.until) {
+    if (state.untilMs === undefined || tsMs > state.untilMs) {
+      state.untilMs = tsMs;
       state.until = record.ts;
     }
   }
@@ -218,6 +235,7 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
   groups.set(key, group);
 }
 
+/** Convert mutable aggregate state into the public result shape. */
 function finishAggregate(state: UsageAggregateState): UsageAggregate {
   const { total, groups, since, until } = state;
   return {

@@ -24,6 +24,7 @@ export interface ModelPrice {
 /** Per-model overrides keyed by exact model id (from `.prowl-review.yml`). */
 export type PriceOverrides = Record<string, ModelPrice>;
 
+/** Return the last index of a recognized ANSI escape sequence, or `start` when malformed. */
 function ansiSequenceEnd(value: string, start: number): number {
   const next = value.charCodeAt(start + 1);
   if (next === 0x5B) {
@@ -33,7 +34,7 @@ function ansiSequenceEnd(value: string, start: number): number {
         return index;
       }
     }
-    return value.length - 1;
+    return start;
   }
   if (next >= 0x40 && next <= 0x5F) {
     return start + 1;
@@ -63,6 +64,7 @@ export function sanitizeDisplayText(value: string): string {
   return sanitized.replace(/\s+/g, " ").trim();
 }
 
+/** Escape sanitized display text for inline Markdown and table cells. */
 export function escapeMarkdownDisplayText(value: string): string {
   const markdownChars = new Set(["\\", "`", "*", "_", "{", "}", "[", "]", "(", ")", "#", "+", "!", "|"]);
   let escaped = "";
