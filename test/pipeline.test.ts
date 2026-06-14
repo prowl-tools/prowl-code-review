@@ -158,6 +158,7 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.posted).toBe(true);
     expect(result.skipped).toContainEqual({ path: "package-lock.json", reason: "ignored" });
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
+    expect(result.payload.body).toContain("Changed files (1)");
     expect(result.payload.body).toContain("No reviewable files remained after filters");
     expect(result.payload.body).toContain("package-lock.json");
     expect(result.payload.comments).toHaveLength(0);
