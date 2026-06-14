@@ -86,6 +86,84 @@ describe("reviewPullRequest", () => {
     expect(result.posted).toBe(false);
   });
 
+  it("ignores generated/vendored files by default and reports them as skipped (#19)", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi.fn(async () => ({
+      meta,
+      diff: `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
+ const a = 1;
++const b = 2;
+diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    // Only the source file reaches the reviewer; the lockfile is skipped, not dropped.
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.diff).toContain("src/a.ts");
+    expect(reviewInput.diff).not.toContain("package-lock.json");
+    expect(result.skipped).toContainEqual({ path: "package-lock.json", reason: "ignored" });
+    expect(result.payload.body).toContain("Not reviewed");
+    expect(result.payload.body).toContain("package-lock.json");
+  });
+
+  it("reviews an ignored-by-default file when the config opts out with an empty list (#19)", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi.fn(async () => ({
+      meta,
+      diff: `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, ignore: [] });
+
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.diff).toContain("package-lock.json"); // nothing ignored
+    expect(result.skipped).not.toContainEqual({ path: "package-lock.json", reason: "ignored" });
+  });
+
+  it("publishes a skipped-only walkthrough without provider review when every file is ignored (#19)", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi.fn(async () => ({
+      meta,
+      diff: `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.gatherGrounding).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    expect(result.posted).toBe(true);
+    expect(result.skipped).toContainEqual({ path: "package-lock.json", reason: "ignored" });
+    expect(result.payload.body).toContain("✅ No issues found in reviewed files");
+    expect(result.payload.body).toContain("Changed files (1)");
+    expect(result.payload.body).toContain("No reviewable files remained after filters");
+    expect(result.payload.body).toContain("package-lock.json");
+    expect(result.payload.comments).toHaveLength(0);
+  });
+
   it("skips agentic context when asked", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, skipContext: true });

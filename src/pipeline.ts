@@ -26,15 +26,16 @@ import {
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
-import { resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
+import { emptyUsage, resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
 import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
+import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
- * filter → size-guard → agentic context → multi-pass review + judge →
- * walkthrough → publish.
+ * filter → ignore filter → size-guard → agentic context → multi-pass review +
+ * judge → walkthrough → publish.
  *
  * Heavy stages are injectable so the orchestration is unit-testable without a
  * live provider or GitHub.
@@ -58,6 +59,11 @@ export interface ReviewPullRequestOptions {
   config?: ProviderConfig;
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
+  /**
+   * Glob patterns for generated/vendored files to skip (#19). Omitted →
+   * {@link DEFAULT_IGNORE_GLOBS}; an explicit list (including `[]`) replaces them.
+   */
+  ignore?: string[];
   diffLimits?: DiffLimits;
   contextLimits?: RetrievalLimits;
   minSeverity?: Severity;
@@ -101,6 +107,18 @@ export interface ReviewPullRequestResult {
 /** Keep operational review notes compact enough for a readable summary. */
 function truncateNote(value: string, maxLength = 500): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
+}
+
+/** Review result used when filters leave no provider-reviewable files. */
+function emptyReviewResult(): ReviewResult {
+  return {
+    findings: [],
+    raw: [],
+    passes: [],
+    verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+    judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+    usage: emptyUsage()
+  };
 }
 
 /** Convert failed specialist passes into reviewer-visible coverage notes. */
@@ -230,10 +248,40 @@ export async function reviewPullRequest(
   const parsed = parseDiff(diff);
   // Keep sensitive files out of the review entirely and out of size budgets.
   const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(parsed.files);
-  const safeParsed = { files: safeFiles };
+  // Drop generated/vendored files (#19) before size guards so they don't burn the
+  // budget; reported as skipped, never dropped silently. Omitted config → built-in
+  // defaults; an explicit list (including []) replaces them.
+  const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
+  const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
+  const safeParsed = { files: keptFiles };
   const guarded = applyDiffLimits(safeParsed, options.diffLimits);
   const reviewFiles = guarded.files;
-  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped];
+  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped];
+
+  if (reviewFiles.length === 0) {
+    const reviewResult = emptyReviewResult();
+    const summaryBody = buildWalkthrough({
+      findings: [],
+      files: parsed.files,
+      skipped,
+      notes: ["No reviewable files remained after filters; provider review skipped."]
+    });
+    const payload = buildReviewPayload({
+      findings: [],
+      diff: { files: [] },
+      summaryBody,
+      event: options.event,
+      agentPrompt: options.agentPrompt
+    });
+
+    let posted = false;
+    if (!options.dryRun) {
+      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+      posted = true;
+    }
+
+    return { meta, payload, review: reviewResult, skipped, contextFiles: 0, posted };
+  }
 
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
