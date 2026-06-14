@@ -9,6 +9,7 @@ export const PACKAGE_NAME = "prowl-review";
 
 // End-to-end PR review pipeline (the integration entry point).
 export {
+  ReviewPublishError,
   reviewPullRequest,
   type ReviewPullRequestOptions,
   type ReviewPullRequestResult,

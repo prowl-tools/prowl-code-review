@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,11 +14,13 @@ import {
   resolveReviewOptions,
   resolveTrustWorkspace,
   resolveUsageLogPath,
-  resolveWorkspace
+  resolveWorkspace,
+  reportReviewCommandResult
 } from "../src/cli/commands/review.js";
 import { resolveProviderConfig } from "../src/providers/index.js";
 import { defaultUsageLogPath } from "../src/cost/usage-log.js";
 import type { ProwlReviewConfig } from "../src/config/schema.js";
+import type { ReviewPullRequestResult } from "../src/pipeline.js";
 
 const ORIGINAL_ENV = process.env;
 let tempDirs: string[] = [];
@@ -28,6 +30,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  vi.restoreAllMocks();
   process.env = ORIGINAL_ENV;
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
@@ -39,6 +42,36 @@ function tempDir(): string {
   const dir = mkdtempSync(join(tmpdir(), "prowl-review-"));
   tempDirs.push(dir);
   return dir;
+}
+
+function reviewCommandResult(over: Partial<ReviewPullRequestResult> = {}): ReviewPullRequestResult {
+  return {
+    meta: {
+      number: 7,
+      title: "T",
+      body: null,
+      baseSha: "base",
+      headSha: "head",
+      draft: false,
+      state: "open",
+      author: "me",
+      changedFiles: 1
+    },
+    payload: { body: "summary", comments: [] } as ReviewPullRequestResult["payload"],
+    review: {
+      findings: [],
+      raw: [],
+      passes: [],
+      verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 1, outputTokens: 2, cachedInputTokens: 0 }
+    },
+    usage: { inputTokens: 1_000_000, outputTokens: 0, cachedInputTokens: 0 },
+    skipped: [],
+    contextFiles: 0,
+    posted: false,
+    ...over
+  };
 }
 
 describe("review command helpers", () => {
@@ -295,6 +328,41 @@ describe("review command action env helpers", () => {
     expect(resolveDryRun({}, { PROWL_DRY_RUN: "true" } as NodeJS.ProcessEnv)).toBe(true);
     expect(resolveDryRun({}, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(false);
     expect(resolveDryRun({ dryRun: true }, { PROWL_DRY_RUN: "false" } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it("reports and logs cost even when publishing failed", () => {
+    const root = tempDir();
+    const summaryPath = join(root, "summary.md");
+    const outputPath = join(root, "output.txt");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    reportReviewCommandResult(reviewCommandResult(), {
+      owner: "o",
+      repo: "r",
+      pullNumber: 7,
+      root,
+      providerConfig: { provider: "openai", model: "gpt-5", apiKey: "k" },
+      env: {
+        GITHUB_OUTPUT: outputPath,
+        GITHUB_STEP_SUMMARY: summaryPath,
+        PROWL_USAGE_LOG: "usage.jsonl"
+      } as NodeJS.ProcessEnv,
+      now: () => new Date("2026-06-14T00:00:00.000Z"),
+      publishFailed: true
+    });
+
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("publish failed"))).toBe(true);
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("prowl-review cost:"))).toBe(true);
+    expect(readFileSync(outputPath, "utf8")).toContain("posted=false");
+    expect(readFileSync(summaryPath, "utf8")).toContain("prowl-review cost");
+    expect(JSON.parse(readFileSync(join(root, "usage.jsonl"), "utf8"))).toMatchObject({
+      ts: "2026-06-14T00:00:00.000Z",
+      provider: "openai",
+      model: "gpt-5",
+      repo: "o/r",
+      pr: 7,
+      inputTokens: 1_000_000
+    });
   });
 });
 
