@@ -84,6 +84,16 @@ describe("usage log round-trip", () => {
     expect(() => findUsageLog(root)).toThrow(/symlink/);
   });
 
+  it("rejects a symlinked usage log directory when searching and reading", async () => {
+    const root = tempDir();
+    const target = tempDir();
+    mkdirSync(join(target, USAGE_LOG_DIR), { recursive: true });
+    writeFileSync(join(target, USAGE_LOG_DIR, USAGE_LOG_FILENAME), `${JSON.stringify(record())}\n`);
+    symlinkSync(join(target, USAGE_LOG_DIR), join(root, USAGE_LOG_DIR), "dir");
+    expect(() => findUsageLog(root)).toThrow(/symlink/);
+    await expect(collect(readUsageRecords(defaultUsageLogPath(root)))).rejects.toThrow(/symlink/);
+  });
+
   it("skips blank and malformed lines without throwing", async () => {
     const dir = tempDir();
     mkdirSync(join(dir, USAGE_LOG_DIR), { recursive: true });

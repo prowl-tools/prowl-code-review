@@ -48,7 +48,7 @@ export function findUsageLog(startDir: string): string | null {
   for (;;) {
     const candidate = join(current, USAGE_LOG_DIR, USAGE_LOG_FILENAME);
     if (existsSync(candidate)) {
-      assertNotSymlink(candidate);
+      assertNotSymlinkedLogPath(candidate);
       return candidate;
     }
     const parent = dirname(current);
@@ -90,6 +90,12 @@ function assertNotSymlink(path: string): void {
     }
     throw error;
   }
+}
+
+/** Reject symlinked log directories/files before reading or returning a log path. */
+function assertNotSymlinkedLogPath(path: string): void {
+  assertNotSymlink(dirname(path));
+  assertNotSymlink(path);
 }
 
 const NO_FOLLOW_FLAG = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
@@ -170,7 +176,7 @@ export async function* readUsageRecords(path: string): AsyncGenerator<UsageRecor
   if (!existsSync(path)) {
     return;
   }
-  assertNotSymlink(path);
+  assertNotSymlinkedLogPath(path);
   const fd = openReadNoFollow(path);
   const lines = createInterface({
     input: createReadStream(path, { autoClose: true, encoding: "utf8", fd }),
