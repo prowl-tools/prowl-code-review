@@ -42,14 +42,15 @@ function anthropicHeaders(apiKey: string): Record<string, string> {
   };
 }
 
-/** Cache creation tokens are billed near full rate, so fold them into input. */
+/** Anthropic reports cache writes separately from normal input and cache reads. */
 function mapUsage(usage: AnthropicUsage | undefined): TokenUsage {
   const inputTokens = usage?.input_tokens ?? 0;
   const cacheWrite = usage?.cache_creation_input_tokens ?? 0;
   return {
-    inputTokens: inputTokens + cacheWrite,
+    inputTokens,
     outputTokens: usage?.output_tokens ?? 0,
-    cachedInputTokens: usage?.cache_read_input_tokens ?? 0
+    cachedInputTokens: usage?.cache_read_input_tokens ?? 0,
+    ...(cacheWrite > 0 ? { cacheWriteInputTokens: cacheWrite } : {})
   };
 }
 

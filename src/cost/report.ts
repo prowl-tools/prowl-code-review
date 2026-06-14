@@ -27,19 +27,21 @@ export function renderCostReportMarkdown(aggregate: UsageAggregate): string {
     `**Estimated spend:** ~${formatUsd(aggregate.usd)}${estimate}`,
     `**Tokens:** ${aggregate.inputTokens.toLocaleString()} in · ` +
       `${aggregate.outputTokens.toLocaleString()} out · ` +
-      `${aggregate.cachedInputTokens.toLocaleString()} cached`,
+      `${aggregate.cachedInputTokens.toLocaleString()} cached read · ` +
+      `${aggregate.cacheWriteInputTokens.toLocaleString()} cache write`,
     "",
     "_Estimated from a built-in price table; your provider dashboard is the source of truth._",
     "",
-    "| Provider / model | Runs | In | Out | Cached | Est. cost |",
-    "| --- | ---: | ---: | ---: | ---: | ---: |"
+    "| Provider / model | Runs | In | Out | Cached read | Cache write | Est. cost |",
+    "| --- | ---: | ---: | ---: | ---: | ---: | ---: |"
   ];
   for (const group of aggregate.groups) {
     const cost = group.priced ? `~${formatUsd(group.usd)}` : "n/a";
     const providerModel = markdownTableCell(`${group.provider}/${group.model}`);
     lines.push(
       `| ${providerModel} | ${group.runs} | ${group.inputTokens.toLocaleString()} | ` +
-        `${group.outputTokens.toLocaleString()} | ${group.cachedInputTokens.toLocaleString()} | ${cost} |`
+        `${group.outputTokens.toLocaleString()} | ${group.cachedInputTokens.toLocaleString()} | ` +
+        `${group.cacheWriteInputTokens.toLocaleString()} | ${cost} |`
     );
   }
   return lines.join("\n");

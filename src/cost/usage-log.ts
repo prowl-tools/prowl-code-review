@@ -31,6 +31,8 @@ export interface UsageRecord {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  /** Input tokens written to a provider cache, when reported separately. */
+  cacheWriteInputTokens?: number;
   /** Estimated USD, or null when the model had no known price. */
   usd: number | null;
 }
@@ -46,6 +48,7 @@ export function findUsageLog(startDir: string): string | null {
   for (;;) {
     const candidate = join(current, USAGE_LOG_DIR, USAGE_LOG_FILENAME);
     if (existsSync(candidate)) {
+      assertNotSymlink(candidate);
       return candidate;
     }
     const parent = dirname(current);
@@ -70,6 +73,7 @@ export function toUsageRecord(
     inputTokens: estimate.inputTokens,
     outputTokens: estimate.outputTokens,
     cachedInputTokens: estimate.cachedInputTokens,
+    ...(estimate.cacheWriteInputTokens > 0 ? { cacheWriteInputTokens: estimate.cacheWriteInputTokens } : {}),
     usd: estimate.usd
   };
 }
@@ -90,9 +94,15 @@ function assertNotSymlink(path: string): void {
 
 const NO_FOLLOW_FLAG = (constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
 
+/** Open a usage log path without following a symlinked final path component. */
+function openNoFollow(path: string, flags: number, mode?: number): number {
+  const noFollowFlags = flags | NO_FOLLOW_FLAG;
+  return mode === undefined ? openSync(path, noFollowFlags) : openSync(path, noFollowFlags, mode);
+}
+
 /** Append one JSON line without following a symlinked final path component. */
 function appendLineNoFollow(path: string, line: string): void {
-  const fd = openSync(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | NO_FOLLOW_FLAG, 0o600);
+  const fd = openNoFollow(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY, 0o600);
   try {
     assertNotSymlink(path);
     writeSync(fd, line, undefined, "utf8");
@@ -110,6 +120,18 @@ export function appendUsageRecord(path: string, record: UsageRecord): void {
   assertNotSymlink(dir);
   assertNotSymlink(path);
   appendLineNoFollow(path, `${JSON.stringify(record)}\n`);
+}
+
+/** Open one usage log for reading without following symlinked log files. */
+function openReadNoFollow(path: string): number {
+  const fd = openNoFollow(path, constants.O_RDONLY);
+  try {
+    assertNotSymlink(path);
+    return fd;
+  } catch (error) {
+    closeSync(fd);
+    throw error;
+  }
 }
 
 /** True when a decoded JSON value is a finite number. */
@@ -136,6 +158,7 @@ function isUsageRecord(value: unknown): value is UsageRecord {
     isFiniteNumber(record.inputTokens) &&
     isFiniteNumber(record.outputTokens) &&
     isFiniteNumber(record.cachedInputTokens) &&
+    (record.cacheWriteInputTokens === undefined || isFiniteNumber(record.cacheWriteInputTokens)) &&
     (record.usd === null || isFiniteNumber(record.usd)) &&
     (record.repo === undefined || typeof record.repo === "string") &&
     (record.pr === undefined || isFiniteNumber(record.pr))
@@ -147,8 +170,10 @@ export async function* readUsageRecords(path: string): AsyncGenerator<UsageRecor
   if (!existsSync(path)) {
     return;
   }
+  assertNotSymlink(path);
+  const fd = openReadNoFollow(path);
   const lines = createInterface({
-    input: createReadStream(path, { encoding: "utf8" }),
+    input: createReadStream(path, { autoClose: true, encoding: "utf8", fd }),
     crlfDelay: Infinity
   });
   for await (const line of lines) {
@@ -176,6 +201,7 @@ export interface UsageGroup {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   usd: number;
   /** True when every run in the group had a known price (so `usd` is complete). */
   priced: boolean;
@@ -186,6 +212,7 @@ export interface UsageAggregate {
   inputTokens: number;
   outputTokens: number;
   cachedInputTokens: number;
+  cacheWriteInputTokens: number;
   totalTokens: number;
   usd: number;
   /** True when every run had a known price (so `usd` is complete). */
@@ -204,6 +231,7 @@ interface UsageAggregateState {
     inputTokens: number;
     outputTokens: number;
     cachedInputTokens: number;
+    cacheWriteInputTokens: number;
     usd: number;
     priced: boolean;
   };
@@ -217,7 +245,7 @@ interface UsageAggregateState {
 function createAggregateState(): UsageAggregateState {
   return {
     groups: new Map<string, UsageGroup>(),
-    total: { runs: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, usd: 0, priced: true }
+    total: { runs: 0, inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, usd: 0, priced: true }
   };
 }
 
@@ -228,6 +256,7 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
   total.inputTokens += record.inputTokens;
   total.outputTokens += record.outputTokens;
   total.cachedInputTokens += record.cachedInputTokens;
+  total.cacheWriteInputTokens += record.cacheWriteInputTokens ?? 0;
   total.usd += record.usd ?? 0;
   if (record.usd === null) {
     total.priced = false;
@@ -253,6 +282,7 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
     inputTokens: 0,
     outputTokens: 0,
     cachedInputTokens: 0,
+    cacheWriteInputTokens: 0,
     usd: 0,
     priced: true
   };
@@ -260,6 +290,7 @@ function addRecordToAggregate(state: UsageAggregateState, record: UsageRecord): 
   group.inputTokens += record.inputTokens;
   group.outputTokens += record.outputTokens;
   group.cachedInputTokens += record.cachedInputTokens;
+  group.cacheWriteInputTokens += record.cacheWriteInputTokens ?? 0;
   group.usd += record.usd ?? 0;
   if (record.usd === null) {
     group.priced = false;
@@ -275,7 +306,8 @@ function finishAggregate(state: UsageAggregateState): UsageAggregate {
     inputTokens: total.inputTokens,
     outputTokens: total.outputTokens,
     cachedInputTokens: total.cachedInputTokens,
-    totalTokens: total.inputTokens + total.outputTokens + total.cachedInputTokens,
+    cacheWriteInputTokens: total.cacheWriteInputTokens,
+    totalTokens: total.inputTokens + total.outputTokens + total.cachedInputTokens + total.cacheWriteInputTokens,
     usd: total.usd,
     priced: total.priced,
     groups: [...groups.values()].sort((a, b) => b.usd - a.usd),
