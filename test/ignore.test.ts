@@ -48,6 +48,7 @@ describe("isIgnoredPath", () => {
 
   it("handles glob patterns with repeated wildcards without regex backtracking", () => {
     expect(isIgnoredPath(`${"a".repeat(300)}c`, ["a*a*a*a*b"])).toBe(false);
+    expect(isIgnoredPath(`${"a".repeat(2048)}c`, ["a*b"])).toBe(false);
   });
 
   it("does not match a path segment partially without a glob", () => {

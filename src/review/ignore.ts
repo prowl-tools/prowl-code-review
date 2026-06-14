@@ -12,7 +12,7 @@ import type { DiffFile, SkippedFile } from "./diff-types.js";
  *     contents (so `src/generated` also matches `src/generated/x.ts`),
  *   - `*` matches within a segment, `**` matches across segments, `?` one char.
  *
- * No glob dependency — the matcher is a small, auditable memoized glob matcher,
+ * No glob dependency — the matcher is a small, auditable iterative glob matcher,
  * consistent with the rest of the codebase.
  */
 export const DEFAULT_IGNORE_GLOBS: readonly string[] = [
@@ -51,6 +51,15 @@ type CompiledIgnorePattern =
   | { kind: "segment"; pattern: string }
   | { kind: "path"; segments: string[]; contentsSegments: string[] };
 
+interface GlobMatchCache {
+  segments: Map<string, boolean>;
+  paths: Map<string, boolean>;
+}
+
+function createGlobMatchCache(): GlobMatchCache {
+  return { segments: new Map(), paths: new Map() };
+}
+
 /** Normalize and cache ignore patterns once per filtering pass. */
 function compileIgnorePatterns(patterns: readonly string[]): CompiledIgnorePattern[] {
   const compiled: CompiledIgnorePattern[] = [];
@@ -70,73 +79,78 @@ function compileIgnorePatterns(patterns: readonly string[]): CompiledIgnorePatte
 }
 
 /** Match a single path segment against a glob where `*` never crosses `/`. */
-function matchSegmentGlob(segment: string, pattern: string): boolean {
-  const memo = new Map<string, boolean>();
-  const match = (segmentIndex: number, patternIndex: number): boolean => {
-    const key = `${segmentIndex}:${patternIndex}`;
-    const cached = memo.get(key);
-    if (cached !== undefined) {
-      return cached;
-    }
+function matchSegmentGlob(segment: string, pattern: string, cache?: GlobMatchCache): boolean {
+  const cacheKey = `${segment}\0${pattern}`;
+  const cached = cache?.segments.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
 
-    let result: boolean;
-    if (patternIndex === pattern.length) {
-      result = segmentIndex === segment.length;
-    } else {
-      const token = pattern[patternIndex];
+  let previous = new Array<boolean>(pattern.length + 1).fill(false);
+  previous[0] = true;
+  for (let patternIndex = 1; patternIndex <= pattern.length; patternIndex += 1) {
+    previous[patternIndex] = pattern[patternIndex - 1] === "*" && previous[patternIndex - 1];
+  }
+
+  for (let segmentIndex = 1; segmentIndex <= segment.length; segmentIndex += 1) {
+    const current = new Array<boolean>(pattern.length + 1).fill(false);
+    for (let patternIndex = 1; patternIndex <= pattern.length; patternIndex += 1) {
+      const token = pattern[patternIndex - 1];
       if (token === "*") {
-        result =
-          match(segmentIndex, patternIndex + 1) ||
-          (segmentIndex < segment.length && match(segmentIndex + 1, patternIndex));
+        current[patternIndex] = current[patternIndex - 1] || previous[patternIndex];
       } else if (token === "?") {
-        result = segmentIndex < segment.length && match(segmentIndex + 1, patternIndex + 1);
+        current[patternIndex] = previous[patternIndex - 1];
       } else {
-        result =
-          segmentIndex < segment.length &&
-          segment[segmentIndex] === token &&
-          match(segmentIndex + 1, patternIndex + 1);
+        current[patternIndex] = previous[patternIndex - 1] && segment[segmentIndex - 1] === token;
       }
     }
+    previous = current;
+  }
 
-    memo.set(key, result);
-    return result;
-  };
-  return match(0, 0);
+  const result = previous[pattern.length];
+  cache?.segments.set(cacheKey, result);
+  return result;
 }
 
 /** Match full path segments, with `**` consuming zero or more complete segments. */
-function matchPathGlob(pathSegments: string[], patternSegments: string[]): boolean {
-  const memo = new Map<string, boolean>();
-  const match = (pathIndex: number, patternIndex: number): boolean => {
-    const key = `${pathIndex}:${patternIndex}`;
-    const cached = memo.get(key);
-    if (cached !== undefined) {
-      return cached;
-    }
+function matchPathGlob(pathSegments: string[], patternSegments: string[], cache?: GlobMatchCache): boolean {
+  const cacheKey = `${pathSegments.join("/")}\0${patternSegments.join("/")}`;
+  const cached = cache?.paths.get(cacheKey);
+  if (cached !== undefined) {
+    return cached;
+  }
 
-    let result: boolean;
-    const patternSegment = patternSegments[patternIndex];
-    if (patternIndex === patternSegments.length) {
-      result = pathIndex === pathSegments.length;
-    } else if (patternSegment === "**") {
-      result =
-        match(pathIndex, patternIndex + 1) ||
-        (pathIndex < pathSegments.length && match(pathIndex + 1, patternIndex));
-    } else {
-      result =
-        pathIndex < pathSegments.length &&
-        matchSegmentGlob(pathSegments[pathIndex], patternSegment) &&
-        match(pathIndex + 1, patternIndex + 1);
-    }
+  let previous = new Array<boolean>(patternSegments.length + 1).fill(false);
+  previous[0] = true;
+  for (let patternIndex = 1; patternIndex <= patternSegments.length; patternIndex += 1) {
+    previous[patternIndex] = patternSegments[patternIndex - 1] === "**" && previous[patternIndex - 1];
+  }
 
-    memo.set(key, result);
-    return result;
-  };
-  return match(0, 0);
+  for (let pathIndex = 1; pathIndex <= pathSegments.length; pathIndex += 1) {
+    const current = new Array<boolean>(patternSegments.length + 1).fill(false);
+    for (let patternIndex = 1; patternIndex <= patternSegments.length; patternIndex += 1) {
+      const patternSegment = patternSegments[patternIndex - 1];
+      if (patternSegment === "**") {
+        current[patternIndex] = current[patternIndex - 1] || previous[patternIndex];
+      } else {
+        current[patternIndex] =
+          previous[patternIndex - 1] && matchSegmentGlob(pathSegments[pathIndex - 1], patternSegment, cache);
+      }
+    }
+    previous = current;
+  }
+
+  const result = previous[patternSegments.length];
+  cache?.paths.set(cacheKey, result);
+  return result;
 }
 
 /** True when `path` matches any precompiled ignore pattern. */
-function isIgnoredByCompiledPatterns(path: string, patterns: readonly CompiledIgnorePattern[]): boolean {
+function isIgnoredByCompiledPatterns(
+  path: string,
+  patterns: readonly CompiledIgnorePattern[],
+  cache = createGlobMatchCache()
+): boolean {
   const normalized = normalizePath(path);
   if (!normalized) {
     return false;
@@ -145,10 +159,13 @@ function isIgnoredByCompiledPatterns(path: string, patterns: readonly CompiledIg
 
   for (const pattern of patterns) {
     if (pattern.kind === "segment") {
-      if (segments.some((segment) => matchSegmentGlob(segment, pattern.pattern))) {
+      if (segments.some((segment) => matchSegmentGlob(segment, pattern.pattern, cache))) {
         return true;
       }
-    } else if (matchPathGlob(segments, pattern.segments) || matchPathGlob(segments, pattern.contentsSegments)) {
+    } else if (
+      matchPathGlob(segments, pattern.segments, cache) ||
+      matchPathGlob(segments, pattern.contentsSegments, cache)
+    ) {
       return true;
     }
   }
@@ -172,9 +189,10 @@ export function filterIgnoredDiffFiles(
   const kept: DiffFile[] = [];
   const skipped: SkippedFile[] = [];
   const compiledPatterns = compileIgnorePatterns(patterns);
+  const matchCache = createGlobMatchCache();
 
   for (const file of files) {
-    if (isIgnoredByCompiledPatterns(file.path, compiledPatterns)) {
+    if (isIgnoredByCompiledPatterns(file.path, compiledPatterns, matchCache)) {
       skipped.push({ path: file.path, reason: "ignored" });
     } else {
       kept.push(file);
