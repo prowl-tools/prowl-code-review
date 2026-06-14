@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -56,6 +56,22 @@ describe("usage log round-trip", () => {
     appendUsageRecord(path, record({ pr: 2 }));
     const records = await collect(readUsageRecords(path));
     expect(records.map((r) => r.pr)).toEqual([1, 2]);
+  });
+
+  it("rejects a symlinked usage log directory", () => {
+    const root = tempDir();
+    const target = tempDir();
+    symlinkSync(target, join(root, USAGE_LOG_DIR), "dir");
+    expect(() => appendUsageRecord(defaultUsageLogPath(root), record())).toThrow(/symlink/);
+  });
+
+  it("rejects a symlinked usage log file", () => {
+    const root = tempDir();
+    const target = join(tempDir(), "target.jsonl");
+    writeFileSync(target, "");
+    mkdirSync(join(root, USAGE_LOG_DIR), { recursive: true });
+    symlinkSync(target, defaultUsageLogPath(root));
+    expect(() => appendUsageRecord(defaultUsageLogPath(root), record())).toThrow(/symlink/);
   });
 
   it("skips blank and malformed lines without throwing", async () => {
