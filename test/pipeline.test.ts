@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { reviewPullRequest } from "../src/pipeline.js";
+import { ReviewPublishError, reviewPullRequest } from "../src/pipeline.js";
 import { ContextRetrievalError } from "../src/context/retrieval.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
@@ -85,6 +85,35 @@ describe("reviewPullRequest", () => {
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, dryRun: true });
     expect(deps.submitReview).not.toHaveBeenCalled();
     expect(result.posted).toBe(false);
+  });
+
+  it("throws publish errors with the completed review usage attached", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [{ path: "src/a.ts", content: "export const a = 1;", truncated: false }],
+      rounds: 1,
+      usage: { inputTokens: 5, outputTokens: 7, cachedInputTokens: 11 },
+      reachedLimit: false,
+      notes: [],
+      toolOutputs: []
+    });
+    deps.runReview.mockResolvedValue(
+      reviewResult([finding()], {
+        usage: { inputTokens: 2, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+    deps.submitReview.mockRejectedValue(new Error("missing write scope"));
+
+    try {
+      await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+      throw new Error("Expected reviewPullRequest to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ReviewPublishError);
+      const publishError = error as ReviewPublishError;
+      expect(publishError.message).toBe("missing write scope");
+      expect(publishError.result.posted).toBe(false);
+      expect(publishError.result.usage).toEqual({ inputTokens: 7, outputTokens: 10, cachedInputTokens: 15 });
+    }
   });
 
   it("ignores generated/vendored files by default and reports them as skipped (#19)", async () => {

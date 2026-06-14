@@ -110,6 +110,16 @@ export interface ReviewPullRequestResult {
   posted: boolean;
 }
 
+export class ReviewPublishError extends Error {
+  readonly result: ReviewPullRequestResult;
+
+  constructor(message: string, result: ReviewPullRequestResult) {
+    super(message);
+    this.name = "ReviewPublishError";
+    this.result = result;
+  }
+}
+
 /** Keep operational review notes compact enough for a readable summary. */
 function truncateNote(value: string, maxLength = 500): string {
   return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
@@ -290,13 +300,18 @@ export async function reviewPullRequest(
       agentPrompt: options.agentPrompt
     });
 
-    let posted = false;
+    const result = { meta, payload, review: reviewResult, usage: reviewResult.usage, skipped, contextFiles: 0, posted: false };
     if (!options.dryRun) {
-      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
-      posted = true;
+      try {
+        await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+        result.posted = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new ReviewPublishError(message, result);
+      }
     }
 
-    return { meta, payload, review: reviewResult, usage: reviewResult.usage, skipped, contextFiles: 0, posted };
+    return result;
   }
 
   // Redact secrets from anything that will reach the provider.
@@ -426,19 +441,24 @@ export async function reviewPullRequest(
     maxInlineComments: options.maxInlineComments
   });
 
-  let posted = false;
-  if (!options.dryRun) {
-    await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
-    posted = true;
-  }
-
-  return {
+  const result = {
     meta,
     payload,
     review: reviewResult,
     usage: addUsage(reviewResult.usage, contextUsage),
     skipped,
     contextFiles,
-    posted
+    posted: false
   };
+  if (!options.dryRun) {
+    try {
+      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+      result.posted = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ReviewPublishError(message, result);
+    }
+  }
+
+  return result;
 }
