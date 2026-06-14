@@ -130,6 +130,7 @@ type ResolvedReviewOptions = Pick<
   | "diffLimits"
   | "agentPrompt"
   | "ignore"
+  | "maxInlineComments"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -197,6 +198,7 @@ export function resolveReviewOptions(
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
     minConfidence: config.review?.minConfidence,
     maxFindings: config.review?.maxFindings,
+    maxInlineComments: config.review?.maxInlineComments,
     verify: cli.verify === false ? false : config.review?.verify,
     verifyConfidence: config.review?.verifyConfidence,
     skipContext:

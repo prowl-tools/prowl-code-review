@@ -228,6 +228,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
   });
 
+  it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {
+    expect(resolveReviewOptions({}, {}, env).maxInlineComments).toBeUndefined();
+    expect(resolveReviewOptions({}, { review: { maxInlineComments: 5 } }, env).maxInlineComments).toBe(5);
+    expect(resolveReviewOptions({}, { review: { maxInlineComments: 0 } }, env).maxInlineComments).toBe(0);
+  });
+
   it("passes the config ignore list through, leaving it undefined for defaults (#19)", () => {
     expect(resolveReviewOptions({}, {}, env).ignore).toBeUndefined(); // → pipeline applies the default globs
     expect(resolveReviewOptions({}, { ignore: ["vendor", "*.snap"] }, env).ignore).toEqual(["vendor", "*.snap"]);
