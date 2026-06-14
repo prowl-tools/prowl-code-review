@@ -13,9 +13,11 @@ import {
   resolveRepo,
   resolveReviewOptions,
   resolveTrustWorkspace,
+  resolveUsageLogPath,
   resolveWorkspace
 } from "../src/cli/commands/review.js";
 import { resolveProviderConfig } from "../src/providers/index.js";
+import { defaultUsageLogPath } from "../src/cost/usage-log.js";
 import type { ProwlReviewConfig } from "../src/config/schema.js";
 
 const ORIGINAL_ENV = process.env;
@@ -226,6 +228,16 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   it("uses only out-of-band inputs to enable workspace execution trust", () => {
     expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
+  });
+
+  it("resolves the usage-log path: explicit env > local default > none in CI (#36)", () => {
+    expect(resolveUsageLogPath("/ws", { PROWL_USAGE_LOG: "/tmp/u.jsonl" } as NodeJS.ProcessEnv)).toBe("/tmp/u.jsonl");
+    expect(resolveUsageLogPath("/ws", {} as NodeJS.ProcessEnv)).toBe(defaultUsageLogPath("/ws"));
+    expect(resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true" } as NodeJS.ProcessEnv)).toBeNull();
+    // an explicit log path still wins inside CI
+    expect(
+      resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true", PROWL_USAGE_LOG: "/tmp/u.jsonl" } as NodeJS.ProcessEnv)
+    ).toBe("/tmp/u.jsonl");
   });
 
   it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {
