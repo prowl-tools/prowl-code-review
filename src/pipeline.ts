@@ -11,6 +11,7 @@ import { applyDiffLimits } from "./review/size-guards.js";
 import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
+  ContextRetrievalError,
   gatherContext as defaultGatherContext,
   type GatherContextParams,
   type GatheredContext,
@@ -337,6 +338,9 @@ export async function reviewPullRequest(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof ContextRetrievalError) {
+        contextUsage = error.usage;
+      }
       contextDegraded = true;
       contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
