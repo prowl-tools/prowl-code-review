@@ -37,6 +37,16 @@ describe("isIgnoredPath", () => {
     expect(isIgnoredPath("docs/api/v1/spec.json", ["docs/**/spec.json"])).toBe(true);
   });
 
+  it("keeps path boundaries when matching `**/` globs", () => {
+    expect(isIgnoredPath("generated/api.ts", ["**/generated/**"])).toBe(true);
+    expect(isIgnoredPath("src/generated/api.ts", ["**/generated/**"])).toBe(true);
+    expect(isIgnoredPath("src/notgenerated/api.ts", ["**/generated/**"])).toBe(false);
+  });
+
+  it("handles glob patterns with repeated wildcards without regex backtracking", () => {
+    expect(isIgnoredPath(`${"a".repeat(300)}c`, ["a*a*a*a*b"])).toBe(false);
+  });
+
   it("does not match a path segment partially without a glob", () => {
     expect(isIgnoredPath("my-node_modules-helper/x.ts", ["node_modules"])).toBe(false);
   });

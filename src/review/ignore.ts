@@ -42,65 +42,120 @@ export const DEFAULT_IGNORE_GLOBS: readonly string[] = [
   "*.snap"
 ];
 
-/** Translate a gitignore-lite glob into an anchored RegExp (no external dep). */
-function globToRegExp(glob: string): RegExp {
-  let re = "";
-  for (let i = 0; i < glob.length; i += 1) {
-    const char = glob[i];
-    if (char === "*") {
-      if (glob[i + 1] === "*") {
-        re += ".*";
-        i += 1;
-        // Treat `**/` as "zero or more leading segments".
-        if (glob[i + 1] === "/") {
-          i += 1;
-        }
-      } else {
-        re += "[^/]*";
-      }
-    } else if (char === "?") {
-      re += "[^/]";
-    } else if ("\\^$.|+()[]{}".includes(char)) {
-      re += `\\${char}`;
-    } else {
-      re += char;
-    }
-  }
-  return new RegExp(`^${re}$`);
-}
-
 /** Normalize a path to forward slashes with no leading `./` or trailing slash. */
 function normalizePath(path: string): string {
   return path.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
 }
 
-/** True when `path` matches any ignore `patterns`. */
-export function isIgnoredPath(path: string, patterns: readonly string[]): boolean {
-  const normalized = normalizePath(path);
-  if (!normalized) {
-    return false;
-  }
-  const segments = normalized.split("/");
+type CompiledIgnorePattern =
+  | { kind: "segment"; pattern: string }
+  | { kind: "path"; segments: string[]; contentsSegments: string[] };
 
+/** Normalize and cache ignore patterns once per filtering pass. */
+function compileIgnorePatterns(patterns: readonly string[]): CompiledIgnorePattern[] {
+  const compiled: CompiledIgnorePattern[] = [];
   for (const raw of patterns) {
     const pattern = normalizePath(raw.trim());
     if (!pattern) {
       continue;
     }
     if (pattern.includes("/")) {
-      // Full-path glob, plus directory-prefix match for its contents.
-      if (globToRegExp(pattern).test(normalized) || globToRegExp(`${pattern}/**`).test(normalized)) {
-        return true;
-      }
+      const segments = pattern.split("/");
+      compiled.push({ kind: "path", segments, contentsSegments: [...segments, "**"] });
     } else {
-      // Segment glob: match the pattern against any single path segment.
-      const segmentRe = globToRegExp(pattern);
-      if (segments.some((segment) => segmentRe.test(segment))) {
+      compiled.push({ kind: "segment", pattern });
+    }
+  }
+  return compiled;
+}
+
+/** Match a single path segment against a glob where `*` never crosses `/`. */
+function matchSegmentGlob(segment: string, pattern: string): boolean {
+  const memo = new Map<string, boolean>();
+  const match = (segmentIndex: number, patternIndex: number): boolean => {
+    const key = `${segmentIndex}:${patternIndex}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let result: boolean;
+    const token = pattern[patternIndex];
+    if (patternIndex === pattern.length) {
+      result = segmentIndex === segment.length;
+    } else if (token === "*") {
+      result =
+        match(segmentIndex, patternIndex + 1) ||
+        (segmentIndex < segment.length && match(segmentIndex + 1, patternIndex));
+    } else if (token === "?") {
+      result = segmentIndex < segment.length && match(segmentIndex + 1, patternIndex + 1);
+    } else {
+      result =
+        segmentIndex < segment.length &&
+        segment[segmentIndex] === token &&
+        match(segmentIndex + 1, patternIndex + 1);
+    }
+
+    memo.set(key, result);
+    return result;
+  };
+  return match(0, 0);
+}
+
+/** Match full path segments, with `**` consuming zero or more complete segments. */
+function matchPathGlob(pathSegments: string[], patternSegments: string[]): boolean {
+  const memo = new Map<string, boolean>();
+  const match = (pathIndex: number, patternIndex: number): boolean => {
+    const key = `${pathIndex}:${patternIndex}`;
+    const cached = memo.get(key);
+    if (cached !== undefined) {
+      return cached;
+    }
+
+    let result: boolean;
+    const patternSegment = patternSegments[patternIndex];
+    if (patternIndex === patternSegments.length) {
+      result = pathIndex === pathSegments.length;
+    } else if (patternSegment === "**") {
+      result =
+        match(pathIndex, patternIndex + 1) ||
+        (pathIndex < pathSegments.length && match(pathIndex + 1, patternIndex));
+    } else {
+      result =
+        pathIndex < pathSegments.length &&
+        matchSegmentGlob(pathSegments[pathIndex], patternSegment) &&
+        match(pathIndex + 1, patternIndex + 1);
+    }
+
+    memo.set(key, result);
+    return result;
+  };
+  return match(0, 0);
+}
+
+/** True when `path` matches any precompiled ignore pattern. */
+function isIgnoredByCompiledPatterns(path: string, patterns: readonly CompiledIgnorePattern[]): boolean {
+  const normalized = normalizePath(path);
+  if (!normalized) {
+    return false;
+  }
+  const segments = normalized.split("/");
+
+  for (const pattern of patterns) {
+    if (pattern.kind === "segment") {
+      if (segments.some((segment) => matchSegmentGlob(segment, pattern.pattern))) {
         return true;
       }
+    } else if (matchPathGlob(segments, pattern.segments) || matchPathGlob(segments, pattern.contentsSegments)) {
+      return true;
     }
   }
   return false;
+}
+
+/** True when `path` matches any ignore `patterns`. */
+export function isIgnoredPath(path: string, patterns: readonly string[]): boolean {
+  return isIgnoredByCompiledPatterns(path, compileIgnorePatterns(patterns));
 }
 
 /**
@@ -114,9 +169,10 @@ export function filterIgnoredDiffFiles(
 ): { files: DiffFile[]; skipped: SkippedFile[] } {
   const kept: DiffFile[] = [];
   const skipped: SkippedFile[] = [];
+  const compiledPatterns = compileIgnorePatterns(patterns);
 
   for (const file of files) {
-    if (isIgnoredPath(file.path, patterns)) {
+    if (isIgnoredByCompiledPatterns(file.path, compiledPatterns)) {
       skipped.push({ path: file.path, reason: "ignored" });
     } else {
       kept.push(file);
