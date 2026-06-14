@@ -38,6 +38,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info
 #   minConfidence: 0.5       # drop non-critical findings below this confidence (0–1)
 #   maxFindings: 25          # cap the number of findings surfaced
+#   maxInlineComments: 20    # cap inline comments; overflow rolls into the summary (0 = none inline)
 #   verify: true             # run the skeptical false-positive verification pass
 #   verifyConfidence: 0.8    # non-blocking findings at/above this confidence skip verification (0–1)
 

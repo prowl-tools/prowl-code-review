@@ -32,6 +32,8 @@ const reviewSchema = z
     minConfidence: z.number().min(0).max(1).optional(),
     /** Cap the number of findings surfaced. Default 25. */
     maxFindings: z.number().int().positive().optional(),
+    /** Cap inline comments per review; overflow rolls into the summary. Default 20 (#25). */
+    maxInlineComments: z.number().int().nonnegative().optional(),
     /** Run the skeptical false-positive verification pass. Default true. */
     verify: z.boolean().optional(),
     /** Findings at/above this confidence skip verification (0–1). Default 0.8. */
