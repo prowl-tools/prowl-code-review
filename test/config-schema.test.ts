@@ -11,7 +11,7 @@ describe("configSchema (#29)", () => {
       provider: "openai",
       model: "gpt-x",
       agentPrompt: false,
-      review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, verify: false, verifyConfidence: 0.9 },
+      review: { minSeverity: "major", minConfidence: 0.7, maxFindings: 10, maxInlineComments: 15, verify: false, verifyConfidence: 0.9 },
       context: { enabled: false, maxRounds: 3, maxFiles: 8 },
       grounding: { enabled: true },
       diff: { maxFiles: 50, maxBytes: 100000 }
@@ -22,6 +22,12 @@ describe("configSchema (#29)", () => {
   it("accepts the agentPrompt toggle and rejects a non-boolean (#57)", () => {
     expect(configSchema.parse({ agentPrompt: true })).toEqual({ agentPrompt: true });
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();
+  });
+
+  it("accepts maxInlineComments incl. 0 and rejects negative/non-int (#25)", () => {
+    expect(configSchema.parse({ review: { maxInlineComments: 0 } })).toEqual({ review: { maxInlineComments: 0 } });
+    expect(() => configSchema.parse({ review: { maxInlineComments: -1 } })).toThrow();
+    expect(() => configSchema.parse({ review: { maxInlineComments: 2.5 } })).toThrow();
   });
 
   it("accepts an ignore glob list (incl. empty) and rejects non-string entries (#19)", () => {
