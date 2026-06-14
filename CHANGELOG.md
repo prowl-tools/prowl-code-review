@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Token-usage + cost logging (backlog #36): per-review cost transparency that proves the BYOK
+  "pennies, no cap" model. Each `review` run estimates its cost from the tracked token usage
+  (input/output/cached) × a built-in price table (`src/cost/pricing.ts`, USD per 1M tokens,
+  config-overridable via `pricing:`; figures are always **estimates** — the provider dashboard is the
+  source of truth) and emits it to **stdout + the GitHub Action job summary** (`$GITHUB_STEP_SUMMARY`),
+  never the PR comment. Local runs also append a one-line-per-run `.prowl-review/usage.jsonl`
+  (`src/cost/usage-log.ts`); CI runs are ephemeral so they skip the log unless `PROWL_USAGE_LOG` is set.
+  New **`prowl-review costs`** command aggregates the local log into per-provider/model totals + a grand
+  estimate (markdown, or `--json` for agents; `--since <days>` window). Pure, injectable, and fully
+  unit-tested. (Per-PR budget enforcement is the separate #18.)
 - Inline-comment volume cap (backlog #25, the noise-ceiling capstone): a configurable maximum number of
   inline review comments per run (`src/review/inline.ts`, default 20) so a large PR isn't carpet-bombed.
   Findings are ranked, so the top N keep their inline comments and the rest roll into a compact

@@ -11,6 +11,7 @@ import { applyDiffLimits } from "./review/size-guards.js";
 import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
+  ContextRetrievalError,
   gatherContext as defaultGatherContext,
   type GatherContextParams,
   type GatheredContext,
@@ -26,7 +27,7 @@ import {
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
-import { emptyUsage, resolveProviderConfig, type ProviderConfig } from "./providers/index.js";
+import { emptyUsage, resolveProviderConfig, type ProviderConfig, type TokenUsage } from "./providers/index.js";
 import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
@@ -99,12 +100,24 @@ export interface ReviewPullRequestResult {
   meta: PullRequestMeta;
   payload: ReviewPayload;
   review: ReviewResult;
+  /** Total LLM usage for the whole pipeline, including context retrieval. */
+  usage: TokenUsage;
   /** Files omitted by size guards (reported, never dropped silently). */
   skipped: SkippedFile[];
   /** Number of files the agentic retriever pulled in. */
   contextFiles: number;
   /** True when the review was published (false on dry run). */
   posted: boolean;
+}
+
+export class ReviewPublishError extends Error {
+  readonly result: ReviewPullRequestResult;
+
+  constructor(message: string, result: ReviewPullRequestResult) {
+    super(message);
+    this.name = "ReviewPublishError";
+    this.result = result;
+  }
 }
 
 /** Keep operational review notes compact enough for a readable summary. */
@@ -121,6 +134,16 @@ function emptyReviewResult(): ReviewResult {
     verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
     judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
     usage: emptyUsage()
+  };
+}
+
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
   };
 }
 
@@ -277,13 +300,18 @@ export async function reviewPullRequest(
       agentPrompt: options.agentPrompt
     });
 
-    let posted = false;
+    const result = { meta, payload, review: reviewResult, usage: reviewResult.usage, skipped, contextFiles: 0, posted: false };
     if (!options.dryRun) {
-      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
-      posted = true;
+      try {
+        await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+        result.posted = true;
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new ReviewPublishError(message, result);
+      }
     }
 
-    return { meta, payload, review: reviewResult, skipped, contextFiles: 0, posted };
+    return result;
   }
 
   // Redact secrets from anything that will reach the provider.
@@ -300,6 +328,7 @@ export async function reviewPullRequest(
 
   let context: string | undefined;
   let contextFiles = 0;
+  let contextUsage = emptyUsage();
   let contextNotes: string[] = [];
   let contextDegraded = false;
   if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
@@ -311,6 +340,7 @@ export async function reviewPullRequest(
         limits: options.contextLimits
       });
       contextFiles = gathered.files.length;
+      contextUsage = gathered.usage;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
       // A hit bound (max rounds/files) or a truncated search/list is partial
       // context on an otherwise healthy review — not an inability to run. Like a
@@ -323,6 +353,9 @@ export async function reviewPullRequest(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (error instanceof ContextRetrievalError) {
+        contextUsage = error.usage;
+      }
       contextDegraded = true;
       contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
@@ -408,11 +441,24 @@ export async function reviewPullRequest(
     maxInlineComments: options.maxInlineComments
   });
 
-  let posted = false;
+  const result = {
+    meta,
+    payload,
+    review: reviewResult,
+    usage: addUsage(reviewResult.usage, contextUsage),
+    skipped,
+    contextFiles,
+    posted: false
+  };
   if (!options.dryRun) {
-    await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
-    posted = true;
+    try {
+      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+      result.posted = true;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ReviewPublishError(message, result);
+    }
   }
 
-  return { meta, payload, review: reviewResult, skipped, contextFiles, posted };
+  return result;
 }

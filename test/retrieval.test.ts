@@ -11,7 +11,7 @@ vi.mock("../src/providers/index.js", async (importOriginal) => {
   };
 });
 
-import { gatherContext } from "../src/context/retrieval.js";
+import { ContextRetrievalError, gatherContext } from "../src/context/retrieval.js";
 import { completeWithTools } from "../src/providers/index.js";
 import type { ProviderConfig, ToolCall, ToolCompletionResult } from "../src/providers/index.js";
 
@@ -103,6 +103,28 @@ describe("gatherContext", () => {
       { path: "src/a.ts", content: "export const a = 1;\n", truncated: false }
     ]);
     expect(result.usage.inputTokens).toBe(2);
+  });
+
+  it("preserves accumulated usage when a later provider round fails", async () => {
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce(toolUse([{ id: "c1", name: "read_file", input: { path: "src/a.ts" } }]))
+      .mockRejectedValueOnce(new Error("provider timeout"));
+
+    try {
+      await gatherContext({
+        toolkit: { root },
+        changedPaths: ["src/a.ts"],
+        config,
+        runCompletion: run
+      });
+      throw new Error("Expected gatherContext to throw");
+    } catch (error) {
+      expect(error).toBeInstanceOf(ContextRetrievalError);
+      expect((error as ContextRetrievalError).message).toBe("provider timeout");
+      expect((error as ContextRetrievalError).usage).toEqual(USAGE);
+      expect((error as ContextRetrievalError).rounds).toBe(2);
+    }
   });
 
   it("stops at maxRounds and reports the limit", async () => {

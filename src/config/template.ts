@@ -23,6 +23,14 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Presentation -------------------------------------------------------------
 # agentPrompt: true          # append a copy-paste "Resolve with an AI agent" prompt to each finding
 
+# --- Cost estimate pricing ----------------------------------------------------
+# Per-review cost is estimated and emitted to the run logs + the GitHub Action
+# job summary (never the PR comment); "prowl-review costs" aggregates local runs.
+# Override the built-in price table (USD per 1M tokens) when a rate is stale or a
+# model isn't listed. Your provider dashboard is the source of truth.
+# pricing:
+#   claude-sonnet-4-6: { input: 3, output: 15, cachedInput: 0.3 }
+
 # --- Ignore list --------------------------------------------------------------
 # Generated/vendored files skipped before review (reported as "ignored", not
 # dropped silently). Built-in defaults cover lockfiles, node_modules, vendor,
