@@ -97,6 +97,8 @@ export interface VerifyResult {
   ok: boolean;
   /** Set when the pass failed. */
   error?: string;
+  /** True when the pass was skipped to stay within the token budget (#18). */
+  skippedForBudget?: boolean;
   /** Token usage for the verification call (zero when skipped/failed). */
   usage: TokenUsage;
 }
