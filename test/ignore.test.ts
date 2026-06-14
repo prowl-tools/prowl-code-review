@@ -30,8 +30,10 @@ describe("isIgnoredPath", () => {
     expect(isIgnoredPath("README.md", DEFAULT_IGNORE_GLOBS)).toBe(false);
   });
 
-  it("supports `*` (within a segment) and `**` (across segments) globs", () => {
+  it("supports `*` and `?` within a segment and `**` across segments", () => {
     expect(isIgnoredPath("a/b/c.min.js", ["*.min.js"])).toBe(true);
+    expect(isIgnoredPath("src/a.js", ["src/?.js"])).toBe(true);
+    expect(isIgnoredPath("src/ab.js", ["src/?.js"])).toBe(false);
     expect(isIgnoredPath("src/generated/api.ts", ["src/generated/**"])).toBe(true);
     expect(isIgnoredPath("src/handcrafted/api.ts", ["src/generated/**"])).toBe(false);
     expect(isIgnoredPath("docs/api/v1/spec.json", ["docs/**/spec.json"])).toBe(true);

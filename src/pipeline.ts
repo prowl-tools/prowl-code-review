@@ -34,8 +34,8 @@ import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
- * filter → size-guard → agentic context → multi-pass review + judge →
- * walkthrough → publish.
+ * filter → ignore filter → size-guard → agentic context → multi-pass review +
+ * judge → walkthrough → publish.
  *
  * Heavy stages are injectable so the orchestration is unit-testable without a
  * live provider or GitHub.

@@ -12,7 +12,7 @@ import type { DiffFile, SkippedFile } from "./diff-types.js";
  *     contents (so `src/generated` also matches `src/generated/x.ts`),
  *   - `*` matches within a segment, `**` matches across segments, `?` one char.
  *
- * No glob dependency — the matcher is a small, auditable regex translation,
+ * No glob dependency — the matcher is a small, auditable memoized glob matcher,
  * consistent with the rest of the codebase.
  */
 export const DEFAULT_IGNORE_GLOBS: readonly string[] = [
