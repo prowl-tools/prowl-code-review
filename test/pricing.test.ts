@@ -34,6 +34,7 @@ describe("resolveModelPrice", () => {
     const overrides = Object.create(null) as Record<string, { input: number; output: number }>;
     overrides["__proto__"] = { input: 99, output: 199 };
     expect(resolveModelPrice("anthropic", "__proto__", overrides)).toBeNull();
+    expect(resolveModelPrice("anthropic", "claude-sonnet-4-6", overrides)).toBeNull();
     expect(resolveModelPrice("anthropic", "constructor", { constructor: { input: 99, output: 199 } })).toBeNull();
   });
 

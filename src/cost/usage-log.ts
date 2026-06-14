@@ -1,4 +1,4 @@
-import { appendFileSync, createReadStream, existsSync, mkdirSync } from "node:fs";
+import { appendFileSync, createReadStream, existsSync, lstatSync, mkdirSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { PROVIDER_NAMES, type ProviderName } from "../providers/index.js";
@@ -74,9 +74,28 @@ export function toUsageRecord(
   };
 }
 
+/** Reject symlinked log directories/files so usage appends cannot escape the workspace. */
+function assertNotSymlink(path: string): void {
+  try {
+    if (lstatSync(path).isSymbolicLink()) {
+      throw new Error(`Usage log path must not be a symlink: ${path}`);
+    }
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+}
+
 /** Append one record as a JSON line, creating the directory if needed. */
 export function appendUsageRecord(path: string, record: UsageRecord): void {
-  mkdirSync(dirname(path), { recursive: true });
+  const dir = dirname(path);
+  assertNotSymlink(dir);
+  assertNotSymlink(path);
+  mkdirSync(dir, { recursive: true });
+  assertNotSymlink(dir);
+  assertNotSymlink(path);
   appendFileSync(path, `${JSON.stringify(record)}\n`, "utf8");
 }
 
