@@ -188,11 +188,13 @@ export type {
 export {
   FindingSchema,
   parseFindings,
+  parseFindingsResult,
   findingKey,
   isBlockingFinding,
   SEVERITIES,
   SEVERITY_ORDER,
   type Finding,
+  type ParsedFindings,
   type Severity
 } from "./review/findings.js";
 export {
@@ -228,11 +230,13 @@ export {
 export {
   verifyFindings,
   parseVerdicts,
+  parseVerdictsResult,
   buildVerifySystem,
   buildVerifyPrompt,
   DEFAULT_VERIFY_CONFIDENCE,
   VerdictSchema,
   type Verdict,
+  type ParsedVerdicts,
   type VerifyInput,
   type VerifyOptions,
   type VerifyResult

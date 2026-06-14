@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   verifyFindings,
   parseVerdicts,
+  parseVerdictsResult,
   buildVerifyPrompt,
   buildVerifySystem,
   DEFAULT_VERIFY_CONFIDENCE
@@ -118,6 +119,24 @@ describe("parseVerdicts", () => {
 
     expect(verdicts).toHaveLength(1);
     expect(verdicts[0]).toMatchObject({ index: 0, falsePositive: false });
+  });
+});
+
+describe("parseVerdictsResult (#7)", () => {
+  it("reports ok for a valid verdict array", () => {
+    const result = parseVerdictsResult(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    expect(result.ok).toBe(true);
+    expect(result.verdicts).toHaveLength(1);
+  });
+
+  it("treats an explicit empty array as ok (not a retry)", () => {
+    expect(parseVerdictsResult("[]")).toEqual({ verdicts: [], ok: true });
+    expect(parseVerdictsResult("```json\n[]\n```")).toEqual({ verdicts: [], ok: true });
+  });
+
+  it("reports not-ok for unparseable output (the retry trigger)", () => {
+    expect(parseVerdictsResult("no json here")).toEqual({ verdicts: [], ok: false });
+    expect(parseVerdictsResult("{not: array}")).toEqual({ verdicts: [], ok: false });
   });
 });
 
@@ -238,6 +257,32 @@ describe("verifyFindings", () => {
     expect(result.error).toMatch(/provider exploded/);
     expect(result.unverified).toBe(1);
     expect(result.findings).toEqual(findings); // nothing dropped
+  });
+
+  it("retries the verification call once when the first response is unparseable (#7)", async () => {
+    const findings = [finding({ confidence: 0.3, title: "candidate" })];
+    let calls = 0;
+    const complete = vi.fn(async (): Promise<CompletionResult> => {
+      calls += 1;
+      if (calls === 1) {
+        return reply("Here is my reasoning, but no JSON array.");
+      }
+      return reply(JSON.stringify([{ index: 0, falsePositive: true, confidence: 0.1 }]));
+    });
+
+    const result = await verifyFindings(findings, { diff: "d" }, { config, complete });
+
+    expect(calls).toBe(2); // unparseable first → one retry
+    expect(result.ok).toBe(true);
+    expect(result.droppedFalsePositive).toBe(1);
+    expect(result.findings).toEqual([]); // dropped after the retry parsed
+    expect(result.usage.inputTokens).toBe(USAGE.inputTokens * 2); // both attempts counted
+  });
+
+  it("requests native JSON output from the verifier (#7)", async () => {
+    const complete = vi.fn(async () => reply("[]"));
+    await verifyFindings([finding({ confidence: 0.3 })], { diff: "d" }, { config, complete });
+    expect((complete.mock.calls[0][0] as CompletionRequest).responseFormat).toBe("json");
   });
 
   it("honors a custom verifyConfidence threshold for non-blocking findings", async () => {

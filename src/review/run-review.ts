@@ -9,7 +9,7 @@ import {
   type RetryOptions,
   type TokenUsage
 } from "../providers/index.js";
-import { type Finding, type Severity, parseFindings } from "./findings.js";
+import { type Finding, type Severity, parseFindingsResult } from "./findings.js";
 import { judgeFindings, type JudgeResult } from "./judge.js";
 import { verifyFindings, type VerifyResult } from "./verify.js";
 import { totalTokens } from "../cost/pricing.js";
@@ -73,6 +73,8 @@ export interface SpecialistPassReport {
   specialist: string;
   findings: number;
   ok: boolean;
+  /** True when the pass was retried once because its first output was unparseable (#7). */
+  retried?: boolean;
   /** Set when the pass failed. */
   error?: string;
 }
@@ -102,6 +104,34 @@ function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   };
 }
 
+/**
+ * Run one specialist pass, retrying once if the model's output isn't a parseable
+ * findings array (#7). An explicit empty array counts as a valid "no findings"
+ * result and is not retried; only genuinely unparseable output is. Both attempts'
+ * token usage is summed. `ok: false` means even the retry was unparseable — the
+ * caller reports the pass as degraded rather than silently treating it as empty.
+ */
+async function runSpecialistPass(
+  run: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>,
+  request: CompletionRequest,
+  config: ProviderConfig
+): Promise<{ findings: Finding[]; ok: boolean; retried: boolean; usage: TokenUsage }> {
+  const first = await run(request, config);
+  let parsed = parseFindingsResult(first.text);
+  let usage = first.usage;
+  let retried = false;
+  if (!parsed.ok) {
+    retried = true;
+    const second = await run(request, config);
+    usage = addUsage(usage, second.usage);
+    const retryParsed = parseFindingsResult(second.text);
+    if (retryParsed.ok) {
+      parsed = retryParsed;
+    }
+  }
+  return { findings: parsed.findings, ok: parsed.ok, retried, usage };
+}
+
 /** Run the multi-pass review and return consolidated findings. */
 export async function runReview(
   input: ReviewInput,
@@ -123,23 +153,36 @@ export async function runReview(
     specialists.map(async (specialist): Promise<{ report: SpecialistPassReport; findings: Finding[]; usage: TokenUsage }> => {
       const config = specialist.model ? { ...baseConfig, model: specialist.model } : baseConfig;
       try {
-        const result = await run({
-          system,
-          prompt: buildSpecialistPrompt({
-            specialist,
-            diff: input.diff,
-            context: input.context,
-            grounding: input.grounding?.summary
-          })
-        }, config);
-        const findings = parseFindings(result.text).map((finding) => ({
+        const pass = await runSpecialistPass(
+          run,
+          {
+            system,
+            prompt: buildSpecialistPrompt({
+              specialist,
+              diff: input.diff,
+              context: input.context,
+              grounding: input.grounding?.summary
+            }),
+            // Native JSON output where the provider supports it (#7).
+            responseFormat: "json"
+          },
+          config
+        );
+        const findings = pass.findings.map((finding) => ({
           ...finding,
           category: finding.category || specialist.key
         }));
         return {
-          report: { specialist: specialist.key, findings: findings.length, ok: true },
-          findings,
-          usage: result.usage
+          report: {
+            specialist: specialist.key,
+            findings: pass.ok ? findings.length : 0,
+            ok: pass.ok,
+            ...(pass.retried ? { retried: true } : {}),
+            ...(pass.ok ? {} : { error: "Pass output was not parseable JSON after one retry." })
+          },
+          // An unparseable pass contributes no findings and is reported as degraded.
+          findings: pass.ok ? findings : [],
+          usage: pass.usage
         };
       } catch (error) {
         return {
