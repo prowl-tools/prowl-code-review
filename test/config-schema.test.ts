@@ -24,6 +24,13 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();
   });
 
+  it("accepts an ignore glob list (incl. empty) and rejects non-string entries (#19)", () => {
+    expect(configSchema.parse({ ignore: ["node_modules", "*.snap"] })).toEqual({ ignore: ["node_modules", "*.snap"] });
+    expect(configSchema.parse({ ignore: [] })).toEqual({ ignore: [] });
+    expect(() => configSchema.parse({ ignore: [""] })).toThrow();
+    expect(() => configSchema.parse({ ignore: "node_modules" })).toThrow();
+  });
+
   it("rejects an unknown top-level key (strict — catches typos)", () => {
     expect(() => configSchema.parse({ revieww: {} })).toThrow();
   });

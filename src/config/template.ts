@@ -23,6 +23,16 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Presentation -------------------------------------------------------------
 # agentPrompt: true          # append a copy-paste "Resolve with an AI agent" prompt to each finding
 
+# --- Ignore list --------------------------------------------------------------
+# Generated/vendored files skipped before review (reported as "ignored", not
+# dropped silently). Built-in defaults cover lockfiles, node_modules, vendor,
+# dist/build/out, coverage, .next/.turbo, and test snapshots. Setting this
+# REPLACES the defaults; use [] to ignore nothing.
+# ignore:
+#   - node_modules
+#   - "*.snap"
+#   - "src/generated/**"
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info

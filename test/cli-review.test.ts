@@ -228,6 +228,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
   });
 
+  it("passes the config ignore list through, leaving it undefined for defaults (#19)", () => {
+    expect(resolveReviewOptions({}, {}, env).ignore).toBeUndefined(); // → pipeline applies the default globs
+    expect(resolveReviewOptions({}, { ignore: ["vendor", "*.snap"] }, env).ignore).toEqual(["vendor", "*.snap"]);
+    expect(resolveReviewOptions({}, { ignore: [] }, env).ignore).toEqual([]); // explicit "ignore nothing"
+  });
+
   it("keeps the agent prompt on by default and disables it from CLI or config (#57)", () => {
     expect(resolveReviewOptions({}, {}, env).agentPrompt).toBeUndefined(); // default on (pipeline default)
     expect(resolveReviewOptions({ agentPrompt: false }, {}, env).agentPrompt).toBe(false); // --no-agent-prompt
