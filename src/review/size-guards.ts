@@ -58,7 +58,8 @@ export function describeSkipped(skipped: SkippedFile[]): string {
     binary: "binary (not reviewable)",
     maxFiles: "skipped - file limit reached",
     maxDiffBytes: "skipped - diff size limit reached",
-    sensitive: "sensitive - kept out of the prompt"
+    sensitive: "sensitive - kept out of the prompt",
+    ignored: "ignored - matched the ignore list"
   };
   const parts: string[] = [];
   for (const [reason, paths] of byReason) {

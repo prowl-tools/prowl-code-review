@@ -134,6 +134,7 @@ export {
 // Unified-diff parsing + size guards.
 export { parseDiff } from "./review/parse-diff.js";
 export { applyDiffLimits, describeSkipped } from "./review/size-guards.js";
+export { filterIgnoredDiffFiles, isIgnoredPath, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 export type {
   ParsedDiff,
   DiffFile,
