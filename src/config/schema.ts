@@ -119,6 +119,9 @@ const specialistsSchema = z
   })
   .strict();
 
+/** Categories reserved for deterministic non-specialist findings. */
+const RESERVED_CUSTOM_SPECIALIST_KEYS = new Set(["lint"]);
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -175,6 +178,13 @@ export const configSchema = z
           code: z.ZodIssueCode.custom,
           path: ["specialists", "custom", index, "key"],
           message: `custom specialist key "${reviewer.key}" collides with a built-in; pick another`
+        });
+      }
+      if (RESERVED_CUSTOM_SPECIALIST_KEYS.has(reviewer.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["specialists", "custom", index, "key"],
+          message: `custom specialist key "${reviewer.key}" is reserved for deterministic findings; pick another`
         });
       }
       if (seen.has(reviewer.key)) {

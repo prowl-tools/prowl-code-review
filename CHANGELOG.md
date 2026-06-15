@@ -16,7 +16,7 @@ All notable changes to Prowl Review will be documented in this file.
   overriding core review rules. Config-level per-reviewer `model` overrides are intentionally not exposed until
   provider/model-specific usage accounting can price mixed-model reviews correctly. Capped at 10 custom
   reviewers (each is a full LLM pass); keys are validated (lowercase/alphanumeric/hyphen, no collision
-  with a built-in or each other), and a config that disables every lens with no custom reviewer is
+  with a built-in, `lint`, or each other), and a config that disables every lens with no custom reviewer is
   rejected. `resolveSpecialists` (pure) composes the set; threaded `config → resolveReviewOptions →
   pipeline → runReview`. Exports `resolveSpecialists`, `BUILTIN_SPECIALIST_KEYS`, and the
   `SpecialistsConfig`/`CustomSpecialistConfig` types.
