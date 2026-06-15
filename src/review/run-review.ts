@@ -9,7 +9,7 @@ import {
   type RetryOptions,
   type TokenUsage
 } from "../providers/index.js";
-import { type Finding, type Severity, parseFindingsResult } from "./findings.js";
+import { type Finding, type Severity, SEVERITY_ORDER, parseFindingsResult } from "./findings.js";
 import { judgeFindings, type JudgeResult } from "./judge.js";
 import { verifyFindings, type VerifyResult } from "./verify.js";
 import { totalTokens } from "../cost/pricing.js";
@@ -168,10 +168,17 @@ export async function runReview(
           },
           config
         );
-        const findings = pass.findings.map((finding) => ({
+        const mapped = pass.findings.map((finding) => ({
           ...finding,
           category: finding.category || specialist.key
         }));
+        // Per-reviewer severity floor (#51): drop this lens's below-floor findings
+        // before the judge so a high-signal-only custom reviewer stays quiet.
+        const findings = specialist.severityFloor
+          ? mapped.filter(
+              (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[specialist.severityFloor!]
+            )
+          : mapped;
         return {
           report: {
             specialist: specialist.key,
