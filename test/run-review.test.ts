@@ -232,6 +232,7 @@ describe("runReview", () => {
     const compliance = result.passes.find((p) => p.specialist === "compliance");
     expect(compliance?.ok).toBe(true);
     expect(compliance?.findings).toBe(1);
+    expect(result.raw.find((f) => f.title === "rfc")?.category).toBe("compliance");
     expect(result.findings.some((f) => f.category === "compliance")).toBe(true);
     expect(result.findings.some((f) => f.category === "security")).toBe(false);
   });
