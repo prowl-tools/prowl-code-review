@@ -5,6 +5,19 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Risk-tiered orchestration (backlog #31): scale cost with risk so a tiny diff doesn't pay for the
+  full review fan-out (the lever the cost audit pointed at — input tokens from re-sent context across
+  passes dominate the bill). A pure scorer (`src/review/risk-tier.ts`) counts changed lines + files and
+  picks a tier: **minimal** (≤30 changed lines AND ≤2 files) runs a reduced built-in set
+  (correctness + security; security never dropped) and tightens cross-file context; **deep** (≥500
+  changed lines OR ≥20 files) expands context; **standard** is everything else (unchanged). Thresholds
+  and an on/off switch are configurable via a `riskTiering` block in `.prowl-review.yml`. Explicit
+  context limits and a configured specialist set (#51) always win over the tier; custom reviewers always
+  run. The chosen tier is logged with the cost line (stdout + Action job summary), and a coverage-reducing
+  minimal-tier run is disclosed as a review note (no silent reduction, #5). `reviewPullRequest` returns
+  the chosen `riskTier`. **Model**-tiering is intentionally out of scope (cheap-model-per-provider is a
+  guess we avoid; the user controls the model). Exports `selectRiskTier`/`planOrchestration`/
+  `diffComplexity` + thresholds.
 - Custom / configurable specialist reviewers (backlog #51): define your own review lenses in
   `.prowl-review.yml` so prowl-review enforces your org's standards without you building the
   orchestration. A new `specialists` block toggles the built-in lenses on/off

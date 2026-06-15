@@ -221,6 +221,19 @@ export {
   type CustomSpecialistConfig
 } from "./review/specialists.js";
 export {
+  diffComplexity,
+  selectRiskTier,
+  planOrchestration,
+  DEFAULT_TIER_THRESHOLDS,
+  MINIMAL_TIER_BUILTINS,
+  TIER_CONTEXT_LIMITS,
+  type RiskTier,
+  type RiskTieringConfig,
+  type DiffComplexity,
+  type RiskTierSelection,
+  type TierPlan
+} from "./review/risk-tier.js";
+export {
   buildWalkthrough,
   reviewCommentState,
   severityCounts,
