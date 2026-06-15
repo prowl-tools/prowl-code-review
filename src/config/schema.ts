@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SEVERITIES } from "../review/findings.js";
+import { BUILTIN_SPECIALIST_KEYS } from "../review/specialists.js";
 import { PROVIDER_NAMES } from "../providers/index.js";
 
 /**
@@ -81,6 +82,45 @@ const budgetSchema = z
   })
   .strict();
 
+/** Toggle the built-in review lenses on/off by key; absent keys stay enabled (#51). */
+const builtinSpecialistsSchema = z
+  .object(
+    Object.fromEntries(BUILTIN_SPECIALIST_KEYS.map((key) => [key, z.boolean().optional()]))
+  )
+  .strict();
+
+/** One custom reviewer added to the multi-pass set (#51). */
+const customSpecialistSchema = z
+  .object({
+    /** Category key (lowercase/alphanumeric/hyphen); also the finding category. */
+    key: z
+      .string()
+      .regex(/^[a-z0-9][a-z0-9-]*$/, "key must be lowercase alphanumeric or hyphens (e.g. compliance)"),
+    /** Optional human title; derived from the key when omitted. */
+    title: z.string().min(1).max(80).optional(),
+    /** What this reviewer should look for (the focus prompt). */
+    focus: z.string().min(1).max(4000),
+    /** Optional "what NOT to flag"; a generic noise guard is used when omitted. */
+    avoid: z.string().min(1).max(4000).optional(),
+    /** Optional severity floor — drop this reviewer's findings below it. */
+    severityFloor: severityEnum.optional(),
+    /** Optional per-reviewer model override (must be a model for the selected provider). */
+    model: z.string().min(1).optional()
+  })
+  .strict();
+
+/**
+ * Custom / configurable specialist reviewers (#51). Built-ins can be toggled off,
+ * and custom reviewers run as extra passes that feed the same judge/dedup. Capped
+ * at 10 custom reviewers — each is a full LLM pass, so the count drives cost.
+ */
+const specialistsSchema = z
+  .object({
+    builtins: builtinSpecialistsSchema.optional(),
+    custom: z.array(customSpecialistSchema).max(10).optional()
+  })
+  .strict();
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -111,6 +151,8 @@ export const configSchema = z
     pricing: z.record(z.string().min(1), modelPriceSchema).optional(),
     /** Per-PR spend ceiling (#18): caps context retrieval + skips verification when spent. */
     budget: budgetSchema.optional(),
+    /** Toggle built-in lenses + add custom reviewers to the multi-pass set (#51). */
+    specialists: specialistsSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
@@ -123,6 +165,47 @@ export const configSchema = z
         code: z.ZodIssueCode.custom,
         path: ["model"],
         message: "model requires provider so model names stay provider-scoped"
+      });
+    }
+
+    const custom = config.specialists?.custom ?? [];
+    const builtinKeys = new Set<string>(BUILTIN_SPECIALIST_KEYS);
+    const seen = new Set<string>();
+    custom.forEach((reviewer, index) => {
+      if (builtinKeys.has(reviewer.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["specialists", "custom", index, "key"],
+          message: `custom specialist key "${reviewer.key}" collides with a built-in; pick another`
+        });
+      }
+      if (seen.has(reviewer.key)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["specialists", "custom", index, "key"],
+          message: `duplicate custom specialist key "${reviewer.key}"`
+        });
+      }
+      seen.add(reviewer.key);
+      // A model name is provider-specific; keep it scoped to a configured provider.
+      if (reviewer.model && !config.provider) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["specialists", "custom", index, "model"],
+          message: "a custom specialist model requires a configured provider so model names stay provider-scoped"
+        });
+      }
+    });
+
+    // Don't let a config disable every lens and leave the review with nothing to run.
+    const builtins = config.specialists?.builtins;
+    const allBuiltinsOff =
+      builtins !== undefined && BUILTIN_SPECIALIST_KEYS.every((key) => builtins[key] === false);
+    if (allBuiltinsOff && custom.length === 0) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["specialists"],
+        message: "at least one specialist must remain enabled (all built-ins are off and no custom reviewers are defined)"
       });
     }
   });
