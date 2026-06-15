@@ -45,6 +45,14 @@ describe("resolveSpecialists (#51)", () => {
     expect(reviewer.title).toBe("Internal Rfc");
   });
 
+  it("derives a title from an underscore-separated key", () => {
+    const [reviewer] = resolveSpecialists({
+      builtins: Object.fromEntries(BUILTIN_SPECIALIST_KEYS.map((k) => [k, false])),
+      custom: [{ key: "internal_rfc", focus: "f" }]
+    });
+    expect(reviewer.title).toBe("Internal Rfc");
+  });
+
   it("passes through explicit title, avoid, and severityFloor", () => {
     const resolved = resolveSpecialists({
       custom: [

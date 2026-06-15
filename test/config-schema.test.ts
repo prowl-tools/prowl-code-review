@@ -98,6 +98,17 @@ describe("configSchema (#29)", () => {
     ).toThrow(/single line/);
   });
 
+  it("rejects empty or oversized custom specialist titles (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "compliance", title: "", focus: "f" }] } })
+    ).toThrow();
+    expect(() =>
+      configSchema.parse({
+        specialists: { custom: [{ key: "compliance", title: "a".repeat(81), focus: "f" }] }
+      })
+    ).toThrow();
+  });
+
   it("rejects a config-level custom specialist model override (#51)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "a", focus: "f", model: "gpt-5.2" }] } })
