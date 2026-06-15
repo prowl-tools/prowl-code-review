@@ -12,6 +12,7 @@ import { resolveProviderConfig, type ProviderConfig } from "../../providers/inde
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
+import { resolveSpecialists } from "../../review/specialists.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, type PriceOverrides } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 
@@ -138,6 +139,7 @@ type ResolvedReviewOptions = Pick<
   | "agentPrompt"
   | "ignore"
   | "maxInlineComments"
+  | "specialists"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -249,7 +251,9 @@ export function resolveReviewOptions(
     // Default on; CLI `--no-agent-prompt` (or `agentPrompt: false` in config) turns it off.
     agentPrompt: cli.agentPrompt === false || config.agentPrompt === false ? false : undefined,
     // Omitted → built-in defaults; an explicit list (including []) replaces them (#19).
-    ignore: config.ignore
+    ignore: config.ignore,
+    // Omitted → the pipeline's built-in specialist set; config composes built-ins + custom (#51).
+    specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined
   };
 }
 

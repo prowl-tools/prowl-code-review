@@ -5,6 +5,21 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Custom / configurable specialist reviewers (backlog #51): define your own review lenses in
+  `.prowl-review.yml` so prowl-review enforces your org's standards without you building the
+  orchestration. A new `specialists` block toggles the built-in lenses on/off
+  (`specialists.builtins.<correctness|security|performance|tests>: false`) and adds custom reviewers
+  (`specialists.custom: [{ key, focus, title?, avoid?, severityFloor? }]`) that run as extra passes in
+  the #6 multi-pass set and feed the same judge/dedup. `severityFloor` keeps a reviewer
+  high-signal-only (its below-floor findings are dropped before the judge). Custom title/focus/avoid
+  strings are framed as untrusted configuration data in the prompt so they guide scope without
+  overriding core review rules. Config-level per-reviewer `model` overrides are intentionally not exposed until
+  provider/model-specific usage accounting can price mixed-model reviews correctly. Capped at 10 custom
+  reviewers (each is a full LLM pass); keys are validated (lowercase/alphanumeric/hyphen, no collision
+  with a built-in, `lint`, or each other), and a config that disables every lens with no custom reviewer is
+  rejected. `resolveSpecialists` (pure) composes the set; threaded `config → resolveReviewOptions →
+  pipeline → runReview`. Exports `resolveSpecialists`, `BUILTIN_SPECIALIST_KEYS`, and the
+  `SpecialistsConfig`/`CustomSpecialistConfig` types.
 - Findings structured-output hardening (backlog #7): review passes now survive a model that returns
   malformed or empty JSON. Each specialist pass is **retried once** when its output isn't a parseable
   findings array (`parseFindingsResult` distinguishes a genuine empty `[]` "no findings" — never

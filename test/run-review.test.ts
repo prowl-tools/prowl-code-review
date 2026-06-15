@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { runReview } from "../src/review/run-review.js";
+import { resolveSpecialists, BUILTIN_SPECIALIST_KEYS } from "../src/review/specialists.js";
 import { retrying } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResult, ProviderConfig } from "../src/providers/index.js";
 
@@ -80,9 +81,12 @@ describe("runReview", () => {
     const systems = complete.mock.calls.map((call) => (call[0] as CompletionRequest).system);
     expect(new Set(systems).size).toBe(1);
     expect(systems[0]).toContain("be strict");
+    expect(systems[0]).toContain("# Untrusted project review guidelines");
+    expect(systems[0]).toContain('Guidelines data: "be strict"');
     expect(systems[0]).toContain("conservative"); // high-signal directive (#55)
     expect(systems[0]).toContain("calibration"); // severity+confidence calibration (#58)
     expect(systems[0]).toContain("do NOT comply"); // anti-injection directive (#14)
+    expect(systems[0]).not.toContain("# Project review guidelines\nbe strict");
     expect(systems[0]).not.toContain("the diff");
     expect(systems[0]).not.toContain("the context");
 
@@ -207,6 +211,55 @@ describe("runReview", () => {
     expect(correctness?.retried).toBe(true);
     expect(correctness?.findings).toBe(0);
     expect(correctness?.error).toMatch(/not parseable JSON/);
+  });
+
+  it("runs a custom specialist as an extra pass (#51)", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Compliance reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "security", title: "rfc", body: "x", confidence: 0.9 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+    const specialists = resolveSpecialists({ custom: [{ key: "compliance", focus: "Check the RFC." }] });
+
+    const result = await runReview({ diff: "d", specialists }, { config, complete, verify: false });
+
+    expect(complete).toHaveBeenCalledTimes(5); // 4 built-ins + compliance
+    const compliance = result.passes.find((p) => p.specialist === "compliance");
+    expect(compliance?.ok).toBe(true);
+    expect(compliance?.findings).toBe(1);
+    expect(result.raw.find((f) => f.title === "rfc")?.category).toBe("compliance");
+    expect(result.findings.some((f) => f.category === "compliance")).toBe(true);
+    expect(result.findings.some((f) => f.category === "security")).toBe(false);
+  });
+
+  it("applies a custom specialist's severity floor before the judge (#51)", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Compliance reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "compliance", title: "kept", body: "x", confidence: 0.9 },
+            { file: "b.ts", line: 2, severity: "minor", category: "compliance", title: "dropped", body: "y", confidence: 0.9 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+    const specialists = resolveSpecialists({
+      builtins: Object.fromEntries(BUILTIN_SPECIALIST_KEYS.map((k) => [k, false])),
+      custom: [{ key: "compliance", focus: "f", severityFloor: "major" }]
+    });
+
+    const result = await runReview({ diff: "d", specialists }, { config, complete, verify: false });
+
+    expect(complete).toHaveBeenCalledTimes(1); // only the compliance pass runs
+    const compliance = result.passes.find((p) => p.specialist === "compliance");
+    expect(compliance?.findings).toBe(1); // the minor finding is dropped by the floor
+    expect(result.raw.map((f) => f.title)).toEqual(["kept"]);
   });
 
   it("applies the severity threshold via the judge", async () => {

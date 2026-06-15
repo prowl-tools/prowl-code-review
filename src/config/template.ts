@@ -59,6 +59,21 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   verify: true             # run the skeptical false-positive verification pass
 #   verifyConfidence: 0.8    # non-blocking findings at/above this confidence skip verification (0–1)
 
+# --- Specialist reviewers -----------------------------------------------------
+# The multi-pass review runs built-in lenses (correctness, security, performance,
+# tests). Toggle any of them off, and/or add your own reviewers — each runs as an
+# extra pass and feeds the same judge/dedup. Each custom reviewer is a full LLM
+# pass, so the count drives cost (max 10).
+# specialists:
+#   builtins:
+#     performance: false     # turn a built-in lens off (absent keys stay on)
+#   custom:
+#     - key: compliance      # lowercase/alphanumeric/hyphen; also the finding category; "lint" is reserved
+#       title: Compliance    # optional; derived from key when omitted
+#       focus: "Flag changes that violate our internal RFC-1234 logging standard."
+#       avoid: "General style nits unrelated to the standard."   # optional
+#       severityFloor: major # optional; drop this reviewer's findings below it
+
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:
 #   enabled: true            # gather callers/definitions/related files before reviewing

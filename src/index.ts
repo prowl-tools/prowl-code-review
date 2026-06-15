@@ -211,10 +211,14 @@ export {
 } from "./review/judge.js";
 export {
   DEFAULT_SPECIALISTS,
+  BUILTIN_SPECIALIST_KEYS,
+  resolveSpecialists,
   buildSharedSystem,
   buildSpecialistDirective,
   buildSpecialistPrompt,
-  type Specialist
+  type Specialist,
+  type SpecialistsConfig,
+  type CustomSpecialistConfig
 } from "./review/specialists.js";
 export {
   buildWalkthrough,
