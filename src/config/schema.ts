@@ -103,9 +103,7 @@ const customSpecialistSchema = z
     /** Optional "what NOT to flag"; a generic noise guard is used when omitted. */
     avoid: z.string().min(1).max(4000).optional(),
     /** Optional severity floor — drop this reviewer's findings below it. */
-    severityFloor: severityEnum.optional(),
-    /** Optional per-reviewer model override (must be a model for the selected provider). */
-    model: z.string().min(1).optional()
+    severityFloor: severityEnum.optional()
   })
   .strict();
 
@@ -187,14 +185,6 @@ export const configSchema = z
         });
       }
       seen.add(reviewer.key);
-      // A model name is provider-specific; keep it scoped to a configured provider.
-      if (reviewer.model && !config.provider) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["specialists", "custom", index, "model"],
-          message: "a custom specialist model requires a configured provider so model names stay provider-scoped"
-        });
-      }
     });
 
     // Don't let a config disable every lens and leave the review with nothing to run.
