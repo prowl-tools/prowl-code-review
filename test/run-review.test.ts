@@ -215,7 +215,7 @@ describe("runReview", () => {
       if (request.prompt.includes("Compliance reviewer")) {
         return reply(
           JSON.stringify([
-            { file: "a.ts", line: 1, severity: "major", category: "compliance", title: "rfc", body: "x", confidence: 0.9 }
+            { file: "a.ts", line: 1, severity: "major", category: "security", title: "rfc", body: "x", confidence: 0.9 }
           ])
         );
       }
@@ -230,6 +230,7 @@ describe("runReview", () => {
     expect(compliance?.ok).toBe(true);
     expect(compliance?.findings).toBe(1);
     expect(result.findings.some((f) => f.category === "compliance")).toBe(true);
+    expect(result.findings.some((f) => f.category === "security")).toBe(false);
   });
 
   it("applies a custom specialist's severity floor before the judge (#51)", async () => {

@@ -170,7 +170,7 @@ export async function runReview(
         );
         const mapped = pass.findings.map((finding) => ({
           ...finding,
-          category: finding.category || specialist.key
+          category: specialist.key
         }));
         // Per-reviewer severity floor (#51): drop this lens's below-floor findings
         // before the judge so a high-signal-only custom reviewer stays quiet.
