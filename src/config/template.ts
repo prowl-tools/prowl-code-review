@@ -63,8 +63,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # The multi-pass review runs built-in lenses (correctness, security, performance,
 # tests). Toggle any of them off, and/or add your own reviewers — each runs as an
 # extra pass and feeds the same judge/dedup. Each custom reviewer is a full LLM
-# pass, so the count drives cost (max 10). A custom "model" requires "provider"
-# above (model names are provider-specific).
+# pass, so the count drives cost (max 10).
 # specialists:
 #   builtins:
 #     performance: false     # turn a built-in lens off (absent keys stay on)
@@ -74,7 +73,6 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #       focus: "Flag changes that violate our internal RFC-1234 logging standard."
 #       avoid: "General style nits unrelated to the standard."   # optional
 #       severityFloor: major # optional; drop this reviewer's findings below it
-#       # model: gpt-5.2     # optional; must be a model for the provider above
 
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:

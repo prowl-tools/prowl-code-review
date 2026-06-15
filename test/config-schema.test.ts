@@ -84,16 +84,10 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ specialists: { custom: [{ key: "compliance", focus: "" }] } })).toThrow();
   });
 
-  it("requires a provider when a custom specialist sets a model (#51)", () => {
+  it("rejects a config-level custom specialist model override (#51)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "a", focus: "f", model: "gpt-5.2" }] } })
-    ).toThrow(/requires a configured provider/);
-    expect(
-      configSchema.parse({
-        provider: "openai",
-        specialists: { custom: [{ key: "a", focus: "f", model: "gpt-5.2" }] }
-      })
-    ).toMatchObject({ provider: "openai" });
+    ).toThrow();
   });
 
   it("rejects disabling every built-in with no custom reviewers (#51)", () => {
