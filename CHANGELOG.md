@@ -11,9 +11,9 @@ All notable changes to Prowl Review will be documented in this file.
   (`specialists.builtins.<correctness|security|performance|tests>: false`) and adds custom reviewers
   (`specialists.custom: [{ key, focus, title?, avoid?, severityFloor? }]`) that run as extra passes in
   the #6 multi-pass set and feed the same judge/dedup. `severityFloor` keeps a reviewer
-  high-signal-only (its below-floor findings are dropped before the judge). Custom focus/avoid strings
-  are framed as untrusted configuration data in the prompt so they guide scope without overriding core
-  review rules. Config-level per-reviewer `model` overrides are intentionally not exposed until
+  high-signal-only (its below-floor findings are dropped before the judge). Custom title/focus/avoid
+  strings are framed as untrusted configuration data in the prompt so they guide scope without
+  overriding core review rules. Config-level per-reviewer `model` overrides are intentionally not exposed until
   provider/model-specific usage accounting can price mixed-model reviews correctly. Capped at 10 custom
   reviewers (each is a full LLM pass); keys are validated (lowercase/alphanumeric/hyphen, no collision
   with a built-in or each other), and a config that disables every lens with no custom reviewer is

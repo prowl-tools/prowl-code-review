@@ -97,7 +97,7 @@ const customSpecialistSchema = z
       .string()
       .regex(/^[a-z0-9][a-z0-9-]*$/, "key must be lowercase alphanumeric or hyphens (e.g. compliance)"),
     /** Optional human title; derived from the key when omitted. */
-    title: z.string().min(1).max(80).optional(),
+    title: z.string().min(1).max(80).regex(/^[^\r\n]+$/, "title must be a single line").optional(),
     /** What this reviewer should look for (the focus prompt). */
     focus: z.string().min(1).max(4000),
     /** Optional "what NOT to flag"; a generic noise guard is used when omitted. */
