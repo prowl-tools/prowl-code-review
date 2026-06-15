@@ -168,6 +168,8 @@ export async function runReview(
           },
           config
         );
+        // Specialist passes own their category; keep custom reviewer buckets stable
+        // even when the model emits a natural category like "security".
         const mapped = pass.findings.map((finding) => ({
           ...finding,
           category: specialist.key
