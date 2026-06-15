@@ -52,6 +52,9 @@ jobs:
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
+          # Flash for dogfooding: ~4x cheaper than 2.5-pro and priced in our table,
+          # so the CI cost line shows real dollars instead of "n/a".
+          ai-model: gemini-2.5-flash
           workspace-path: ${{ github.workspace }}/pr-head
           guidelines-path: ${{ github.workspace }}
           # min-severity: major
