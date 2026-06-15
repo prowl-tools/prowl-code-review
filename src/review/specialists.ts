@@ -1,4 +1,4 @@
-import { SEVERITIES } from "./findings.js";
+import { SEVERITIES, type Severity } from "./findings.js";
 
 /**
  * Specialist review lenses (backlog #6). Each pass is tightly scoped with an
@@ -17,6 +17,12 @@ export interface Specialist {
   avoid: string;
   /** Optional per-specialist model override. */
   model?: string;
+  /**
+   * Optional severity floor (#51): drop this lens's findings below it before the
+   * judge, so a custom reviewer can be high-signal-only (e.g. a compliance pass
+   * that should only raise `major`+). Built-ins leave this unset.
+   */
+  severityFloor?: Severity;
 }
 
 export const DEFAULT_SPECIALISTS: Specialist[] = [
@@ -119,6 +125,65 @@ export function buildSpecialistDirective(specialist: Specialist): string {
     `Do NOT flag: ${specialist.avoid}`,
     `Use "${specialist.key}" as the category for every finding you return.`
   ].join("\n");
+}
+
+/** The built-in specialist keys, in pass order. */
+export const BUILTIN_SPECIALIST_KEYS = DEFAULT_SPECIALISTS.map((s) => s.key);
+
+/** Generic "what NOT to flag" applied to a custom reviewer that omits its own. */
+const DEFAULT_CUSTOM_AVOID =
+  "Style/formatting, naming preferences, or speculative issues that require unlikely preconditions. Do not restate what the code obviously does.";
+
+/** One custom reviewer as it appears in `.prowl-review.yml` (#51). */
+export interface CustomSpecialistConfig {
+  /** Category key (also the finding category); must not collide with a built-in. */
+  key: string;
+  /** Optional human title; derived from the key when omitted. */
+  title?: string;
+  /** What this reviewer should look for (the focus prompt). */
+  focus: string;
+  /** Optional "what NOT to flag"; a generic noise guard is used when omitted. */
+  avoid?: string;
+  /** Optional severity floor — drop this reviewer's findings below it. */
+  severityFloor?: Severity;
+  /** Optional per-reviewer model override (must be a model for the selected provider). */
+  model?: string;
+}
+
+/** Custom/built-in specialist configuration block from `.prowl-review.yml` (#51). */
+export interface SpecialistsConfig {
+  /** Toggle built-in lenses on/off by key; absent keys stay enabled. */
+  builtins?: Partial<Record<string, boolean>>;
+  /** Extra reviewers appended to the multi-pass set. */
+  custom?: CustomSpecialistConfig[];
+}
+
+/** Title-case a key like `internal-rfc` → `Internal Rfc` for reporting. */
+function titleFromKey(key: string): string {
+  return key
+    .split(/[-_]/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
+/**
+ * Resolve the specialist set for a review from config (#51): the built-ins
+ * (minus any toggled off) followed by the custom reviewers, which compose with
+ * them and feed the same judge/dedup. Returns {@link DEFAULT_SPECIALISTS} when
+ * no config is given. Pure; the schema enforces key uniqueness/shape upstream.
+ */
+export function resolveSpecialists(config?: SpecialistsConfig): Specialist[] {
+  const builtins = DEFAULT_SPECIALISTS.filter((s) => config?.builtins?.[s.key] !== false);
+  const custom = (config?.custom ?? []).map((c): Specialist => ({
+    key: c.key,
+    title: c.title ?? titleFromKey(c.key),
+    focus: c.focus,
+    avoid: c.avoid ?? DEFAULT_CUSTOM_AVOID,
+    ...(c.severityFloor ? { severityFloor: c.severityFloor } : {}),
+    ...(c.model ? { model: c.model } : {})
+  }));
+  return [...builtins, ...custom];
 }
 
 /** Build the volatile user prompt for one specialist pass. */
