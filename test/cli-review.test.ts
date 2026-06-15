@@ -294,6 +294,16 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({}, { agentPrompt: false }, env).agentPrompt).toBe(false); // config off
     expect(resolveReviewOptions({}, { agentPrompt: true }, env).agentPrompt).toBeUndefined(); // explicit on stays default
   });
+
+  it("resolves the specialist set only when config sets one (#51)", () => {
+    expect(resolveReviewOptions({}, {}, env).specialists).toBeUndefined(); // → pipeline's built-in default set
+    const resolved = resolveReviewOptions(
+      {},
+      { specialists: { builtins: { performance: false }, custom: [{ key: "compliance", focus: "f" }] } },
+      env
+    );
+    expect(resolved.specialists?.map((s) => s.key)).toEqual(["correctness", "security", "tests", "compliance"]);
+  });
 });
 
 describe("review command action env helpers", () => {

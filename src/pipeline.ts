@@ -18,6 +18,7 @@ import {
   type RetrievalLimits
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
+import type { Specialist } from "./review/specialists.js";
 import {
   gatherGrounding as defaultGatherGrounding,
   buildGroundingSummary,
@@ -82,6 +83,11 @@ export interface ReviewPullRequestOptions {
    * from `budget.maxTokens`/`maxUsd` by the CLI. Specialist passes still run.
    */
   budgetTokens?: number;
+  /**
+   * Specialist set for the multi-pass review (#51): built-ins (minus any toggled
+   * off) plus custom reviewers. Omitted → the built-in {@link DEFAULT_SPECIALISTS}.
+   */
+  specialists?: Specialist[];
   /** Run the skeptical false-positive verification pass (default true, #8). */
   verify?: boolean;
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
@@ -433,7 +439,7 @@ export async function reviewPullRequest(
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
   const reviewResult = await review(
-    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding },
+    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding, specialists: options.specialists },
     {
       config,
       minSeverity: options.minSeverity,
