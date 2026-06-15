@@ -140,6 +140,7 @@ type ResolvedReviewOptions = Pick<
   | "ignore"
   | "maxInlineComments"
   | "specialists"
+  | "riskTiering"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -253,7 +254,9 @@ export function resolveReviewOptions(
     // Omitted → built-in defaults; an explicit list (including []) replaces them (#19).
     ignore: config.ignore,
     // Omitted → the pipeline's built-in specialist set; config composes built-ins + custom (#51).
-    specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined
+    specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined,
+    // Omitted → tiering on with built-in thresholds; config can tune or disable it (#31).
+    riskTiering: config.riskTiering
   };
 }
 
@@ -304,12 +307,15 @@ export function reportReviewCommandResult(
     options.providerConfig.model,
     options.pricing ?? {}
   );
-  console.log(`prowl-review cost: ${formatCostLine(cost)}`);
+  // The chosen risk tier (#31) is logged alongside the cost so a run's spend is
+  // attributable to its orchestration tier.
+  const tierSuffix = result.riskTier ? ` · risk tier: ${result.riskTier}` : "";
+  console.log(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
 
   const summaryPath = env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
     try {
-      appendFileSync(summaryPath, `### prowl-review cost\n\n- ${formatCostLine(cost)}\n`);
+      appendFileSync(summaryPath, `### prowl-review cost\n\n- ${formatCostLine(cost)}${tierSuffix}\n`);
     } catch {
       // non-fatal: job summary unavailable
     }

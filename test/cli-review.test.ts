@@ -304,6 +304,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     );
     expect(resolved.specialists?.map((s) => s.key)).toEqual(["correctness", "security", "tests", "compliance"]);
   });
+
+  it("passes the riskTiering config straight through (#31)", () => {
+    expect(resolveReviewOptions({}, {}, env).riskTiering).toBeUndefined(); // → tiering on with built-in thresholds
+    const cfg = { riskTiering: { enabled: false } };
+    expect(resolveReviewOptions({}, cfg, env).riskTiering).toEqual({ enabled: false });
+  });
 });
 
 describe("review command action env helpers", () => {
