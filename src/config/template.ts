@@ -68,7 +68,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   builtins:
 #     performance: false     # turn a built-in lens off (absent keys stay on)
 #   custom:
-#     - key: compliance      # lowercase/alphanumeric/hyphen; also the finding category
+#     - key: compliance      # lowercase/alphanumeric/hyphen; also the finding category; "lint" is reserved
 #       title: Compliance    # optional; derived from key when omitted
 #       focus: "Flag changes that violate our internal RFC-1234 logging standard."
 #       avoid: "General style nits unrelated to the standard."   # optional

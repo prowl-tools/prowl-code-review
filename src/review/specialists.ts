@@ -143,7 +143,7 @@ const DEFAULT_CUSTOM_AVOID =
 
 /** One custom reviewer as it appears in `.prowl-review.yml` (#51). */
 export interface CustomSpecialistConfig {
-  /** Category key (also the finding category); must not collide with a built-in. */
+  /** Category key (also the finding category); must not collide with built-in/reserved keys. */
   key: string;
   /** Optional human title; derived from the key when omitted. */
   title?: string;

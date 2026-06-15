@@ -71,6 +71,12 @@ describe("configSchema (#29)", () => {
     ).toThrow(/collides with a built-in/);
   });
 
+  it("rejects reserved custom specialist keys (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "lint", focus: "f" }] } })
+    ).toThrow(/reserved/);
+  });
+
   it("rejects duplicate custom specialist keys (#51)", () => {
     expect(() =>
       configSchema.parse({
