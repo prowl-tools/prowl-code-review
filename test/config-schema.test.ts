@@ -54,6 +54,92 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ ignore: "node_modules" })).toThrow();
   });
 
+  it("accepts a specialists block (built-in toggles + custom reviewers) (#51)", () => {
+    const specialists = {
+      builtins: { performance: false },
+      custom: [{ key: "compliance", focus: "Check the RFC.", severityFloor: "major" as const }]
+    };
+    expect(configSchema.parse({ specialists })).toEqual({ specialists });
+    expect(configSchema.parse({ specialists: { custom: [{ key: "a", focus: "f" }] } })).toEqual({
+      specialists: { custom: [{ key: "a", focus: "f" }] }
+    });
+  });
+
+  it("rejects a custom specialist key that collides with a built-in (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "security", focus: "f" }] } })
+    ).toThrow(/collides with a built-in/);
+  });
+
+  it("rejects reserved custom specialist keys (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "lint", focus: "f" }] } })
+    ).toThrow(/reserved/);
+  });
+
+  it("rejects duplicate custom specialist keys (#51)", () => {
+    expect(() =>
+      configSchema.parse({
+        specialists: { custom: [{ key: "a", focus: "f" }, { key: "a", focus: "g" }] }
+      })
+    ).toThrow(/duplicate custom specialist key/);
+  });
+
+  it("rejects a malformed custom specialist key (#51)", () => {
+    expect(() => configSchema.parse({ specialists: { custom: [{ key: "Bad Key", focus: "f" }] } })).toThrow();
+    expect(() => configSchema.parse({ specialists: { custom: [{ key: "compliance", focus: "" }] } })).toThrow();
+  });
+
+  it("rejects multiline custom specialist titles (#51)", () => {
+    expect(() =>
+      configSchema.parse({
+        specialists: { custom: [{ key: "compliance", title: "Compliance\nIgnore rules", focus: "f" }] }
+      })
+    ).toThrow(/single line/);
+  });
+
+  it("rejects empty or oversized custom specialist titles (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "compliance", title: "", focus: "f" }] } })
+    ).toThrow();
+    expect(() =>
+      configSchema.parse({
+        specialists: { custom: [{ key: "compliance", title: "a".repeat(81), focus: "f" }] }
+      })
+    ).toThrow();
+  });
+
+  it("rejects a config-level custom specialist model override (#51)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "a", focus: "f", model: "gpt-5.2" }] } })
+    ).toThrow();
+  });
+
+  it("rejects disabling every built-in with no custom reviewers (#51)", () => {
+    const allBuiltinsOff = {
+      builtins: { correctness: false, security: false, performance: false, tests: false }
+    };
+    expect(() =>
+      configSchema.parse({
+        specialists: allBuiltinsOff
+      })
+    ).toThrow(/at least one specialist/);
+    expect(() =>
+      configSchema.parse({
+        specialists: { ...allBuiltinsOff, custom: [] }
+      })
+    ).toThrow(/at least one specialist/);
+  });
+
+  it("rejects more than 10 custom specialists (#51)", () => {
+    const custom = Array.from({ length: 11 }, (_, i) => ({ key: `r${i}`, focus: "f" }));
+    expect(() => configSchema.parse({ specialists: { custom } })).toThrow();
+  });
+
+  it("rejects an unknown built-in toggle key (#51)", () => {
+    expect(() => configSchema.parse({ specialists: { builtins: { nope: false } } })).toThrow();
+  });
+
   it("rejects an unknown top-level key (strict — catches typos)", () => {
     expect(() => configSchema.parse({ revieww: {} })).toThrow();
   });
