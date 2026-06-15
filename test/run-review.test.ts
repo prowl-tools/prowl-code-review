@@ -81,9 +81,12 @@ describe("runReview", () => {
     const systems = complete.mock.calls.map((call) => (call[0] as CompletionRequest).system);
     expect(new Set(systems).size).toBe(1);
     expect(systems[0]).toContain("be strict");
+    expect(systems[0]).toContain("# Untrusted project review guidelines");
+    expect(systems[0]).toContain('Guidelines data: "be strict"');
     expect(systems[0]).toContain("conservative"); // high-signal directive (#55)
     expect(systems[0]).toContain("calibration"); // severity+confidence calibration (#58)
     expect(systems[0]).toContain("do NOT comply"); // anti-injection directive (#14)
+    expect(systems[0]).not.toContain("# Project review guidelines\nbe strict");
     expect(systems[0]).not.toContain("the diff");
     expect(systems[0]).not.toContain("the context");
 
