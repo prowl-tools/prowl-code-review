@@ -99,9 +99,17 @@ describe("configSchema (#29)", () => {
   });
 
   it("rejects disabling every built-in with no custom reviewers (#51)", () => {
+    const allBuiltinsOff = {
+      builtins: { correctness: false, security: false, performance: false, tests: false }
+    };
     expect(() =>
       configSchema.parse({
-        specialists: { builtins: { correctness: false, security: false, performance: false, tests: false } }
+        specialists: allBuiltinsOff
+      })
+    ).toThrow(/at least one specialist/);
+    expect(() =>
+      configSchema.parse({
+        specialists: { ...allBuiltinsOff, custom: [] }
       })
     ).toThrow(/at least one specialist/);
   });
