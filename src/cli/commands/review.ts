@@ -66,19 +66,53 @@ export function resolvePullNumber(flag?: string): number {
   throw new Error("Pull request number required: pass --pr <n> (or run on a pull_request event).");
 }
 
+/** Read a UTF-8 file, returning undefined when it is absent or unreadable. */
+function readOptionalFile(path: string): string | undefined {
+  if (!existsSync(path)) {
+    return undefined;
+  }
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
 /** Load optional review guidelines from the repository root, preferring REVIEW_GUIDELINES.md. */
 export function loadGuidelines(root: string): string | undefined {
   for (const name of ["REVIEW_GUIDELINES.md", "CLAUDE.md"]) {
-    const path = join(root, name);
-    if (existsSync(path)) {
-      try {
-        return readFileSync(path, "utf8");
-      } catch {
-        // ignore unreadable guideline files
-      }
+    const content = readOptionalFile(join(root, name));
+    if (content !== undefined) {
+      return content;
     }
   }
   return undefined;
+}
+
+/** Load optional learned false-positive patterns (LEARNED_PATTERNS.md) from a trusted root (#30). */
+export function loadLearnedPatterns(root: string): string | undefined {
+  return readOptionalFile(join(root, "LEARNED_PATTERNS.md"));
+}
+
+/**
+ * Resolve the optional org-wide guidelines file injected into every repo's review
+ * (#30). Trusted (out-of-band like the guidelines workspace), so it comes from an
+ * env var / Action input, never untrusted repo config.
+ */
+export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.PROWL_ORG_GUIDELINES_PATH?.trim() || undefined;
+}
+
+/**
+ * Compose org-wide and per-repo guidelines into one block (#30). When both are
+ * present they are kept under clear sub-headers; otherwise whichever exists is
+ * used as-is.
+ */
+export function composeGuidelines(org: string | undefined, repo: string | undefined): string | undefined {
+  if (org && repo) {
+    return `## Organization standards\n${org}\n\n## Repository standards\n${repo}`;
+  }
+  return org ?? repo;
 }
 
 /** Parse an optional severity threshold for filtering findings. */
@@ -372,7 +406,12 @@ export function buildReviewCommand(): Command {
       const pullNumber = resolvePullNumber(options.pr);
       const root = resolveWorkspace();
       const guidelinesRoot = resolveGuidelinesWorkspace();
-      const guidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
+      const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
+      const orgGuidelinesPath = resolveOrgGuidelinesPath();
+      const orgGuidelines = orgGuidelinesPath ? readOptionalFile(orgGuidelinesPath) : undefined;
+      const guidelines = composeGuidelines(orgGuidelines, repoGuidelines);
+      // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
+      const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
       const { config } = loadConfig(resolveConfigLoadOptions(options, root));
       const providerConfig = resolveProviderConfig(process.env, {
@@ -398,6 +437,7 @@ export function buildReviewCommand(): Command {
         config: providerConfig,
         toolkitRoot: root,
         guidelines,
+        learnedPatterns,
         budgetTokens: budget.tokens ?? undefined,
         dryRun: resolveDryRun(options)
       };
