@@ -261,6 +261,33 @@ describe("reviewPullRequest", () => {
     });
   });
 
+  it("does not advance the incremental base when review coverage is degraded (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF)
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "provider timeout" },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(true);
+    expect(result.payload.body).toContain("Review incomplete");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      preservePriorSummary: true
+    });
+  });
+
   it("treats an empty compare diff as an incremental no-op (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);
