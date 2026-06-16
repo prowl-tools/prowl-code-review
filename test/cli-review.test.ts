@@ -5,6 +5,9 @@ import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   loadGuidelines,
+  loadLearnedPatterns,
+  composeGuidelines,
+  resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
   resolveConfigLoadOptions,
@@ -124,6 +127,30 @@ describe("review command helpers", () => {
     mkdirSync(join(fallbackDir, "REVIEW_GUIDELINES.md"));
     writeFileSync(join(fallbackDir, "CLAUDE.md"), "fallback rules");
     expect(loadGuidelines(fallbackDir)).toBe("fallback rules");
+  });
+
+  it("loads LEARNED_PATTERNS.md when present (#30)", () => {
+    const dir = tempDir();
+    expect(loadLearnedPatterns(dir)).toBeUndefined();
+    writeFileSync(join(dir, "LEARNED_PATTERNS.md"), "Known false positive: X.");
+    expect(loadLearnedPatterns(dir)).toBe("Known false positive: X.");
+  });
+
+  it("composes org + repo guidelines under sub-headers (#30)", () => {
+    expect(composeGuidelines(undefined, undefined)).toBeUndefined();
+    expect(composeGuidelines(undefined, "repo rules")).toBe("repo rules");
+    expect(composeGuidelines("org rules", undefined)).toBe("org rules");
+    expect(composeGuidelines("org rules", "repo rules")).toBe(
+      "## Organization standards\norg rules\n\n## Repository standards\nrepo rules"
+    );
+  });
+
+  it("resolves the org guidelines path only from a non-empty env value (#30)", () => {
+    expect(resolveOrgGuidelinesPath({} as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveOrgGuidelinesPath({ PROWL_ORG_GUIDELINES_PATH: "  " } as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveOrgGuidelinesPath({ PROWL_ORG_GUIDELINES_PATH: "/org/guide.md" } as NodeJS.ProcessEnv)).toBe(
+      "/org/guide.md"
+    );
   });
 
   it("parses and validates min severity", () => {
