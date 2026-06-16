@@ -122,6 +122,30 @@ const specialistsSchema = z
 /** Categories reserved for deterministic non-specialist findings. */
 const RESERVED_CUSTOM_SPECIALIST_KEYS = new Set(["lint"]);
 
+/** Risk-tiered orchestration thresholds (#31); all bounds are optional overrides. */
+const riskTieringSchema = z
+  .object({
+    /** Master switch; false → every review runs the full `standard` set. Default true. */
+    enabled: z.boolean().optional(),
+    /** Upper bounds for the cheap `minimal` tier (both must hold). */
+    minimal: z
+      .object({
+        maxChangedLines: z.number().int().positive().optional(),
+        maxFiles: z.number().int().positive().optional()
+      })
+      .strict()
+      .optional(),
+    /** Lower bounds for the thorough `deep` tier (either triggers it). */
+    deep: z
+      .object({
+        minChangedLines: z.number().int().positive().optional(),
+        minFiles: z.number().int().positive().optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -154,6 +178,8 @@ export const configSchema = z
     budget: budgetSchema.optional(),
     /** Toggle built-in lenses + add custom reviewers to the multi-pass set (#51). */
     specialists: specialistsSchema.optional(),
+    /** Scale pass count + context to diff size/complexity (#31). */
+    riskTiering: riskTieringSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

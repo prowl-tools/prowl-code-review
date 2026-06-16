@@ -140,6 +140,16 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ specialists: { builtins: { nope: false } } })).toThrow();
   });
 
+  it("accepts a riskTiering block and rejects malformed values (#31)", () => {
+    expect(configSchema.parse({ riskTiering: { enabled: false } })).toEqual({ riskTiering: { enabled: false } });
+    const full = { riskTiering: { enabled: true, minimal: { maxChangedLines: 20, maxFiles: 2 }, deep: { minChangedLines: 400, minFiles: 15 } } };
+    expect(configSchema.parse(full)).toEqual(full);
+    expect(() => configSchema.parse({ riskTiering: { minimal: { maxFiles: 0 } } })).toThrow(); // positive
+    expect(() => configSchema.parse({ riskTiering: { deep: { minChangedLines: 1.5 } } })).toThrow(); // int
+    expect(() => configSchema.parse({ riskTiering: { nope: true } })).toThrow(); // strict
+    expect(() => configSchema.parse({ riskTiering: { minimal: { nope: 1 } } })).toThrow(); // strict nested
+  });
+
   it("rejects an unknown top-level key (strict — catches typos)", () => {
     expect(() => configSchema.parse({ revieww: {} })).toThrow();
   });

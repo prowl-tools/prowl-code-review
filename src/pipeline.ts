@@ -18,7 +18,14 @@ import {
   type RetrievalLimits
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
-import type { Specialist } from "./review/specialists.js";
+import { DEFAULT_SPECIALISTS, type Specialist } from "./review/specialists.js";
+import {
+  diffComplexity,
+  selectRiskTier,
+  planOrchestration,
+  type RiskTier,
+  type RiskTieringConfig
+} from "./review/risk-tier.js";
 import {
   gatherGrounding as defaultGatherGrounding,
   buildGroundingSummary,
@@ -88,6 +95,11 @@ export interface ReviewPullRequestOptions {
    * off) plus custom reviewers. Omitted → the built-in {@link DEFAULT_SPECIALISTS}.
    */
   specialists?: Specialist[];
+  /**
+   * Risk-tiered orchestration (#31): scale pass count + context to diff size.
+   * Omitted → enabled with built-in thresholds; `{ enabled: false }` disables it.
+   */
+  riskTiering?: RiskTieringConfig;
   /** Run the skeptical false-positive verification pass (default true, #8). */
   verify?: boolean;
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
@@ -119,6 +131,8 @@ export interface ReviewPullRequestResult {
   skipped: SkippedFile[];
   /** Number of files the agentic retriever pulled in. */
   contextFiles: number;
+  /** Orchestration tier chosen for this diff (#31); undefined when no files were reviewed. */
+  riskTier?: RiskTier;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -240,6 +254,59 @@ function budgetNotes(usage: TokenUsage, budgetTokens: number | undefined): strin
   ];
 }
 
+/** Merge tier context limits under any explicit user limits (user wins per-field). */
+function mergeContextLimits(
+  user: RetrievalLimits | undefined,
+  tier: { maxRounds?: number; maxFiles?: number } | undefined
+): RetrievalLimits | undefined {
+  if (!tier) {
+    return user;
+  }
+  return {
+    ...user,
+    maxRounds: user?.maxRounds ?? tier.maxRounds,
+    maxFiles: user?.maxFiles ?? tier.maxFiles
+  };
+}
+
+/**
+ * Surface a coverage-affecting tier choice as a review note (#5: no silent
+ * reduction). Only the cost-saving `minimal` tier trims coverage, so only it
+ * reports; `standard`/`deep` add no note (the tier is still logged to stdout).
+ */
+function riskTierNotes(
+  selection: ReturnType<typeof selectRiskTier>,
+  applied: {
+    specialistKeys?: string[];
+    contextLimited: boolean;
+  }
+): string[] {
+  if (selection.tier !== "minimal") {
+    return [];
+  }
+
+  const reductions: string[] = [];
+  if (applied.specialistKeys) {
+    reductions.push(`ran a reduced specialist set (${applied.specialistKeys.join(", ")})`);
+  }
+  if (applied.contextLimited) {
+    reductions.push("limited cross-file context");
+  }
+  if (reductions.length === 0) {
+    return [];
+  }
+
+  const appliedText =
+    reductions.length === 1
+      ? reductions[0]
+      : `${reductions.slice(0, -1).join(", ")} and ${reductions[reductions.length - 1]}`;
+  return [
+    `Risk tier: minimal (${selection.changedLines} changed line(s), ${selection.fileCount} file(s)) — ` +
+      `${appliedText} to scale cost with risk (#31). ` +
+      `Set riskTiering.enabled: false to always run the full review.`
+  ];
+}
+
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
 function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   const changed: Record<string, number[]> = {};
@@ -346,6 +413,31 @@ export async function reviewPullRequest(
     return result;
   }
 
+  // Risk-tiered orchestration (#31): scale the cost drivers (pass count + context)
+  // to diff complexity, so a tiny diff doesn't pay for the full fan-out.
+  const tierSelection = selectRiskTier(diffComplexity(reviewFiles), options.riskTiering);
+  const tierPlan = planOrchestration(tierSelection.tier);
+  // A tier trims the BUILT-IN lenses only when the user hasn't configured an
+  // explicit set (#51) — explicit config is honored as-is, and custom reviewers
+  // always run. Omitted → the pipeline's default set via runReview.
+  const effectiveSpecialists =
+    options.specialists ??
+    (tierPlan.builtinSpecialistKeys
+      ? DEFAULT_SPECIALISTS.filter((s) => tierPlan.builtinSpecialistKeys!.includes(s.key))
+      : undefined);
+  // Context limits: explicit user values win per-field; the tier fills the rest.
+  const effectiveContextLimits = mergeContextLimits(options.contextLimits, tierPlan.contextLimits);
+  const tierSpecialistKeys = options.specialists === undefined ? tierPlan.builtinSpecialistKeys : undefined;
+  const tierLimitedContext =
+    !options.skipContext &&
+    Boolean(options.toolkitRoot) &&
+    ((options.contextLimits?.maxRounds === undefined && tierPlan.contextLimits?.maxRounds !== undefined) ||
+      (options.contextLimits?.maxFiles === undefined && tierPlan.contextLimits?.maxFiles !== undefined));
+  const tierNotes = riskTierNotes(tierSelection, {
+    specialistKeys: tierSpecialistKeys,
+    contextLimited: tierLimitedContext
+  });
+
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
   const renderedDiff = renderGuardedDiff(reviewFiles);
@@ -367,16 +459,16 @@ export async function reviewPullRequest(
     try {
       const contextMaxTokens =
         options.budgetTokens === undefined
-          ? options.contextLimits?.maxTokens
-          : options.contextLimits?.maxTokens === undefined
+          ? effectiveContextLimits?.maxTokens
+          : effectiveContextLimits?.maxTokens === undefined
             ? options.budgetTokens
-            : Math.min(options.budgetTokens, options.contextLimits.maxTokens);
+            : Math.min(options.budgetTokens, effectiveContextLimits.maxTokens);
       const gathered = await gather({
         toolkit: { root: options.toolkitRoot },
         changedPaths: reviewFiles.map((file) => file.path),
         config,
         // Cap the (otherwise unbounded) retrieval loop at the tighter explicit context or review budget (#18).
-        limits: { ...options.contextLimits, maxTokens: contextMaxTokens }
+        limits: { ...effectiveContextLimits, maxTokens: contextMaxTokens }
       });
       contextFiles = gathered.files.length;
       contextUsage = gathered.usage;
@@ -439,7 +531,7 @@ export async function reviewPullRequest(
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
   const reviewResult = await review(
-    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding, specialists: options.specialists },
+    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding, specialists: effectiveSpecialists },
     {
       config,
       minSeverity: options.minSeverity,
@@ -472,6 +564,7 @@ export async function reviewPullRequest(
     coverage,
     degraded,
     notes: [
+      ...tierNotes,
       ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
       ...redactionNotes,
       ...contextNotes,
@@ -502,6 +595,7 @@ export async function reviewPullRequest(
     usage: totalUsage,
     skipped,
     contextFiles,
+    riskTier: tierSelection.tier,
     posted: false
   };
   if (!options.dryRun) {

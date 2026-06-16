@@ -67,10 +67,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` and a `LEARNED_PATTERNS.md` into the prompt; a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to learned-patterns (persisted per #12).
     - Acceptance: support an optional **org-wide guidelines template** (a shared file or URL injected into every repo's prompts) in addition to per-repo files, so orgs can enforce house standards once.
 
-31. **Risk-tiered orchestration (cost control)**
-    As a developer, I want small diffs to run fewer passes and large/complex ones more, so that cost scales with risk.
-    - Acceptance: pass-count/model tier selected from diff size/complexity (config-overridable); chosen tier + est. cost logged.
-
 32. **Issue/ticket validation**
     As a developer, I want the reviewer to check whether the PR satisfies its linked issue, so that scope gaps are caught early.
     - Acceptance: when a PR links a GitHub issue (and optionally Linear/Jira), pull the issue's acceptance criteria into the review and flag unmet/missing requirements.

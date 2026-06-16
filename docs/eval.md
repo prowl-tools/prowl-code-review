@@ -60,8 +60,10 @@ per-PR Action) and let a quality drop fail the job.
 Cases are stored in-repo and never fetched from GitHub, so a run depends only on
 the cases + the reviewer's own LLM call. Pin the comparison by recording each
 JSON report against its `provider`, `model`, and `promptFingerprint`; a score
-move is then either a prompt change (fingerprint differs) or a model/data change
-(it doesn't). The harness logic itself is covered by unit tests that inject a
+move is then either a prompt change (fingerprint differs), a model/data change
+(it doesn't), or a risk-tiering change recorded under `riskTiering` (effective
+thresholds plus each case's selected tier and specialist-set prompt
+fingerprint). The harness logic itself is covered by unit tests that inject a
 fake completion, so CI validates the scoring without spending tokens.
 
 ## Growing the benchmark

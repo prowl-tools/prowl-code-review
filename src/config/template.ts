@@ -74,6 +74,20 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #       avoid: "General style nits unrelated to the standard."   # optional
 #       severityFloor: major # optional; drop this reviewer's findings below it
 
+# --- Risk-tiered orchestration ------------------------------------------------
+# Scale cost with risk: tiny diffs run a reduced pass set + less context
+# ("minimal"), large/complex ones get the full treatment with more context
+# ("deep"); everything else is "standard". The chosen tier is logged with the
+# cost line, and a minimal-tier run is noted in the review. Defaults shown.
+# riskTiering:
+#   enabled: true            # set false to always run the full "standard" review
+#   minimal:                 # both bounds must hold for the cheap tier
+#     maxChangedLines: 30
+#     maxFiles: 2
+#   deep:                    # either bound triggers the thorough tier
+#     minChangedLines: 500
+#     minFiles: 20
+
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:
 #   enabled: true            # gather callers/definitions/related files before reviewing
