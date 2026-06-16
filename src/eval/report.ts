@@ -50,6 +50,31 @@ function reviewSettings(report: EvalReport): string {
   return settings.join(", ");
 }
 
+/** Render risk-tiering settings and selected case tiers for reproducibility. */
+function riskTieringSettings(report: EvalReport): string {
+  const { settings, cases } = report.riskTiering;
+  const counts = cases.reduce(
+    (acc, benchmarkCase) => {
+      acc[benchmarkCase.tier] += 1;
+      return acc;
+    },
+    { minimal: 0, standard: 0, deep: 0 }
+  );
+  const selected = [
+    counts.minimal > 0 ? `minimal ${counts.minimal}` : undefined,
+    counts.standard > 0 ? `standard ${counts.standard}` : undefined,
+    counts.deep > 0 ? `deep ${counts.deep}` : undefined
+  ].filter(Boolean);
+  const caseSummary = selected.length > 0 ? selected.join(", ") : "no cases";
+  if (!settings.enabled) {
+    return `off; cases: ${caseSummary}`;
+  }
+  return (
+    `on; minimal <=${settings.minimal.maxChangedLines} line(s) and <=${settings.minimal.maxFiles} file(s); ` +
+    `deep >=${settings.deep.minChangedLines} line(s) or >=${settings.deep.minFiles} file(s); cases: ${caseSummary}`
+  );
+}
+
 /** Render the report as a markdown summary. */
 export function renderReportMarkdown(report: EvalReport): string {
   const m = report.metrics;
@@ -60,6 +85,7 @@ export function renderReportMarkdown(report: EvalReport): string {
     `**Prompt fingerprint:** \`${report.promptFingerprint}\``,
     `**Match:** ±${report.match.lineWindow} lines${report.match.requireCategory ? ", category required" : ""}`,
     `**Review:** ${reviewSettings(report)}`,
+    `**Risk tiering:** ${riskTieringSettings(report)}`,
     "",
     "## Metrics",
     "",

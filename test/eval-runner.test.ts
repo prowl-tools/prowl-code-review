@@ -14,6 +14,7 @@ import { DEFAULT_VERIFY_CONFIDENCE } from "../src/review/verify.js";
 import type { CompletionResult, ProviderConfig } from "../src/providers/index.js";
 import type { ReviewInput, ReviewResult, RunReviewOptions } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
+import { DEFAULT_TIER_THRESHOLDS } from "../src/review/risk-tier.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "test-model", apiKey: "k" };
 
@@ -231,6 +232,29 @@ describe("runBenchmark", () => {
     expect(report.promptFingerprint).toMatch(/^[0-9a-f]{12}$/);
     expect(report.match.lineWindow).toBe(3);
     expect(report.review).toEqual(defaultReviewSettings);
+    expect(report.riskTiering).toEqual({
+      settings: {
+        enabled: true,
+        minimal: { ...DEFAULT_TIER_THRESHOLDS.minimal },
+        deep: { ...DEFAULT_TIER_THRESHOLDS.deep }
+      },
+      cases: [
+        {
+          id: "bug1",
+          tier: "minimal",
+          changedLines: 1,
+          fileCount: 1,
+          specialistKeys: ["correctness", "security"]
+        },
+        {
+          id: "clean1",
+          tier: "minimal",
+          changedLines: 1,
+          fileCount: 1,
+          specialistKeys: ["correctness", "security"]
+        }
+      ]
+    });
 
     expect(report.metrics.recall).toBe(1); // bug covered
     expect(report.metrics.coveredBugs).toBe(1);
@@ -276,9 +300,18 @@ describe("runBenchmark", () => {
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
     }));
 
-    await runBenchmark(cases, { config, runReview: review });
+    const report = await runBenchmark(cases, { config, runReview: review });
 
     expect(review.mock.calls[0][0].specialists?.map((s) => s.key)).toEqual(["correctness", "security"]);
+    expect(report.riskTiering.cases).toEqual([
+      {
+        id: "tiny",
+        tier: "minimal",
+        changedLines: 1,
+        fileCount: 1,
+        specialistKeys: ["correctness", "security"]
+      }
+    ]);
   });
 
   it("runs full benchmark specialist defaults when risk tiering is disabled (#31)", async () => {
@@ -300,9 +333,24 @@ describe("runBenchmark", () => {
       usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
     }));
 
-    await runBenchmark(cases, { config, runReview: review, riskTiering: { enabled: false } });
+    const report = await runBenchmark(cases, { config, runReview: review, riskTiering: { enabled: false } });
 
     expect(review.mock.calls[0][0].specialists).toBeUndefined();
+    expect(report.riskTiering).toEqual({
+      settings: {
+        enabled: false,
+        minimal: { ...DEFAULT_TIER_THRESHOLDS.minimal },
+        deep: { ...DEFAULT_TIER_THRESHOLDS.deep }
+      },
+      cases: [
+        {
+          id: "tiny",
+          tier: "standard",
+          changedLines: 1,
+          fileCount: 1
+        }
+      ]
+    });
   });
 
   it("filters sensitive files and redacts secrets before review", async () => {
