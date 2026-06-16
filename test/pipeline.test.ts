@@ -5,6 +5,7 @@ import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
 import type { ReviewResult } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
+import type { ReviewState } from "../src/review/state.js";
 import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
@@ -18,6 +19,16 @@ const DIFF = `diff --git a/src/a.ts b/src/a.ts
  const a = 1;
 +const b = 2;
  const c = 3;
+`;
+
+// Delta diff for incremental re-review (#23) — a different file than the full DIFF,
+// so a test can tell whether the delta or the full PR was reviewed.
+const DELTA_DIFF = `diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1,1 +1,2 @@
+ const x = 1;
++const y = 2;
 `;
 
 const meta = {
@@ -225,6 +236,232 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).toContain("reduced specialist set");
     expect(result.payload.body).toContain("correctness, security");
     expect(result.payload.body).not.toContain("limited cross-file context");
+  });
+
+  it("incrementally reviews only the delta since the last reviewed SHA (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchComparisonDiff).toHaveBeenCalledWith(octokit, ref, "old-sha", "head");
+    expect(result.incremental).toBe(true);
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.diff).toContain("src/b.ts"); // the delta file
+    expect(reviewInput.diff).not.toContain("src/a.ts"); // full-PR file not re-scanned
+    expect(result.payload.body).toContain("Incremental review");
+    expect(result.payload.body).toContain("old-sha"); // sha7 disclosure
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
+  });
+
+  it("does not advance the incremental base when review coverage is degraded (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF)
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "provider timeout" },
+          { specialist: "security", findings: 0, ok: true }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(true);
+    expect(result.payload.body).toContain("Review incomplete");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      preservePriorSummary: true
+    });
+  });
+
+  it("treats an empty compare diff as an incremental no-op (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const fetchComparisonDiff = vi.fn(async () => "");
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchComparisonDiff).toHaveBeenCalledWith(octokit, ref, "old-sha", "head");
+    expect(result.incremental).toBe(true);
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.gatherGrounding).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(result.payload.body).toContain("No reviewable changes since the last reviewed commit");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
+  });
+
+  it("falls back when an incremental delta line is absent from the full PR diff (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+    deps.runReview.mockResolvedValue(
+      reviewResult([
+        finding({
+          file: "src/b.ts",
+          line: 2,
+          title: "Delta-only line",
+          body: "This line is not part of the final PR diff."
+        })
+      ])
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts");
+    expect(deps.runReview.mock.calls[0][0].diff).not.toContain("src/b.ts");
+  });
+
+  it("falls back to a full review when the delta contains non-PR changes (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const upstreamOnlyDiff = `diff --git a/src/upstream.ts b/src/upstream.ts
+--- a/src/upstream.ts
++++ b/src/upstream.ts
+@@ -1,1 +1,2 @@
+ const upstream = 1;
++const mergedFromBase = 2;
+`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => upstreamOnlyDiff)
+    };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts");
+    expect(deps.runReview.mock.calls[0][0].diff).not.toContain("src/upstream.ts");
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
+  });
+
+  it("falls back when an incremental delta line has different content than the PR diff (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const mismatchedDelta = `diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1,1 +1,2 @@
+ const x = 1;
++const y = 3;
+`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => mismatchedDelta)
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("const y = 2;");
+    expect(deps.runReview.mock.calls[0][0].diff).not.toContain("const y = 3;");
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
+  });
+
+  it("preserves reviewed files for incremental publish anchors when full diff caps apply (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = { ...makeDeps(), fetchPriorState: vi.fn(async () => priorState), fetchComparisonDiff: vi.fn(async () => DELTA_DIFF) };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+    deps.runReview.mockResolvedValue(
+      reviewResult([
+        finding({
+          file: "src/b.ts",
+          line: 2,
+          title: "Still in PR diff",
+          body: "This line should be published inline."
+        })
+      ])
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      diffLimits: { maxFiles: 1 }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/b.ts");
+    expect(result.payload.comments).toHaveLength(1);
+    expect(result.payload.comments[0]).toEqual(expect.objectContaining({ path: "src/b.ts", line: 2 }));
+  });
+
+  it("reviews the full PR when there is no prior reviewed SHA (#23)", async () => {
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState: vi.fn(async () => null), fetchComparisonDiff };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchComparisonDiff).not.toHaveBeenCalled();
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts"); // full PR diff
+    expect(result.payload.body).not.toContain("Incremental review");
+  });
+
+  it("reviews the full PR when head equals the last reviewed SHA (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "head", postedFindings: [] };
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState: vi.fn(async () => priorState), fetchComparisonDiff };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchComparisonDiff).not.toHaveBeenCalled(); // no new commits → nothing to delta
+    expect(result.incremental).toBe(false);
+  });
+
+  it("falls back to a full review when the delta can't be computed (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => {
+        throw new Error("404 Not Found"); // e.g. base unreachable after a force-push
+      })
+    };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts"); // full diff used
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
+  });
+
+  it("skips incremental entirely when disabled (#23)", async () => {
+    const fetchPriorState = vi.fn(async () => null);
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      incremental: false
+    });
+
+    expect(fetchPriorState).not.toHaveBeenCalled();
+    expect(fetchComparisonDiff).not.toHaveBeenCalled();
+    expect(result.incremental).toBe(false);
   });
 
   it("throws publish errors with the completed review usage attached", async () => {

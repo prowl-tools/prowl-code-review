@@ -13,11 +13,14 @@ import {
 /**
  * Publish the review with update-not-duplicate semantics (backlog #12 + #22).
  *
- * The summary is a single top-level PR comment carrying our hidden marker +
- * persisted state; on a re-run we find it and edit it **in place** instead of
- * stacking a new one. Inline findings are posted as review comments, deduped
- * against the fingerprints of findings already posted on a prior push (from the
- * marker state), so the same finding isn't repeated every push.
+ * By default the summary is a single top-level PR comment carrying our hidden
+ * marker + persisted state; on a re-run we find it and edit it **in place**
+ * instead of stacking a new one. Incremental delta runs can opt into preserving
+ * the prior visible summary by creating a fresh summary comment while still
+ * carrying forward the hidden state used for deduplication. Inline findings are
+ * posted as review comments, deduped against the fingerprints of findings
+ * already posted on a prior push (from the marker state), so the same finding
+ * isn't repeated every push.
  *
  * The decision (`planPublish`) is pure and unit-tested; `submitReview` performs
  * the GitHub reads/writes. `octokit` is injectable for testing.
@@ -52,6 +55,8 @@ export interface SubmitReviewOptions {
   commitId?: string;
   /** Head SHA recorded as `lastReviewedSha` for incremental re-review (#23). */
   headSha?: string;
+  /** Create a fresh summary comment so earlier visible findings remain on the PR. */
+  preservePriorSummary?: boolean;
   /** Bot login used as a secondary check when matching our prior comment. */
   botLogin?: string;
 }
@@ -64,16 +69,18 @@ export function planPublish(input: {
   payload: ReviewPayload;
   priorComment: PriorSummaryComment | null;
   headSha?: string;
+  /** Create a fresh summary comment instead of editing the prior one. */
+  preservePriorSummary?: boolean;
   /** Fingerprints recovered from prior bot-authored inline comments. */
   priorPostedFindings?: string[];
   /** Inline comments known to have been posted; defaults to all net-new comments for pure planning. */
   postedInlineComments?: ReviewComment[];
 }): PublishPlan {
   const priorState = parseState(input.priorComment?.body);
-  const priorPostedFindings = [
-    ...new Set([...(priorState?.postedFindings ?? []), ...(input.priorPostedFindings ?? [])])
-  ];
-  const alreadyPosted = new Set(priorPostedFindings);
+  const alreadyPosted = new Set([
+    ...(priorState?.postedFindings ?? []),
+    ...(input.priorPostedFindings ?? [])
+  ]);
 
   const newInlineComments = input.payload.comments.filter(
     (comment) => !alreadyPosted.has(comment.fingerprint)
@@ -83,7 +90,7 @@ export function planPublish(input: {
   // Track only inline fingerprints that were actually posted, so failed/skipped
   // publishes are retried on the next run instead of disappearing from state.
   const postedFindings = [
-    ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
+    ...new Set([...alreadyPosted, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
   const requestedState: ReviewState = {
@@ -98,7 +105,7 @@ export function planPublish(input: {
   );
 
   return {
-    priorCommentId: input.priorComment?.id,
+    priorCommentId: input.preservePriorSummary ? undefined : input.priorComment?.id,
     summaryBody,
     newInlineComments,
     state
@@ -142,6 +149,26 @@ async function findPriorSummary(
   }
 
   return null;
+}
+
+/**
+ * Load the persisted review state from our prior summary comment (incremental
+ * re-review, #23): resolve the bot login, find the marked comment, parse its
+ * state. Returns null when there's no prior review (a fresh first run). Tolerant
+ * — any read failure yields null so the run falls back to a full review.
+ */
+export async function fetchPriorReviewState(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<ReviewState | null> {
+  try {
+    const login = await getAuthenticatedLogin(octokit, botLogin);
+    const prior = await findPriorSummary(octokit, ref, login);
+    return parseState(prior?.body);
+  } catch {
+    return null;
+  }
 }
 
 /** Resolve the authenticated bot login used to trust prior prowl-review comments. */
@@ -228,7 +255,8 @@ function inlineBatchReviewBody(commentCount: number): string {
 
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
- * place when present, and posts only net-new inline findings.
+ * place when present unless `preservePriorSummary` is requested, and posts only
+ * net-new inline findings.
  */
 export async function submitReview(
   octokit: OctokitLike,
@@ -245,6 +273,7 @@ export async function submitReview(
     payload,
     priorComment: prior,
     headSha: options.headSha,
+    preservePriorSummary: options.preservePriorSummary,
     priorPostedFindings,
     postedInlineComments: []
   });
@@ -282,6 +311,7 @@ export async function submitReview(
     payload,
     priorComment: prior,
     headSha: options.headSha,
+    preservePriorSummary: options.preservePriorSummary,
     priorPostedFindings,
     postedInlineComments
   });

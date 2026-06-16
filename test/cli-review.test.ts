@@ -305,6 +305,13 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolved.specialists?.map((s) => s.key)).toEqual(["correctness", "security", "tests", "compliance"]);
   });
 
+  it("forces a full review from CLI or config, else defaults (#23)", () => {
+    expect(resolveReviewOptions({}, {}, env).incremental).toBeUndefined(); // → pipeline default (on)
+    expect(resolveReviewOptions({ incremental: false }, {}, env).incremental).toBe(false); // --no-incremental
+    expect(resolveReviewOptions({}, { review: { incremental: false } }, env).incremental).toBe(false); // config off
+    expect(resolveReviewOptions({}, { review: { incremental: true } }, env).incremental).toBe(true);
+  });
+
   it("passes the riskTiering config straight through (#31)", () => {
     expect(resolveReviewOptions({}, {}, env).riskTiering).toBeUndefined(); // → tiering on with built-in thresholds
     const cfg = { riskTiering: { enabled: false } };

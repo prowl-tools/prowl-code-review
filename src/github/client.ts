@@ -75,6 +75,17 @@ export interface OctokitLike {
         body: string;
       }): Promise<{ data: unknown }>;
     };
+    /** Repository endpoints — commit comparison for incremental re-review (#23). */
+    repos: {
+      /** Compare two commits; with `mediaType.format: "diff"` returns the raw delta diff. */
+      compareCommitsWithBasehead(params: {
+        owner: string;
+        repo: string;
+        /** `BASE...HEAD` revision range. */
+        basehead: string;
+        mediaType?: { format: string };
+      }): Promise<{ data: unknown }>;
+    };
     /** User endpoints used to identify the authenticated GitHub app/bot. */
     users: {
       /** Return the authenticated user's login for comment ownership checks. */

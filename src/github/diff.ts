@@ -62,6 +62,19 @@ interface RawPullRequest {
   changed_files?: number;
 }
 
+interface RawComparison {
+  /** GitHub compare relationship: ahead/behind/diverged/identical. */
+  status?: unknown;
+}
+
+function comparisonStatus(data: unknown): string | undefined {
+  if (!data || typeof data !== "object") {
+    return undefined;
+  }
+  const status = (data as RawComparison).status;
+  return typeof status === "string" ? status : undefined;
+}
+
 /**
  * Fetch a pull request's metadata and raw unified diff via the GitHub REST API.
  * Two calls: a normal `pulls.get` for metadata and a `format: "diff"` `pulls.get`
@@ -95,4 +108,43 @@ export async function fetchPullRequest(
     },
     diff
   };
+}
+
+/**
+ * Fetch the raw unified diff between two commits (incremental re-review, #23) via
+ * `repos.compareCommitsWithBasehead` with `format: "diff"`. Used to review only
+ * the delta a push added since the last reviewed SHA. Throws if the range can't
+ * be compared (e.g. the base SHA is unreachable after a force-push) — the caller
+ * falls back to a full review.
+ */
+export async function fetchComparisonDiff(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  base: string,
+  head: string
+): Promise<string> {
+  const basehead = `${base}...${head}`;
+  const comparison = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner: ref.owner,
+    repo: ref.repo,
+    basehead
+  });
+  const status = comparisonStatus(comparison.data);
+  if (status !== "ahead" && status !== "identical") {
+    throw new Error(
+      `Cannot use incremental compare ${basehead}: base is not an ancestor of head (status: ${status ?? "unknown"})`
+    );
+  }
+  if (status === "identical") {
+    return "";
+  }
+
+  const response = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner: ref.owner,
+    repo: ref.repo,
+    basehead,
+    mediaType: { format: "diff" }
+  });
+  // With `format: "diff"` the API returns the raw diff as the body.
+  return response.data as unknown as string;
 }
