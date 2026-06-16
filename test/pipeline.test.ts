@@ -198,6 +198,19 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("Risk tier:");
   });
 
+  it("does not claim minimal tier limited context when context retrieval cannot run (#31)", async () => {
+    const deps = makeDeps();
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      deps,
+      specialists: [DEFAULT_SPECIALISTS[2]]
+    });
+
+    expect(result.riskTier).toBe("minimal");
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(result.payload.body).not.toContain("Risk tier:");
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
