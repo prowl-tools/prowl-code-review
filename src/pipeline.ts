@@ -127,6 +127,8 @@ export interface ReviewPullRequestOptions {
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
   verifyConfidence?: number;
   guidelines?: string;
+  /** Learned false-positive patterns (LEARNED_PATTERNS.md) injected into prompts (#30). */
+  learnedPatterns?: string;
   event?: ReviewEvent;
   /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
   agentPrompt?: boolean;
@@ -687,7 +689,14 @@ export async function reviewPullRequest(
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
   const reviewResult = await review(
-    { diff: diffText, context: reviewContext, guidelines: options.guidelines, grounding, specialists: effectiveSpecialists },
+    {
+      diff: diffText,
+      context: reviewContext,
+      guidelines: options.guidelines,
+      learnedPatterns: options.learnedPatterns,
+      grounding,
+      specialists: effectiveSpecialists
+    },
     {
       config,
       minSeverity: options.minSeverity,
