@@ -281,6 +281,30 @@ describe("reviewPullRequest", () => {
     });
   });
 
+  it("anchors incremental inline comments against the full PR diff (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+    deps.runReview.mockResolvedValue(
+      reviewResult([
+        finding({
+          file: "src/b.ts",
+          line: 2,
+          title: "Delta-only line",
+          body: "This line is not part of the final PR diff."
+        })
+      ])
+    );
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/b.ts"); // provider still sees the delta
+    expect(result.payload.comments).toHaveLength(0); // GitHub inline comments anchor to the full PR diff
+    expect(result.payload.body).toContain("Delta-only line");
+    expect(result.payload.body).toContain("src/b.ts");
+  });
+
   it("reviews the full PR when there is no prior reviewed SHA (#23)", async () => {
     const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
     const deps = { ...makeDeps(), fetchPriorState: vi.fn(async () => null), fetchComparisonDiff };
