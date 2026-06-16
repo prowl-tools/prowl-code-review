@@ -115,6 +115,8 @@ interface ReviewCommandOptions {
   minSeverity?: string;
   context?: boolean;
   verify?: boolean;
+  /** `--no-incremental` → false; otherwise true/undefined (#23). */
+  incremental?: boolean;
   grounding?: boolean;
   trustWorkspace?: boolean;
   agentPrompt?: boolean;
@@ -141,6 +143,7 @@ type ResolvedReviewOptions = Pick<
   | "maxInlineComments"
   | "specialists"
   | "riskTiering"
+  | "incremental"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -235,6 +238,8 @@ export function resolveReviewOptions(
     maxInlineComments: config.review?.maxInlineComments,
     verify: cli.verify === false ? false : config.review?.verify,
     verifyConfidence: config.review?.verifyConfidence,
+    // CLI --no-incremental (or config) forces a full-PR review (#23).
+    incremental: cli.incremental === false ? false : config.review?.incremental,
     skipContext:
       cli.context === false || config.context?.enabled === false ? true : undefined,
     contextLimits: compact({
@@ -352,6 +357,7 @@ export function buildReviewCommand(): Command {
     .option("--no-grounding", "skip linter/SAST grounding")
     .option("--trust-workspace", "allow repo-local linter/SAST tools to execute in the workspace")
     .option("--no-verify", "skip the skeptical false-positive verification pass")
+    .option("--no-incremental", "review the full PR diff, not just the delta since the last review")
     .option("--no-agent-prompt", "omit the per-finding \"Resolve with an AI agent\" prompt")
     .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")

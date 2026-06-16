@@ -42,10 +42,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: mark fixed/outdated finding threads resolved via GraphQL `resolveReviewThread` when their finding no longer appears (or its line is gone).
     - Acceptance: respect human replies on a finding — "won't fix"/"acknowledged" resolves the thread; "I disagree" makes the judge justify the finding or withdraw it (instead of blindly re-emitting it).
 
-23. **Incremental re-review on new commits**
-    As a developer, I want pushes to an open PR to review only the new changes without repeating prior findings, so that re-reviews are fast and cheap.
-    - Acceptance: on `synchronize`, review only the delta since the last reviewed SHA (from #12); previously-posted findings not repeated.
-
 24. **Check run / merge gate**
     As an org owner, I want a pass/fail status check with line annotations, so that critical findings can block merge.
     - Acceptance: create a Check Run (Checks API) with `conclusion` from severity (e.g. Critical → failure) + summary + up to 50 annotations/batch; configurable gating.

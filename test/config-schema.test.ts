@@ -140,6 +140,11 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ specialists: { builtins: { nope: false } } })).toThrow();
   });
 
+  it("accepts review.incremental and rejects a non-boolean (#23)", () => {
+    expect(configSchema.parse({ review: { incremental: false } })).toEqual({ review: { incremental: false } });
+    expect(() => configSchema.parse({ review: { incremental: "no" } })).toThrow();
+  });
+
   it("accepts a riskTiering block and rejects malformed values (#31)", () => {
     expect(configSchema.parse({ riskTiering: { enabled: false } })).toEqual({ riskTiering: { enabled: false } });
     const full = { riskTiering: { enabled: true, minimal: { maxChangedLines: 20, maxFiles: 2 }, deep: { minChangedLines: 400, minFiles: 15 } } };
