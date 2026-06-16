@@ -182,6 +182,8 @@ export interface EvalRiskTierCase {
   changedLines: number;
   /** File-count signal used for selection. */
   fileCount: number;
+  /** Prompt fingerprint for the actual specialist set used by this case. */
+  promptFingerprint: string;
   /** Built-in specialist keys used when the tier narrowed the default set. */
   specialistKeys?: string[];
 }
@@ -200,7 +202,7 @@ export interface EvalReport {
   provider: string;
   /** Model that produced the reviews. */
   model: string;
-  /** Hash of the review prompts + specialist set (changes when prompts change). */
+  /** Hash of the default review prompts; per-case tiered hashes live under `riskTiering`. */
   promptFingerprint: string;
   /** Matching configuration used. */
   match: Required<MatchOptions>;

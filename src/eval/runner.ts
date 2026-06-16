@@ -222,11 +222,13 @@ export async function runBenchmark(
       const specialists = tierPlan.builtinSpecialistKeys
         ? DEFAULT_SPECIALISTS.filter((s) => tierPlan.builtinSpecialistKeys!.includes(s.key))
         : undefined;
+      const effectiveSpecialists = specialists ?? DEFAULT_SPECIALISTS;
       riskTierCases.push({
         id: benchmarkCase.id,
         tier: tierSelection.tier,
         changedLines: tierSelection.changedLines,
         fileCount: tierSelection.fileCount,
+        promptFingerprint: promptFingerprint(effectiveSpecialists),
         ...(specialists ? { specialistKeys: specialists.map((specialist) => specialist.key) } : {})
       });
       const rendered = renderGuardedDiff(guarded.files);
