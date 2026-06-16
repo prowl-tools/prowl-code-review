@@ -1,11 +1,17 @@
 import type { OctokitLike } from "./github/client.js";
 import {
   fetchPullRequest as defaultFetchPullRequest,
+  fetchComparisonDiff as defaultFetchComparisonDiff,
   type FetchedPullRequest,
   type PullRequestMeta,
   type PullRequestRef
 } from "./github/diff.js";
-import { submitReview as defaultSubmitReview, type SubmitReviewOptions } from "./github/review.js";
+import {
+  submitReview as defaultSubmitReview,
+  fetchPriorReviewState as defaultFetchPriorReviewState,
+  type SubmitReviewOptions
+} from "./github/review.js";
+import type { ReviewState } from "./review/state.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
 import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
@@ -55,6 +61,15 @@ import { totalTokens } from "./cost/pricing.js";
 /** Injectable pipeline stages (default to the library implementations). */
 export interface PipelineDeps {
   fetchPullRequest?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
+  /** Load prior persisted review state to find the last reviewed SHA (#23). */
+  fetchPriorState?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<ReviewState | null>;
+  /** Fetch the raw delta diff between two commits for incremental re-review (#23). */
+  fetchComparisonDiff?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    base: string,
+    head: string
+  ) => Promise<string>;
   gatherContext?: (params: GatherContextParams) => Promise<GatheredContext>;
   runReview?: (input: ReviewInput, options?: RunReviewOptions) => Promise<ReviewResult>;
   gatherGrounding?: (params: GatherGroundingParams) => Promise<GroundingResult>;
@@ -100,6 +115,13 @@ export interface ReviewPullRequestOptions {
    * Omitted → enabled with built-in thresholds; `{ enabled: false }` disables it.
    */
   riskTiering?: RiskTieringConfig;
+  /**
+   * Incremental re-review (#23): on a re-run, review only the delta since the last
+   * reviewed SHA (from prior state) instead of the whole PR. Default on; set false
+   * to always review the full PR diff. Falls back to a full review when there's no
+   * prior SHA or the delta can't be computed (e.g. after a force-push).
+   */
+  incremental?: boolean;
   /** Run the skeptical false-positive verification pass (default true, #8). */
   verify?: boolean;
   /** Findings at/above this confidence skip verification (default 0.8, #8). */
@@ -133,6 +155,8 @@ export interface ReviewPullRequestResult {
   contextFiles: number;
   /** Orchestration tier chosen for this diff (#31); undefined when no files were reviewed. */
   riskTier?: RiskTier;
+  /** True when only the delta since the last reviewed SHA was reviewed (#23). */
+  incremental?: boolean;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -307,6 +331,25 @@ function riskTierNotes(
   ];
 }
 
+/**
+ * Disclose incremental-review scope (#23, #5: no silent reduction). When only the
+ * delta was scanned, say so; when an attempted incremental fell back to a full
+ * review (e.g. force-push), note that too.
+ */
+function incrementalNotes(baseSha: string | undefined, fallback: boolean): string[] {
+  if (baseSha) {
+    return [
+      `Incremental review (#23): scanned only the changes since the last reviewed commit (\`${baseSha.slice(0, 7)}\`); ` +
+        `earlier findings remain in this summary and were not re-scanned. ` +
+        `Use --no-incremental (or review.incremental: false) to re-scan the full PR.`
+    ];
+  }
+  if (fallback) {
+    return ["Could not compute the incremental delta (history may have changed); ran a full review (#23)."];
+  }
+  return [];
+}
+
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
 function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   const changed: Record<string, number[]> = {};
@@ -368,9 +411,35 @@ export async function reviewPullRequest(
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const submit = deps.submitReview ?? defaultSubmitReview;
+  const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
+  const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
   const { meta, diff } = await fetchPr(octokit, ref);
-  const parsed = parseDiff(diff);
+
+  // Incremental re-review (#23): on a re-run, scan only the delta a push added
+  // since the last reviewed SHA instead of the whole PR. Best-effort — a missing
+  // prior SHA, an unchanged head, or a compare failure (e.g. after a force-push)
+  // falls back to the full PR diff.
+  let reviewDiff = diff;
+  let incrementalBaseSha: string | undefined;
+  let incrementalFallback = false;
+  if (options.incremental !== false) {
+    const priorSha = (await loadPriorState(octokit, ref))?.lastReviewedSha;
+    if (priorSha && priorSha !== meta.headSha) {
+      try {
+        const delta = await compareDiff(octokit, ref, priorSha, meta.headSha);
+        if (delta && delta.trim().length > 0) {
+          reviewDiff = delta;
+          incrementalBaseSha = priorSha;
+        }
+      } catch {
+        incrementalFallback = true;
+      }
+    }
+  }
+  const incrementalNotesList = incrementalNotes(incrementalBaseSha, incrementalFallback);
+
+  const parsed = parseDiff(reviewDiff);
   // Keep sensitive files out of the review entirely and out of size budgets.
   const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(parsed.files);
   // Drop generated/vendored files (#19) before size guards so they don't burn the
@@ -389,7 +458,12 @@ export async function reviewPullRequest(
       findings: [],
       files: parsed.files,
       skipped,
-      notes: ["No reviewable files remained after filters; provider review skipped."]
+      notes: [
+        ...incrementalNotesList,
+        incrementalBaseSha
+          ? "No reviewable changes since the last reviewed commit; provider review skipped."
+          : "No reviewable files remained after filters; provider review skipped."
+      ]
     });
     const payload = buildReviewPayload({
       findings: [],
@@ -399,7 +473,16 @@ export async function reviewPullRequest(
       agentPrompt: options.agentPrompt
     });
 
-    const result = { meta, payload, review: reviewResult, usage: reviewResult.usage, skipped, contextFiles: 0, posted: false };
+    const result = {
+      meta,
+      payload,
+      review: reviewResult,
+      usage: reviewResult.usage,
+      skipped,
+      contextFiles: 0,
+      incremental: incrementalBaseSha !== undefined,
+      posted: false
+    };
     if (!options.dryRun) {
       try {
         await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
@@ -564,6 +647,7 @@ export async function reviewPullRequest(
     coverage,
     degraded,
     notes: [
+      ...incrementalNotesList,
       ...tierNotes,
       ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
       ...redactionNotes,
@@ -596,6 +680,7 @@ export async function reviewPullRequest(
     skipped,
     contextFiles,
     riskTier: tierSelection.tier,
+    incremental: incrementalBaseSha !== undefined,
     posted: false
   };
   if (!options.dryRun) {
