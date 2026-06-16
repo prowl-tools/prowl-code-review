@@ -345,7 +345,7 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
     ];
   }
   if (fallback) {
-    return ["Could not compute the incremental delta (history may have changed); ran a full review (#23)."];
+    return ["Could not safely use the incremental delta (history may have changed); ran a full review (#23)."];
   }
   return [];
 }
@@ -371,6 +371,48 @@ function filterAndGuardDiffFiles(
   const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
   const guarded = applyDiffLimits({ files: keptFiles }, diffLimits);
   return { files: guarded.files, skipped: [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped] };
+}
+
+function filterPublishDiffFiles(
+  files: DiffFile[],
+  ignorePatterns: readonly string[],
+  reviewedPaths: Set<string>
+): DiffFile[] {
+  const { files: safeFiles } = filterSensitiveDiffFiles(files);
+  const { files: keptFiles } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
+  return keptFiles.filter((file) => reviewedPaths.has(file.path));
+}
+
+function changedLineKeys(file: DiffFile): Set<string> {
+  const keys = new Set<string>();
+  for (const hunk of file.hunks) {
+    for (const line of hunk.lines) {
+      if (line.type === "add" && line.newLine !== undefined) {
+        keys.add(`add:${line.newLine}:${line.content}`);
+      } else if (line.type === "del") {
+        keys.add(`del:${line.oldLine ?? ""}:${line.content}`);
+      }
+    }
+  }
+  return keys;
+}
+
+function incrementalDeltaIsWithinPrDiff(deltaFiles: DiffFile[], prFiles: DiffFile[]): boolean {
+  const prByPath = new Map(prFiles.map((file) => [file.path, file]));
+  for (const deltaFile of deltaFiles) {
+    const prFile = prByPath.get(deltaFile.path);
+    if (!prFile || deltaFile.binary !== prFile.binary) {
+      return false;
+    }
+
+    const prKeys = changedLineKeys(prFile);
+    for (const key of changedLineKeys(deltaFile)) {
+      if (!prKeys.has(key)) {
+        return false;
+      }
+    }
+  }
+  return true;
 }
 
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
@@ -438,12 +480,13 @@ export async function reviewPullRequest(
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
   const { meta, diff } = await fetchPr(octokit, ref);
+  const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
   // since the last reviewed SHA instead of the whole PR. Best-effort — a missing
   // prior SHA, an unchanged head, or a compare failure (e.g. after a force-push)
   // falls back to the full PR diff.
-  let reviewDiff = diff;
+  let parsed = fullParsed;
   let incrementalBaseSha: string | undefined;
   let incrementalFallback = false;
   if (options.incremental !== false) {
@@ -451,22 +494,26 @@ export async function reviewPullRequest(
     if (priorSha && priorSha !== meta.headSha) {
       try {
         const delta = await compareDiff(octokit, ref, priorSha, meta.headSha);
-        reviewDiff = delta;
+        parsed = parseDiff(delta);
         incrementalBaseSha = priorSha;
       } catch {
         incrementalFallback = true;
       }
     }
   }
+  if (incrementalBaseSha !== undefined && !incrementalDeltaIsWithinPrDiff(parsed.files, fullParsed.files)) {
+    parsed = fullParsed;
+    incrementalBaseSha = undefined;
+    incrementalFallback = true;
+  }
   const incrementalNotesList = incrementalNotes(incrementalBaseSha, incrementalFallback);
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
-  const parsed = parseDiff(reviewDiff);
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
-      : filterAndGuardDiffFiles(parseDiff(diff).files, ignorePatterns, options.diffLimits).files;
+      : filterPublishDiffFiles(fullParsed.files, ignorePatterns, new Set(reviewFiles.map((file) => file.path)));
 
   if (reviewFiles.length === 0) {
     const reviewResult = emptyReviewResult();
