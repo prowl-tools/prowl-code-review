@@ -186,6 +186,15 @@ describe("promptFingerprint", () => {
     });
     expect(promptFingerprint()).toBe(createHash("sha256").update(material).digest("hex").slice(0, 12));
   });
+
+  it("hashes an explicit specialist subset separately", () => {
+    const minimalSpecialists = DEFAULT_SPECIALISTS.filter((specialist) =>
+      ["correctness", "security"].includes(specialist.key)
+    );
+    const subsetFingerprint = promptFingerprint(minimalSpecialists);
+    expect(subsetFingerprint).toMatch(/^[0-9a-f]{12}$/);
+    expect(subsetFingerprint).not.toBe(promptFingerprint());
+  });
 });
 
 describe("BenchmarkCaseSchema", () => {

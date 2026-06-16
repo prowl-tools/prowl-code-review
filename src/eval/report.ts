@@ -66,12 +66,16 @@ function riskTieringSettings(report: EvalReport): string {
     counts.deep > 0 ? `deep ${counts.deep}` : undefined
   ].filter(Boolean);
   const caseSummary = selected.length > 0 ? selected.join(", ") : "no cases";
+  const promptFingerprints = [...new Set(cases.map((benchmarkCase) => benchmarkCase.promptFingerprint))];
+  const fingerprintSummary =
+    promptFingerprints.length > 0 ? `; prompt fingerprints: ${promptFingerprints.join(", ")}` : "";
   if (!settings.enabled) {
-    return `off; cases: ${caseSummary}`;
+    return `off; cases: ${caseSummary}${fingerprintSummary}`;
   }
   return (
     `on; minimal <=${settings.minimal.maxChangedLines} line(s) and <=${settings.minimal.maxFiles} file(s); ` +
-    `deep >=${settings.deep.minChangedLines} line(s) or >=${settings.deep.minFiles} file(s); cases: ${caseSummary}`
+    `deep >=${settings.deep.minChangedLines} line(s) or >=${settings.deep.minFiles} file(s); ` +
+    `cases: ${caseSummary}${fingerprintSummary}`
   );
 }
 

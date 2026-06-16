@@ -225,13 +225,15 @@ describe("report rendering", () => {
           tier: "minimal",
           changedLines: 1,
           fileCount: 1,
+          promptFingerprint: "min123abc456",
           specialistKeys: ["correctness", "security"]
         },
         {
           id: "clean-noisy",
           tier: "standard",
           changedLines: 80,
-          fileCount: 3
+          fileCount: 3,
+          promptFingerprint: "std123abc456"
         }
       ]
     },
@@ -279,7 +281,9 @@ describe("report rendering", () => {
     expect(md).toContain("anthropic / claude-x");
     expect(md).toContain("`abc123def456`");
     expect(md).toContain("verification off, min severity major");
-    expect(md).toContain("Risk tiering:** on; minimal <=30 line(s) and <=2 file(s); deep >=500 line(s) or >=20 file(s); cases: minimal 1, standard 1");
+    expect(md).toContain(
+      "Risk tiering:** on; minimal <=30 line(s) and <=2 file(s); deep >=500 line(s) or >=20 file(s); cases: minimal 1, standard 1; prompt fingerprints: min123abc456, std123abc456"
+    );
     expect(md).toContain("Precision | 75.0%");
     expect(md).toContain("Recall | 60.0%");
     expect(md).toContain("| bug-hit | bug |");
@@ -292,7 +296,11 @@ describe("report rendering", () => {
     const parsed = JSON.parse(renderReportJson(renderedReport));
     expect(parsed.promptFingerprint).toBe("abc123def456");
     expect(parsed.review).toEqual({ ...defaultReviewSettings, verify: false, minSeverity: "major" });
-    expect(parsed.riskTiering.cases[0]).toMatchObject({ id: "bug-hit", tier: "minimal" });
+    expect(parsed.riskTiering.cases[0]).toMatchObject({
+      id: "bug-hit",
+      tier: "minimal",
+      promptFingerprint: "min123abc456"
+    });
     expect(parsed.cases).toHaveLength(3);
   });
 });

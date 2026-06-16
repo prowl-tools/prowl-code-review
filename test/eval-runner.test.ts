@@ -15,8 +15,14 @@ import type { CompletionResult, ProviderConfig } from "../src/providers/index.js
 import type { ReviewInput, ReviewResult, RunReviewOptions } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
 import { DEFAULT_TIER_THRESHOLDS } from "../src/review/risk-tier.js";
+import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
+import { promptFingerprint } from "../src/eval/version.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "test-model", apiKey: "k" };
+const minimalPromptFingerprint = promptFingerprint(
+  DEFAULT_SPECIALISTS.filter((specialist) => ["correctness", "security"].includes(specialist.key))
+);
+const defaultPromptFingerprint = promptFingerprint();
 
 const BENCH_DIR = join(__dirname, "..", "bench");
 
@@ -244,6 +250,7 @@ describe("runBenchmark", () => {
           tier: "minimal",
           changedLines: 1,
           fileCount: 1,
+          promptFingerprint: minimalPromptFingerprint,
           specialistKeys: ["correctness", "security"]
         },
         {
@@ -251,10 +258,12 @@ describe("runBenchmark", () => {
           tier: "minimal",
           changedLines: 1,
           fileCount: 1,
+          promptFingerprint: minimalPromptFingerprint,
           specialistKeys: ["correctness", "security"]
         }
       ]
     });
+    expect(report.riskTiering.cases[0].promptFingerprint).not.toBe(report.promptFingerprint);
 
     expect(report.metrics.recall).toBe(1); // bug covered
     expect(report.metrics.coveredBugs).toBe(1);
@@ -309,6 +318,7 @@ describe("runBenchmark", () => {
         tier: "minimal",
         changedLines: 1,
         fileCount: 1,
+        promptFingerprint: minimalPromptFingerprint,
         specialistKeys: ["correctness", "security"]
       }
     ]);
@@ -347,7 +357,8 @@ describe("runBenchmark", () => {
           id: "tiny",
           tier: "standard",
           changedLines: 1,
-          fileCount: 1
+          fileCount: 1,
+          promptFingerprint: defaultPromptFingerprint
         }
       ]
     });
