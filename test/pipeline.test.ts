@@ -243,6 +243,7 @@ describe("reviewPullRequest", () => {
     const fetchPriorState = vi.fn(async () => priorState);
     const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
     const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
@@ -281,7 +282,7 @@ describe("reviewPullRequest", () => {
     });
   });
 
-  it("anchors incremental inline comments against the full PR diff (#23)", async () => {
+  it("falls back when an incremental delta line is absent from the full PR diff (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);
     const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
@@ -299,10 +300,60 @@ describe("reviewPullRequest", () => {
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
-    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/b.ts"); // provider still sees the delta
-    expect(result.payload.comments).toHaveLength(0); // GitHub inline comments anchor to the full PR diff
-    expect(result.payload.body).toContain("Delta-only line");
-    expect(result.payload.body).toContain("src/b.ts");
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts");
+    expect(deps.runReview.mock.calls[0][0].diff).not.toContain("src/b.ts");
+  });
+
+  it("falls back to a full review when the delta contains non-PR changes (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const upstreamOnlyDiff = `diff --git a/src/upstream.ts b/src/upstream.ts
+--- a/src/upstream.ts
++++ b/src/upstream.ts
+@@ -1,1 +1,2 @@
+ const upstream = 1;
++const mergedFromBase = 2;
+`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => upstreamOnlyDiff)
+    };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts");
+    expect(deps.runReview.mock.calls[0][0].diff).not.toContain("src/upstream.ts");
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
+  });
+
+  it("preserves reviewed files for incremental publish anchors when full diff caps apply (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = { ...makeDeps(), fetchPriorState: vi.fn(async () => priorState), fetchComparisonDiff: vi.fn(async () => DELTA_DIFF) };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+    deps.runReview.mockResolvedValue(
+      reviewResult([
+        finding({
+          file: "src/b.ts",
+          line: 2,
+          title: "Still in PR diff",
+          body: "This line should be published inline."
+        })
+      ])
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      diffLimits: { maxFiles: 1 }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("src/b.ts");
+    expect(result.payload.comments).toHaveLength(1);
+    expect(result.payload.comments[0]).toEqual(expect.objectContaining({ path: "src/b.ts", line: 2 }));
   });
 
   it("reviews the full PR when there is no prior reviewed SHA (#23)", async () => {
@@ -342,7 +393,7 @@ describe("reviewPullRequest", () => {
 
     expect(result.incremental).toBe(false);
     expect(deps.runReview.mock.calls[0][0].diff).toContain("src/a.ts"); // full diff used
-    expect(result.payload.body).toContain("Could not compute the incremental delta");
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
   });
 
   it("skips incremental entirely when disabled (#23)", async () => {
