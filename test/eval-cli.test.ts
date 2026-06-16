@@ -15,6 +15,7 @@ import {
   DEFAULT_MIN_SEVERITY
 } from "../src/review/judge.js";
 import { DEFAULT_VERIFY_CONFIDENCE } from "../src/review/verify.js";
+import { DEFAULT_TIER_THRESHOLDS } from "../src/review/risk-tier.js";
 
 const ORIGINAL_ENV = process.env;
 beforeEach(() => {
@@ -63,6 +64,14 @@ function report(over: Partial<EvalReport> = {}): EvalReport {
     promptFingerprint: "abc123def456",
     match: { lineWindow: 3, requireCategory: false },
     review: defaultReviewSettings,
+    riskTiering: {
+      settings: {
+        enabled: true,
+        minimal: { ...DEFAULT_TIER_THRESHOLDS.minimal },
+        deep: { ...DEFAULT_TIER_THRESHOLDS.deep }
+      },
+      cases: []
+    },
     metrics: metrics({ precision: 0.75, recall: 0.6, f1: 0.667 }),
     cases: [],
     errored: 0,
@@ -204,6 +213,28 @@ describe("eval command action", () => {
 describe("report rendering", () => {
   const renderedReport = report({
     review: { ...defaultReviewSettings, verify: false, minSeverity: "major" },
+    riskTiering: {
+      settings: {
+        enabled: true,
+        minimal: { ...DEFAULT_TIER_THRESHOLDS.minimal },
+        deep: { ...DEFAULT_TIER_THRESHOLDS.deep }
+      },
+      cases: [
+        {
+          id: "bug-hit",
+          tier: "minimal",
+          changedLines: 1,
+          fileCount: 1,
+          specialistKeys: ["correctness", "security"]
+        },
+        {
+          id: "clean-noisy",
+          tier: "standard",
+          changedLines: 80,
+          fileCount: 3
+        }
+      ]
+    },
     cases: [
       {
         id: "bug-hit",
@@ -248,6 +279,7 @@ describe("report rendering", () => {
     expect(md).toContain("anthropic / claude-x");
     expect(md).toContain("`abc123def456`");
     expect(md).toContain("verification off, min severity major");
+    expect(md).toContain("Risk tiering:** on; minimal <=30 line(s) and <=2 file(s); deep >=500 line(s) or >=20 file(s); cases: minimal 1, standard 1");
     expect(md).toContain("Precision | 75.0%");
     expect(md).toContain("Recall | 60.0%");
     expect(md).toContain("| bug-hit | bug |");
@@ -260,6 +292,7 @@ describe("report rendering", () => {
     const parsed = JSON.parse(renderReportJson(renderedReport));
     expect(parsed.promptFingerprint).toBe("abc123def456");
     expect(parsed.review).toEqual({ ...defaultReviewSettings, verify: false, minSeverity: "major" });
+    expect(parsed.riskTiering.cases[0]).toMatchObject({ id: "bug-hit", tier: "minimal" });
     expect(parsed.cases).toHaveLength(3);
   });
 });

@@ -25,6 +25,7 @@ import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
 import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../review/ignore.js";
 import { DEFAULT_SPECIALISTS } from "../review/specialists.js";
 import {
+  DEFAULT_TIER_THRESHOLDS,
   diffComplexity,
   planOrchestration,
   selectRiskTier,
@@ -38,6 +39,8 @@ import {
   type BenchmarkCase,
   type CaseResult,
   type EvalReport,
+  type EvalRiskTierCase,
+  type EvalRiskTieringSettings,
   type EvalReviewSettings,
   type MatchOptions
 } from "./types.js";
@@ -115,6 +118,21 @@ function normalizeReviewSettings(review?: ReviewKnobs): EvalReviewSettings {
   };
 }
 
+/** Fill in tier defaults so report metadata fully describes the run. */
+function normalizeRiskTieringSettings(riskTiering: RiskTieringConfig = {}): EvalRiskTieringSettings {
+  return {
+    enabled: riskTiering.enabled !== false,
+    minimal: {
+      maxChangedLines: riskTiering.minimal?.maxChangedLines ?? DEFAULT_TIER_THRESHOLDS.minimal.maxChangedLines,
+      maxFiles: riskTiering.minimal?.maxFiles ?? DEFAULT_TIER_THRESHOLDS.minimal.maxFiles
+    },
+    deep: {
+      minChangedLines: riskTiering.deep?.minChangedLines ?? DEFAULT_TIER_THRESHOLDS.deep.minChangedLines,
+      minFiles: riskTiering.deep?.minFiles ?? DEFAULT_TIER_THRESHOLDS.deep.minFiles
+    }
+  };
+}
+
 /** Reject malformed fixtures before they can score as quiet or ordinary misses. */
 function validateParsedBenchmarkDiff(files: DiffFile[]): void {
   if (files.length === 0) {
@@ -179,8 +197,10 @@ export async function runBenchmark(
     requireCategory: options.match?.requireCategory ?? false
   };
   const reviewSettings = normalizeReviewSettings(options.review);
+  const riskTieringSettings = normalizeRiskTieringSettings(options.riskTiering);
 
   const results: CaseResult[] = [];
+  const riskTierCases: EvalRiskTierCase[] = [];
   for (const benchmarkCase of cases) {
     try {
       // Mirror the production pipeline: parse the stored diff and feed the model
@@ -202,6 +222,13 @@ export async function runBenchmark(
       const specialists = tierPlan.builtinSpecialistKeys
         ? DEFAULT_SPECIALISTS.filter((s) => tierPlan.builtinSpecialistKeys!.includes(s.key))
         : undefined;
+      riskTierCases.push({
+        id: benchmarkCase.id,
+        tier: tierSelection.tier,
+        changedLines: tierSelection.changedLines,
+        fileCount: tierSelection.fileCount,
+        ...(specialists ? { specialistKeys: specialists.map((specialist) => specialist.key) } : {})
+      });
       const rendered = renderGuardedDiff(guarded.files);
       const diff = redactSecrets(rendered).text;
       const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;
@@ -238,6 +265,10 @@ export async function runBenchmark(
     promptFingerprint: promptFingerprint(),
     match,
     review: reviewSettings,
+    riskTiering: {
+      settings: riskTieringSettings,
+      cases: riskTierCases
+    },
     metrics: aggregate(results),
     cases: results,
     errored: results.filter((result) => result.errored).length
