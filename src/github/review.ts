@@ -77,10 +77,10 @@ export function planPublish(input: {
   postedInlineComments?: ReviewComment[];
 }): PublishPlan {
   const priorState = parseState(input.priorComment?.body);
-  const priorPostedFindings = [
-    ...new Set([...(priorState?.postedFindings ?? []), ...(input.priorPostedFindings ?? [])])
-  ];
-  const alreadyPosted = new Set(priorPostedFindings);
+  const alreadyPosted = new Set([
+    ...(priorState?.postedFindings ?? []),
+    ...(input.priorPostedFindings ?? [])
+  ]);
 
   const newInlineComments = input.payload.comments.filter(
     (comment) => !alreadyPosted.has(comment.fingerprint)
@@ -90,7 +90,7 @@ export function planPublish(input: {
   // Track only inline fingerprints that were actually posted, so failed/skipped
   // publishes are retried on the next run instead of disappearing from state.
   const postedFindings = [
-    ...new Set([...priorPostedFindings, ...postedInlineComments.map((c) => c.fingerprint)])
+    ...new Set([...alreadyPosted, ...postedInlineComments.map((c) => c.fingerprint)])
   ];
 
   const requestedState: ReviewState = {
