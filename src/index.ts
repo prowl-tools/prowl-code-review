@@ -99,6 +99,7 @@ export {
 export { createOctokit, type OctokitLike } from "./github/client.js";
 export {
   fetchPullRequest,
+  fetchComparisonDiff,
   type PullRequestRef,
   type PullRequestMeta,
   type FetchedPullRequest
@@ -106,6 +107,7 @@ export {
 export {
   submitReview,
   planPublish,
+  fetchPriorReviewState,
   type SubmitReviewOptions,
   type PublishPlan,
   type PriorSummaryComment
