@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Guidelines + learnings injection (backlog #30, core): the reviewer now loads a `LEARNED_PATTERNS.md`
+  file (alongside the already-loaded `REVIEW_GUIDELINES.md`/`CLAUDE.md`) from the trusted guidelines
+  checkout and injects it into every specialist's shared system block as a distinct **"learned
+  false-positive patterns"** section — issues previously dismissed or ignored aren't re-raised unless
+  the code now clearly exhibits a real problem. Also adds an optional **org-wide guidelines** file
+  (`org-guidelines-path` Action input / `PROWL_ORG_GUIDELINES_PATH`) injected into every repo's review
+  in addition to per-repo guidelines (composed under "Organization standards" / "Repository standards"
+  sub-headers). Both are framed as untrusted JSON-string data, consistent with the guidelines hardening.
+  New `learnedPatterns` option on the pipeline/`runReview`; `loadLearnedPatterns`/`composeGuidelines`/
+  `resolveOrgGuidelinesPath` CLI helpers. **Deferred:** the feedback-*append* path (👎 reaction /
+  `@prowl-review ignore` writing back to `LEARNED_PATTERNS.md`) rides with the bot-command set (#26),
+  and an org-guidelines-by-URL option — both noted in the backlog.
 - Incremental re-review (backlog #23): on a re-push, review only the delta since the last reviewed
   commit instead of the whole PR — faster, cheaper re-reviews. The #12 state store already records the
   last-reviewed SHA in the summary marker; the pipeline now reads it up front and, when it differs from
