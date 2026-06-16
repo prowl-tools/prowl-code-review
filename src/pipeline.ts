@@ -430,6 +430,7 @@ export async function reviewPullRequest(
   const tierSpecialistKeys = options.specialists === undefined ? tierPlan.builtinSpecialistKeys : undefined;
   const tierLimitedContext =
     !options.skipContext &&
+    Boolean(options.toolkitRoot) &&
     ((options.contextLimits?.maxRounds === undefined && tierPlan.contextLimits?.maxRounds !== undefined) ||
       (options.contextLimits?.maxFiles === undefined && tierPlan.contextLimits?.maxFiles !== undefined));
   const tierNotes = riskTierNotes(tierSelection, {

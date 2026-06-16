@@ -12,7 +12,7 @@ import {
 } from "../src/review/judge.js";
 import { DEFAULT_VERIFY_CONFIDENCE } from "../src/review/verify.js";
 import type { CompletionResult, ProviderConfig } from "../src/providers/index.js";
-import type { ReviewInput, ReviewResult } from "../src/review/run-review.js";
+import type { ReviewInput, ReviewResult, RunReviewOptions } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "test-model", apiKey: "k" };
@@ -255,6 +255,54 @@ describe("runBenchmark", () => {
     expect(seenDiff).toContain("### a.ts");
     expect(seenDiff).toContain("+added();");
     expect(seenDiff).toMatch(/2 \+added\(\);/); // new-side line number annotated
+  });
+
+  it("applies the minimal risk tier specialist plan to benchmark cases (#31)", async () => {
+    const cases = [
+      {
+        id: "tiny",
+        description: "d",
+        kind: "clean" as const,
+        diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n existing\n+tiny();",
+        expected: []
+      }
+    ];
+    const review = vi.fn(async (_input: ReviewInput, _options?: RunReviewOptions): Promise<ReviewResult> => ({
+      findings: [],
+      raw: [],
+      passes: [],
+      verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+
+    await runBenchmark(cases, { config, runReview: review });
+
+    expect(review.mock.calls[0][0].specialists?.map((s) => s.key)).toEqual(["correctness", "security"]);
+  });
+
+  it("runs full benchmark specialist defaults when risk tiering is disabled (#31)", async () => {
+    const cases = [
+      {
+        id: "tiny",
+        description: "d",
+        kind: "clean" as const,
+        diff: "diff --git a/a.ts b/a.ts\n--- a/a.ts\n+++ b/a.ts\n@@ -1,1 +1,2 @@\n existing\n+tiny();",
+        expected: []
+      }
+    ];
+    const review = vi.fn(async (_input: ReviewInput, _options?: RunReviewOptions): Promise<ReviewResult> => ({
+      findings: [],
+      raw: [],
+      passes: [],
+      verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+      judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+
+    await runBenchmark(cases, { config, runReview: review, riskTiering: { enabled: false } });
+
+    expect(review.mock.calls[0][0].specialists).toBeUndefined();
   });
 
   it("filters sensitive files and redacts secrets before review", async () => {

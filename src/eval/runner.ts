@@ -23,6 +23,13 @@ import { renderGuardedDiff } from "../review/render-diff.js";
 import { redactSecrets } from "../review/redact.js";
 import { filterSensitiveDiffFiles } from "../review/sensitive-diff.js";
 import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../review/ignore.js";
+import { DEFAULT_SPECIALISTS } from "../review/specialists.js";
+import {
+  diffComplexity,
+  planOrchestration,
+  selectRiskTier,
+  type RiskTieringConfig
+} from "../review/risk-tier.js";
 import { scoreCase, erroredCase } from "./match.js";
 import { aggregate } from "./metrics.js";
 import { promptFingerprint } from "./version.js";
@@ -65,6 +72,8 @@ export interface RunBenchmarkOptions {
   match?: MatchOptions;
   /** Review knobs applied to every case (defaults to the pipeline defaults). */
   review?: ReviewKnobs;
+  /** Risk-tiered orchestration applied per benchmark case; omitted -> production defaults. */
+  riskTiering?: RiskTieringConfig;
   /** Injectable review pass (defaults to the real multi-pass review). */
   runReview?: (input: ReviewInput, options?: RunReviewOptions) => Promise<ReviewResult>;
   /** Injectable completion, forwarded to the real review pass. */
@@ -188,6 +197,11 @@ export async function runBenchmark(
         ...guarded.skipped
       ]);
       validateReviewableDiff(guarded.files);
+      const tierSelection = selectRiskTier(diffComplexity(guarded.files), options.riskTiering);
+      const tierPlan = planOrchestration(tierSelection.tier);
+      const specialists = tierPlan.builtinSpecialistKeys
+        ? DEFAULT_SPECIALISTS.filter((s) => tierPlan.builtinSpecialistKeys!.includes(s.key))
+        : undefined;
       const rendered = renderGuardedDiff(guarded.files);
       const diff = redactSecrets(rendered).text;
       const context = benchmarkCase.context === undefined ? undefined : redactSecrets(benchmarkCase.context).text;
@@ -195,7 +209,8 @@ export async function runBenchmark(
         {
           diff,
           context,
-          guidelines: benchmarkCase.guidelines
+          guidelines: benchmarkCase.guidelines,
+          specialists
         },
         { config, complete: options.complete, ...reviewSettings }
       );
