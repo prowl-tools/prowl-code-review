@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Incremental re-review (backlog #23): on a re-push, review only the delta since the last reviewed
+  commit instead of the whole PR — faster, cheaper re-reviews. The #12 state store already records the
+  last-reviewed SHA in the summary marker; the pipeline now reads it up front and, when it differs from
+  the new head, fetches the `lastReviewedSha...head` delta via `repos.compareCommitsWithBasehead`
+  (`fetchComparisonDiff`) and reviews that. Best-effort with full-review fallback: no prior SHA, an
+  unchanged head, or a compare failure (e.g. base unreachable after a force-push) reverts to the full PR
+  diff. Pairs with risk-tiering (#31) — a small delta usually lands in the cheap `minimal` tier — and
+  inline findings still dedup across pushes (#22). The reduced scope is disclosed as a review note (no
+  silent reduction, #5); `reviewPullRequest` returns `incremental`. Default on; turn off with
+  `--no-incremental` or `review.incremental: false` to re-scan the full PR. Exports `fetchComparisonDiff`
+  and `fetchPriorReviewState`.
 - Risk-tiered orchestration (backlog #31): scale cost with risk so a tiny diff doesn't pay for the
   full review fan-out (the lever the cost audit pointed at — input tokens from re-sent context across
   passes dominate the bill). A pure scorer (`src/review/risk-tier.ts`) counts changed lines + files and
