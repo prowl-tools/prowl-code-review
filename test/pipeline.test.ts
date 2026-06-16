@@ -5,6 +5,7 @@ import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
 import type { ReviewResult } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
+import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
 const ref = { owner: "o", repo: "r", pull_number: 7 };
@@ -148,6 +149,53 @@ describe("reviewPullRequest", () => {
     expect(deps.gatherContext).toHaveBeenCalledWith(
       expect.objectContaining({ limits: expect.objectContaining({ maxFiles: 99, maxRounds: 3 }) })
     );
+  });
+
+  it("does not claim minimal tier trimmed specialists when an explicit set is honored (#31)", async () => {
+    const deps = makeDeps();
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      specialists: [DEFAULT_SPECIALISTS[2]]
+    });
+
+    expect(result.riskTier).toBe("minimal");
+    expect(deps.runReview.mock.calls[0][0].specialists.map((s: { key: string }) => s.key)).toEqual(["performance"]);
+    expect(result.payload.body).toContain("Risk tier: minimal");
+    expect(result.payload.body).toContain("limited cross-file context");
+    expect(result.payload.body).not.toContain("reduced specialist set");
+    expect(result.payload.body).not.toContain("correctness, security");
+  });
+
+  it("does not claim minimal tier limited context when explicit context limits are honored (#31)", async () => {
+    const deps = makeDeps();
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      contextLimits: { maxFiles: 99, maxRounds: 99 }
+    });
+
+    expect(result.riskTier).toBe("minimal");
+    expect(result.payload.body).toContain("Risk tier: minimal");
+    expect(result.payload.body).toContain("reduced specialist set");
+    expect(result.payload.body).toContain("correctness, security");
+    expect(result.payload.body).not.toContain("limited cross-file context");
+  });
+
+  it("omits the minimal tier note when explicit overrides neutralize every tier reduction (#31)", async () => {
+    const deps = makeDeps();
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      specialists: [DEFAULT_SPECIALISTS[2]],
+      contextLimits: { maxFiles: 99, maxRounds: 99 }
+    });
+
+    expect(result.riskTier).toBe("minimal");
+    expect(result.payload.body).not.toContain("Risk tier:");
   });
 
   it("throws publish errors with the completed review usage attached", async () => {
