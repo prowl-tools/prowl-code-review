@@ -38,7 +38,9 @@ const reviewSchema = z
     /** Run the skeptical false-positive verification pass. Default true. */
     verify: z.boolean().optional(),
     /** Findings at/above this confidence skip verification (0–1). Default 0.8. */
-    verifyConfidence: z.number().min(0).max(1).optional()
+    verifyConfidence: z.number().min(0).max(1).optional(),
+    /** On a re-run, review only the delta since the last reviewed SHA. Default true (#23). */
+    incremental: z.boolean().optional()
   })
   .strict();
 
