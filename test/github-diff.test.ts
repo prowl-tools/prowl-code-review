@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPullRequest } from "../src/github/diff.js";
+import { fetchPullRequest, fetchComparisonDiff } from "../src/github/diff.js";
 import type { OctokitLike } from "../src/github/client.js";
 
 function mockOctokit(prData: unknown, diff: string) {
@@ -67,5 +67,32 @@ describe("fetchPullRequest", () => {
     expect(result.meta.author).toBeNull();
     expect(result.meta.draft).toBe(false);
     expect(result.meta.changedFiles).toBe(0);
+  });
+});
+
+describe("fetchComparisonDiff (#23)", () => {
+  const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
+
+  it("requests the BASE...HEAD range as a raw diff and returns the body", async () => {
+    const compareCommitsWithBasehead = vi.fn(async () => ({ data: "DELTA DIFF" }));
+    const octokit = { rest: { repos: { compareCommitsWithBasehead } } } as unknown as OctokitLike;
+
+    const diff = await fetchComparisonDiff(octokit, ref, "old-sha", "new-sha");
+
+    expect(diff).toBe("DELTA DIFF");
+    expect(compareCommitsWithBasehead).toHaveBeenCalledWith({
+      owner: "prowl-tools",
+      repo: "prowl-code-review",
+      basehead: "old-sha...new-sha",
+      mediaType: { format: "diff" }
+    });
+  });
+
+  it("propagates errors so the caller can fall back to a full review", async () => {
+    const compareCommitsWithBasehead = vi.fn(async () => {
+      throw new Error("404 Not Found");
+    });
+    const octokit = { rest: { repos: { compareCommitsWithBasehead } } } as unknown as OctokitLike;
+    await expect(fetchComparisonDiff(octokit, ref, "old", "new")).rejects.toThrow(/404/);
   });
 });

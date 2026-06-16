@@ -144,6 +144,26 @@ async function findPriorSummary(
   return null;
 }
 
+/**
+ * Load the persisted review state from our prior summary comment (incremental
+ * re-review, #23): resolve the bot login, find the marked comment, parse its
+ * state. Returns null when there's no prior review (a fresh first run). Tolerant
+ * — any read failure yields null so the run falls back to a full review.
+ */
+export async function fetchPriorReviewState(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<ReviewState | null> {
+  try {
+    const login = await getAuthenticatedLogin(octokit, botLogin);
+    const prior = await findPriorSummary(octokit, ref, login);
+    return parseState(prior?.body);
+  } catch {
+    return null;
+  }
+}
+
 /** Resolve the authenticated bot login used to trust prior prowl-review comments. */
 async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
   if (botLogin) {

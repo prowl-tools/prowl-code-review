@@ -96,3 +96,26 @@ export async function fetchPullRequest(
     diff
   };
 }
+
+/**
+ * Fetch the raw unified diff between two commits (incremental re-review, #23) via
+ * `repos.compareCommitsWithBasehead` with `format: "diff"`. Used to review only
+ * the delta a push added since the last reviewed SHA. Throws if the range can't
+ * be compared (e.g. the base SHA is unreachable after a force-push) — the caller
+ * falls back to a full review.
+ */
+export async function fetchComparisonDiff(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  base: string,
+  head: string
+): Promise<string> {
+  const response = await octokit.rest.repos.compareCommitsWithBasehead({
+    owner: ref.owner,
+    repo: ref.repo,
+    basehead: `${base}...${head}`,
+    mediaType: { format: "diff" }
+  });
+  // With `format: "diff"` the API returns the raw diff as the body.
+  return response.data as unknown as string;
+}
