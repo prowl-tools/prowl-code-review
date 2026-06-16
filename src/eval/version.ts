@@ -2,7 +2,8 @@ import { createHash } from "node:crypto";
 import {
   buildSharedSystem,
   buildSpecialistPrompt,
-  DEFAULT_SPECIALISTS
+  DEFAULT_SPECIALISTS,
+  type Specialist
 } from "../review/specialists.js";
 import { buildVerifyPrompt, buildVerifySystem } from "../review/verify.js";
 import type { Finding } from "../review/findings.js";
@@ -35,10 +36,10 @@ const VERIFY_FINDING_PLACEHOLDER: Finding = {
   confidence: 0.5
 };
 
-export function promptFingerprint(): string {
+export function promptFingerprint(specialists: readonly Specialist[] = DEFAULT_SPECIALISTS): string {
   const material = JSON.stringify({
     shared: buildSharedSystem({}),
-    specialists: DEFAULT_SPECIALISTS.map((specialist) => ({
+    specialists: specialists.map((specialist) => ({
       key: specialist.key,
       model: specialist.model ?? null,
       prompt: {

@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { SEVERITIES, type Severity } from "../review/findings.js";
+import type { RiskTier } from "../review/risk-tier.js";
 
 /**
  * Quality eval harness types (backlog #13).
@@ -161,18 +162,54 @@ export interface EvalReviewSettings {
   verifyConfidence: number;
 }
 
+/** Effective risk-tier thresholds recorded for benchmark reproducibility. */
+export interface EvalRiskTieringSettings {
+  /** Whether tiering was enabled for the run. */
+  enabled: boolean;
+  /** Effective upper bounds for the cheap `minimal` tier. */
+  minimal: { maxChangedLines: number; maxFiles: number };
+  /** Effective lower bounds for the thorough `deep` tier. */
+  deep: { minChangedLines: number; minFiles: number };
+}
+
+/** Risk-tier decision made for one benchmark case. */
+export interface EvalRiskTierCase {
+  /** Benchmark case id. */
+  id: string;
+  /** Tier selected after production-style guards. */
+  tier: RiskTier;
+  /** Changed-line signal used for selection. */
+  changedLines: number;
+  /** File-count signal used for selection. */
+  fileCount: number;
+  /** Prompt fingerprint for the actual specialist set used by this case. */
+  promptFingerprint: string;
+  /** Built-in specialist keys used when the tier narrowed the default set. */
+  specialistKeys?: string[];
+}
+
+/** Risk-tiering metadata that affects what each benchmark case exercised. */
+export interface EvalRiskTieringReport {
+  /** Effective tiering settings for this run. */
+  settings: EvalRiskTieringSettings;
+  /** Per-case tier decisions. Cases that fail before diff guarding are absent. */
+  cases: EvalRiskTierCase[];
+}
+
 /** A full benchmark run, stamped for reproducibility. */
 export interface EvalReport {
   /** Provider that produced the reviews. */
   provider: string;
   /** Model that produced the reviews. */
   model: string;
-  /** Hash of the review prompts + specialist set (changes when prompts change). */
+  /** Hash of the default review prompts; per-case tiered hashes live under `riskTiering`. */
   promptFingerprint: string;
   /** Matching configuration used. */
   match: Required<MatchOptions>;
   /** Review settings that affect finding filtering and verification. */
   review: EvalReviewSettings;
+  /** Risk-tiering settings and per-case decisions used by the runner. */
+  riskTiering: EvalRiskTieringReport;
   metrics: EvalMetrics;
   cases: CaseResult[];
   /** Cases excluded from metrics because their review pass errored. */
