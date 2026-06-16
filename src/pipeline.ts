@@ -276,15 +276,33 @@ function mergeContextLimits(
  */
 function riskTierNotes(
   selection: ReturnType<typeof selectRiskTier>,
-  plan: ReturnType<typeof planOrchestration>
+  applied: {
+    specialistKeys?: string[];
+    contextLimited: boolean;
+  }
 ): string[] {
   if (selection.tier !== "minimal") {
     return [];
   }
-  const lenses = plan.builtinSpecialistKeys?.join(", ") ?? "a reduced set";
+
+  const reductions: string[] = [];
+  if (applied.specialistKeys) {
+    reductions.push(`ran a reduced specialist set (${applied.specialistKeys.join(", ")})`);
+  }
+  if (applied.contextLimited) {
+    reductions.push("limited cross-file context");
+  }
+  if (reductions.length === 0) {
+    return [];
+  }
+
+  const appliedText =
+    reductions.length === 1
+      ? reductions[0]
+      : `${reductions.slice(0, -1).join(", ")} and ${reductions[reductions.length - 1]}`;
   return [
     `Risk tier: minimal (${selection.changedLines} changed line(s), ${selection.fileCount} file(s)) — ` +
-      `ran a reduced specialist set (${lenses}) and limited cross-file context to scale cost with risk (#31). ` +
+      `${appliedText} to scale cost with risk (#31). ` +
       `Set riskTiering.enabled: false to always run the full review.`
   ];
 }
@@ -409,7 +427,15 @@ export async function reviewPullRequest(
       : undefined);
   // Context limits: explicit user values win per-field; the tier fills the rest.
   const effectiveContextLimits = mergeContextLimits(options.contextLimits, tierPlan.contextLimits);
-  const tierNotes = riskTierNotes(tierSelection, tierPlan);
+  const tierSpecialistKeys = options.specialists === undefined ? tierPlan.builtinSpecialistKeys : undefined;
+  const tierLimitedContext =
+    !options.skipContext &&
+    ((options.contextLimits?.maxRounds === undefined && tierPlan.contextLimits?.maxRounds !== undefined) ||
+      (options.contextLimits?.maxFiles === undefined && tierPlan.contextLimits?.maxFiles !== undefined));
+  const tierNotes = riskTierNotes(tierSelection, {
+    specialistKeys: tierSpecialistKeys,
+    contextLimited: tierLimitedContext
+  });
 
   // Redact secrets from anything that will reach the provider.
   const redactionNotes: string[] = [];
