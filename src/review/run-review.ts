@@ -38,6 +38,8 @@ export interface ReviewInput {
   context?: string;
   /** Project review guidelines (CLAUDE.md / REVIEW_GUIDELINES.md), if any. */
   guidelines?: string;
+  /** Learned false-positive patterns (LEARNED_PATTERNS.md), if any (#30). */
+  learnedPatterns?: string;
   /** Specialist set; defaults to {@link DEFAULT_SPECIALISTS}. */
   specialists?: Specialist[];
   /**
@@ -146,7 +148,8 @@ export async function runReview(
 
   // Shared, byte-identical trusted instructions; untrusted PR content stays in prompt.
   const system = buildSharedSystem({
-    guidelines: input.guidelines
+    guidelines: input.guidelines,
+    learnedPatterns: input.learnedPatterns
   });
 
   const outcomes = await Promise.all(
