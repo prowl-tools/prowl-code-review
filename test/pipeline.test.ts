@@ -211,6 +211,22 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("Risk tier:");
   });
 
+  it("still discloses minimal specialist trimming when context retrieval cannot run (#31)", async () => {
+    const deps = makeDeps();
+    const result = await reviewPullRequest(octokit, ref, { config, deps });
+
+    expect(result.riskTier).toBe("minimal");
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.runReview.mock.calls[0][0].specialists.map((s: { key: string }) => s.key)).toEqual([
+      "correctness",
+      "security"
+    ]);
+    expect(result.payload.body).toContain("Risk tier: minimal");
+    expect(result.payload.body).toContain("reduced specialist set");
+    expect(result.payload.body).toContain("correctness, security");
+    expect(result.payload.body).not.toContain("limited cross-file context");
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
