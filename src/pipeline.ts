@@ -350,10 +350,14 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
   return [];
 }
 
-function submitOptionsForReview(meta: PullRequestMeta, incrementalBaseSha: string | undefined): SubmitReviewOptions {
+function submitOptionsForReview(
+  meta: PullRequestMeta,
+  incrementalBaseSha: string | undefined,
+  complete = true
+): SubmitReviewOptions {
   return {
     commitId: meta.headSha,
-    headSha: meta.headSha,
+    ...(complete ? { headSha: meta.headSha } : {}),
     ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {})
   };
 }
@@ -399,13 +403,18 @@ function changedLineKeys(file: DiffFile): Set<string> {
 
 function incrementalDeltaIsWithinPrDiff(deltaFiles: DiffFile[], prFiles: DiffFile[]): boolean {
   const prByPath = new Map(prFiles.map((file) => [file.path, file]));
+  const prKeysByPath = new Map<string, Set<string>>();
   for (const deltaFile of deltaFiles) {
     const prFile = prByPath.get(deltaFile.path);
     if (!prFile || deltaFile.binary !== prFile.binary) {
       return false;
     }
 
-    const prKeys = changedLineKeys(prFile);
+    let prKeys = prKeysByPath.get(prFile.path);
+    if (!prKeys) {
+      prKeys = changedLineKeys(prFile);
+      prKeysByPath.set(prFile.path, prKeys);
+    }
     for (const key of changedLineKeys(deltaFile)) {
       if (!prKeys.has(key)) {
         return false;
@@ -749,7 +758,7 @@ export async function reviewPullRequest(
   };
   if (!options.dryRun) {
     try {
-      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha));
+      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, !degraded));
       result.posted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
