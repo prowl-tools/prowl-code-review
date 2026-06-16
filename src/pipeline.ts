@@ -340,7 +340,7 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
   if (baseSha) {
     return [
       `Incremental review (#23): scanned only the changes since the last reviewed commit (\`${baseSha.slice(0, 7)}\`); ` +
-        `earlier findings remain in this summary and were not re-scanned. ` +
+        `earlier prowl-review summary comments remain on the PR and were not re-scanned. ` +
         `Use --no-incremental (or review.incremental: false) to re-scan the full PR.`
     ];
   }
@@ -348,6 +348,14 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
     return ["Could not compute the incremental delta (history may have changed); ran a full review (#23)."];
   }
   return [];
+}
+
+function submitOptionsForReview(meta: PullRequestMeta, incrementalBaseSha: string | undefined): SubmitReviewOptions {
+  return {
+    commitId: meta.headSha,
+    headSha: meta.headSha,
+    ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {})
+  };
 }
 
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
@@ -428,10 +436,8 @@ export async function reviewPullRequest(
     if (priorSha && priorSha !== meta.headSha) {
       try {
         const delta = await compareDiff(octokit, ref, priorSha, meta.headSha);
-        if (delta && delta.trim().length > 0) {
-          reviewDiff = delta;
-          incrementalBaseSha = priorSha;
-        }
+        reviewDiff = delta;
+        incrementalBaseSha = priorSha;
       } catch {
         incrementalFallback = true;
       }
@@ -485,7 +491,7 @@ export async function reviewPullRequest(
     };
     if (!options.dryRun) {
       try {
-        await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+        await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha));
         result.posted = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -685,7 +691,7 @@ export async function reviewPullRequest(
   };
   if (!options.dryRun) {
     try {
-      await submit(octokit, ref, payload, { commitId: meta.headSha, headSha: meta.headSha });
+      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha));
       result.posted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

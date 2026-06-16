@@ -253,6 +253,32 @@ describe("reviewPullRequest", () => {
     expect(reviewInput.diff).not.toContain("src/a.ts"); // full-PR file not re-scanned
     expect(result.payload.body).toContain("Incremental review");
     expect(result.payload.body).toContain("old-sha"); // sha7 disclosure
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
+  });
+
+  it("treats an empty compare diff as an incremental no-op (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const fetchComparisonDiff = vi.fn(async () => "");
+    const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchComparisonDiff).toHaveBeenCalledWith(octokit, ref, "old-sha", "head");
+    expect(result.incremental).toBe(true);
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.gatherGrounding).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(result.payload.body).toContain("No reviewable changes since the last reviewed commit");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
   });
 
   it("reviews the full PR when there is no prior reviewed SHA (#23)", async () => {

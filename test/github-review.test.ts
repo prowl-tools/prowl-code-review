@@ -89,6 +89,30 @@ describe("planPublish", () => {
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
 
+  it("can create a fresh summary while carrying forward prior dedup state", () => {
+    const prior = {
+      id: 99,
+      body:
+        `${REVIEW_MARKER}\n## prowl-review\n\nold unresolved summary finding\n` +
+        serializeState({ v: 1, lastReviewedSha: "old-sha", postedFindings: ["fp-a"] })
+    };
+    const plan = planPublish({
+      payload: payload({
+        body: `${REVIEW_MARKER}\n## prowl-review\n\nnew delta summary`,
+        comments: [comment({ fingerprint: "fp-a" }), comment({ fingerprint: "fp-b" })]
+      }),
+      priorComment: prior,
+      headSha: "sha2",
+      preservePriorSummary: true
+    });
+
+    expect(plan.priorCommentId).toBeUndefined();
+    expect(plan.newInlineComments.map((c) => c.fingerprint)).toEqual(["fp-b"]);
+    expect(plan.state).toEqual({ v: 1, lastReviewedSha: "sha2", postedFindings: ["fp-a", "fp-b"] });
+    expect(plan.summaryBody).toContain("new delta summary");
+    expect(plan.summaryBody).not.toContain("old unresolved summary finding");
+  });
+
   it("can leave unposted inline findings out of persisted state", () => {
     const plan = planPublish({
       payload: payload(),
@@ -200,6 +224,39 @@ describe("submitReview", () => {
     expect((updateComment.mock.calls[0][0] as { comment_id: number }).comment_id).toBe(77);
     // The single finding was already posted last push → no new inline comment.
     expect(createReview).not.toHaveBeenCalled();
+  });
+
+  it("preserves the prior summary when requested and still dedups inline findings", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\nold summary\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([prior]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({
+        body: `${REVIEW_MARKER}\n## prowl-review\n\nnew delta summary`,
+        comments: [comment({ fingerprint: "fp-a" }), comment({ fingerprint: "fp-b" })]
+      }),
+      { commitId: "head2", headSha: "head2", preservePriorSummary: true }
+    );
+
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { comments?: Array<{ body?: string }> };
+    expect(review.comments).toHaveLength(1);
+    expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-b");
+    expect(createComment).toHaveBeenCalledTimes(1);
+    const created = createComment.mock.calls[0][0] as { body: string };
+    expect(created.body).toContain("new delta summary");
+    expect(parseState(created.body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head2",
+      postedFindings: ["fp-a", "fp-b"]
+    });
   });
 
   it("updates the summary even when there are no new inline findings", async () => {
