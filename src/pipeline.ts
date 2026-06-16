@@ -358,6 +358,21 @@ function submitOptionsForReview(meta: PullRequestMeta, incrementalBaseSha: strin
   };
 }
 
+function filterAndGuardDiffFiles(
+  files: DiffFile[],
+  ignorePatterns: readonly string[],
+  diffLimits: DiffLimits | undefined
+): { files: DiffFile[]; skipped: SkippedFile[] } {
+  // Keep sensitive files out of the review entirely and out of size budgets.
+  const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(files);
+  // Drop generated/vendored files (#19) before size guards so they don't burn the
+  // budget; reported as skipped, never dropped silently. Omitted config → built-in
+  // defaults; an explicit list (including []) replaces them.
+  const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
+  const guarded = applyDiffLimits({ files: keptFiles }, diffLimits);
+  return { files: guarded.files, skipped: [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped] };
+}
+
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
 function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   const changed: Record<string, number[]> = {};
@@ -445,18 +460,13 @@ export async function reviewPullRequest(
   }
   const incrementalNotesList = incrementalNotes(incrementalBaseSha, incrementalFallback);
 
-  const parsed = parseDiff(reviewDiff);
-  // Keep sensitive files out of the review entirely and out of size budgets.
-  const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(parsed.files);
-  // Drop generated/vendored files (#19) before size guards so they don't burn the
-  // budget; reported as skipped, never dropped silently. Omitted config → built-in
-  // defaults; an explicit list (including []) replaces them.
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
-  const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
-  const safeParsed = { files: keptFiles };
-  const guarded = applyDiffLimits(safeParsed, options.diffLimits);
-  const reviewFiles = guarded.files;
-  const skipped: SkippedFile[] = [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped];
+  const parsed = parseDiff(reviewDiff);
+  const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
+  const publishFiles =
+    incrementalBaseSha === undefined
+      ? reviewFiles
+      : filterAndGuardDiffFiles(parseDiff(diff).files, ignorePatterns, options.diffLimits).files;
 
   if (reviewFiles.length === 0) {
     const reviewResult = emptyReviewResult();
@@ -535,8 +545,9 @@ export async function reviewPullRequest(
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
   }
-  if (sensitiveSkipped.length > 0) {
-    redactionNotes.push(`Skipped ${sensitiveSkipped.length} sensitive file(s) — kept out of the prompt.`);
+  const sensitiveSkipCount = skipped.filter((file) => file.reason === "sensitive").length;
+  if (sensitiveSkipCount > 0) {
+    redactionNotes.push(`Skipped ${sensitiveSkipCount} sensitive file(s) — kept out of the prompt.`);
   }
 
   let context: string | undefined;
@@ -671,7 +682,7 @@ export async function reviewPullRequest(
 
   const payload = buildReviewPayload({
     findings: reviewResult.findings,
-    diff: { files: reviewFiles },
+    diff: { files: publishFiles },
     summaryBody,
     event: options.event,
     agentPrompt: options.agentPrompt,
