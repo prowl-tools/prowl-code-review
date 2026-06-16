@@ -380,6 +380,39 @@ describe("review command action env helpers", () => {
       inputTokens: 1_000_000
     });
   });
+
+  it("includes the risk tier in cost output only when present", () => {
+    const root = tempDir();
+    const summaryPath = join(root, "summary.md");
+    const summaryWithoutTierPath = join(root, "summary-no-tier.md");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const baseOptions = {
+      owner: "o",
+      repo: "r",
+      pullNumber: 7,
+      root,
+      providerConfig: { provider: "openai", model: "gpt-5", apiKey: "k" },
+      env: { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summaryPath } as NodeJS.ProcessEnv
+    };
+
+    reportReviewCommandResult(reviewCommandResult({ riskTier: "minimal" }), baseOptions);
+
+    const costLine = logSpy.mock.calls.map(([line]) => String(line)).find((line) => line.startsWith("prowl-review cost:"));
+    expect(costLine).toContain("risk tier: minimal");
+    expect(readFileSync(summaryPath, "utf8")).toContain("risk tier: minimal");
+
+    logSpy.mockClear();
+    reportReviewCommandResult(reviewCommandResult(), {
+      ...baseOptions,
+      env: { GITHUB_ACTIONS: "true", GITHUB_STEP_SUMMARY: summaryWithoutTierPath } as NodeJS.ProcessEnv
+    });
+
+    const costLineWithoutTier = logSpy.mock.calls
+      .map(([line]) => String(line))
+      .find((line) => line.startsWith("prowl-review cost:"));
+    expect(costLineWithoutTier).not.toContain("risk tier:");
+    expect(readFileSync(summaryWithoutTierPath, "utf8")).not.toContain("risk tier:");
+  });
 });
 
 describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () => {
