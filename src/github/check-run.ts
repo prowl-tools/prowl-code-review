@@ -94,6 +94,9 @@ function gateSummaryLine(input: {
     if (approval.event === "REQUEST_CHANGES") {
       return `Gate: ${blocking} finding(s) at or above \`${approval.requestChangesAt}\` — requesting changes (this check fails).`;
     }
+    if (approval.coverageDegraded) {
+      return "Gate: review coverage degraded — approval withheld (this check passes).";
+    }
     return `Gate: no findings at or above \`${approval.requestChangesAt}\` — this check passes.`;
   }
   if (failOn !== undefined) {

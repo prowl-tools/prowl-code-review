@@ -104,7 +104,7 @@ export interface PipelineDeps {
   detectBreakGlass?: (
     octokit: OctokitLike,
     ref: PullRequestRef,
-    options?: { botLogin?: string }
+    options?: { botLogin?: string; createdAfter?: string }
   ) => Promise<BreakGlassSignal>;
 }
 
@@ -519,13 +519,14 @@ async function resolveApprovalDecision(
   octokit: OctokitLike,
   ref: PullRequestRef,
   findings: Finding[],
-  config: ApprovalConfig | undefined
+  config: ApprovalConfig | undefined,
+  options: { coverageDegraded?: boolean; breakGlassCreatedAfter?: string } = {}
 ): Promise<ApprovalDecision> {
   let breakGlass: BreakGlassSignal | undefined;
   if (config?.enabled === true && config.breakGlass !== false) {
-    breakGlass = await detect(octokit, ref, {});
+    breakGlass = await detect(octokit, ref, { createdAfter: options.breakGlassCreatedAfter });
   }
-  return planApprovalDecision({ findings, config, breakGlass });
+  return planApprovalDecision({ findings, config, breakGlass, coverageDegraded: options.coverageDegraded });
 }
 
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
@@ -703,7 +704,8 @@ export async function reviewPullRequest(
       octokit,
       ref,
       reviewResult.findings,
-      options.approval
+      options.approval,
+      { coverageDegraded: true, breakGlassCreatedAfter: meta.headPushedAt }
     );
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
@@ -889,7 +891,8 @@ export async function reviewPullRequest(
     octokit,
     ref,
     reviewResult.findings,
-    options.approval
+    options.approval,
+    { coverageDegraded: degraded, breakGlassCreatedAfter: meta.headPushedAt }
   );
 
   const summaryBody = buildWalkthrough({

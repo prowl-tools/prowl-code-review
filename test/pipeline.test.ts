@@ -597,6 +597,55 @@ describe("reviewPullRequest", () => {
       expect(result.payload.body).toContain("maintainer");
     });
 
+    it("passes the head push timestamp to break-glass detection", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.fetchPullRequest.mockResolvedValue({
+        meta: { ...meta, headPushedAt: "2026-06-17T21:45:23Z" },
+        diff: DIFF
+      });
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectBreakGlass).toHaveBeenCalledWith(
+        octokit,
+        ref,
+        expect.objectContaining({ createdAfter: "2026-06-17T21:45:23Z" })
+      );
+    });
+
+    it("does not approve a degraded clean review", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.gatherContext.mockRejectedValue(
+        new ContextRetrievalError("context unavailable", {
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+          rounds: 1,
+          notes: []
+        })
+      );
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("not approving");
+      expect(result.payload.body).toContain("Review incomplete");
+    });
+
     it("drives the #24 check conclusion from the rubric (request-changes → failure)", async () => {
       const submitCheckRun = vi.fn(async () => {});
       const deps = { ...makeDeps(), submitCheckRun };

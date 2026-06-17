@@ -64,6 +64,8 @@ export interface OctokitLike {
           id: number;
           body?: string;
           user?: { login?: string } | null;
+          /** Comment creation timestamp, used to expire break-glass overrides on new pushes. */
+          created_at?: string;
           /** Author's relationship to the repo; gates break-glass overrides (#52). */
           author_association?: string;
         }>;

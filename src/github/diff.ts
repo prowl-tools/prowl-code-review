@@ -22,6 +22,8 @@ export interface PullRequestMeta {
   baseSha: string;
   /** Head branch commit SHA. */
   headSha: string;
+  /** Timestamp of the head repository's latest push, when GitHub provides it. */
+  headPushedAt?: string;
   /** Whether the pull request is currently a draft. */
   draft: boolean;
   /** GitHub pull request state. */
@@ -51,7 +53,7 @@ interface RawPullRequest {
   /** Base branch information. */
   base: { sha: string };
   /** Head branch information. */
-  head: { sha: string };
+  head: { sha: string; repo?: { pushed_at?: string | null } | null };
   /** Whether the pull request is currently a draft. */
   draft?: boolean;
   /** GitHub pull request state. */
@@ -101,6 +103,7 @@ export async function fetchPullRequest(
       body: pr.body,
       baseSha: pr.base.sha,
       headSha: pr.head.sha,
+      ...(pr.head.repo?.pushed_at ? { headPushedAt: pr.head.repo.pushed_at } : {}),
       draft: pr.draft ?? false,
       state: pr.state,
       author: pr.user?.login ?? null,
