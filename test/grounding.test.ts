@@ -268,7 +268,7 @@ describe("gatherGrounding", () => {
 
 /** Arg-aware exec: returns per-tool stdout/code keyed on the command. */
 function execByTool(map: { ruff?: Partial<ExecResult>; gitleaks?: Partial<ExecResult> }): Exec {
-  return vi.fn(async (command: string): Promise<ExecResult> => {
+  return vi.fn(async (command: string, _args: string[], _cwd: string, _options?: unknown): Promise<ExecResult> => {
     const base = { stdout: "[]", stderr: "", code: 0 };
     if (command === "ruff") return { ...base, ...map.ruff };
     if (command === "gitleaks") return { ...base, ...map.gitleaks };
@@ -292,7 +292,17 @@ describe("gatherGrounding — Ruff (#16b)", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ file: "app/x.py", line: 3, category: "lint", title: "F401", severity: "minor" })
     );
+    const ruffCall = (exec as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === "ruff");
+    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--force-exclude", "--", "app/x.py"]);
     expect(result.notes.join(" ")).toContain("Ruff: 1 grounding finding");
+  });
+
+  it("does not invoke Ruff when no Python files changed", async () => {
+    const exec = execByTool({ ruff: { stdout: ruffJson, code: 1 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["README.md"], exec });
+    const ruffCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "ruff");
+    expect(ruffCalls).toHaveLength(0);
+    expect(result.findings).toEqual([]);
   });
 
   it("drops Ruff findings outside the changed lines", async () => {
@@ -312,6 +322,14 @@ describe("gatherGrounding — Ruff (#16b)", () => {
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Ruff not available");
   });
+
+  it("notes malformed Ruff JSON when violations exit with no parseable findings", async () => {
+    const exec = execByTool({ ruff: { stdout: "[", stderr: "truncated json", code: 1 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["app/x.py"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Ruff failed (exit 1)");
+    expect(result.notes.join(" ")).toContain("truncated json");
+  });
 });
 
 describe("gatherGrounding — Gitleaks (#16b)", () => {
@@ -330,7 +348,33 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(result.findings).toContainEqual(
       expect.objectContaining({ file: "config.py", line: 5, severity: "critical", category: "security", title: "generic-api-key" })
     );
+    const gitleaksCall = (exec as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === "gitleaks");
+    expect(gitleaksCall?.[1]).toEqual([
+      "detect",
+      "--no-git",
+      "--source",
+      "config.py",
+      "--report-format",
+      "json",
+      "--report-path",
+      "-",
+      "--redact",
+      "--no-banner",
+      "--ignore-gitleaks-allow",
+      "--gitleaks-ignore-path",
+      expect.any(String)
+    ]);
+    expect(gitleaksCall?.[1]).not.toContain("/dev/stdout");
+    expect(gitleaksCall?.[3]).toMatchObject({ env: { GITLEAKS_CONFIG: "", GITLEAKS_CONFIG_TOML: "" } });
     expect(result.notes.join(" ")).toContain("Gitleaks: 1 potential secret");
+  });
+
+  it("does not invoke Gitleaks when there are no safe changed paths", async () => {
+    const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: [], exec });
+    const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
+    expect(gitleaksCalls).toHaveLength(0);
+    expect(result.findings).toEqual([]);
   });
 
   it("drops leaks outside the changed lines", async () => {
@@ -349,6 +393,14 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["config.py"], exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Gitleaks not available");
+  });
+
+  it("notes malformed Gitleaks JSON when leaks exit with no parseable findings", async () => {
+    const exec = execByTool({ gitleaks: { stdout: "[", stderr: "truncated json", code: 1 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["config.py"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Gitleaks failed (exit 1)");
+    expect(result.notes.join(" ")).toContain("truncated json");
   });
 });
 
