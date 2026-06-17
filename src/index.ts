@@ -199,6 +199,14 @@ export type {
 
 // Multi-pass specialized review + judge/dedup.
 export {
+  LANGUAGES,
+  detectLanguage,
+  isJavaScriptFamily,
+  summarizeLanguages,
+  type LanguageId,
+  type LanguageCount
+} from "./review/language.js";
+export {
   FindingSchema,
   parseFindings,
   parseFindingsResult,
