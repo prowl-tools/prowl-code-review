@@ -103,6 +103,8 @@ export function buildSharedSystem(input: {
   guidelines?: string;
   /** Known false-positive / learned patterns to avoid re-raising (#30). */
   learnedPatterns?: string;
+  /** Human labels of the languages this PR changes, for language-aware review (#5). */
+  languages?: string[];
 }): string {
   const sections: string[] = [
     "You are part of an automated code-review system reviewing a pull request diff.",
@@ -118,6 +120,14 @@ export function buildSharedSystem(input: {
     SIGNAL_DIRECTIVE,
     OUTPUT_SPEC
   ];
+  // Language-aware review (#5): the labels are derived by us from file extensions
+  // (a fixed allowlist), so this is trusted instruction text, not PR-supplied data.
+  if (input.languages && input.languages.length > 0) {
+    sections.push(
+      `This pull request changes code in: ${input.languages.join(", ")}. ` +
+        "Apply each language's idioms, standard library, and common pitfalls when reviewing."
+    );
+  }
   if (input.guidelines) {
     sections.push(
       [

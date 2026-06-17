@@ -139,3 +139,16 @@ describe("buildSharedSystem learned patterns (#30)", () => {
     expect(system).toContain("# Untrusted learned false-positive patterns");
   });
 });
+
+describe("buildSharedSystem language awareness (#5)", () => {
+  it("lists the PR's languages as trusted instruction text", () => {
+    const system = buildSharedSystem({ languages: ["TypeScript", "Python"] });
+    expect(system).toContain("This pull request changes code in: TypeScript, Python.");
+    expect(system).toContain("Apply each language's idioms");
+  });
+
+  it("omits the language line when none are detected", () => {
+    expect(buildSharedSystem({})).not.toContain("This pull request changes code in:");
+    expect(buildSharedSystem({ languages: [] })).not.toContain("This pull request changes code in:");
+  });
+});
