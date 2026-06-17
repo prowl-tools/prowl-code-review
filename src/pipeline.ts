@@ -596,8 +596,10 @@ export async function reviewPullRequest(
   // contents to context retrieval or provider review prompts.
   let grounding: ReviewInput["grounding"];
   let groundingFindings: Finding[] = [];
+  let directGroundingFindings: Finding[] = [];
   let groundingNotes: string[] = [];
   const groundingLineFiles = [...reviewFiles, ...secretScanFiles];
+  const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
   if (!options.skipGrounding && options.toolkitRoot && groundingLineFiles.length > 0) {
     try {
       const result = await ground({
@@ -612,12 +614,19 @@ export async function reviewPullRequest(
       groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
       const redacted = redactGroundingFindings(result.findings);
       groundingFindings = redacted.findings;
+      directGroundingFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
+      const promptGroundingFindings = groundingFindings.filter((finding) => !secretScanPathSet.has(finding.file));
       const redactionCount = redacted.count + redactedNotes.count;
       if (redactionCount > 0) {
         redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
       }
-      if (groundingFindings.length > 0) {
-        grounding = { findings: groundingFindings, summary: buildGroundingSummary(groundingFindings) };
+      if (directGroundingFindings.length > 0 && reviewFiles.length > 0) {
+        groundingNotes.push(
+          `Linter grounding: kept ${directGroundingFindings.length} sensitive-file secret finding(s) outside provider verification.`
+        );
+      }
+      if (promptGroundingFindings.length > 0) {
+        grounding = { findings: promptGroundingFindings, summary: buildGroundingSummary(promptGroundingFindings) };
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -786,6 +795,10 @@ export async function reviewPullRequest(
       maxTokens: reviewBudgetTokens
     }
   );
+  if (directGroundingFindings.length > 0) {
+    reviewResult.raw = [...reviewResult.raw, ...directGroundingFindings];
+    reviewResult.findings = [...directGroundingFindings, ...reviewResult.findings];
+  }
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
   // when the reviewer couldn't fully run — a specialist pass failed, verification
