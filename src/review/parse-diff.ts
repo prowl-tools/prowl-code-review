@@ -183,7 +183,7 @@ function parseDiffGitPaths(raw: string): { oldPath: string; newPath: string } | 
  * Parse a unified git diff (as returned by the GitHub API `format: "diff"`) into
  * a structured {@link ParsedDiff}. Pure and network-free.
  *
- * Handles added/modified/deleted/renamed and binary files, multiple hunks, and
+ * Handles added/modified/deleted/renamed/copied and binary files, multiple hunks, and
  * the `\ No newline at end of file` marker. Tracks old/new line numbers per line.
  */
 export function parseDiff(text: string): ParsedDiff {
@@ -233,6 +233,16 @@ export function parseDiff(text: string): ParsedDiff {
     if (raw.startsWith("rename to ")) {
       current.status = "renamed";
       current.path = decodeGitQuotedPath(raw.slice("rename to ".length));
+      continue;
+    }
+    if (raw.startsWith("copy from ")) {
+      current.status = "copied";
+      current.oldPath = decodeGitQuotedPath(raw.slice("copy from ".length));
+      continue;
+    }
+    if (raw.startsWith("copy to ")) {
+      current.status = "copied";
+      current.path = decodeGitQuotedPath(raw.slice("copy to ".length));
       continue;
     }
     if (raw.startsWith("Binary files ") || raw.startsWith("GIT binary patch")) {
