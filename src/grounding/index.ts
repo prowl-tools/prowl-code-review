@@ -418,11 +418,11 @@ async function runRuff(
     notes.push(`Ruff: linted ${limited.length}/${files.length} changed files (file cap).`);
   }
 
-  // `--force-exclude` so a repo's own exclude config can't accidentally re-include
-  // odd paths; `--` terminates flags before the file list.
+  // `--isolated` ignores repo config. Avoid `--force-exclude` so directly passed
+  // changed files cannot be suppressed by PR-supplied gitignore/exclude rules.
   const result = await params.exec(
     "ruff",
-    ["check", "--output-format", "json", "--isolated", "--force-exclude", "--", ...limited],
+    ["check", "--output-format", "json", "--isolated", "--", ...limited],
     params.root
   );
 
@@ -526,7 +526,7 @@ async function runGitleaks(
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
-  const files = [...new Set(safeRelativePaths([...params.changedPaths, ...(params.secretScanPaths ?? [])]))];
+  const files = [...new Set(safeRelativePaths([...(params.secretScanPaths ?? []), ...params.changedPaths]))];
   if (files.length === 0) {
     return { findings: [], notes: [] };
   }

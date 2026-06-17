@@ -293,7 +293,8 @@ describe("gatherGrounding — Ruff (#16b)", () => {
       expect.objectContaining({ file: "app/x.py", line: 3, category: "lint", title: "F401", severity: "minor" })
     );
     const ruffCall = (exec as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === "ruff");
-    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--force-exclude", "--", "app/x.py"]);
+    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--", "app/x.py"]);
+    expect(ruffCall?.[1]).not.toContain("--force-exclude");
     expect(result.notes.join(" ")).toContain("Ruff: 1 grounding finding");
   });
 
@@ -390,6 +391,23 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(gitleaksCalls[0][1]).toContain(".env");
     const ruffCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "ruff");
     expect(ruffCalls).toHaveLength(0);
+  });
+
+  it("prioritizes secret-only paths before applying the Gitleaks file cap", async () => {
+    const exec = execByTool({ gitleaks: { stdout: "[]", code: 0 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/b.ts"],
+      secretScanPaths: [".env"],
+      exec,
+      limits: { maxFiles: 2 }
+    });
+
+    const sources = (exec as ReturnType<typeof vi.fn>).mock.calls
+      .filter((call) => call[0] === "gitleaks")
+      .map((call) => call[1][call[1].indexOf("--source") + 1]);
+    expect(sources).toEqual([".env", "src/a.ts"]);
+    expect(result.notes.join(" ")).toContain("scanned 2/3");
   });
 
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
