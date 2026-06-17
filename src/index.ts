@@ -109,6 +109,7 @@ export {
   submitReview,
   planPublish,
   fetchPriorReviewState,
+  hasActiveRequestChanges,
   type SubmitReviewOptions,
   type PublishPlan,
   type PriorSummaryComment

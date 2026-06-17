@@ -22,8 +22,8 @@ export interface PullRequestMeta {
   baseSha: string;
   /** Head branch commit SHA. */
   headSha: string;
-  /** Timestamp of the head repository's latest push, when GitHub provides it. */
-  headPushedAt?: string;
+  /** Timestamp of the current head commit, when GitHub provides it. */
+  headCommittedAt?: string;
   /** Whether the pull request is currently a draft. */
   draft: boolean;
   /** GitHub pull request state. */
@@ -53,7 +53,10 @@ interface RawPullRequest {
   /** Base branch information. */
   base: { sha: string };
   /** Head branch information. */
-  head: { sha: string; repo?: { pushed_at?: string | null } | null };
+  head: {
+    sha: string;
+    repo?: { name?: string; owner?: { login?: string | null } | null } | null;
+  };
   /** Whether the pull request is currently a draft. */
   draft?: boolean;
   /** GitHub pull request state. */
@@ -77,6 +80,35 @@ function comparisonStatus(data: unknown): string | undefined {
   return typeof status === "string" ? status : undefined;
 }
 
+interface RawCommit {
+  commit?: {
+    committer?: { date?: string | null } | null;
+    author?: { date?: string | null } | null;
+  };
+}
+
+async function fetchHeadCommittedAt(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  pr: RawPullRequest
+): Promise<string | undefined> {
+  const repo = pr.head.repo;
+  const owner = repo?.owner?.login ?? ref.owner;
+  const repoName = repo?.name ?? ref.repo;
+
+  try {
+    const response = await octokit.rest.repos.getCommit({
+      owner,
+      repo: repoName,
+      ref: pr.head.sha
+    });
+    const commit = response.data as RawCommit;
+    return commit.commit?.committer?.date ?? commit.commit?.author?.date ?? undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Fetch a pull request's metadata and raw unified diff via the GitHub REST API.
  * Two calls: a normal `pulls.get` for metadata and a `format: "diff"` `pulls.get`
@@ -88,6 +120,7 @@ export async function fetchPullRequest(
 ): Promise<FetchedPullRequest> {
   const metaResponse = await octokit.rest.pulls.get({ ...ref });
   const pr = metaResponse.data as RawPullRequest;
+  const headCommittedAt = await fetchHeadCommittedAt(octokit, ref, pr);
 
   const diffResponse = await octokit.rest.pulls.get({
     ...ref,
@@ -103,7 +136,7 @@ export async function fetchPullRequest(
       body: pr.body,
       baseSha: pr.base.sha,
       headSha: pr.head.sha,
-      ...(pr.head.repo?.pushed_at ? { headPushedAt: pr.head.repo.pushed_at } : {}),
+      ...(headCommittedAt ? { headCommittedAt } : {}),
       draft: pr.draft ?? false,
       state: pr.state,
       author: pr.user?.login ?? null,

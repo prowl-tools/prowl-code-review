@@ -100,6 +100,7 @@ describe("planCheckRun with the approval rubric (#52)", () => {
       requestChangesAt: "critical",
       overridden: false,
       coverageDegraded: false,
+      clearsPriorRequestChanges: false,
       reason: "test",
       ...over
     };
@@ -131,6 +132,15 @@ describe("planCheckRun with the approval rubric (#52)", () => {
     });
     expect(plan.conclusion).toBe("success");
     expect(plan.summary).toContain("approval withheld");
+  });
+
+  it("explains when approval clears a prior request-changes review", () => {
+    const plan = planCheckRun({
+      findings: [],
+      approval: decision({ event: "APPROVE", blocking: 0, clearsPriorRequestChanges: true })
+    });
+    expect(plan.conclusion).toBe("success");
+    expect(plan.summary).toContain("clear a previous prowl-review change request");
   });
 
   it("passes (and records the override) on a break-glass approval", () => {

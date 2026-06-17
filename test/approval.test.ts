@@ -73,6 +73,17 @@ describe("planApprovalDecision (#52)", () => {
     expect(decision.overridden).toBe(false);
   });
 
+  it("approves to clear a prior request-changes review even when approveWhenClean is off", () => {
+    const decision = planApprovalDecision({
+      findings: [finding({ severity: "major" })],
+      config: enabled,
+      priorRequestChanges: true
+    });
+    expect(decision.event).toBe("APPROVE");
+    expect(decision.clearsPriorRequestChanges).toBe(true);
+    expect(decision.reason).toContain("clear a prior");
+  });
+
   it("does not approve a degraded clean review", () => {
     const decision = planApprovalDecision({
       findings: [],
@@ -82,6 +93,17 @@ describe("planApprovalDecision (#52)", () => {
     expect(decision.event).toBe("COMMENT");
     expect(decision.coverageDegraded).toBe(true);
     expect(decision.reason).toContain("degraded");
+  });
+
+  it("does not approve a degraded review just to clear a prior request", () => {
+    const decision = planApprovalDecision({
+      findings: [],
+      config: enabled,
+      coverageDegraded: true,
+      priorRequestChanges: true
+    });
+    expect(decision.event).toBe("COMMENT");
+    expect(decision.clearsPriorRequestChanges).toBe(false);
   });
 
   describe("break-glass override", () => {
@@ -159,6 +181,13 @@ describe("approvalNotes (#52)", () => {
       planApprovalDecision({ findings: [], config: { enabled: true, approveWhenClean: true } })
     );
     expect(notes[0]).toContain("approved");
+  });
+
+  it("notes an approval that clears a prior request-changes review", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({ findings: [], config: enabled, priorRequestChanges: true })
+    );
+    expect(notes[0]).toContain("clear a previous");
   });
 
   it("notes when approval is withheld for degraded coverage", () => {

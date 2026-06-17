@@ -97,6 +97,12 @@ function gateSummaryLine(input: {
     if (approval.coverageDegraded) {
       return "Gate: review coverage degraded — approval withheld (this check passes).";
     }
+    if (approval.clearsPriorRequestChanges) {
+      return (
+        `Gate: no findings at or above \`${approval.requestChangesAt}\` — ` +
+        "approving to clear a previous prowl-review change request (this check passes)."
+      );
+    }
     return `Gate: no findings at or above \`${approval.requestChangesAt}\` — this check passes.`;
   }
   if (failOn !== undefined) {

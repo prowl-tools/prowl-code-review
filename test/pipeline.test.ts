@@ -575,6 +575,24 @@ describe("reviewPullRequest", () => {
       expect(result.payload.event).toBe("COMMENT");
     });
 
+    it("approves a clean run to clear an active prior request-changes review", async () => {
+      const detectPriorRequestChanges = vi.fn(async () => true);
+      const deps = { ...makeDeps(), detectPriorRequestChanges };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectPriorRequestChanges).toHaveBeenCalledWith(octokit, ref);
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.approval?.clearsPriorRequestChanges).toBe(true);
+      expect(result.payload.event).toBe("APPROVE");
+      expect(result.payload.body).toContain("clear a previous prowl-review change request");
+    });
+
     it("force-approves and records the override on a trusted break-glass comment", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
       const deps = { ...makeDeps(), detectBreakGlass };
@@ -597,11 +615,11 @@ describe("reviewPullRequest", () => {
       expect(result.payload.body).toContain("maintainer");
     });
 
-    it("passes the head push timestamp to break-glass detection", async () => {
+    it("passes the head commit timestamp to break-glass detection", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: false }));
       const deps = { ...makeDeps(), detectBreakGlass };
       deps.fetchPullRequest.mockResolvedValue({
-        meta: { ...meta, headPushedAt: "2026-06-17T21:45:23Z" },
+        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
         diff: DIFF
       });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));

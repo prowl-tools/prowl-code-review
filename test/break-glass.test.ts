@@ -18,7 +18,20 @@ interface Comment {
 }
 
 function mockOctokit(comments: Comment[]) {
-  const listComments = vi.fn(async () => ({ data: comments }));
+  const listComments = vi.fn(async (params: { per_page?: number; page?: number; since?: string }) => {
+    const since = params.since ? Date.parse(params.since) : undefined;
+    const visible =
+      since === undefined
+        ? comments
+        : comments.filter((comment) => {
+            const updatedAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
+            return Number.isFinite(updatedAt) && updatedAt > since;
+          });
+    const perPage = params.per_page ?? 30;
+    const page = params.page ?? 1;
+    const start = (page - 1) * perPage;
+    return { data: visible.slice(start, start + perPage) };
+  });
   const octokit = { rest: { issues: { listComments } } } as unknown as OctokitLike;
   return { octokit, listComments };
 }
@@ -90,17 +103,68 @@ describe("detectBreakGlass (#52)", () => {
   });
 
   it("returns the newest trusted match when several exist", async () => {
-    // Listed newest-first (sort=created/desc), so the first trusted match wins.
+    // GitHub lists issue comments oldest-first, so the last trusted match wins.
     const { octokit, listComments } = mockOctokit([
-      { id: 2, body: "@prowl-review break glass", user: { login: "second" }, author_association: "MEMBER" },
-      { id: 1, body: "@prowl-review break glass", user: { login: "first" }, author_association: "OWNER" }
+      {
+        id: 1,
+        body: "@prowl-review break glass",
+        user: { login: "first" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      },
+      {
+        id: 2,
+        body: "@prowl-review break glass",
+        user: { login: "second" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T15:00:00Z"
+      }
     ]);
     const signal = await detectBreakGlass(octokit, ref);
     expect(signal.actor).toBe("second");
-    expect(listComments).toHaveBeenCalledWith(expect.objectContaining({ sort: "created", direction: "desc" }));
+    expect(listComments).toHaveBeenCalledWith(
+      expect.not.objectContaining({ sort: expect.anything(), direction: expect.anything() })
+    );
   });
 
-  it("ignores override comments from before the current head push", async () => {
+  it("paginates in API order and still chooses a newer override", async () => {
+    const filler = Array.from({ length: 99 }, (_, index) => ({
+      id: index + 2,
+      body: "discussion",
+      user: { login: "reviewer" },
+      author_association: "MEMBER",
+      created_at: "2026-06-17T14:01:00Z"
+    }));
+    const { octokit, listComments } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass",
+        user: { login: "first" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      },
+      ...filler,
+      {
+        id: 101,
+        body: "@prowl-review break glass",
+        user: { login: "second" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T15:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { createdAfter: "2026-06-17T13:00:00Z" });
+
+    expect(signal.actor).toBe("second");
+    expect(listComments).toHaveBeenCalledTimes(2);
+    expect(listComments).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ page: 1, since: "2026-06-17T13:00:00Z" })
+    );
+    expect(listComments).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 2 }));
+  });
+
+  it("ignores override comments from before the current head commit", async () => {
     const { octokit } = mockOctokit([
       {
         id: 1,
@@ -115,7 +179,7 @@ describe("detectBreakGlass (#52)", () => {
     expect(signal.active).toBe(false);
   });
 
-  it("honors override comments after the current head push", async () => {
+  it("honors override comments after the current head commit", async () => {
     const { octokit } = mockOctokit([
       {
         id: 1,

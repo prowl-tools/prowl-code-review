@@ -61,6 +61,8 @@ export interface ApprovalDecision {
   overridden: boolean;
   /** True when approval was withheld because review coverage was degraded. */
   coverageDegraded: boolean;
+  /** True when approval clears an earlier prowl-review request-changes review. */
+  clearsPriorRequestChanges: boolean;
   /** Login of the override actor, when overridden (audit). */
   overrideActor?: string;
   /** One-line human-readable reason for the decision. */
@@ -76,10 +78,12 @@ export function planApprovalDecision(input: {
   config?: ApprovalConfig;
   breakGlass?: BreakGlassSignal;
   coverageDegraded?: boolean;
+  priorRequestChanges?: boolean;
 }): ApprovalDecision {
   const config = input.config ?? {};
   const requestChangesAt = config.requestChangesAt ?? DEFAULT_REQUEST_CHANGES_AT;
   const coverageDegraded = input.coverageDegraded === true;
+  const priorRequestChanges = input.priorRequestChanges === true;
   const blocking = input.findings.filter(
     (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[requestChangesAt]
   ).length;
@@ -92,6 +96,7 @@ export function planApprovalDecision(input: {
       requestChangesAt,
       overridden: false,
       coverageDegraded,
+      clearsPriorRequestChanges: false,
       reason: "Approval gate disabled; posting as a comment."
     };
   }
@@ -107,6 +112,7 @@ export function planApprovalDecision(input: {
         requestChangesAt,
         overridden: true,
         coverageDegraded,
+        clearsPriorRequestChanges: false,
         overrideActor: actor,
         reason:
           `Break-glass override${actor ? ` by @${actor}` : ""}: approving past ` +
@@ -120,6 +126,7 @@ export function planApprovalDecision(input: {
       requestChangesAt,
       overridden: false,
       coverageDegraded,
+      clearsPriorRequestChanges: false,
       reason: `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes.`
     };
   }
@@ -132,11 +139,12 @@ export function planApprovalDecision(input: {
       requestChangesAt,
       overridden: false,
       coverageDegraded,
+      clearsPriorRequestChanges: false,
       reason: "Review coverage degraded; posting as a comment instead of approving."
     };
   }
 
-  if (config.approveWhenClean === true) {
+  if (priorRequestChanges || config.approveWhenClean === true) {
     return {
       enabled: true,
       event: "APPROVE",
@@ -144,7 +152,10 @@ export function planApprovalDecision(input: {
       requestChangesAt,
       overridden: false,
       coverageDegraded,
-      reason: `No findings at or above ${requestChangesAt}; approving.`
+      clearsPriorRequestChanges: priorRequestChanges,
+      reason: priorRequestChanges
+        ? `No findings at or above ${requestChangesAt}; approving to clear a prior prowl-review change request.`
+        : `No findings at or above ${requestChangesAt}; approving.`
     };
   }
 
@@ -155,6 +166,7 @@ export function planApprovalDecision(input: {
     requestChangesAt,
     overridden: false,
     coverageDegraded,
+    clearsPriorRequestChanges: false,
     reason: `No findings at or above ${requestChangesAt}; posting as a comment.`
   };
 }
@@ -186,6 +198,12 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
   }
   if (decision.coverageDegraded) {
     return ["Approval gate (#52): not approving because review coverage was degraded."];
+  }
+  if (decision.clearsPriorRequestChanges) {
+    return [
+      `Approval gate (#52): approved to clear a previous prowl-review change request — no findings at or above ` +
+        `\`${decision.requestChangesAt}\`.`
+    ];
   }
   if (decision.event === "APPROVE") {
     return [`Approval gate (#52): approved — no findings at or above \`${decision.requestChangesAt}\`.`];
