@@ -342,6 +342,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({}, { review: { incremental: true } }, env).incremental).toBe(true);
   });
 
+  it("passes the checkRun config straight through (#24)", () => {
+    expect(resolveReviewOptions({}, {}, env).checkRun).toBeUndefined();
+    const cfg = { checkRun: { enabled: true, failOn: "critical" as const } };
+    expect(resolveReviewOptions({}, cfg, env).checkRun).toEqual({ enabled: true, failOn: "critical" });
+  });
+
   it("passes the riskTiering config straight through (#31)", () => {
     expect(resolveReviewOptions({}, {}, env).riskTiering).toBeUndefined(); // → tiering on with built-in thresholds
     const cfg = { riskTiering: { enabled: false } };
