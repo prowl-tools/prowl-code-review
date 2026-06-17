@@ -32,6 +32,19 @@ const IMPACT_BADGE: Record<Impact, string> = {
   low: "🟢 Low"
 };
 
+/** Map impact to a GitHub alert type so the callout's color tracks severity (#54). */
+const IMPACT_ALERT: Record<Impact, string> = {
+  high: "CAUTION",
+  medium: "WARNING",
+  low: "NOTE"
+};
+
+/** Render a 1–5 effort score as a filled/empty bar, e.g. ▰▰▰▱▱ (#54). */
+function effortBar(effort: number): string {
+  const filled = Math.max(0, Math.min(5, Math.round(effort)));
+  return "▰".repeat(filled) + "▱".repeat(5 - filled);
+}
+
 type LineDelta = { additions: number; deletions: number };
 
 export interface WalkthroughInput {
@@ -354,13 +367,28 @@ function nitpickDetail(finding: Finding): string {
   return parts.join("\n");
 }
 
-/** Render only blocking findings prominently; nitpicks go in their own section. */
+/** Escape a pre-rendered cell so a stray pipe/newline can't break a Markdown table. */
+function tableCellSafe(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ");
+}
+
+/**
+ * Render blocking findings as a compact table (severity · location · finding) —
+ * scannable rather than a flat bullet wall (#54). Nitpicks go in their own
+ * collapsed section.
+ */
 function findingsSection(findings: Finding[]): string {
   const blockers = findings.filter(isBlockingFinding);
   if (blockers.length === 0) {
     return "### Findings\n_No blocking issues found._";
   }
-  return ["### Findings", ...blockers.map(findingBullet)].join("\n");
+  const rows = blockers.map(
+    (finding) =>
+      `| ${SEVERITY_BADGE[finding.severity]} ${finding.severity} | ${tableCellSafe(
+        findingLocation(finding)
+      )} | **${escapeMarkdownParagraphFlat(finding.title)}** |`
+  );
+  return ["### Findings", "", "| Severity | Location | Finding |", "| :-- | :-- | :-- |", ...rows].join("\n");
 }
 
 /**
@@ -401,7 +429,8 @@ function notesSection(notes: string[] | undefined): string {
     return "";
   }
   return [
-    "> ⚠️ **Review notes**",
+    "> [!NOTE]",
+    "> **Review notes**",
     ...visible.map((note) => `> - ${escapeReviewNote(note)}`)
   ].join("\n");
 }
@@ -431,9 +460,11 @@ export function reviewCommentState(input: WalkthroughInput): ReviewCommentState 
   return input.degraded || partialCoverage ? "degraded" : "clean";
 }
 
-/** Render the "> ⚠️ Not reviewed" skip line, or "" when nothing was skipped. */
+/** Render the "Not reviewed" skip alert, or "" when nothing was skipped. */
 function skippedNoteBlock(skipped: SkippedFile[] | undefined): string {
-  return skipped && skipped.length > 0 ? `> ⚠️ **Not reviewed:** ${skippedFilesNote(skipped)}` : "";
+  return skipped && skipped.length > 0
+    ? `> [!NOTE]\n> **Not reviewed:** ${skippedFilesNote(skipped)}`
+    : "";
 }
 
 /** Render the optional Mermaid diagram block, or "" when none is provided. */
@@ -441,9 +472,18 @@ function diagramBlock(mermaid: string | undefined): string {
   return mermaid?.trim() ? ["### Diagram", fencedCodeBlock("mermaid", mermaid)].join("\n") : "";
 }
 
+/** Impact/effort/findings header as a GitHub alert keyed to impact (findings state, #54). */
+function impactAlert(impact: Impact, effort: number, counts: Record<Severity, number>): string {
+  return [
+    `> [!${IMPACT_ALERT[impact]}]`,
+    `> **Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effortBar(effort)} (${effort}/5) · ` +
+      `**Findings:** ${severityCountLine(counts)}`
+  ].join("\n");
+}
+
 /** Collapsed "Review info" block for the clean state: impact/effort/passes + benign notes. */
 function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: number): string {
-  const header = `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effort}/5${
+  const header = `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effortBar(effort)} (${effort}/5)${
     input.coverage ? ` · ${input.coverage.passed}/${input.coverage.total} passes` : ""
   }`;
   const lines = [header];
@@ -487,9 +527,10 @@ export function buildWalkthrough(input: WalkthroughInput): string {
     const counts = severityCounts(input.findings);
     sections.push(
       summarySection(input.summary),
-      `**Impact:** ${IMPACT_BADGE[impact]} · **Estimated effort:** ${effort}/5 · **Findings:** ${severityCountLine(counts)}`,
-      changedFilesSection(input.files, lineDeltas),
+      impactAlert(impact, effort, counts),
+      // Findings lead; the file inventory is secondary and stays collapsed below.
       findingsSection(input.findings),
+      changedFilesSection(input.files, lineDeltas),
       nitpickSection(input.findings),
       notesSection(input.notes)
     );
