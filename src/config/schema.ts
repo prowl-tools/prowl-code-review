@@ -148,6 +148,19 @@ const riskTieringSchema = z
   })
   .strict();
 
+/** Merge gate via the Checks API (#24). Opt-in; needs `checks: write`. */
+const checkRunSchema = z
+  .object({
+    /** Publish a Check Run summarizing the review. Default false (opt-in). */
+    enabled: z.boolean().optional(),
+    /**
+     * Severity at/above which the check fails (and can block merge via branch
+     * protection). Omit for an informational (neutral) check that never fails.
+     */
+    failOn: severityEnum.optional()
+  })
+  .strict();
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -182,6 +195,8 @@ export const configSchema = z
     specialists: specialistsSchema.optional(),
     /** Scale pass count + context to diff size/complexity (#31). */
     riskTiering: riskTieringSchema.optional(),
+    /** Merge gate via the Checks API (#24); opt-in. */
+    checkRun: checkRunSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

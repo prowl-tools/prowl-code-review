@@ -113,6 +113,17 @@ export {
   type PriorSummaryComment
 } from "./github/review.js";
 export {
+  planCheckRun,
+  submitCheckRun,
+  annotationLevelFor,
+  CHECK_RUN_NAME,
+  CHECK_ANNOTATION_BATCH,
+  type CheckRunPlan,
+  type CheckConclusion,
+  type CheckAnnotation,
+  type AnnotationLevel
+} from "./github/check-run.js";
+export {
   findingFingerprint,
   serializeState,
   parseState,
