@@ -40,6 +40,8 @@ export interface ReviewInput {
   guidelines?: string;
   /** Learned false-positive patterns (LEARNED_PATTERNS.md), if any (#30). */
   learnedPatterns?: string;
+  /** Human labels of languages this PR changes, for language-aware review (#5). */
+  languages?: string[];
   /** Specialist set; defaults to {@link DEFAULT_SPECIALISTS}. */
   specialists?: Specialist[];
   /**
@@ -149,7 +151,8 @@ export async function runReview(
   // Shared, byte-identical trusted instructions; untrusted PR content stays in prompt.
   const system = buildSharedSystem({
     guidelines: input.guidelines,
-    learnedPatterns: input.learnedPatterns
+    learnedPatterns: input.learnedPatterns,
+    languages: input.languages
   });
 
   const outcomes = await Promise.all(
