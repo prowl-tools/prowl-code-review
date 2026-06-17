@@ -93,6 +93,11 @@ const FILENAME_TO_LANGUAGE: Record<string, LanguageId> = {
   gnumakefile: "make"
 };
 
+/** Read only declared map entries; object-prototype keys are not language ids. */
+function lookupLanguage(map: Record<string, LanguageId>, key: string): LanguageId | undefined {
+  return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : undefined;
+}
+
 /** Return the basename of a repo path, tolerant of either slash style. */
 function basename(path: string): string {
   const normalized = path.replace(/\\/g, "/");
@@ -103,14 +108,15 @@ function basename(path: string): string {
 /** Detect a file's language by filename then extension, or undefined when unknown. */
 export function detectLanguage(path: string): LanguageId | undefined {
   const name = basename(path).toLowerCase();
-  if (name in FILENAME_TO_LANGUAGE) {
-    return FILENAME_TO_LANGUAGE[name];
+  const filenameLanguage = lookupLanguage(FILENAME_TO_LANGUAGE, name);
+  if (filenameLanguage) {
+    return filenameLanguage;
   }
   const dot = name.lastIndexOf(".");
   if (dot <= 0) {
     return undefined; // no extension, or a dotfile like ".gitignore"
   }
-  return EXTENSION_TO_LANGUAGE[name.slice(dot + 1)];
+  return lookupLanguage(EXTENSION_TO_LANGUAGE, name.slice(dot + 1));
 }
 
 /** True when a path is JavaScript or TypeScript (the ESLint-eligible languages). */
