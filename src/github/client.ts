@@ -91,6 +91,48 @@ export interface OctokitLike {
       /** Return the authenticated user's login for comment ownership checks. */
       getAuthenticated(): Promise<{ data: { login: string } }>;
     };
+    /** Checks API — the merge-gate Check Run (#24). */
+    checks: {
+      /** Create a completed check run with a conclusion + annotations. */
+      create(params: {
+        owner: string;
+        repo: string;
+        name: string;
+        head_sha: string;
+        status?: string;
+        conclusion?: string;
+        output?: {
+          title: string;
+          summary: string;
+          annotations?: Array<{
+            path: string;
+            start_line: number;
+            end_line: number;
+            annotation_level: string;
+            message: string;
+            title?: string;
+          }>;
+        };
+      }): Promise<{ data: { id: number } }>;
+      /** Update a check run to attach additional annotation batches. */
+      update(params: {
+        owner: string;
+        repo: string;
+        check_run_id: number;
+        output?: {
+          title: string;
+          summary: string;
+          annotations?: Array<{
+            path: string;
+            start_line: number;
+            end_line: number;
+            annotation_level: string;
+            message: string;
+            title?: string;
+          }>;
+        };
+      }): Promise<{ data: unknown }>;
+    };
   };
 }
 
