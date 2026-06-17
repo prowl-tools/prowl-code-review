@@ -82,10 +82,12 @@ describe("gatherGrounding", () => {
     expect(result.notes.join(" ")).toContain("1 grounding finding");
   });
 
-  it("skips entirely when no JS/TS files changed (no exec)", async () => {
+  it("does not run ESLint when no JS/TS files changed", async () => {
     const exec = fakeExec({ stdout: "[]" });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["README.md"], exec });
-    expect(exec).not.toHaveBeenCalled();
+    // ESLint (process.execPath) isn't invoked; other ungated runners (e.g. Gitleaks) may be.
+    const eslintCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === process.execPath);
+    expect(eslintCalls).toHaveLength(0);
     expect(result.findings).toEqual([]);
   });
 
@@ -96,7 +98,8 @@ describe("gatherGrounding", () => {
       changedPaths: ["src/a.ts"],
       exec
     });
-    expect(exec).not.toHaveBeenCalled();
+    const eslintCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === process.execPath);
+    expect(eslintCalls).toHaveLength(0); // ESLint gated behind trust; Gitleaks (ungated) may still run
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("not trusted");
   });
@@ -260,6 +263,92 @@ describe("gatherGrounding", () => {
     });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Linter grounding error: ENOENT");
+  });
+});
+
+/** Arg-aware exec: returns per-tool stdout/code keyed on the command. */
+function execByTool(map: { ruff?: Partial<ExecResult>; gitleaks?: Partial<ExecResult> }): Exec {
+  return vi.fn(async (command: string): Promise<ExecResult> => {
+    const base = { stdout: "[]", stderr: "", code: 0 };
+    if (command === "ruff") return { ...base, ...map.ruff };
+    if (command === "gitleaks") return { ...base, ...map.gitleaks };
+    return base; // eslint / anything else: no findings
+  });
+}
+
+describe("gatherGrounding — Ruff (#16b)", () => {
+  const ruffJson = JSON.stringify([
+    { code: "F401", message: "`os` imported but unused", filename: "app/x.py", location: { row: 3 }, end_location: { row: 3 } }
+  ]);
+
+  it("lints changed Python files, ungated, on changed lines", async () => {
+    const exec = execByTool({ ruff: { stdout: ruffJson, code: 1 } }); // ruff exits 1 when violations exist
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["app/x.py", "README.md"],
+      changedLines: { "app/x.py": [3] },
+      exec // note: no trustWorkspace — Ruff runs ungated
+    });
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "app/x.py", line: 3, category: "lint", title: "F401", severity: "minor" })
+    );
+    expect(result.notes.join(" ")).toContain("Ruff: 1 grounding finding");
+  });
+
+  it("drops Ruff findings outside the changed lines", async () => {
+    const exec = execByTool({ ruff: { stdout: ruffJson, code: 1 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["app/x.py"],
+      changedLines: { "app/x.py": [99] },
+      exec
+    });
+    expect(result.findings).toEqual([]);
+  });
+
+  it("skips gracefully when Ruff is not installed", async () => {
+    const exec = execByTool({ ruff: { stdout: "", code: 127 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["app/x.py"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Ruff not available");
+  });
+});
+
+describe("gatherGrounding — Gitleaks (#16b)", () => {
+  const gitleaksJson = JSON.stringify([
+    { RuleID: "generic-api-key", Description: "Detected a Generic API Key", File: "config.py", StartLine: 5, EndLine: 5 }
+  ]);
+
+  it("flags secrets on changed lines as critical security findings, ungated", async () => {
+    const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } }); // gitleaks exits 1 when leaks found
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["config.py"],
+      changedLines: { "config.py": [5] },
+      exec // no trustWorkspace — Gitleaks runs ungated
+    });
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "config.py", line: 5, severity: "critical", category: "security", title: "generic-api-key" })
+    );
+    expect(result.notes.join(" ")).toContain("Gitleaks: 1 potential secret");
+  });
+
+  it("drops leaks outside the changed lines", async () => {
+    const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["config.py"],
+      changedLines: { "config.py": [1] },
+      exec
+    });
+    expect(result.findings).toEqual([]);
+  });
+
+  it("skips gracefully when Gitleaks is not installed", async () => {
+    const exec = execByTool({ gitleaks: { stdout: "", code: 127 } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["config.py"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Gitleaks not available");
   });
 });
 

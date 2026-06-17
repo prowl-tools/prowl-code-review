@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
-import { isJavaScriptFamily } from "../review/language.js";
+import { detectLanguage, isJavaScriptFamily } from "../review/language.js";
 // `relative`/`isAbsolute` are used for normalizing ESLint's absolute paths back
 // to repo-relative; changed-path safety is checked structurally below.
 
@@ -296,10 +296,252 @@ async function runEslint(
   return { findings, notes };
 }
 
+// ---------------------------------------------------------------------------
+// Ruff (Python lint) and Gitleaks (secret scan) — backlog #16b.
+//
+// Unlike ESLint, these run with their OWN rules (a single binary, no repo-defined
+// plugin code), so they run ungated even on untrusted PR checkouts — that's the
+// point for secret scanning. They are selected per-language via the #5 detector;
+// absent tools skip gracefully. (Semgrep is deferred: its rulesets need a network
+// registry or repo rules — a separate sourcing decision.)
+// ---------------------------------------------------------------------------
+
+/** True when a tool failed because its executable isn't installed. */
+function commandUnavailable(result: ExecResult): boolean {
+  if (result.code === 127) {
+    return true;
+  }
+  const text = `${result.stderr}\n${result.stdout}`;
+  return /(?:command not found|not recognized as an internal or external command|no such file or directory|could not determine executable to run|spawn .* ENOENT|ENOENT)/i.test(
+    text
+  );
+}
+
+/** Build a compact, actionable failure note for a tool that ran but didn't produce usable output. */
+function toolFailureNote(tool: string, result: ExecResult): string {
+  const diagnostic = (result.stderr.trim() || result.stdout.trim() || "no diagnostic output").slice(
+    0,
+    ESLINT_DIAGNOSTIC_LIMIT
+  );
+  return `${tool} failed (exit ${result.code}); skipped grounding. ${diagnostic}`;
+}
+
+interface RuffMessage {
+  code: string | null;
+  message: string;
+  filename: string;
+  location?: { row?: number };
+  end_location?: { row?: number };
+}
+
+/** Map a Ruff diagnostic to a low-severity, high-confidence lint grounding finding. */
+function ruffToFinding(root: string, message: RuffMessage): Finding | undefined {
+  const row = message.location?.row;
+  if (!row || row <= 0) {
+    return undefined;
+  }
+  const file = isAbsolute(message.filename) ? relative(root, message.filename) : message.filename;
+  const endRow = message.end_location?.row;
+  return {
+    file: file.replace(/[\\/]/g, "/"),
+    line: row,
+    ...(endRow && endRow > row ? { endLine: endRow } : {}),
+    severity: "minor" as Severity,
+    category: "lint",
+    title: message.code ?? "ruff",
+    body: message.code ? `${message.message} (${message.code})` : message.message,
+    confidence: 0.9
+  };
+}
+
+/** Parse `ruff check --output-format json` stdout into findings; tolerant of junk. */
+function parseRuffJson(root: string, stdout: string): Finding[] {
+  const trimmed = stdout.trim();
+  if (!trimmed.startsWith("[")) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(trimmed);
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const entry of parsed as RuffMessage[]) {
+    if (entry && typeof entry.message === "string" && typeof entry.filename === "string") {
+      const finding = ruffToFinding(root, entry);
+      if (finding) {
+        findings.push(finding);
+      }
+    }
+  }
+  return findings;
+}
+
+/** Run Ruff over the changed Python files, or note why it was skipped. */
+async function runRuff(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    trustWorkspace: boolean;
+  }
+): Promise<GroundingResult> {
+  const files = safeRelativePaths(params.changedPaths).filter((p) => detectLanguage(p) === "python");
+  if (files.length === 0) {
+    return { findings: [], notes: [] };
+  }
+
+  const limited = files.slice(0, params.limits.maxFiles);
+  const notes: string[] = [];
+  if (files.length > limited.length) {
+    notes.push(`Ruff: linted ${limited.length}/${files.length} changed files (file cap).`);
+  }
+
+  // `--force-exclude` so a repo's own exclude config can't accidentally re-include
+  // odd paths; `--` terminates flags before the file list.
+  const result = await params.exec(
+    "ruff",
+    ["check", "--output-format", "json", "--force-exclude", "--", ...limited],
+    params.root
+  );
+
+  if (result.code === null) {
+    return { findings: [], notes: [...notes, "Ruff: timed out; skipped."] };
+  }
+  const parsed = parseRuffJson(params.root, result.stdout);
+  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
+  const hasJson = result.stdout.trim().startsWith("[");
+
+  if (parsed.length === 0 && commandUnavailable(result)) {
+    return { findings: [], notes: [...notes, "Ruff not available in the workspace; skipped lint grounding."] };
+  }
+  // Ruff exits 0 (clean) or 1 (violations) on success; 2 signals a real error.
+  if (parsed.length === 0 && (!hasJson || result.code >= 2)) {
+    return { findings: [], notes: [...notes, toolFailureNote("Ruff", result)] };
+  }
+
+  if (findings.length > params.limits.maxFindings) {
+    notes.push(`Ruff: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`);
+    return { findings: findings.slice(0, params.limits.maxFindings), notes };
+  }
+  if (findings.length > 0) {
+    notes.push(`Ruff: ${findings.length} grounding finding(s).`);
+  }
+  return { findings, notes };
+}
+
+interface GitleaksFinding {
+  RuleID?: string;
+  Description?: string;
+  File?: string;
+  StartLine?: number;
+  EndLine?: number;
+}
+
+/** Map a Gitleaks leak to a critical security grounding finding (secret value already redacted). */
+function gitleaksToFinding(finding: GitleaksFinding): Finding | undefined {
+  const line = finding.StartLine;
+  if (!finding.File || !line || line <= 0) {
+    return undefined;
+  }
+  const endLine = finding.EndLine;
+  const rule = finding.RuleID ?? "gitleaks";
+  return {
+    file: finding.File.replace(/[\\/]/g, "/"),
+    line,
+    ...(endLine && endLine > line ? { endLine } : {}),
+    severity: "critical" as Severity,
+    category: "security",
+    title: rule,
+    body: finding.Description ? `${finding.Description} (${rule})` : `Potential secret detected (${rule})`,
+    confidence: 0.9
+  };
+}
+
+/** Parse Gitleaks JSON report output into findings; tolerant of junk/banners. */
+function parseGitleaksJson(stdout: string): Finding[] {
+  const start = stdout.indexOf("[");
+  if (start === -1) {
+    return [];
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(stdout.slice(start).trim());
+  } catch {
+    return [];
+  }
+  if (!Array.isArray(parsed)) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const entry of parsed as GitleaksFinding[]) {
+    const finding = entry && typeof entry === "object" ? gitleaksToFinding(entry) : undefined;
+    if (finding) {
+      findings.push(finding);
+    }
+  }
+  return findings;
+}
+
+/**
+ * Run Gitleaks over the workspace and keep leaks on changed lines. Gitleaks takes
+ * a directory (not a file list), so it scans the checkout and findings are then
+ * filtered to the PR's changed lines. `--redact` keeps secret values out of the
+ * report (defense-in-depth with the pipeline's own redaction).
+ */
+async function runGitleaks(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    trustWorkspace: boolean;
+  }
+): Promise<GroundingResult> {
+  if (safeRelativePaths(params.changedPaths).length === 0) {
+    return { findings: [], notes: [] };
+  }
+
+  const result = await params.exec(
+    "gitleaks",
+    ["detect", "--no-git", "--source", ".", "--report-format", "json", "--report-path", "/dev/stdout", "--redact", "--no-banner"],
+    params.root
+  );
+
+  if (result.code === null) {
+    return { findings: [], notes: ["Gitleaks: timed out; skipped."] };
+  }
+  const parsed = parseGitleaksJson(result.stdout);
+  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
+  const hasJson = result.stdout.includes("[");
+
+  if (parsed.length === 0 && commandUnavailable(result)) {
+    return { findings: [], notes: ["Gitleaks not available in the workspace; skipped secret grounding."] };
+  }
+  // Gitleaks exits 0 (no leaks) or 1 (leaks found) on success; higher codes are errors.
+  if (parsed.length === 0 && (!hasJson || result.code > 1)) {
+    return { findings: [], notes: [toolFailureNote("Gitleaks", result)] };
+  }
+
+  if (findings.length > params.limits.maxFindings) {
+    return {
+      findings: findings.slice(0, params.limits.maxFindings),
+      notes: [`Gitleaks: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`]
+    };
+  }
+  return {
+    findings,
+    notes: findings.length > 0 ? [`Gitleaks: ${findings.length} potential secret(s) on changed lines.`] : []
+  };
+}
+
 /**
  * Run available linters over the changed files and return normalized grounding
- * findings + operational notes. Currently ESLint (JS/TS); extend by adding more
- * runners here.
+ * findings + operational notes. ESLint (JS/TS, trusted-workspace only), Ruff
+ * (Python), and Gitleaks (secrets); extend by adding more runners here.
  */
 export async function gatherGrounding(params: GatherGroundingParams): Promise<GroundingResult> {
   const limits: Required<GroundingLimits> = {
@@ -309,7 +551,7 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
   };
   const exec = params.exec ?? defaultExec(limits.timeoutMs);
 
-  const runners = [runEslint];
+  const runners = [runEslint, runRuff, runGitleaks];
   const results = await Promise.all(
     runners.map((runner) =>
       runner({
