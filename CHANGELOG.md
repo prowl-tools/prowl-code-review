@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- More grounding runners — Ruff + Gitleaks (backlog #16b): the grounding registry now runs **Ruff**
+  (Python lint, selected via the #5 language detector) and **Gitleaks** (secret scanning) alongside
+  ESLint. Unlike ESLint, both run **ungated** even on untrusted checkouts — they use their own
+  single-binary rulesets, not repo-defined plugin code — which is the point for catching secrets in any
+  PR. Ruff findings normalize to `lint`/`minor`; Gitleaks leaks to `security`/`critical` (with
+  `--redact`, and the pipeline's own redaction on top). Both filter to the PR's changed lines, cap
+  findings, and skip gracefully (with a note) when the tool is absent — non-Python/non-secret cases just
+  don't run. **Deferred (still #16b):** Semgrep — its rulesets need a network registry or repo rules, a
+  separate sourcing decision.
 - Multi-language support (backlog #5, core): a dependency-free language-detection primitive
   (`src/review/language.ts` — `detectLanguage`/`summarizeLanguages` by extension/filename across ~20
   languages) that makes the review **language-aware**. The specialist system prompt now states which
