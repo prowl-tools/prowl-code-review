@@ -109,10 +109,12 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
  * used as-is.
  */
 export function composeGuidelines(org: string | undefined, repo: string | undefined): string | undefined {
-  if (org && repo) {
-    return `## Organization standards\n${org}\n\n## Repository standards\n${repo}`;
+  const normalizedOrg = org?.trim() ? org : undefined;
+  const normalizedRepo = repo?.trim() ? repo : undefined;
+  if (normalizedOrg && normalizedRepo) {
+    return `## Organization standards\n${normalizedOrg}\n\n## Repository standards\n${normalizedRepo}`;
   }
-  return org ?? repo;
+  return normalizedOrg ?? normalizedRepo;
 }
 
 /** Parse an optional severity threshold for filtering findings. */
