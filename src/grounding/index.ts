@@ -61,6 +61,11 @@ export interface GatherGroundingParams {
    */
   secretScanPaths?: string[];
   /**
+   * Secret scan paths whose path exposure is itself changed. Findings from these
+   * paths bypass changed-line filtering when no added-line evidence exists.
+   */
+  secretScanWholeFilePaths?: string[];
+  /**
    * New-side changed lines by repo-relative file path. When provided, linter
    * messages outside these lines are dropped so pre-existing lint failures do
    * not become PR findings.
@@ -129,6 +134,10 @@ function safeRelativePaths(paths: string[]): string[] {
   return safe;
 }
 
+function normalizeRelativePath(path: string): string {
+  return path.replace(/^\.\//, "").replace(/\\/g, "/");
+}
+
 const ESLINT_DIAGNOSTIC_LIMIT = 500;
 
 interface EslintMessage {
@@ -171,22 +180,30 @@ function changedLineLookup(changedLines: GatherGroundingParams["changedLines"]):
   }
   const lookup = new Map<string, Set<number>>();
   for (const [file, lines] of Object.entries(changedLines)) {
-    const normalized = file.replace(/^\.\//, "").replace(/\\/g, "/");
+    const normalized = normalizeRelativePath(file);
     lookup.set(normalized, new Set(lines.filter((line) => Number.isInteger(line) && line > 0)));
   }
   return lookup;
 }
 
 /** Keep only findings whose line range intersects the new-side changed lines. */
-function filterToChangedLines(findings: Finding[], changedLines: Map<string, Set<number>> | undefined): Finding[] {
+function filterToChangedLines(
+  findings: Finding[],
+  changedLines: Map<string, Set<number>> | undefined,
+  wholeFilePaths = new Set<string>()
+): Finding[] {
   if (!changedLines) {
     return findings;
   }
   return findings.filter((finding) => {
+    const file = normalizeRelativePath(finding.file);
+    if (wholeFilePaths.has(file)) {
+      return true;
+    }
     if (!finding.line) {
       return false;
     }
-    const lines = changedLines.get(finding.file);
+    const lines = changedLines.get(file);
     if (!lines || lines.size === 0) {
       return false;
     }
@@ -524,10 +541,15 @@ async function runGitleaks(
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
     secretScanPaths?: GatherGroundingParams["secretScanPaths"];
+    secretScanWholeFilePaths?: GatherGroundingParams["secretScanWholeFilePaths"];
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
-  const files = [...new Set(safeRelativePaths([...(params.secretScanPaths ?? []), ...params.changedPaths]))];
+  const files = [
+    ...new Set(
+      safeRelativePaths([...(params.secretScanPaths ?? []), ...(params.secretScanWholeFilePaths ?? []), ...params.changedPaths])
+    )
+  ];
   if (files.length === 0) {
     return { findings: [], notes: [] };
   }
@@ -591,7 +613,8 @@ async function runGitleaks(
     parsedFindings.push(...parsed);
   }
 
-  const findings = filterToChangedLines(parsedFindings, changedLineLookup(params.changedLines));
+  const wholeFilePaths = new Set(safeRelativePaths(params.secretScanWholeFilePaths ?? []).map(normalizeRelativePath));
+  const findings = filterToChangedLines(parsedFindings, changedLineLookup(params.changedLines), wholeFilePaths);
 
   if (findings.length > params.limits.maxFindings) {
     return {
@@ -625,6 +648,7 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
         root: params.root,
         changedPaths: params.changedPaths,
         secretScanPaths: params.secretScanPaths,
+        secretScanWholeFilePaths: params.secretScanWholeFilePaths,
         changedLines: params.changedLines,
         trustWorkspace: params.trustWorkspace === true,
         exec,

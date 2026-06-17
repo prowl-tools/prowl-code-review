@@ -499,6 +499,10 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   return changed;
 }
 
+function hasAddedNewLines(file: DiffFile): boolean {
+  return file.hunks.some((hunk) => hunk.lines.some((line) => line.type === "add" && line.newLine));
+}
+
 /** Redact untrusted linter finding text before it reaches prompts or comments. */
 function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; count: number } {
   let count = 0;
@@ -599,14 +603,19 @@ export async function reviewPullRequest(
   let directGroundingFindings: Finding[] = [];
   let groundingNotes: string[] = [];
   const groundingLineFiles = [...reviewFiles, ...secretScanFiles];
+  const groundingChangedLines = changedLinesByPath(groundingLineFiles);
   const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
+  const secretScanWholeFilePaths = secretScanFiles
+    .filter((file) => file.status === "renamed" && !hasAddedNewLines(file))
+    .map((file) => file.path);
   if (!options.skipGrounding && options.toolkitRoot && groundingLineFiles.length > 0) {
     try {
       const result = await ground({
         root: options.toolkitRoot,
         changedPaths: reviewFiles.map((file) => file.path),
         secretScanPaths: secretScanFiles.map((file) => file.path),
-        changedLines: changedLinesByPath(groundingLineFiles),
+        secretScanWholeFilePaths,
+        changedLines: groundingChangedLines,
         trustWorkspace: options.trustWorkspace === true,
         limits: options.groundingLimits
       });

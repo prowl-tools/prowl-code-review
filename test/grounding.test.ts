@@ -393,6 +393,31 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(ruffCalls).toHaveLength(0);
   });
 
+  it("keeps Gitleaks findings for whole-file secret scan paths without changed lines", async () => {
+    const secretJson = JSON.stringify([
+      {
+        RuleID: "generic-api-key",
+        Description: "Detected a Generic API Key",
+        File: "config/example.txt",
+        StartLine: 7,
+        EndLine: 7
+      }
+    ]);
+    const exec = execByTool({ gitleaks: { stdout: secretJson, code: 1 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      secretScanPaths: ["config/example.txt"],
+      secretScanWholeFilePaths: ["config/example.txt"],
+      changedLines: {},
+      exec
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "config/example.txt", line: 7, severity: "critical", category: "security" })
+    );
+  });
+
   it("prioritizes secret-only paths before applying the Gitleaks file cap", async () => {
     const exec = execByTool({ gitleaks: { stdout: "[]", code: 0 } });
     const result = await gatherGrounding({
