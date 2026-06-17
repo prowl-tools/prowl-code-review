@@ -34,7 +34,7 @@ inputs:
     required: false
     default: ""
   guidelines-path:
-    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md/LEARNED_PATTERNS.md; omitted disables guidelines."
+    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md/LEARNED_PATTERNS.md for repository-level guidance; omit to disable repository guidelines (org-guidelines-path still applies)."
     required: false
     default: ""
   org-guidelines-path:

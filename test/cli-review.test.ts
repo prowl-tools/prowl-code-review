@@ -140,6 +140,9 @@ describe("review command helpers", () => {
     expect(composeGuidelines(undefined, undefined)).toBeUndefined();
     expect(composeGuidelines(undefined, "repo rules")).toBe("repo rules");
     expect(composeGuidelines("org rules", undefined)).toBe("org rules");
+    expect(composeGuidelines("", "repo rules")).toBe("repo rules");
+    expect(composeGuidelines("   ", "repo rules")).toBe("repo rules");
+    expect(composeGuidelines("org rules", "")).toBe("org rules");
     expect(composeGuidelines("org rules", "repo rules")).toBe(
       "## Organization standards\norg rules\n\n## Repository standards\nrepo rules"
     );
