@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
+import { isJavaScriptFamily } from "../review/language.js";
 // `relative`/`isAbsolute` are used for normalizing ESLint's absolute paths back
 // to repo-relative; changed-path safety is checked structurally below.
 
@@ -111,7 +112,6 @@ function safeRelativePaths(paths: string[]): string[] {
   return safe;
 }
 
-const ESLINT_EXTENSIONS = /\.(?:m|c)?[jt]sx?$/i;
 const ESLINT_DIAGNOSTIC_LIMIT = 500;
 
 interface EslintMessage {
@@ -244,7 +244,9 @@ async function runEslint(
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
-  const files = safeRelativePaths(params.changedPaths).filter((p) => ESLINT_EXTENSIONS.test(p));
+  // Per-language linter selection (#5): ESLint handles the JS/TS family; other
+  // languages degrade gracefully (no lint grounding) until their runners land (#16b).
+  const files = safeRelativePaths(params.changedPaths).filter(isJavaScriptFamily);
   if (files.length === 0) {
     return { findings: [], notes: [] };
   }
