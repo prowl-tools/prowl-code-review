@@ -145,6 +145,15 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ review: { incremental: "no" } })).toThrow();
   });
 
+  it("accepts a checkRun block and rejects malformed values (#24)", () => {
+    expect(configSchema.parse({ checkRun: { enabled: true, failOn: "critical" } })).toEqual({
+      checkRun: { enabled: true, failOn: "critical" }
+    });
+    expect(configSchema.parse({ checkRun: { enabled: false } })).toEqual({ checkRun: { enabled: false } });
+    expect(() => configSchema.parse({ checkRun: { failOn: "urgent" } })).toThrow(); // bad severity
+    expect(() => configSchema.parse({ checkRun: { nope: true } })).toThrow(); // strict
+  });
+
   it("accepts a riskTiering block and rejects malformed values (#31)", () => {
     expect(configSchema.parse({ riskTiering: { enabled: false } })).toEqual({ riskTiering: { enabled: false } });
     const full = { riskTiering: { enabled: true, minimal: { maxChangedLines: 20, maxFiles: 2 }, deep: { minChangedLines: 400, minFiles: 15 } } };

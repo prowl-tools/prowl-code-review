@@ -11,6 +11,12 @@ import {
   fetchPriorReviewState as defaultFetchPriorReviewState,
   type SubmitReviewOptions
 } from "./github/review.js";
+import {
+  planCheckRun,
+  submitCheckRun as defaultSubmitCheckRun,
+  type CheckRunPlan,
+  type CheckConclusion
+} from "./github/check-run.js";
 import type { ReviewState } from "./review/state.js";
 import { parseDiff } from "./review/parse-diff.js";
 import { applyDiffLimits } from "./review/size-guards.js";
@@ -79,6 +85,12 @@ export interface PipelineDeps {
     payload: ReviewPayload,
     options?: SubmitReviewOptions
   ) => Promise<void>;
+  /** Publish the merge-gate Check Run (#24). */
+  submitCheckRun?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    input: { headSha: string; plan: CheckRunPlan; name?: string }
+  ) => Promise<void>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -129,6 +141,12 @@ export interface ReviewPullRequestOptions {
   guidelines?: string;
   /** Learned false-positive patterns (LEARNED_PATTERNS.md) injected into prompts (#30). */
   learnedPatterns?: string;
+  /**
+   * Merge gate via the Checks API (#24). Opt-in (needs `checks: write`). With
+   * `failOn` set, findings at/above that severity make the check fail; omitted →
+   * an informational (neutral) check.
+   */
+  checkRun?: { enabled?: boolean; failOn?: Severity };
   event?: ReviewEvent;
   /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
   agentPrompt?: boolean;
@@ -159,6 +177,8 @@ export interface ReviewPullRequestResult {
   riskTier?: RiskTier;
   /** True when only the delta since the last reviewed SHA was reviewed (#23). */
   incremental?: boolean;
+  /** Conclusion of the merge-gate Check Run (#24); undefined when disabled/skipped/failed. */
+  checkRunConclusion?: CheckConclusion;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -426,6 +446,39 @@ function incrementalDeltaIsWithinPrDiff(deltaFiles: DiffFile[], prFiles: DiffFil
   return true;
 }
 
+/**
+ * Publish the merge-gate Check Run (#24) when enabled. Non-fatal: a failure
+ * (e.g. missing `checks: write`) never sinks the review, which is the primary
+ * output. Returns the conclusion, or undefined when skipped/failed.
+ */
+async function maybeSubmitCheckRun(
+  submit: NonNullable<PipelineDeps["submitCheckRun"]>,
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  input: {
+    dryRun?: boolean;
+    checkRun?: { enabled?: boolean; failOn?: Severity };
+    headSha?: string;
+    findings: Finding[];
+    incremental: boolean;
+  }
+): Promise<CheckConclusion | undefined> {
+  if (input.dryRun || !input.checkRun?.enabled || !input.headSha) {
+    return undefined;
+  }
+  try {
+    const plan = planCheckRun({
+      findings: input.findings,
+      failOn: input.checkRun.failOn,
+      incremental: input.incremental
+    });
+    await submit(octokit, ref, { headSha: input.headSha, plan });
+    return plan.conclusion;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
 function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   const changed: Record<string, number[]> = {};
@@ -487,6 +540,7 @@ export async function reviewPullRequest(
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const submit = deps.submitReview ?? defaultSubmitReview;
+  const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
@@ -547,7 +601,7 @@ export async function reviewPullRequest(
       agentPrompt: options.agentPrompt
     });
 
-    const result = {
+    const result: ReviewPullRequestResult = {
       meta,
       payload,
       review: reviewResult,
@@ -566,6 +620,14 @@ export async function reviewPullRequest(
         throw new ReviewPublishError(message, result);
       }
     }
+    // A passing gate still posts on a no-findings run so a Required check isn't left pending.
+    result.checkRunConclusion = await maybeSubmitCheckRun(submitCheck, octokit, ref, {
+      dryRun: options.dryRun,
+      checkRun: options.checkRun,
+      headSha: meta.headSha,
+      findings: [],
+      incremental: incrementalBaseSha !== undefined
+    });
 
     return result;
   }
@@ -754,7 +816,7 @@ export async function reviewPullRequest(
     maxInlineComments: options.maxInlineComments
   });
 
-  const result = {
+  const result: ReviewPullRequestResult = {
     meta,
     payload,
     review: reviewResult,
@@ -774,6 +836,14 @@ export async function reviewPullRequest(
       throw new ReviewPublishError(message, result);
     }
   }
+  // Merge gate (#24): conclusion from the surfaced findings against `failOn`.
+  result.checkRunConclusion = await maybeSubmitCheckRun(submitCheck, octokit, ref, {
+    dryRun: options.dryRun,
+    checkRun: options.checkRun,
+    headSha: meta.headSha,
+    findings: reviewResult.findings,
+    incremental: incrementalBaseSha !== undefined
+  });
 
   return result;
 }

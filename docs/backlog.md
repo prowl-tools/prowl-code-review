@@ -42,10 +42,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: mark fixed/outdated finding threads resolved via GraphQL `resolveReviewThread` when their finding no longer appears (or its line is gone).
     - Acceptance: respect human replies on a finding — "won't fix"/"acknowledged" resolves the thread; "I disagree" makes the judge justify the finding or withdraw it (instead of blindly re-emitting it).
 
-24. **Check run / merge gate**
-    As an org owner, I want a pass/fail status check with line annotations, so that critical findings can block merge.
-    - Acceptance: create a Check Run (Checks API) with `conclusion` from severity (e.g. Critical → failure) + summary + up to 50 annotations/batch; configurable gating.
-
 26. **Bot command set**
     As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
     - Acceptance: support `review` / `full review` (manual + full re-scan), `pause`/`resume`, `ignore`, `resolve`, `configure` via `@prowl-review <cmd>` comments (verb allowlist per #14).
