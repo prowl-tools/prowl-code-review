@@ -12,8 +12,8 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 5. **Multi-language support**
    As a developer on any stack, I want context retrieval and linting to work beyond JS/TS, so that `prowl-review` is a real CodeRabbit replacement (and covers the Prowl suite's Python/YAML too).
-   - Acceptance: language-agnostic parsing via tree-sitter grammars (TS/JS, Python, Go, Ruby, Java, etc.) feeding caller/definition lookup for #4.
-   - Acceptance: per-language linter auto-selection in grounding (#16); graceful degradation for unsupported languages (still reviews via the LLM, just without AST-assisted context).
+   - **Done (core, see resolved.md):** a language-detection primitive (`src/review/language.ts`) makes the review language-aware (specialist prompts state the PR's languages); grounding selects linters via the detector (per-language seam for #16b); unsupported languages degrade gracefully (LLM-reviewed). Cross-file context retrieval was already language-agnostic (grep/read).
+   - Acceptance (remaining): language-agnostic **tree-sitter** parsing feeding AST-assisted caller/definition lookup for #4 — sharper symbol resolution than grep, weighed against the heavy WASM-grammar dependency vs. the "agentic grep, no heavy infra" principle (#4).
 
 ## Medium Priority
 
