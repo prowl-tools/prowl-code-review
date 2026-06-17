@@ -161,6 +161,20 @@ const checkRunSchema = z
   })
   .strict();
 
+/** Approval rubric + break-glass override (#52). Opt-in. */
+const approvalSchema = z
+  .object({
+    /** Engage the rubric (map findings → a review event). Default false (comment only). */
+    enabled: z.boolean().optional(),
+    /** Severity at/above which the review requests changes. Default `critical`. */
+    requestChangesAt: severityEnum.optional(),
+    /** Approve (not just comment) when nothing is at/above the threshold. Default false. */
+    approveWhenClean: z.boolean().optional(),
+    /** Honor `@prowl-review break glass` overrides from trusted authors. Default true. */
+    breakGlass: z.boolean().optional()
+  })
+  .strict();
+
 /** USD-per-1M-token price override for one model (#36). */
 const modelPriceSchema = z
   .object({
@@ -197,6 +211,8 @@ export const configSchema = z
     riskTiering: riskTieringSchema.optional(),
     /** Merge gate via the Checks API (#24); opt-in. */
     checkRun: checkRunSchema.optional(),
+    /** Approval rubric + break-glass override (#52); opt-in. */
+    approval: approvalSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

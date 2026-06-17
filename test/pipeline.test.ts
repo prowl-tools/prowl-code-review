@@ -536,6 +536,101 @@ describe("reviewPullRequest", () => {
     expect(result.checkRunConclusion).toBeUndefined(); // gate failure swallowed
   });
 
+  describe("approval rubric + break-glass (#52)", () => {
+    it("only comments by default (gate off): no override lookup, COMMENT event", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(detectBreakGlass).not.toHaveBeenCalled();
+      expect(result.approval).toBeUndefined();
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
+    it("requests changes when a finding is at/above the threshold", async () => {
+      const deps = makeDeps();
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.body).toContain("requesting changes");
+    });
+
+    it("comments (not request-changes) when nothing meets the threshold", async () => {
+      const deps = makeDeps(); // default finding is major; threshold defaults to critical
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
+    it("force-approves and records the override on a trusted break-glass comment", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectBreakGlass).toHaveBeenCalledTimes(1);
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.approval?.overridden).toBe(true);
+      expect(result.payload.event).toBe("APPROVE");
+      expect(result.payload.body).toContain("Break-glass override");
+      // The walkthrough neutralizes @mentions in notes, so the actor is recorded
+      // without a live ping (&#64;maintainer).
+      expect(result.payload.body).toContain("maintainer");
+    });
+
+    it("drives the #24 check conclusion from the rubric (request-changes → failure)", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), submitCheckRun };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true },
+        checkRun: { enabled: true } // no failOn — the rubric is the source of truth
+      });
+
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("a break-glass override also unblocks the #24 check (→ success)", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), submitCheckRun, detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true },
+        checkRun: { enabled: true }
+      });
+
+      expect(result.checkRunConclusion).toBe("success");
+    });
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({

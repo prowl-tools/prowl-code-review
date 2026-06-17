@@ -154,6 +154,14 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ checkRun: { nope: true } })).toThrow(); // strict
   });
 
+  it("accepts an approval block and rejects malformed values (#52)", () => {
+    const full = { approval: { enabled: true, requestChangesAt: "major", approveWhenClean: false, breakGlass: true } };
+    expect(configSchema.parse(full)).toEqual(full);
+    expect(configSchema.parse({ approval: { enabled: false } })).toEqual({ approval: { enabled: false } });
+    expect(() => configSchema.parse({ approval: { requestChangesAt: "urgent" } })).toThrow(); // bad severity
+    expect(() => configSchema.parse({ approval: { nope: true } })).toThrow(); // strict
+  });
+
   it("accepts a riskTiering block and rejects malformed values (#31)", () => {
     expect(configSchema.parse({ riskTiering: { enabled: false } })).toEqual({ riskTiering: { enabled: false } });
     const full = { riskTiering: { enabled: true, minimal: { maxChangedLines: 20, maxFiles: 2 }, deep: { minChangedLines: 400, minFiles: 15 } } };

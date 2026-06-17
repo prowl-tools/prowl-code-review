@@ -59,7 +59,15 @@ export interface OctokitLike {
         page?: number;
         sort?: "created" | "updated";
         direction?: "asc" | "desc";
-      }): Promise<{ data: Array<{ id: number; body?: string; user?: { login?: string } | null }> }>;
+      }): Promise<{
+        data: Array<{
+          id: number;
+          body?: string;
+          user?: { login?: string } | null;
+          /** Author's relationship to the repo; gates break-glass overrides (#52). */
+          author_association?: string;
+        }>;
+      }>;
       /** Create a top-level PR/issue comment (the summary on a first run). */
       createComment(params: {
         owner: string;
