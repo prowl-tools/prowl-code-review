@@ -306,6 +306,20 @@ describe("gatherGrounding — Ruff (#16b)", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("caps Ruff files and reports truncation", async () => {
+    const exec = execByTool({ ruff: { stdout: "[]", code: 0 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["app/a.py", "app/b.py"],
+      exec,
+      limits: { maxFiles: 1 }
+    });
+
+    const ruffCall = (exec as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === "ruff");
+    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--no-cache", "--", "app/a.py"]);
+    expect(result.notes.join(" ")).toContain("Ruff: linted 1/2 changed files (file cap).");
+  });
+
   it("drops Ruff findings outside the changed lines", async () => {
     const exec = execByTool({ ruff: { stdout: ruffJson, code: 1 } });
     const result = await gatherGrounding({
@@ -322,6 +336,31 @@ describe("gatherGrounding — Ruff (#16b)", () => {
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["app/x.py"], exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Ruff not available");
+  });
+
+  it("notes when Ruff times out", async () => {
+    const exec = execByTool({ ruff: { stdout: "", code: null } });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["app/x.py"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Ruff: timed out; skipped.");
+  });
+
+  it("caps Ruff findings and reports truncation", async () => {
+    const manyRuffJson = JSON.stringify([
+      { code: "F401", message: "`os` imported but unused", filename: "app/a.py", location: { row: 1 }, end_location: { row: 1 } },
+      { code: "F841", message: "local variable is assigned to but never used", filename: "app/b.py", location: { row: 2 }, end_location: { row: 2 } }
+    ]);
+    const exec = execByTool({ ruff: { stdout: manyRuffJson, code: 1 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["app/a.py", "app/b.py"],
+      changedLines: { "app/a.py": [1], "app/b.py": [2] },
+      exec,
+      limits: { maxFindings: 1 }
+    });
+
+    expect(result.findings).toHaveLength(1);
+    expect(result.notes.join(" ")).toContain("Ruff: kept 1/2 findings (finding cap).");
   });
 
   it("notes malformed Ruff JSON when violations exit with no parseable findings", async () => {

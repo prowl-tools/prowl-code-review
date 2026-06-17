@@ -606,7 +606,7 @@ export async function reviewPullRequest(
   const groundingChangedLines = changedLinesByPath(groundingLineFiles);
   const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
   const secretScanWholeFilePaths = secretScanFiles
-    .filter((file) => file.status === "renamed" && !hasAddedNewLines(file))
+    .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
     .map((file) => file.path);
   if (!options.skipGrounding && options.toolkitRoot && groundingLineFiles.length > 0) {
     try {

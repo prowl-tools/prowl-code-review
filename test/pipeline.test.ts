@@ -1151,6 +1151,34 @@ diff --git a/src/a.ts b/src/a.ts
     );
   });
 
+  it("keeps sensitive copies without added lines eligible for secret grounding", async () => {
+    const deps = makeDeps();
+    const copyDiff = `diff --git a/template.env b/.env.example
+similarity index 100%
+copy from template.env
+copy to .env.example
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const b = 2;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: copyDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/a.ts"],
+        secretScanPaths: [".env.example"],
+        secretScanWholeFilePaths: [".env.example"],
+        changedLines: { "src/a.ts": [2] }
+      })
+    );
+  });
+
   it("runs secret grounding when only sensitive files remain after filters", async () => {
     const deps = makeDeps();
     const secretDiff = `diff --git a/.env b/.env
