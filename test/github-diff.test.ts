@@ -9,21 +9,24 @@ function mockOctokit(prData: unknown, diff: string) {
     }
     return { data: prData };
   });
-  const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
-  return { octokit, get };
+  const getCommit = vi.fn(async () => ({
+    data: { commit: { committer: { date: "2026-06-17T21:45:23Z" } } }
+  }));
+  const octokit = { rest: { pulls: { get }, repos: { getCommit } } } as unknown as OctokitLike;
+  return { octokit, get, getCommit };
 }
 
 describe("fetchPullRequest", () => {
   const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 
   it("fetches metadata and the raw diff and maps them", async () => {
-    const { octokit, get } = mockOctokit(
+    const { octokit, get, getCommit } = mockOctokit(
       {
         number: 7,
         title: "Add thing",
         body: "does a thing",
         base: { sha: "base-sha" },
-        head: { sha: "head-sha", repo: { pushed_at: "2026-06-17T21:45:23Z" } },
+        head: { sha: "head-sha", repo: { name: "prowl-code-review", owner: { login: "prowl-tools" } } },
         draft: true,
         state: "open",
         user: { login: "michael" },
@@ -42,11 +45,16 @@ describe("fetchPullRequest", () => {
       body: "does a thing",
       baseSha: "base-sha",
       headSha: "head-sha",
-      headPushedAt: "2026-06-17T21:45:23Z",
+      headCommittedAt: "2026-06-17T21:45:23Z",
       draft: true,
       state: "open",
       author: "michael",
       changedFiles: 3
+    });
+    expect(getCommit).toHaveBeenCalledWith({
+      owner: "prowl-tools",
+      repo: "prowl-code-review",
+      ref: "head-sha"
     });
   });
 

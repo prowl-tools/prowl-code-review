@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { submitReview, planPublish } from "../src/github/review.js";
+import { submitReview, planPublish, hasActiveRequestChanges } from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
@@ -7,11 +7,13 @@ import { serializeState, parseState } from "../src/review/state.js";
 
 type MockIssueComment = { id: number; body?: string; user?: { login?: string } | null };
 type MockReviewComment = { body?: string; user?: { login?: string } | null };
+type MockReviewSubmission = { state?: string; user?: { login?: string } | null };
 
 function mockOctokit(
   priorComments: MockIssueComment[] = [],
   priorReviewComments: MockReviewComment[] = [],
-  login = "github-actions[bot]"
+  login = "github-actions[bot]",
+  priorReviews: MockReviewSubmission[] = []
 ) {
   const listComments = vi.fn(
     async (params: { per_page?: number; page?: number; sort?: string; direction?: "asc" | "desc" }) => {
@@ -33,18 +35,26 @@ function mockOctokit(
       return { data: priorReviewComments.slice(start, start + perPage) };
     }
   );
+  const listReviews = vi.fn(
+    async (params: { per_page?: number; page?: number }) => {
+      const perPage = params.per_page ?? 30;
+      const page = params.page ?? 1;
+      const start = (page - 1) * perPage;
+      return { data: priorReviews.slice(start, start + perPage) };
+    }
+  );
   const createComment = vi.fn(async () => ({ data: {} }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, listReviewComments },
+      pulls: { createReview, listReviewComments, listReviews },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
   } as unknown as OctokitLike;
-  return { octokit, listComments, listReviewComments, createComment, updateComment, createReview, getAuthenticated };
+  return { octokit, listComments, listReviewComments, listReviews, createComment, updateComment, createReview, getAuthenticated };
 }
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
@@ -176,6 +186,34 @@ describe("planPublish", () => {
     expect(plan.state.postedFindings.at(-1)).toBe(priorPostedFindings.at(-1));
     expect(plan.state.postedFindings).not.toContain(priorPostedFindings[0]);
     expect(parseState(plan.summaryBody)).toEqual(plan.state);
+  });
+});
+
+describe("hasActiveRequestChanges", () => {
+  it("treats a bot request-changes review as active even after a later comment", async () => {
+    const { octokit } = mockOctokit([], [], "github-actions[bot]", [
+      { state: "CHANGES_REQUESTED", user: { login: "github-actions[bot]" } },
+      { state: "COMMENTED", user: { login: "github-actions[bot]" } }
+    ]);
+
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(true);
+  });
+
+  it("treats a later bot approval as clearing a prior request-changes review", async () => {
+    const { octokit } = mockOctokit([], [], "github-actions[bot]", [
+      { state: "REQUEST_CHANGES", user: { login: "github-actions[bot]" } },
+      { state: "APPROVED", user: { login: "github-actions[bot]" } }
+    ]);
+
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(false);
+  });
+
+  it("ignores review states from other users", async () => {
+    const { octokit } = mockOctokit([], [], "github-actions[bot]", [
+      { state: "CHANGES_REQUESTED", user: { login: "reviewer" } }
+    ]);
+
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(false);
   });
 });
 

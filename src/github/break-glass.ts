@@ -14,8 +14,8 @@ import type { BreakGlassSignal } from "../review/approval.js";
  *  - **Author association** must be OWNER/MEMBER/COLLABORATOR, so a drive-by fork
  *    contributor (association NONE/CONTRIBUTOR) can't unblock their own PR. This
  *    needs no extra API call — GitHub returns `author_association` on each comment.
- *  - When a push timestamp is supplied, the override comment must be newer than
- *    that push, so an override cannot silently carry forward to later commits.
+ *  - When a head commit timestamp is supplied, the override comment must be newer
+ *    than that commit, so an override cannot silently carry forward to later commits.
  *  - prowl-review's **own** summary comment is skipped (it carries the hidden
  *    {@link REVIEW_MARKER} and, when requesting changes, literally contains the
  *    override phrase as guidance) so the bot can never self-trigger an override —
@@ -32,7 +32,7 @@ export const BREAK_GLASS_RE = /@prowl-review\s+break[\s-]?glass\b/i;
 export const BREAK_GLASS_TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
 
 /** Don't page issue comments forever on a very long thread. */
-const MAX_COMMENT_PAGES = 10;
+const MAX_COMMENT_PAGES = 20;
 
 /** Return true when a comment body asks prowl-review to break glass. */
 export function matchesBreakGlass(body: string | null | undefined): boolean {
@@ -40,9 +40,9 @@ export function matchesBreakGlass(body: string | null | undefined): boolean {
 }
 
 /**
- * Scan PR comments for a trusted `@prowl-review break glass` override. Returns the
- * first matching comment from a trusted author (newest first), or an inactive
- * signal when none is found or the read fails.
+ * Scan PR comments for a trusted `@prowl-review break glass` override. GitHub
+ * returns issue comments in ascending order, so we keep the newest trusted match
+ * while paging instead of assuming the first match is the latest.
  */
 export async function detectBreakGlass(
   octokit: OctokitLike,
@@ -55,6 +55,7 @@ export async function detectBreakGlass(
       parsedCreatedAfter === undefined || Number.isFinite(parsedCreatedAfter) ? parsedCreatedAfter : Number.POSITIVE_INFINITY;
     const perPage = 100;
     let page = 1;
+    let newest: BreakGlassSignal | undefined;
     for (;;) {
       const response = await octokit.rest.issues.listComments({
         owner: ref.owner,
@@ -62,8 +63,7 @@ export async function detectBreakGlass(
         issue_number: ref.pull_number,
         per_page: perPage,
         page,
-        sort: "created",
-        direction: "desc"
+        ...(options.createdAfter ? { since: options.createdAfter } : {})
       });
 
       for (const comment of response.data) {
@@ -89,13 +89,16 @@ export async function detectBreakGlass(
         if (!BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association)) {
           continue;
         }
-        return { active: true, actor: login ?? undefined, association };
+        newest = { active: true, actor: login ?? undefined, association };
       }
 
       if (response.data.length < perPage || page >= MAX_COMMENT_PAGES) {
         break;
       }
       page += 1;
+    }
+    if (newest) {
+      return newest;
     }
   } catch {
     // fall through to an inactive signal

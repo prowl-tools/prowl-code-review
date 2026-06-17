@@ -28,6 +28,7 @@ import {
 
 const MAX_SUMMARY_COMMENT_PAGES = 10;
 const MAX_INLINE_COMMENT_PAGES = 10;
+const MAX_REVIEW_PAGES = 10;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
@@ -182,6 +183,60 @@ async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): P
     return response.data.login;
   } catch {
     return undefined;
+  }
+}
+
+function isRequestChangesState(state: string | undefined): boolean {
+  return state === "REQUEST_CHANGES" || state === "CHANGES_REQUESTED";
+}
+
+function isDecisiveReviewState(state: string | undefined): boolean {
+  return isRequestChangesState(state) || state === "APPROVED" || state === "DISMISSED";
+}
+
+/**
+ * Return true when the bot has an active request-changes review on the PR.
+ * COMMENTED reviews do not clear GitHub's requested-changes state; a later
+ * approval or dismissal does.
+ */
+export async function hasActiveRequestChanges(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<boolean> {
+  try {
+    const login = await getAuthenticatedLogin(octokit, botLogin);
+    if (!login) {
+      return false;
+    }
+
+    const perPage = 100;
+    let page = 1;
+    let latestDecisiveState: string | undefined;
+    for (;;) {
+      const response = await octokit.rest.pulls.listReviews({
+        owner: ref.owner,
+        repo: ref.repo,
+        pull_number: ref.pull_number,
+        per_page: perPage,
+        page
+      });
+
+      for (const review of response.data) {
+        if (review.user?.login === login && isDecisiveReviewState(review.state)) {
+          latestDecisiveState = review.state;
+        }
+      }
+
+      if (response.data.length < perPage || page >= MAX_REVIEW_PAGES) {
+        break;
+      }
+      page += 1;
+    }
+
+    return isRequestChangesState(latestDecisiveState);
+  } catch {
+    return false;
   }
 }
 

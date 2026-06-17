@@ -102,7 +102,8 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # --- Approval rubric + break-glass --------------------------------------------
 # Map findings to a GitHub review event so the gate is predictable: findings at
 # or above requestChangesAt make the bot REQUEST CHANGES; an otherwise clean
-# review comments (or approves, if approveWhenClean). Opt-in; off by default the
+# review comments (or approves, if approveWhenClean or clearing its own prior
+# request-changes review). Opt-in; off by default the
 # bot only ever comments. A repo owner/member/collaborator can override a
 # request-changes by commenting "@prowl-review break glass" — that force-approves
 # past the blocking finding and is recorded in the review for auditability. When

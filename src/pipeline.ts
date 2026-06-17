@@ -9,6 +9,7 @@ import {
 import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
+  hasActiveRequestChanges as defaultHasActiveRequestChanges,
   type SubmitReviewOptions
 } from "./github/review.js";
 import {
@@ -106,6 +107,8 @@ export interface PipelineDeps {
     ref: PullRequestRef,
     options?: { botLogin?: string; createdAfter?: string }
   ) => Promise<BreakGlassSignal>;
+  /** Detect whether prowl-review has an active prior request-changes review (#52). */
+  detectPriorRequestChanges?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<boolean>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -516,6 +519,7 @@ async function maybeSubmitCheckRun(
  */
 async function resolveApprovalDecision(
   detect: NonNullable<PipelineDeps["detectBreakGlass"]>,
+  detectPriorRequestChanges: NonNullable<PipelineDeps["detectPriorRequestChanges"]>,
   octokit: OctokitLike,
   ref: PullRequestRef,
   findings: Finding[],
@@ -523,10 +527,29 @@ async function resolveApprovalDecision(
   options: { coverageDegraded?: boolean; breakGlassCreatedAfter?: string } = {}
 ): Promise<ApprovalDecision> {
   let breakGlass: BreakGlassSignal | undefined;
-  if (config?.enabled === true && config.breakGlass !== false) {
+  let decision = planApprovalDecision({ findings, config, coverageDegraded: options.coverageDegraded });
+  if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
     breakGlass = await detect(octokit, ref, { createdAfter: options.breakGlassCreatedAfter });
+    decision = planApprovalDecision({
+      findings,
+      config,
+      breakGlass,
+      coverageDegraded: options.coverageDegraded
+    });
   }
-  return planApprovalDecision({ findings, config, breakGlass, coverageDegraded: options.coverageDegraded });
+  if (decision.enabled && decision.event === "COMMENT" && !decision.coverageDegraded && decision.blocking === 0) {
+    const priorRequestChanges = await detectPriorRequestChanges(octokit, ref);
+    if (priorRequestChanges) {
+      decision = planApprovalDecision({
+        findings,
+        config,
+        breakGlass,
+        coverageDegraded: options.coverageDegraded,
+        priorRequestChanges
+      });
+    }
+  }
+  return decision;
 }
 
 /** Build a new-side changed-line map for grounding tools that lint whole files. */
@@ -596,6 +619,7 @@ export async function reviewPullRequest(
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
+  const detectPriorRequestChanges = deps.detectPriorRequestChanges ?? defaultHasActiveRequestChanges;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
@@ -701,11 +725,12 @@ export async function reviewPullRequest(
     const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
     const approval = await resolveApprovalDecision(
       detectOverride,
+      detectPriorRequestChanges,
       octokit,
       ref,
       reviewResult.findings,
       options.approval,
-      { coverageDegraded: true, breakGlassCreatedAfter: meta.headPushedAt }
+      { coverageDegraded: true, breakGlassCreatedAfter: meta.headCommittedAt }
     );
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
@@ -888,11 +913,12 @@ export async function reviewPullRequest(
   // to the review event and the #24 check conclusion — one decision, both surfaces.
   const approval = await resolveApprovalDecision(
     detectOverride,
+    detectPriorRequestChanges,
     octokit,
     ref,
     reviewResult.findings,
     options.approval,
-    { coverageDegraded: degraded, breakGlassCreatedAfter: meta.headPushedAt }
+    { coverageDegraded: degraded, breakGlassCreatedAfter: meta.headCommittedAt }
   );
 
   const summaryBody = buildWalkthrough({

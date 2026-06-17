@@ -47,6 +47,19 @@ export interface OctokitLike {
         per_page?: number;
         page?: number;
       }): Promise<{ data: Array<{ body?: string; user?: { login?: string } | null }> }>;
+      /** List review submissions already posted on the PR. */
+      listReviews(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        per_page?: number;
+        page?: number;
+      }): Promise<{
+        data: Array<{
+          state?: string;
+          user?: { login?: string } | null;
+        }>;
+      }>;
     };
     /** Issue endpoints — a PR is an issue, so its top-level comments live here. */
     issues: {
@@ -59,6 +72,7 @@ export interface OctokitLike {
         page?: number;
         sort?: "created" | "updated";
         direction?: "asc" | "desc";
+        since?: string;
       }): Promise<{
         data: Array<{
           id: number;
@@ -87,6 +101,12 @@ export interface OctokitLike {
     };
     /** Repository endpoints — commit comparison for incremental re-review (#23). */
     repos: {
+      /** Fetch one commit's metadata. */
+      getCommit(params: {
+        owner: string;
+        repo: string;
+        ref: string;
+      }): Promise<{ data: unknown }>;
       /** Compare two commits; with `mediaType.format: "diff"` returns the raw delta diff. */
       compareCommitsWithBasehead(params: {
         owner: string;
