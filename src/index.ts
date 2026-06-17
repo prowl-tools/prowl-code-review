@@ -66,6 +66,7 @@ export {
   type GroundingResult,
   type GroundingLimits,
   type Exec,
+  type ExecOptions,
   type ExecResult
 } from "./grounding/index.js";
 

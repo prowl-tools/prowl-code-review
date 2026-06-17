@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
 import { detectLanguage, isJavaScriptFamily } from "../review/language.js";
@@ -28,8 +29,13 @@ export interface ExecResult {
   code: number | null;
 }
 
+export interface ExecOptions {
+  /** Extra environment overrides for this invocation. */
+  env?: NodeJS.ProcessEnv;
+}
+
 /** Injectable command runner (defaults to a confined `execFile`). */
-export type Exec = (command: string, args: string[], cwd: string) => Promise<ExecResult>;
+export type Exec = (command: string, args: string[], cwd: string, options?: ExecOptions) => Promise<ExecResult>;
 
 export interface GroundingLimits {
   /** Max changed files passed to a linter. Default {@link DEFAULT_MAX_FILES}. */
@@ -74,12 +80,18 @@ export interface GroundingResult {
 
 /** Default command runner: `execFile` confined to `cwd`, bounded output + time. */
 function defaultExec(timeoutMs: number): Exec {
-  return (command, args, cwd) =>
+  return (command, args, cwd, options) =>
     new Promise<ExecResult>((resolve) => {
       execFile(
         command,
         args,
-        { cwd, timeout: timeoutMs, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
+        {
+          cwd,
+          timeout: timeoutMs,
+          maxBuffer: 16 * 1024 * 1024,
+          windowsHide: true,
+          env: options?.env ? { ...process.env, ...options.env } : process.env
+        },
         (error, stdout, stderr) => {
           let code: number | null = 0;
           if (error) {
@@ -299,11 +311,11 @@ async function runEslint(
 // ---------------------------------------------------------------------------
 // Ruff (Python lint) and Gitleaks (secret scan) — backlog #16b.
 //
-// Unlike ESLint, these run with their OWN rules (a single binary, no repo-defined
-// plugin code), so they run ungated even on untrusted PR checkouts — that's the
-// point for secret scanning. They are selected per-language via the #5 detector;
-// absent tools skip gracefully. (Semgrep is deferred: its rulesets need a network
-// registry or repo rules — a separate sourcing decision.)
+// Unlike ESLint, these run with trusted built-in rules and no repo-discovered
+// config/plugin code, so they run ungated even on untrusted PR checkouts — that's
+// the point for secret scanning. They are selected per-language via the #5
+// detector; absent tools skip gracefully. (Semgrep is deferred: its rulesets
+// need a network registry or repo rules — a separate sourcing decision.)
 // ---------------------------------------------------------------------------
 
 /** True when a tool failed because its executable isn't installed. */
@@ -405,7 +417,7 @@ async function runRuff(
   // odd paths; `--` terminates flags before the file list.
   const result = await params.exec(
     "ruff",
-    ["check", "--output-format", "json", "--force-exclude", "--", ...limited],
+    ["check", "--output-format", "json", "--isolated", "--force-exclude", "--", ...limited],
     params.root
   );
 
@@ -419,8 +431,9 @@ async function runRuff(
   if (parsed.length === 0 && commandUnavailable(result)) {
     return { findings: [], notes: [...notes, "Ruff not available in the workspace; skipped lint grounding."] };
   }
-  // Ruff exits 0 (clean) or 1 (violations) on success; 2 signals a real error.
-  if (parsed.length === 0 && (!hasJson || result.code >= 2)) {
+  // Ruff exits 0 (clean) or 1 (violations) on success. If exit 1 produced no
+  // parseable diagnostics, surface it as a tool failure instead of a clean run.
+  if (parsed.length === 0 && (!hasJson || result.code >= 1)) {
     return { findings: [], notes: [...notes, toolFailureNote("Ruff", result)] };
   }
 
@@ -487,11 +500,17 @@ function parseGitleaksJson(stdout: string): Finding[] {
   return findings;
 }
 
+const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
+  GITLEAKS_CONFIG: "",
+  GITLEAKS_CONFIG_TOML: ""
+};
+const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
+
 /**
- * Run Gitleaks over the workspace and keep leaks on changed lines. Gitleaks takes
- * a directory (not a file list), so it scans the checkout and findings are then
- * filtered to the PR's changed lines. `--redact` keeps secret values out of the
- * report (defense-in-depth with the pipeline's own redaction).
+ * Run Gitleaks over changed files and keep leaks on changed lines. Each file is
+ * passed as `--source` so Gitleaks falls back to its built-in default config
+ * instead of loading a PR-supplied `.gitleaks.toml` from the checkout. `--redact`
+ * keeps secret values out of the report (defense-in-depth with pipeline redaction).
  */
 async function runGitleaks(
   params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
@@ -505,36 +524,70 @@ async function runGitleaks(
     return { findings: [], notes: [] };
   }
 
-  const result = await params.exec(
-    "gitleaks",
-    ["detect", "--no-git", "--source", ".", "--report-format", "json", "--report-path", "/dev/stdout", "--redact", "--no-banner"],
-    params.root
+  const files = safeRelativePaths(params.changedPaths);
+  const limited = files.slice(0, params.limits.maxFiles);
+  const notes: string[] = [];
+  if (files.length > limited.length) {
+    notes.push(`Gitleaks: scanned ${limited.length}/${files.length} changed files (file cap).`);
+  }
+
+  const results = await Promise.all(
+    limited.map((file) =>
+      params.exec(
+        "gitleaks",
+        [
+          "detect",
+          "--no-git",
+          "--source",
+          file,
+          "--report-format",
+          "json",
+          "--report-path",
+          "-",
+          "--redact",
+          "--no-banner",
+          "--ignore-gitleaks-allow",
+          "--gitleaks-ignore-path",
+          GITLEAKS_DISABLED_IGNORE_PATH
+        ],
+        params.root,
+        { env: GITLEAKS_TRUSTED_ENV }
+      )
+    )
   );
 
-  if (result.code === null) {
-    return { findings: [], notes: ["Gitleaks: timed out; skipped."] };
+  if (results.some(commandUnavailable)) {
+    return { findings: [], notes: [...notes, "Gitleaks not available in the workspace; skipped secret grounding."] };
   }
-  const parsed = parseGitleaksJson(result.stdout);
-  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
-  const hasJson = result.stdout.includes("[");
 
-  if (parsed.length === 0 && commandUnavailable(result)) {
-    return { findings: [], notes: ["Gitleaks not available in the workspace; skipped secret grounding."] };
+  const parsedFindings: Finding[] = [];
+  for (const result of results) {
+    if (result.code === null) {
+      notes.push("Gitleaks: timed out; skipped.");
+      continue;
+    }
+    const parsed = parseGitleaksJson(result.stdout);
+    const hasJson = result.stdout.includes("[");
+    // Gitleaks exits 0 (no leaks) or 1 (leaks found) on success. If exit 1
+    // produced no parseable report, surface it as a tool failure.
+    if (parsed.length === 0 && (!hasJson || result.code >= 1)) {
+      notes.push(toolFailureNote("Gitleaks", result));
+      continue;
+    }
+    parsedFindings.push(...parsed);
   }
-  // Gitleaks exits 0 (no leaks) or 1 (leaks found) on success; higher codes are errors.
-  if (parsed.length === 0 && (!hasJson || result.code > 1)) {
-    return { findings: [], notes: [toolFailureNote("Gitleaks", result)] };
-  }
+
+  const findings = filterToChangedLines(parsedFindings, changedLineLookup(params.changedLines));
 
   if (findings.length > params.limits.maxFindings) {
     return {
       findings: findings.slice(0, params.limits.maxFindings),
-      notes: [`Gitleaks: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`]
+      notes: [...notes, `Gitleaks: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`]
     };
   }
   return {
     findings,
-    notes: findings.length > 0 ? [`Gitleaks: ${findings.length} potential secret(s) on changed lines.`] : []
+    notes: findings.length > 0 ? [...notes, `Gitleaks: ${findings.length} potential secret(s) on changed lines.`] : notes
   };
 }
 
