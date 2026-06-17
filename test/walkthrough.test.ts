@@ -80,9 +80,51 @@ describe("buildWalkthrough", () => {
       files
     });
     expect(md).toContain("**Impact:** 🔴 High");
-    expect(md).toMatch(/Estimated effort:\*\* \d\/5/);
+    expect(md).toMatch(/Estimated effort:\*\* [▰▱]+ \(\d\/5\)/);
     expect(md).toContain("🔴 1");
     expect(md).toContain("🟠 1");
+  });
+
+  it("renders the impact callout as a GitHub alert keyed to impact + an effort bar (#54)", () => {
+    const high = buildWalkthrough({ findings: [makeFinding("critical")], files });
+    expect(high).toContain("> [!CAUTION]"); // high impact
+    expect(high).toContain("> **Impact:** 🔴 High");
+    expect(high).toMatch(/▰+▱*/); // effort bar glyphs
+
+    const low = buildWalkthrough({ findings: [makeFinding("minor")], files: [makeFile("a.ts", 1, 0)] });
+    // minor-only is the clean/nitpick path; the alert is only in the findings (blocking) state.
+    expect(low).not.toContain("> [!CAUTION]");
+  });
+
+  it("renders blocking findings as a table (#54)", () => {
+    const md = buildWalkthrough({
+      findings: [
+        makeFinding("critical", { title: "SQLi", file: "src/db.ts", line: 9 }),
+        makeFinding("major", { title: "Auth bypass\nwith | table break", file: "src/auth|roles.ts", line: 12 })
+      ],
+      files
+    });
+    expect(md).toContain("| Severity | Location | Finding |");
+    expect(md).toContain("| :-- | :-- | :-- |");
+    expect(md).toContain("| 🔴 critical | `src/db.ts:9` | **SQLi** |");
+    expect(md).toContain("| 🟠 major | `src/auth\\|roles.ts:12` | **Auth bypass with \\| table break** |");
+  });
+
+  it("clamps rendered effort scores to the visible 1-5 range", () => {
+    const high = buildWalkthrough({ findings: [makeFinding("critical")], files, effort: 6 });
+    expect(high).toContain("Estimated effort:** ▰▰▰▰▰ (5/5)");
+    expect(high).not.toContain("(6/5)");
+
+    const low = buildWalkthrough({ findings: [], files, effort: 0 });
+    expect(low).toContain("Estimated effort: ▰▱▱▱▱ (1/5)");
+    expect(low).not.toContain("(0/5)");
+  });
+
+  it("renders review notes as a GitHub note alert (#54)", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files, notes: ["Incremental review."] });
+    expect(md).toContain("> [!NOTE]");
+    expect(md).toContain("> **Review notes**");
+    expect(md).toContain("Incremental review.");
   });
 
   it("groups changed files by top directory inside a collapsed details block", () => {
@@ -260,6 +302,7 @@ describe("buildWalkthrough", () => {
       expect(md).toContain("✅ No issues found 🚀");
       // Review info is collapsed, with the pass count.
       expect(md).toContain("<summary><b>Review info</b></summary>");
+      expect(md).toContain("Estimated effort: ▰▱▱▱▱ (1/5)");
       expect(md).toContain("4/4 passes");
       expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
       // None of the verbose findings-state chrome.
@@ -278,6 +321,7 @@ describe("buildWalkthrough", () => {
       });
       // Partial coverage on a healthy review: clean + honest caveat, not degraded.
       expect(md).toContain("✅ No issues found in reviewed files 🚀");
+      expect(md).toContain("> [!NOTE]");
       expect(md).toContain("Not reviewed");
       expect(md).toContain("huge.lock");
       expect(md).not.toContain("Review incomplete");

@@ -4,6 +4,17 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Review-comment presentation polish (backlog #54): the findings-state summary now leads with a
+  one-line TL;DR, a **GitHub alert callout** keyed to impact (`> [!CAUTION]`/`[!WARNING]`/`[!NOTE]`) for
+  the impact/effort/findings line with a visual **effort bar** (`▰▰▰▱▱`), and renders blocking findings
+  as a compact **table** (severity · location · finding) instead of a bullet wall — findings lead, the
+  file inventory stays in its collapsed `<details>` below. Review notes and the "Not reviewed" skip line
+  are now GitHub **note alerts** (`> [!NOTE]`). Pure-formatter changes to `buildWalkthrough`; all
+  untrusted-text escaping is unchanged and table cells are pipe/newline-safe. Inline comments already
+  carried severity badges + committable suggestions, so they were left as-is. (Bot avatar/branding is
+  separate — #47.)
+
 ### Added
 - Check Run / merge gate (backlog #24): an opt-in GitHub Check Run summarizing the review with per-line
   annotations, so Critical findings can block merge. A pure `planCheckRun` derives the conclusion from
