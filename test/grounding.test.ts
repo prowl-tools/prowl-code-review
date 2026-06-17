@@ -293,7 +293,7 @@ describe("gatherGrounding — Ruff (#16b)", () => {
       expect.objectContaining({ file: "app/x.py", line: 3, category: "lint", title: "F401", severity: "minor" })
     );
     const ruffCall = (exec as ReturnType<typeof vi.fn>).mock.calls.find((call) => call[0] === "ruff");
-    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--", "app/x.py"]);
+    expect(ruffCall?.[1]).toEqual(["check", "--output-format", "json", "--isolated", "--no-cache", "--", "app/x.py"]);
     expect(ruffCall?.[1]).not.toContain("--force-exclude");
     expect(result.notes.join(" ")).toContain("Ruff: 1 grounding finding");
   });

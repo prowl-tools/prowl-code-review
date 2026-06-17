@@ -418,11 +418,12 @@ async function runRuff(
     notes.push(`Ruff: linted ${limited.length}/${files.length} changed files (file cap).`);
   }
 
-  // `--isolated` ignores repo config. Avoid `--force-exclude` so directly passed
-  // changed files cannot be suppressed by PR-supplied gitignore/exclude rules.
+  // `--isolated` ignores repo config; `--no-cache` avoids dirtying the checkout.
+  // Avoid `--force-exclude` so directly passed changed files cannot be suppressed
+  // by PR-supplied gitignore/exclude rules.
   const result = await params.exec(
     "ruff",
-    ["check", "--output-format", "json", "--isolated", "--", ...limited],
+    ["check", "--output-format", "json", "--isolated", "--no-cache", "--", ...limited],
     params.root
   );
 
