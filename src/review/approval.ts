@@ -59,6 +59,8 @@ export interface ApprovalDecision {
   requestChangesAt: Severity;
   /** True when a break-glass override flipped request-changes into approval. */
   overridden: boolean;
+  /** True when approval was withheld because review coverage was degraded. */
+  coverageDegraded: boolean;
   /** Login of the override actor, when overridden (audit). */
   overrideActor?: string;
   /** One-line human-readable reason for the decision. */
@@ -73,9 +75,11 @@ export function planApprovalDecision(input: {
   findings: Finding[];
   config?: ApprovalConfig;
   breakGlass?: BreakGlassSignal;
+  coverageDegraded?: boolean;
 }): ApprovalDecision {
   const config = input.config ?? {};
   const requestChangesAt = config.requestChangesAt ?? DEFAULT_REQUEST_CHANGES_AT;
+  const coverageDegraded = input.coverageDegraded === true;
   const blocking = input.findings.filter(
     (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[requestChangesAt]
   ).length;
@@ -87,6 +91,7 @@ export function planApprovalDecision(input: {
       blocking,
       requestChangesAt,
       overridden: false,
+      coverageDegraded,
       reason: "Approval gate disabled; posting as a comment."
     };
   }
@@ -101,6 +106,7 @@ export function planApprovalDecision(input: {
         blocking,
         requestChangesAt,
         overridden: true,
+        coverageDegraded,
         overrideActor: actor,
         reason:
           `Break-glass override${actor ? ` by @${actor}` : ""}: approving past ` +
@@ -113,7 +119,20 @@ export function planApprovalDecision(input: {
       blocking,
       requestChangesAt,
       overridden: false,
+      coverageDegraded,
       reason: `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes.`
+    };
+  }
+
+  if (coverageDegraded) {
+    return {
+      enabled: true,
+      event: "COMMENT",
+      blocking,
+      requestChangesAt,
+      overridden: false,
+      coverageDegraded,
+      reason: "Review coverage degraded; posting as a comment instead of approving."
     };
   }
 
@@ -124,6 +143,7 @@ export function planApprovalDecision(input: {
       blocking,
       requestChangesAt,
       overridden: false,
+      coverageDegraded,
       reason: `No findings at or above ${requestChangesAt}; approving.`
     };
   }
@@ -134,6 +154,7 @@ export function planApprovalDecision(input: {
     blocking,
     requestChangesAt,
     overridden: false,
+    coverageDegraded,
     reason: `No findings at or above ${requestChangesAt}; posting as a comment.`
   };
 }
@@ -162,6 +183,9 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
         `\`${decision.requestChangesAt}\`. A repo owner/member/collaborator can override by commenting ` +
         "`@prowl-review break glass`."
     ];
+  }
+  if (decision.coverageDegraded) {
+    return ["Approval gate (#52): not approving because review coverage was degraded."];
   }
   if (decision.event === "APPROVE") {
     return [`Approval gate (#52): approved — no findings at or above \`${decision.requestChangesAt}\`.`];

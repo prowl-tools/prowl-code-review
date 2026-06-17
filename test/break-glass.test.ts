@@ -14,6 +14,7 @@ interface Comment {
   body?: string;
   user?: { login?: string } | null;
   author_association?: string;
+  created_at?: string;
 }
 
 function mockOctokit(comments: Comment[]) {
@@ -97,6 +98,36 @@ describe("detectBreakGlass (#52)", () => {
     const signal = await detectBreakGlass(octokit, ref);
     expect(signal.actor).toBe("second");
     expect(listComments).toHaveBeenCalledWith(expect.objectContaining({ sort: "created", direction: "desc" }));
+  });
+
+  it("ignores override comments from before the current head push", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T12:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { createdAfter: "2026-06-17T13:00:00Z" });
+    expect(signal.active).toBe(false);
+  });
+
+  it("honors override comments after the current head push", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { createdAfter: "2026-06-17T13:00:00Z" });
+    expect(signal).toEqual({ active: true, actor: "maintainer", association: "OWNER" });
   });
 
   it("is inactive (never accidentally approves) when the read fails", async () => {

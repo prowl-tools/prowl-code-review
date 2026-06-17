@@ -14,6 +14,8 @@ import type { BreakGlassSignal } from "../review/approval.js";
  *  - **Author association** must be OWNER/MEMBER/COLLABORATOR, so a drive-by fork
  *    contributor (association NONE/CONTRIBUTOR) can't unblock their own PR. This
  *    needs no extra API call — GitHub returns `author_association` on each comment.
+ *  - When a push timestamp is supplied, the override comment must be newer than
+ *    that push, so an override cannot silently carry forward to later commits.
  *  - prowl-review's **own** summary comment is skipped (it carries the hidden
  *    {@link REVIEW_MARKER} and, when requesting changes, literally contains the
  *    override phrase as guidance) so the bot can never self-trigger an override —
@@ -45,9 +47,12 @@ export function matchesBreakGlass(body: string | null | undefined): boolean {
 export async function detectBreakGlass(
   octokit: OctokitLike,
   ref: PullRequestRef,
-  options: { botLogin?: string } = {}
+  options: { botLogin?: string; createdAfter?: string } = {}
 ): Promise<BreakGlassSignal> {
   try {
+    const parsedCreatedAfter = options.createdAfter ? Date.parse(options.createdAfter) : undefined;
+    const createdAfter =
+      parsedCreatedAfter === undefined || Number.isFinite(parsedCreatedAfter) ? parsedCreatedAfter : Number.POSITIVE_INFINITY;
     const perPage = 100;
     let page = 1;
     for (;;) {
@@ -73,6 +78,12 @@ export async function detectBreakGlass(
         }
         if (!matchesBreakGlass(comment.body)) {
           continue;
+        }
+        if (createdAfter !== undefined) {
+          const createdAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
+          if (!Number.isFinite(createdAt) || createdAt <= createdAfter) {
+            continue;
+          }
         }
         const association = comment.author_association ?? "NONE";
         if (!BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association)) {

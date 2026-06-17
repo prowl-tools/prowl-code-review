@@ -73,6 +73,17 @@ describe("planApprovalDecision (#52)", () => {
     expect(decision.overridden).toBe(false);
   });
 
+  it("does not approve a degraded clean review", () => {
+    const decision = planApprovalDecision({
+      findings: [],
+      config: { enabled: true, approveWhenClean: true },
+      coverageDegraded: true
+    });
+    expect(decision.event).toBe("COMMENT");
+    expect(decision.coverageDegraded).toBe(true);
+    expect(decision.reason).toContain("degraded");
+  });
+
   describe("break-glass override", () => {
     const active: BreakGlassSignal = { active: true, actor: "maintainer", association: "OWNER" };
 
@@ -148,6 +159,18 @@ describe("approvalNotes (#52)", () => {
       planApprovalDecision({ findings: [], config: { enabled: true, approveWhenClean: true } })
     );
     expect(notes[0]).toContain("approved");
+  });
+
+  it("notes when approval is withheld for degraded coverage", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({
+        findings: [],
+        config: { enabled: true, approveWhenClean: true },
+        coverageDegraded: true
+      })
+    );
+    expect(notes[0]).toContain("not approving");
+    expect(notes[0]).toContain("coverage was degraded");
   });
 
   it("emits no note for a plain comment decision", () => {

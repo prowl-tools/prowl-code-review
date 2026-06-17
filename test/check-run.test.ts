@@ -99,6 +99,7 @@ describe("planCheckRun with the approval rubric (#52)", () => {
       blocking: 1,
       requestChangesAt: "critical",
       overridden: false,
+      coverageDegraded: false,
       reason: "test",
       ...over
     };
@@ -121,6 +122,15 @@ describe("planCheckRun with the approval rubric (#52)", () => {
       });
       expect(plan.conclusion).toBe("success");
     }
+  });
+
+  it("explains when approval is withheld for degraded coverage", () => {
+    const plan = planCheckRun({
+      findings: [],
+      approval: decision({ event: "COMMENT", blocking: 0, coverageDegraded: true })
+    });
+    expect(plan.conclusion).toBe("success");
+    expect(plan.summary).toContain("approval withheld");
   });
 
   it("passes (and records the override) on a break-glass approval", () => {
