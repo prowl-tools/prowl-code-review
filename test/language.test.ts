@@ -36,6 +36,11 @@ describe("detectLanguage (#5)", () => {
     expect(detectLanguage("noext")).toBeUndefined();
   });
 
+  it("ignores inherited object keys in filename and extension lookups", () => {
+    expect(detectLanguage("constructor")).toBeUndefined();
+    expect(detectLanguage("src/foo.constructor")).toBeUndefined();
+  });
+
   it("every mapped language id has a label", () => {
     // Guard against an extension pointing at an id missing from LANGUAGES.
     for (const id of ["typescript", "python", "go", "docker", "make"] as const) {
@@ -75,5 +80,9 @@ describe("summarizeLanguages (#5)", () => {
 
   it("returns [] when no files map to a known language", () => {
     expect(summarizeLanguages(["x.bin", "y"])).toEqual([]);
+  });
+
+  it("omits inherited object keys before stable sorting", () => {
+    expect(summarizeLanguages(["a.go", "b.constructor"])).toEqual([{ id: "go", label: "Go", files: 1 }]);
   });
 });
