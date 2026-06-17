@@ -37,7 +37,7 @@ export interface DiffHunk {
 }
 
 /** File-level change status inferred from unified-diff headers. */
-export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed";
+export type DiffFileStatus = "added" | "modified" | "deleted" | "renamed" | "copied";
 
 /** One changed file parsed from a unified diff. */
 export interface DiffFile {

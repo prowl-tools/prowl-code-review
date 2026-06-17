@@ -18,7 +18,7 @@ export function renderGuardedDiff(files: DiffFile[]): string {
     }
 
     const header =
-      file.status === "renamed" && file.oldPath
+      (file.status === "renamed" || file.status === "copied") && file.oldPath
         ? `### ${file.oldPath} → ${file.path} (${file.status})`
         : `### ${file.path} (${file.status})`;
     const lines: string[] = [header];

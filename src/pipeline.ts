@@ -499,6 +499,10 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   return changed;
 }
 
+function hasAddedNewLines(file: DiffFile): boolean {
+  return file.hunks.some((hunk) => hunk.lines.some((line) => line.type === "add" && line.newLine));
+}
+
 /** Redact untrusted linter finding text before it reaches prompts or comments. */
 function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; count: number } {
   let count = 0;
@@ -580,22 +584,86 @@ export async function reviewPullRequest(
     incrementalBaseSha === undefined
       ? reviewFiles
       : filterPublishDiffFiles(fullParsed.files, ignorePatterns, new Set(reviewFiles.map((file) => file.path)));
+  const reviewPathSet = new Set(reviewFiles.map((file) => file.path));
+  const sensitiveSkippedPaths = new Set(skipped.filter((file) => file.reason === "sensitive").map((file) => file.path));
+  const secretScanFiles = parsed.files.filter((file) => sensitiveSkippedPaths.has(file.path) && !reviewPathSet.has(file.path));
+
+  // Redact/report anything that will reach prompts or review comments.
+  const redactionNotes: string[] = [];
+  const sensitiveSkipCount = sensitiveSkippedPaths.size;
+  if (sensitiveSkipCount > 0) {
+    redactionNotes.push(`Skipped ${sensitiveSkipCount} sensitive file(s) — kept out of the prompt.`);
+  }
+
+  // Linter/SAST grounding (#16): run deterministic tools on reviewable files and
+  // let Gitleaks additionally scan sensitive skipped files without exposing their
+  // contents to context retrieval or provider review prompts.
+  let grounding: ReviewInput["grounding"];
+  let groundingFindings: Finding[] = [];
+  let directGroundingFindings: Finding[] = [];
+  let groundingNotes: string[] = [];
+  const groundingLineFiles = [...reviewFiles, ...secretScanFiles];
+  const groundingChangedLines = changedLinesByPath(groundingLineFiles);
+  const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
+  const secretScanWholeFilePaths = secretScanFiles
+    .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
+    .map((file) => file.path);
+  if (!options.skipGrounding && options.toolkitRoot && groundingLineFiles.length > 0) {
+    try {
+      const result = await ground({
+        root: options.toolkitRoot,
+        changedPaths: reviewFiles.map((file) => file.path),
+        secretScanPaths: secretScanFiles.map((file) => file.path),
+        secretScanWholeFilePaths,
+        changedLines: groundingChangedLines,
+        trustWorkspace: options.trustWorkspace === true,
+        limits: options.groundingLimits
+      });
+      const redactedNotes = redactGroundingNotes(result.notes);
+      groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
+      const redacted = redactGroundingFindings(result.findings);
+      groundingFindings = redacted.findings;
+      directGroundingFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
+      const promptGroundingFindings = groundingFindings.filter((finding) => !secretScanPathSet.has(finding.file));
+      const redactionCount = redacted.count + redactedNotes.count;
+      if (redactionCount > 0) {
+        redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
+      }
+      if (directGroundingFindings.length > 0 && reviewFiles.length > 0) {
+        groundingNotes.push(
+          `Linter grounding: kept ${directGroundingFindings.length} sensitive-file secret finding(s) outside provider verification.`
+        );
+      }
+      if (promptGroundingFindings.length > 0) {
+        grounding = { findings: promptGroundingFindings, summary: buildGroundingSummary(promptGroundingFindings) };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const redacted = redactSecrets(message);
+      if (redacted.count > 0) {
+        redactionNotes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
+      }
+      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${redacted.text}`)];
+    }
+  }
 
   if (reviewFiles.length === 0) {
-    const reviewResult = emptyReviewResult();
+    const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
     const summaryBody = buildWalkthrough({
-      findings: [],
+      findings: reviewResult.findings,
       files: parsed.files,
       skipped,
       notes: [
         ...incrementalNotesList,
+        ...redactionNotes,
+        ...groundingNotes,
         incrementalBaseSha
           ? "No reviewable changes since the last reviewed commit; provider review skipped."
           : "No reviewable files remained after filters; provider review skipped."
       ]
     });
     const payload = buildReviewPayload({
-      findings: [],
+      findings: reviewResult.findings,
       diff: { files: [] },
       summaryBody,
       event: options.event,
@@ -626,7 +694,7 @@ export async function reviewPullRequest(
       dryRun: options.dryRun,
       checkRun: options.checkRun,
       headSha: meta.headSha,
-      findings: [],
+      findings: reviewResult.findings,
       incremental: incrementalBaseSha !== undefined
     });
 
@@ -659,16 +727,11 @@ export async function reviewPullRequest(
   });
 
   // Redact secrets from anything that will reach the provider.
-  const redactionNotes: string[] = [];
   const renderedDiff = renderGuardedDiff(reviewFiles);
   const redactedDiff = redactSecrets(renderedDiff);
   const diffText = redactedDiff.text;
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
-  }
-  const sensitiveSkipCount = skipped.filter((file) => file.reason === "sensitive").length;
-  if (sensitiveSkipCount > 0) {
-    redactionNotes.push(`Skipped ${sensitiveSkipCount} sensitive file(s) — kept out of the prompt.`);
   }
 
   let context: string | undefined;
@@ -713,36 +776,6 @@ export async function reviewPullRequest(
     }
   }
 
-  // Linter/SAST grounding (#16): run the repo's deterministic linters on the
-  // changed files and feed the findings into the review so the LLM reconciles
-  // rather than re-discovers. Degrades gracefully; never blocks the review.
-  let grounding: ReviewInput["grounding"];
-  let groundingNotes: string[] = [];
-  if (!options.skipGrounding && options.toolkitRoot && reviewFiles.length > 0) {
-    try {
-      const result = await ground({
-        root: options.toolkitRoot,
-        changedPaths: reviewFiles.map((file) => file.path),
-        changedLines: changedLinesByPath(reviewFiles),
-        trustWorkspace: options.trustWorkspace === true,
-        limits: options.groundingLimits
-      });
-      const redactedNotes = redactGroundingNotes(result.notes);
-      groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
-      const redacted = redactGroundingFindings(result.findings);
-      const redactionCount = redacted.count + redactedNotes.count;
-      if (redactionCount > 0) {
-        redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
-      }
-      if (redacted.findings.length > 0) {
-        grounding = { findings: redacted.findings, summary: buildGroundingSummary(redacted.findings) };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${message}`)];
-    }
-  }
-
   // The verification gate sees the budget net of what context retrieval already
   // spent, so it skips the precision pass once the run is out of budget (#18).
   const reviewBudgetTokens =
@@ -771,6 +804,10 @@ export async function reviewPullRequest(
       maxTokens: reviewBudgetTokens
     }
   );
+  if (directGroundingFindings.length > 0) {
+    reviewResult.raw = [...reviewResult.raw, ...directGroundingFindings];
+    reviewResult.findings = [...directGroundingFindings, ...reviewResult.findings];
+  }
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
   // when the reviewer couldn't fully run — a specialist pass failed, verification
