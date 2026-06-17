@@ -89,6 +89,16 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #     minChangedLines: 500
 #     minFiles: 20
 
+# --- Merge gate (GitHub Check Run) --------------------------------------------
+# Publish a Check Run summarizing the review with per-line annotations. Opt-in;
+# needs the workflow to grant "checks: write". With failOn set, findings at or
+# above that severity fail the check (and can block merge once the org marks the
+# "prowl-review" check Required in branch protection); omit failOn for an
+# informational check that never fails.
+# checkRun:
+#   enabled: false
+#   failOn: critical         # critical | major | minor | trivial | info
+
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:
 #   enabled: true            # gather callers/definitions/related files before reviewing

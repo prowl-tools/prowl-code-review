@@ -180,6 +180,7 @@ type ResolvedReviewOptions = Pick<
   | "specialists"
   | "riskTiering"
   | "incremental"
+  | "checkRun"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -297,7 +298,9 @@ export function resolveReviewOptions(
     // Omitted → the pipeline's built-in specialist set; config composes built-ins + custom (#51).
     specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined,
     // Omitted → tiering on with built-in thresholds; config can tune or disable it (#31).
-    riskTiering: config.riskTiering
+    riskTiering: config.riskTiering,
+    // Merge gate (#24); opt-in via config (needs checks: write).
+    checkRun: config.checkRun
   };
 }
 
@@ -330,6 +333,9 @@ export function reportReviewCommandResult(
     `prowl-review: ${count} finding(s), ${inline} inline, ${result.contextFiles} context file(s) on ` +
       `${options.owner}/${options.repo}#${options.pullNumber} ${publishStatus}`
   );
+  if (result.checkRunConclusion) {
+    console.log(`prowl-review: merge-gate check run → ${result.checkRunConclusion}`);
+  }
 
   const outputPath = env.GITHUB_OUTPUT;
   if (outputPath) {

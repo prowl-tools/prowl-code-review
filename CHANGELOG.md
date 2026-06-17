@@ -5,6 +5,19 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Check Run / merge gate (backlog #24): an opt-in GitHub Check Run summarizing the review with per-line
+  annotations, so Critical findings can block merge. A pure `planCheckRun` derives the conclusion from
+  the worst finding severity against a configurable `checkRun.failOn` (findings at/above it → `failure`;
+  omit `failOn` for an informational `neutral` check), builds the summary (severity breakdown; findings
+  without a line are counted but not annotated — no silent drop, #5), and maps findings to annotations
+  (critical/major → failure, minor → warning, else notice). `submitCheckRun` publishes via the Checks
+  API, batching annotations in ≤50/request (create + update calls). Wired into the pipeline as a
+  non-fatal step — a check-run failure (e.g. missing `checks: write`) never sinks the published review —
+  and a passing gate still posts on a no-findings run so a Required check isn't left pending.
+  Opt-in via `checkRun.enabled` in `.prowl-review.yml` (a `failure` conclusion only blocks merge once the
+  org marks the "prowl-review" check Required in branch protection). `reviewPullRequest` returns
+  `checkRunConclusion`. New `checks` methods on `OctokitLike`; exports `planCheckRun`/`submitCheckRun` +
+  types.
 - Guidelines + learnings injection (backlog #30, core): the reviewer now loads a `LEARNED_PATTERNS.md`
   file (alongside the already-loaded `REVIEW_GUIDELINES.md`/`CLAUDE.md`) from the trusted guidelines
   checkout and injects it into every specialist's shared system block as a distinct **"learned

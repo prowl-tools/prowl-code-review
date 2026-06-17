@@ -475,6 +475,60 @@ describe("reviewPullRequest", () => {
     expect(deps.runReview.mock.calls[0][0].learnedPatterns).toBe("Known false positive: X.");
   });
 
+  it("publishes a merge-gate check run when enabled (#24)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" } // default finding is major → fails
+    });
+
+    expect(submitCheckRun).toHaveBeenCalledTimes(1);
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.headSha).toBe("head");
+    expect(input.plan.conclusion).toBe("failure");
+    expect(result.checkRunConclusion).toBe("failure");
+  });
+
+  it("does not publish a check run when disabled or on a dry run (#24)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const offDeps = { ...makeDeps(), submitCheckRun };
+    const off = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps: offDeps });
+    expect(submitCheckRun).not.toHaveBeenCalled();
+    expect(off.checkRunConclusion).toBeUndefined();
+
+    const dryCheck = vi.fn(async () => {});
+    const dryDeps = { ...makeDeps(), submitCheckRun: dryCheck };
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps: dryDeps,
+      dryRun: true,
+      checkRun: { enabled: true, failOn: "critical" }
+    });
+    expect(dryCheck).not.toHaveBeenCalled();
+  });
+
+  it("does not fail the review when the check run errors (#24)", async () => {
+    const submitCheckRun = vi.fn(async () => {
+      throw new Error("missing checks: write");
+    });
+    const deps = { ...makeDeps(), submitCheckRun };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "critical" }
+    });
+
+    expect(result.posted).toBe(true); // review still published
+    expect(result.checkRunConclusion).toBeUndefined(); // gate failure swallowed
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
