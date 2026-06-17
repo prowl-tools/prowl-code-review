@@ -41,8 +41,13 @@ const IMPACT_ALERT: Record<Impact, string> = {
 
 /** Render a 1–5 effort score as a filled/empty bar, e.g. ▰▰▰▱▱ (#54). */
 function effortBar(effort: number): string {
-  const filled = Math.max(0, Math.min(5, Math.round(effort)));
+  const filled = normalizeEffort(effort);
   return "▰".repeat(filled) + "▱".repeat(5 - filled);
+}
+
+/** Clamp reviewer-visible effort values to the score range shown in comments. */
+function normalizeEffort(effort: number): number {
+  return Math.max(1, Math.min(5, Math.round(effort)));
 }
 
 type LineDelta = { additions: number; deletions: number };
@@ -502,7 +507,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   const lineDeltas = new Map<DiffFile, LineDelta>();
   const changedLines = totalChangedLines(input.files, lineDeltas);
   const impact = input.impact ?? deriveImpact(input.findings, input.files, changedLines);
-  const effort = input.effort ?? deriveEffort(input.files, changedLines);
+  const effort = normalizeEffort(input.effort ?? deriveEffort(input.files, changedLines));
   const state = reviewCommentState(input);
 
   const sections: string[] = [REVIEW_MARKER, "## prowl-review"];
