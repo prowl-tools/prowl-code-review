@@ -34,7 +34,11 @@ inputs:
     required: false
     default: ""
   guidelines-path:
-    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md; omitted disables guidelines."
+    description: "Explicit trusted checkout used to load REVIEW_GUIDELINES.md/CLAUDE.md/LEARNED_PATTERNS.md for repository-level guidance; omit to disable repository guidelines (org-guidelines-path still applies)."
+    required: false
+    default: ""
+  org-guidelines-path:
+    description: "Optional trusted path to an org-wide guidelines file injected into every repo's review (added to per-repo guidelines)."
     required: false
     default: ""
   trust-workspace:
@@ -81,5 +85,6 @@ runs:
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
+        PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
       run: node "${{ github.action_path }}/dist/cli.js" review

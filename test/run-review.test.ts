@@ -98,6 +98,17 @@ describe("runReview", () => {
     }
   });
 
+  it("injects learned false-positive patterns into the shared system (#30)", async () => {
+    const complete = fakeComplete();
+    await runReview(
+      { diff: "d", learnedPatterns: "Do not flag console.log in scripts/." },
+      { config, complete, verify: false }
+    );
+    const system = (complete.mock.calls[0][0] as CompletionRequest).system ?? "";
+    expect(system).toContain("learned false-positive patterns");
+    expect(system).toContain("Do not flag console.log in scripts/.");
+  });
+
   it("injects grounding into prompts and merges grounding findings (#16)", async () => {
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       // The grounding summary reaches every specialist prompt.

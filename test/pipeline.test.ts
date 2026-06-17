@@ -464,6 +464,17 @@ describe("reviewPullRequest", () => {
     expect(result.incremental).toBe(false);
   });
 
+  it("threads learned false-positive patterns into the review input (#30)", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      learnedPatterns: "Known false positive: X."
+    });
+    expect(deps.runReview.mock.calls[0][0].learnedPatterns).toBe("Known false positive: X.");
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
