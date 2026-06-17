@@ -49,6 +49,12 @@ index abc1234..def5678 100644
 +new
 `;
 
+const COPIED = `diff --git a/template.env b/.env.example
+similarity index 100%
+copy from template.env
+copy to .env.example
+`;
+
 const BINARY = `diff --git a/img.png b/img.png
 new file mode 100644
 index 0000000..abc1234
@@ -106,6 +112,14 @@ describe("parseDiff", () => {
     expect(files[0].status).toBe("renamed");
     expect(files[0].oldPath).toBe("old-name.ts");
     expect(files[0].path).toBe("new-name.ts");
+  });
+
+  it("parses a copied file", () => {
+    const { files } = parseDiff(COPIED);
+    expect(files[0].status).toBe("copied");
+    expect(files[0].oldPath).toBe("template.env");
+    expect(files[0].path).toBe(".env.example");
+    expect(files[0].hunks).toHaveLength(0);
   });
 
   it("flags binary files with no hunks", () => {

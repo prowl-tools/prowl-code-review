@@ -51,6 +51,13 @@ describe("renderGuardedDiff", () => {
     expect(out).toContain("### old.ts → new.ts (renamed)");
   });
 
+  it("shows the copy source for copied files", () => {
+    const out = renderGuardedDiff([
+      { path: ".env.example", oldPath: "template.env", status: "copied", binary: false, byteSize: 0, hunks: [] }
+    ]);
+    expect(out).toContain("### template.env → .env.example (copied)");
+  });
+
   it("returns an empty string for no files", () => {
     expect(renderGuardedDiff([])).toBe("");
   });

@@ -1094,6 +1094,18 @@ rename to secrets/prod.txt
     expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
     expect(result.skipped).toContainEqual({ path: "secrets/prod.txt", reason: "sensitive" });
     expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/a.ts"],
+        secretScanPaths: [".env", "config/example.txt", "secrets/prod.txt"],
+        changedLines: {
+          ".env": [1],
+          "src/a.ts": [2],
+          "config/example.txt": [1],
+          "secrets/prod.txt": [1]
+        }
+      })
+    );
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
@@ -1109,6 +1121,155 @@ rename to secrets/prod.txt
     // Sensitive/size skips are partial coverage, not a failed review: clean + caveat.
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
     expect(result.payload.body).not.toContain("Review incomplete");
+  });
+
+  it("keeps sensitive renames without added lines eligible for secret grounding", async () => {
+    const deps = makeDeps();
+    const renameDiff = `diff --git a/.env b/config/example.txt
+similarity index 100%
+rename from .env
+rename to config/example.txt
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const b = 2;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: renameDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/a.ts"],
+        secretScanPaths: ["config/example.txt"],
+        secretScanWholeFilePaths: ["config/example.txt"],
+        changedLines: { "src/a.ts": [2] }
+      })
+    );
+  });
+
+  it("keeps sensitive copies without added lines eligible for secret grounding", async () => {
+    const deps = makeDeps();
+    const copyDiff = `diff --git a/template.env b/.env.example
+similarity index 100%
+copy from template.env
+copy to .env.example
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const b = 2;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: copyDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/a.ts"],
+        secretScanPaths: [".env.example"],
+        secretScanWholeFilePaths: [".env.example"],
+        changedLines: { "src/a.ts": [2] }
+      })
+    );
+  });
+
+  it("runs secret grounding when only sensitive files remain after filters", async () => {
+    const deps = makeDeps();
+    const secretDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+`;
+    const secretFinding = {
+      file: ".env",
+      line: 1,
+      severity: "critical" as const,
+      category: "security",
+      title: "generic-api-key",
+      body: "Detected a Generic API Key (generic-api-key)",
+      confidence: 0.9
+    };
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: secretDiff });
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [secretFinding],
+      notes: ["Gitleaks: 1 potential secret(s) on changed lines."]
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: [],
+        secretScanPaths: [".env"],
+        changedLines: { ".env": [1] }
+      })
+    );
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(result.review.findings).toEqual([secretFinding]);
+    expect(result.payload.body).toContain("generic-api-key");
+    expect(result.payload.body).toContain("provider review skipped");
+  });
+
+  it("surfaces sensitive secret grounding without provider verification when reviewable files remain", async () => {
+    const deps = makeDeps();
+    const mixedDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1 +1,2 @@
+ const a = 1;
++const b = 2;
+`;
+    const secretFinding = {
+      file: ".env",
+      line: 1,
+      severity: "critical" as const,
+      category: "security",
+      title: "generic-api-key",
+      body: "Detected a Generic API Key (generic-api-key)",
+      confidence: 0.9
+    };
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: mixedDiff });
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [secretFinding],
+      notes: ["Gitleaks: 1 potential secret(s) on changed lines."]
+    });
+    deps.runReview.mockImplementation(async (input) => {
+      expect(input.grounding).toBeUndefined();
+      return reviewResult([]);
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+    expect(result.review.findings).toEqual([secretFinding]);
+    expect(result.payload.body).toContain("generic-api-key");
+    expect(result.payload.body).toContain("sensitive-file secret finding");
+  });
+
+  it("redacts secrets in grounding failure notes", async () => {
+    const deps = makeDeps();
+    deps.gatherGrounding.mockRejectedValue(new Error("gitleaks failed: API_KEY=AKIAIOSFODNN7EXAMPLE"));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("Linter grounding failed");
+    expect(result.payload.body).toContain("[REDACTED");
+    expect(result.payload.body).not.toContain("AKIAIOSFODNN7EXAMPLE");
   });
 
   it("redacts private key blocks after rendering annotated diffs", async () => {

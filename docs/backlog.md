@@ -17,10 +17,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-16b. **More grounding runners: Gitleaks / Semgrep / Ruff** *(framework + ESLint done — see resolved.md)*
-    As a reviewer, I want SAST + more-language linters fed into the review too, so that grounding isn't JS/TS-only.
-    - Acceptance: add Gitleaks (secrets), Semgrep (SAST, rule-configurable), and Ruff (Python) as runners in the existing `src/grounding` registry, normalized to the findings schema and injected as grounding alongside ESLint.
-    - Acceptance: per-language linter auto-selection generalizes with #5's language detection; graceful degradation when a tool is absent (already in place).
+16b. **More grounding runners: Semgrep** *(framework + ESLint + Ruff + Gitleaks done — see resolved.md)*
+    As a reviewer, I want SAST fed into the review too, so that grounding isn't lint-only.
+    - **Done:** Ruff (Python) and Gitleaks (secrets) added to the `src/grounding` registry, normalized to the findings schema, per-language-selected via #5's detector, running ungated (own rulesets, no repo code); graceful degradation when a tool is absent.
+    - Acceptance (remaining): add **Semgrep** (SAST, rule-configurable) as a runner — needs a ruleset-sourcing decision (network registry `--config auto`/`p/…` vs. repo `.semgrep.yml` vs. a bundled set) consistent with the no-extra-infra principle.
 
 17. **LLM resilience: cross-generation failback + heartbeat** *(retry/backoff + partial-failure done — see resolved.md)*
     As a developer, I want reviews to survive sustained provider trouble and long "thinking", so that overload or a slow model doesn't kill or appear to hang the review.
