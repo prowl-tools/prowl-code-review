@@ -56,6 +56,11 @@ export interface GatherGroundingParams {
   /** Repo-relative changed file paths (new side). */
   changedPaths: string[];
   /**
+   * Extra repo-relative changed paths that only secret scanners may inspect.
+   * Used for sensitive files that must stay out of reviewer prompts/context.
+   */
+  secretScanPaths?: string[];
+  /**
    * New-side changed lines by repo-relative file path. When provided, linter
    * messages outside these lines are dropped so pre-existing lint failures do
    * not become PR findings.
@@ -253,6 +258,7 @@ async function runEslint(
     exec: Exec;
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
+    secretScanPaths?: GatherGroundingParams["secretScanPaths"];
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
@@ -324,9 +330,7 @@ function commandUnavailable(result: ExecResult): boolean {
     return true;
   }
   const text = `${result.stderr}\n${result.stdout}`;
-  return /(?:command not found|not recognized as an internal or external command|no such file or directory|could not determine executable to run|spawn .* ENOENT|ENOENT)/i.test(
-    text
-  );
+  return /(?:command not found|not recognized as an internal or external command|could not determine executable to run|spawn .* ENOENT)/i.test(text);
 }
 
 /** Build a compact, actionable failure note for a tool that ran but didn't produce usable output. */
@@ -399,6 +403,7 @@ async function runRuff(
     exec: Exec;
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
+    secretScanPaths?: GatherGroundingParams["secretScanPaths"];
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
@@ -517,20 +522,23 @@ async function runGitleaks(
     exec: Exec;
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
+    secretScanPaths?: GatherGroundingParams["secretScanPaths"];
     trustWorkspace: boolean;
   }
 ): Promise<GroundingResult> {
-  if (safeRelativePaths(params.changedPaths).length === 0) {
+  const files = [...new Set(safeRelativePaths([...params.changedPaths, ...(params.secretScanPaths ?? [])]))];
+  if (files.length === 0) {
     return { findings: [], notes: [] };
   }
 
-  const files = safeRelativePaths(params.changedPaths);
   const limited = files.slice(0, params.limits.maxFiles);
   const notes: string[] = [];
   if (files.length > limited.length) {
     notes.push(`Gitleaks: scanned ${limited.length}/${files.length} changed files (file cap).`);
   }
 
+  // Scan files individually so a missing/deleted path cannot suppress findings
+  // from other files and a repo-root `.gitleaks.toml` cannot silence leaks.
   const results = await Promise.all(
     limited.map((file) =>
       params.exec(
@@ -556,12 +564,17 @@ async function runGitleaks(
     )
   );
 
-  if (results.some(commandUnavailable)) {
+  const unavailableCount = results.filter(commandUnavailable).length;
+  if (unavailableCount === results.length) {
     return { findings: [], notes: [...notes, "Gitleaks not available in the workspace; skipped secret grounding."] };
   }
 
   const parsedFindings: Finding[] = [];
   for (const result of results) {
+    if (commandUnavailable(result)) {
+      notes.push("Gitleaks not available for one file scan; skipped that file.");
+      continue;
+    }
     if (result.code === null) {
       notes.push("Gitleaks: timed out; skipped.");
       continue;
@@ -610,6 +623,7 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
       runner({
         root: params.root,
         changedPaths: params.changedPaths,
+        secretScanPaths: params.secretScanPaths,
         changedLines: params.changedLines,
         trustWorkspace: params.trustWorkspace === true,
         exec,

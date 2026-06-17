@@ -1094,6 +1094,18 @@ rename to secrets/prod.txt
     expect(result.skipped).toContainEqual({ path: "config/example.txt", reason: "sensitive" });
     expect(result.skipped).toContainEqual({ path: "secrets/prod.txt", reason: "sensitive" });
     expect(deps.gatherContext.mock.calls[0][0].changedPaths).toEqual(["src/a.ts"]);
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/a.ts"],
+        secretScanPaths: [".env", "config/example.txt", "secrets/prod.txt"],
+        changedLines: {
+          ".env": [1],
+          "src/a.ts": [2],
+          "config/example.txt": [1],
+          "secrets/prod.txt": [1]
+        }
+      })
+    );
 
     const diffInput = deps.runReview.mock.calls[0][0].diff;
     expect(diffInput).not.toContain(".env");
@@ -1109,6 +1121,46 @@ rename to secrets/prod.txt
     // Sensitive/size skips are partial coverage, not a failed review: clean + caveat.
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
     expect(result.payload.body).not.toContain("Review incomplete");
+  });
+
+  it("runs secret grounding when only sensitive files remain after filters", async () => {
+    const deps = makeDeps();
+    const secretDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+`;
+    const secretFinding = {
+      file: ".env",
+      line: 1,
+      severity: "critical" as const,
+      category: "security",
+      title: "generic-api-key",
+      body: "Detected a Generic API Key (generic-api-key)",
+      confidence: 0.9
+    };
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: secretDiff });
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [secretFinding],
+      notes: ["Gitleaks: 1 potential secret(s) on changed lines."]
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: [],
+        secretScanPaths: [".env"],
+        changedLines: { ".env": [1] }
+      })
+    );
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(result.review.findings).toEqual([secretFinding]);
+    expect(result.payload.body).toContain("generic-api-key");
+    expect(result.payload.body).toContain("provider review skipped");
   });
 
   it("redacts private key blocks after rendering annotated diffs", async () => {

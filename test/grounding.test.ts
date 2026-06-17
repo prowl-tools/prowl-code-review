@@ -369,6 +369,29 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(result.notes.join(" ")).toContain("Gitleaks: 1 potential secret");
   });
 
+  it("scans secret-only paths with Gitleaks", async () => {
+    const secretJson = JSON.stringify([
+      { RuleID: "generic-api-key", Description: "Detected a Generic API Key", File: ".env", StartLine: 1, EndLine: 1 }
+    ]);
+    const exec = execByTool({ gitleaks: { stdout: secretJson, code: 1 } });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      secretScanPaths: [".env"],
+      changedLines: { ".env": [1] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: ".env", line: 1, severity: "critical", category: "security" })
+    );
+    const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
+    expect(gitleaksCalls).toHaveLength(1);
+    expect(gitleaksCalls[0][1]).toContain(".env");
+    const ruffCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "ruff");
+    expect(ruffCalls).toHaveLength(0);
+  });
+
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
     const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } });
     const result = await gatherGrounding({ root: ROOT, changedPaths: [], exec });
@@ -393,6 +416,32 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["config.py"], exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Gitleaks not available");
+  });
+
+  it("keeps Gitleaks findings from valid files when another source is missing", async () => {
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "gitleaks") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const source = args[args.indexOf("--source") + 1];
+      if (source === "deleted.env") {
+        return { stdout: "", stderr: "stat deleted.env: no such file or directory", code: 1 };
+      }
+      return { stdout: gitleaksJson, stderr: "", code: 1 };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["deleted.env", "config.py"],
+      changedLines: { "config.py": [5] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "config.py", line: 5, severity: "critical", category: "security" })
+    );
+    expect(result.notes.join(" ")).toContain("Gitleaks failed (exit 1)");
+    expect(result.notes.join(" ")).toContain("no such file or directory");
   });
 
   it("notes malformed Gitleaks JSON when leaks exit with no parseable findings", async () => {
