@@ -464,6 +464,13 @@ describe("reviewPullRequest", () => {
     expect(result.incremental).toBe(false);
   });
 
+  it("threads the PR's detected languages into the review input (#5)", async () => {
+    const deps = makeDeps();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+    // The default DIFF touches src/a.ts → TypeScript.
+    expect(deps.runReview.mock.calls[0][0].languages).toEqual(["TypeScript"]);
+  });
+
   it("threads learned false-positive patterns into the review input (#30)", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, {

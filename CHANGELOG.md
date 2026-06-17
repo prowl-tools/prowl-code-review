@@ -4,6 +4,19 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Multi-language support (backlog #5, core): a dependency-free language-detection primitive
+  (`src/review/language.ts` — `detectLanguage`/`summarizeLanguages` by extension/filename across ~20
+  languages) that makes the review **language-aware**. The specialist system prompt now states which
+  languages a PR touches ("changes code in: TypeScript, Python …") so the model applies each language's
+  idioms; detection is derived from a fixed allowlist (trusted instruction text, not PR data). Grounding's
+  ESLint runner now selects files via the detector (`isJavaScriptFamily`) — the per-language
+  linter-selection seam #16b builds on — and non-JS/TS languages degrade gracefully (reviewed by the LLM,
+  just without language-specific tooling). Cross-file context retrieval was already language-agnostic
+  (grep/read), so no change was needed there. Exports the detection API. **Deferred (still #5):**
+  tree-sitter AST-assisted caller/definition resolution — a heavier, separate layer (the detection
+  primitive it would need is now in place).
+
 ### Changed
 - Review-comment presentation polish (backlog #54): the findings-state summary now leads with a
   one-line TL;DR, a **GitHub alert callout** keyed to impact (`> [!CAUTION]`/`[!WARNING]`/`[!NOTE]`) for

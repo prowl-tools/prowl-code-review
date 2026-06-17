@@ -31,6 +31,7 @@ import {
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
 import { DEFAULT_SPECIALISTS, type Specialist } from "./review/specialists.js";
+import { summarizeLanguages } from "./review/language.js";
 import {
   diffComplexity,
   selectRiskTier,
@@ -756,6 +757,7 @@ export async function reviewPullRequest(
       context: reviewContext,
       guidelines: options.guidelines,
       learnedPatterns: options.learnedPatterns,
+      languages: summarizeLanguages(reviewFiles.map((file) => file.path)).map((language) => language.label),
       grounding,
       specialists: effectiveSpecialists
     },
