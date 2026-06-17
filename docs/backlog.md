@@ -60,8 +60,9 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
-    - Acceptance: reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` and a `LEARNED_PATTERNS.md` into the prompt; a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to learned-patterns (persisted per #12).
-    - Acceptance: support an optional **org-wide guidelines template** (a shared file or URL injected into every repo's prompts) in addition to per-repo files, so orgs can enforce house standards once.
+    - **Done (core, see resolved.md):** the reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` **and** a `LEARNED_PATTERNS.md` and injects them into the prompt (learned patterns as a distinct "do not re-raise" section); an optional org-wide guidelines **file** (`org-guidelines-path` / `PROWL_ORG_GUIDELINES_PATH`) is injected into every repo's prompts alongside per-repo files.
+    - Acceptance (remaining): a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to `LEARNED_PATTERNS.md` (persisted per #12) — rides with the bot-command set (#26), which owns the `ignore` verb + write-back/event infra.
+    - Acceptance (remaining): support the org-wide guidelines template via **URL** (not just a file), so orgs can host one shared standard.
 
 32. **Issue/ticket validation**
     As a developer, I want the reviewer to check whether the PR satisfies its linked issue, so that scope gaps are caught early.
