@@ -621,7 +621,11 @@ export async function reviewPullRequest(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${message}`)];
+      const redacted = redactSecrets(message);
+      if (redacted.count > 0) {
+        redactionNotes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
+      }
+      groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${redacted.text}`)];
     }
   }
 

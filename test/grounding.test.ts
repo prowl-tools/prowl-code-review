@@ -419,7 +419,7 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
   });
 
   it("keeps Gitleaks findings from valid files when another source is missing", async () => {
-    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+    const exec: Exec = vi.fn(async (command: string, args: string[], _cwd: string, _options?: unknown): Promise<ExecResult> => {
       if (command !== "gitleaks") {
         return { stdout: "[]", stderr: "", code: 0 };
       }
@@ -442,6 +442,31 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     );
     expect(result.notes.join(" ")).toContain("Gitleaks failed (exit 1)");
     expect(result.notes.join(" ")).toContain("no such file or directory");
+  });
+
+  it("keeps Gitleaks findings from valid files when another source times out", async () => {
+    const exec: Exec = vi.fn(async (command: string, args: string[], _cwd: string, _options?: unknown): Promise<ExecResult> => {
+      if (command !== "gitleaks") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const source = args[args.indexOf("--source") + 1];
+      if (source === "slow.env") {
+        return { stdout: "", stderr: "", code: null };
+      }
+      return { stdout: gitleaksJson, stderr: "", code: 1 };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["slow.env", "config.py"],
+      changedLines: { "config.py": [5] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "config.py", line: 5, severity: "critical", category: "security" })
+    );
+    expect(result.notes.join(" ")).toContain("Gitleaks: timed out; skipped.");
   });
 
   it("notes malformed Gitleaks JSON when leaks exit with no parseable findings", async () => {

@@ -1163,6 +1163,17 @@ new file mode 100644
     expect(result.payload.body).toContain("provider review skipped");
   });
 
+  it("redacts secrets in grounding failure notes", async () => {
+    const deps = makeDeps();
+    deps.gatherGrounding.mockRejectedValue(new Error("gitleaks failed: API_KEY=AKIAIOSFODNN7EXAMPLE"));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.payload.body).toContain("Linter grounding failed");
+    expect(result.payload.body).toContain("[REDACTED");
+    expect(result.payload.body).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
   it("redacts private key blocks after rendering annotated diffs", async () => {
     const deps = makeDeps();
     const privateKeyDiff = `diff --git a/README.md b/README.md
