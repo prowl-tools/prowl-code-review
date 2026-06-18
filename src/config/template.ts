@@ -99,6 +99,23 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   enabled: false
 #   failOn: critical         # critical | major | minor | trivial | info
 
+# --- Approval rubric + break-glass --------------------------------------------
+# Map findings to a GitHub review event so the gate is predictable: findings at
+# or above requestChangesAt make the bot REQUEST CHANGES; an otherwise clean
+# review comments (or approves, if approveWhenClean or clearing its own prior
+# request-changes review). Opt-in; off by default the
+# bot only ever comments. A repo owner/member/collaborator can override a
+# request-changes by commenting "@prowl-review break glass <head-sha>" — that
+# force-approves past the blocking finding only for that exact head SHA, and is recorded
+# in the review for auditability. Approval is withheld if review coverage is
+# incomplete or files were skipped. When the Check Run (above) is also enabled,
+# it follows this same decision and fails on incomplete coverage.
+# approval:
+#   enabled: false
+#   requestChangesAt: critical  # critical | major | minor | trivial | info
+#   approveWhenClean: false     # approve (not just comment) when nothing is at/above the threshold
+#   breakGlass: true            # honor "@prowl-review break glass <head-sha>" overrides
+
 # --- Cross-file context (agentic retrieval) -----------------------------------
 # context:
 #   enabled: true            # gather callers/definitions/related files before reviewing

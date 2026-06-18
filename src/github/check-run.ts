@@ -1,6 +1,7 @@
 import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
 import { type Finding, type Severity, SEVERITY_ORDER } from "../review/findings.js";
+import type { ApprovalDecision } from "../review/approval.js";
 
 /**
  * Check Run / merge gate (backlog #24).
@@ -75,27 +76,83 @@ function severityBreakdown(findings: Finding[]): string {
   return parts.length > 0 ? parts.join(", ") : "none";
 }
 
+/** Build the "Gate:" summary line, reflecting the approval rubric (#52) or failOn. */
+function gateSummaryLine(input: {
+  approval?: ApprovalDecision;
+  failOn?: Severity;
+  conclusion: CheckConclusion;
+  blocking: number;
+}): string {
+  const { approval, failOn, conclusion, blocking } = input;
+  if (approval) {
+    if (approval.overridden) {
+      return (
+        `Gate: break-glass override${approval.overrideActor ? ` by @${approval.overrideActor}` : ""} — ` +
+        `approved past ${blocking} finding(s) at or above \`${approval.requestChangesAt}\` (this check passes).`
+      );
+    }
+    if (approval.event === "REQUEST_CHANGES") {
+      return `Gate: ${blocking} finding(s) at or above \`${approval.requestChangesAt}\` — requesting changes (this check fails).`;
+    }
+    if (approval.coverageDegraded) {
+      return "Gate: review coverage incomplete — approval withheld (this check fails).";
+    }
+    if (approval.clearsPriorRequestChanges) {
+      return (
+        `Gate: no findings at or above \`${approval.requestChangesAt}\` — ` +
+        "approving to clear a previous prowl-review change request (this check passes)."
+      );
+    }
+    return `Gate: no findings at or above \`${approval.requestChangesAt}\` — this check passes.`;
+  }
+  if (failOn !== undefined) {
+    return conclusion === "failure"
+      ? `Gate: ${blocking} finding(s) at or above \`${failOn}\` — this check fails.`
+      : `Gate: no findings at or above \`${failOn}\` — this check passes.`;
+  }
+  return "Gate: informational only (set checkRun.failOn or approval.enabled to block on severity).";
+}
+
 /**
  * Decide the check-run conclusion, summary, and annotations from the findings.
  *
- * With `failOn` set, any finding at or above that severity makes the conclusion
- * `failure`; otherwise `success`. With `failOn` omitted the check is purely
- * informational (`neutral`). Findings without a line can't be annotated, so they
- * are reported in the summary count but not as annotations (no silent drop, #5).
+ * When an approval decision (#52) is supplied and engaged, the check follows the
+ * **same** rubric as the published review event — request-changes or incomplete
+ * coverage → `failure`, comment/approve → `success`, and a break-glass override
+ * → `success` — so the gate and the review can never disagree. Otherwise it falls back to `failOn`:
+ * any finding at or above that severity makes the conclusion `failure`, else
+ * `success`; with `failOn` omitted too, the check is purely informational
+ * (`neutral`). Findings without a line can't be annotated, so they are reported
+ * in the summary count but not as annotations (no silent drop, #5).
  */
 export function planCheckRun(input: {
   findings: Finding[];
   failOn?: Severity;
   /** Incremental runs (#23) gate on the delta; surfaced in the summary. */
   incremental?: boolean;
+  /** Approval rubric decision (#52); when engaged it drives the conclusion. */
+  approval?: ApprovalDecision;
 }): CheckRunPlan {
   const { findings, failOn } = input;
+  const approval = input.approval?.enabled ? input.approval : undefined;
 
-  const gated = failOn !== undefined;
-  const blocking = gated
-    ? findings.filter((f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[failOn])
-    : [];
-  const conclusion: CheckConclusion = !gated ? "neutral" : blocking.length > 0 ? "failure" : "success";
+  const gated = approval !== undefined || failOn !== undefined;
+  const blocking = approval
+    ? findings.filter((f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[approval.requestChangesAt])
+    : failOn !== undefined
+      ? findings.filter((f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[failOn])
+      : [];
+  const conclusion: CheckConclusion = approval
+    ? approval.coverageDegraded
+      ? "failure"
+      : approval.overridden || approval.event !== "REQUEST_CHANGES"
+      ? "success"
+      : "failure"
+    : !gated
+      ? "neutral"
+      : blocking.length > 0
+        ? "failure"
+        : "success";
 
   const annotations: CheckAnnotation[] = findings
     .filter((finding): finding is Finding & { line: number } => finding.line !== undefined)
@@ -119,11 +176,7 @@ export function planCheckRun(input: {
     total === 0
       ? "prowl-review found no issues in the reviewed changes."
       : `prowl-review found ${total} finding${total === 1 ? "" : "s"}: ${severityBreakdown(findings)}.`,
-    gated
-      ? conclusion === "failure"
-        ? `Gate: ${blocking.length} finding(s) at or above \`${failOn}\` — this check fails.`
-        : `Gate: no findings at or above \`${failOn}\` — this check passes.`
-      : "Gate: informational only (set checkRun.failOn to block on severity).",
+    gateSummaryLine({ approval, failOn, conclusion, blocking: blocking.length }),
     annotations.length < total
       ? `${total - annotations.length} finding(s) without a line are summarized but not annotated.`
       : ""

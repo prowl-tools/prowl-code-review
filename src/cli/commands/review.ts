@@ -181,6 +181,7 @@ type ResolvedReviewOptions = Pick<
   | "riskTiering"
   | "incremental"
   | "checkRun"
+  | "approval"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -300,7 +301,9 @@ export function resolveReviewOptions(
     // Omitted → tiering on with built-in thresholds; config can tune or disable it (#31).
     riskTiering: config.riskTiering,
     // Merge gate (#24); opt-in via config (needs checks: write).
-    checkRun: config.checkRun
+    checkRun: config.checkRun,
+    // Approval rubric + break-glass (#52); opt-in via config.
+    approval: config.approval
   };
 }
 
@@ -335,6 +338,13 @@ export function reportReviewCommandResult(
   );
   if (result.checkRunConclusion) {
     console.log(`prowl-review: merge-gate check run → ${result.checkRunConclusion}`);
+  }
+  if (result.approval?.enabled) {
+    const verdict = result.approval.event.toLowerCase().replace("_", " ");
+    const override = result.approval.overridden
+      ? ` (break-glass override${result.approval.overrideActor ? ` by @${result.approval.overrideActor}` : ""})`
+      : "";
+    console.log(`prowl-review: approval gate → ${verdict}${override}`);
   }
 
   const outputPath = env.GITHUB_OUTPUT;

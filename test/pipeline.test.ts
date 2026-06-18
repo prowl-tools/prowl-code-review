@@ -288,6 +288,46 @@ describe("reviewPullRequest", () => {
     });
   });
 
+  it("does not approve or advance incremental state when the full PR still has skipped files", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fullDiffWithSensitiveFile = `diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1,1 +1,2 @@
+ TOKEN=old
++TOKEN=new
+
+${DELTA_DIFF}`;
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF),
+      submitCheckRun
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: fullDiffWithSensitiveFile }));
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      approval: { enabled: true, approveWhenClean: true },
+      checkRun: { enabled: true }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(result.skipped).toEqual([]);
+    expect(result.approval?.coverageDegraded).toBe(true);
+    expect(result.approval?.event).toBe("COMMENT");
+    expect(result.payload.event).toBe("COMMENT");
+    expect(result.checkRunConclusion).toBe("failure");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      preservePriorSummary: true
+    });
+  });
+
   it("treats an empty compare diff as an incremental no-op (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);
@@ -302,6 +342,40 @@ describe("reviewPullRequest", () => {
     expect(deps.gatherGrounding).not.toHaveBeenCalled();
     expect(deps.runReview).not.toHaveBeenCalled();
     expect(result.payload.body).toContain("No reviewable changes since the last reviewed commit");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
+  });
+
+  it("does not fail approval checks for an empty incremental no-op", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const submitCheckRun = vi.fn(async () => {});
+    const detectPriorRequestChanges = vi.fn(async () => ({ active: false, truncated: false }));
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ""),
+      submitCheckRun,
+      detectPriorRequestChanges
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      approval: { enabled: true, approveWhenClean: true },
+      checkRun: { enabled: true }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(detectPriorRequestChanges).toHaveBeenCalled();
+    expect(result.approval?.coverageDegraded).toBe(false);
+    expect(result.approval?.event).toBe("APPROVE");
+    expect(result.payload.event).toBe("APPROVE");
+    expect(result.checkRunConclusion).toBe("success");
     expect(deps.submitReview.mock.calls[0][3]).toEqual({
       commitId: "head",
       headSha: "head",
@@ -534,6 +608,259 @@ describe("reviewPullRequest", () => {
 
     expect(result.posted).toBe(true); // review still published
     expect(result.checkRunConclusion).toBeUndefined(); // gate failure swallowed
+  });
+
+  describe("approval rubric + break-glass (#52)", () => {
+    it("only comments by default (gate off): no override lookup, COMMENT event", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(detectBreakGlass).not.toHaveBeenCalled();
+      expect(result.approval).toBeUndefined();
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
+    it("requests changes when a finding is at/above the threshold", async () => {
+      const deps = makeDeps();
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.body).toContain("requesting changes");
+    });
+
+    it("comments (not request-changes) when nothing meets the threshold", async () => {
+      const deps = makeDeps(); // default finding is major; threshold defaults to critical
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
+    it("approves a clean run to clear an active prior request-changes review", async () => {
+      const detectPriorRequestChanges = vi.fn(async () => ({ active: true, truncated: false }));
+      const deps = { ...makeDeps(), detectPriorRequestChanges };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectPriorRequestChanges).toHaveBeenCalledWith(octokit, ref);
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.approval?.clearsPriorRequestChanges).toBe(true);
+      expect(result.payload.event).toBe("APPROVE");
+      expect(result.payload.body).toContain("clear a previous prowl-review change request");
+    });
+
+    it("does not approve when prior request-changes history is truncated", async () => {
+      const detectPriorRequestChanges = vi.fn(async () => ({ active: false, truncated: true }));
+      const deps = { ...makeDeps(), detectPriorRequestChanges };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.priorRequestChangesTruncated).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("pagination cap");
+    });
+
+    it("checks prior request-changes history before approveWhenClean approvals", async () => {
+      const detectPriorRequestChanges = vi.fn(async () => ({ active: false, truncated: true }));
+      const deps = { ...makeDeps(), detectPriorRequestChanges };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(detectPriorRequestChanges).toHaveBeenCalledWith(octokit, ref);
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.priorRequestChangesTruncated).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("pagination cap");
+    });
+
+    it("force-approves and records the override on a trusted break-glass comment", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectBreakGlass).toHaveBeenCalledTimes(1);
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.approval?.overridden).toBe(true);
+      expect(result.payload.event).toBe("APPROVE");
+      expect(result.payload.body).toContain("Break-glass override");
+      // The walkthrough neutralizes @mentions in notes, so the actor is recorded
+      // without a live ping (&#64;maintainer).
+      expect(result.payload.body).toContain("maintainer");
+    });
+
+    it("passes the exact head SHA to break-glass detection", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectBreakGlass).toHaveBeenCalledWith(
+        octokit,
+        ref,
+        expect.objectContaining({ headSha: "head" })
+      );
+    });
+
+    it("does not approve a degraded clean review", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: false }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.gatherContext.mockRejectedValue(
+        new ContextRetrievalError("context unavailable", {
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+          rounds: 1,
+          notes: []
+        })
+      );
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("not approving");
+      expect(result.payload.body).toContain("Review incomplete");
+    });
+
+    it("does not approve when guardrails skipped part of the diff", async () => {
+      const deps = makeDeps();
+      deps.fetchPullRequest.mockResolvedValue({
+        meta,
+        diff: `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
+ const a = 1;
++const b = 2;
+diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1,1 +1,2 @@
+ const c = 1;
++const d = 2;
+`
+      });
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        diffLimits: { maxFiles: 1 },
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("not approving");
+      expect(result.payload.body).toContain("skipped - file limit reached");
+    });
+
+    it("drives the #24 check conclusion from the rubric (request-changes → failure)", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), submitCheckRun };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true },
+        checkRun: { enabled: true } // no failOn — the rubric is the source of truth
+      });
+
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("drives the #24 check conclusion to failure when approval coverage is degraded", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), submitCheckRun };
+      deps.gatherContext.mockRejectedValue(
+        new ContextRetrievalError("context unavailable", {
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+          rounds: 1,
+          notes: []
+        })
+      );
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true },
+        checkRun: { enabled: true }
+      });
+
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("a break-glass override also unblocks the #24 check (→ success)", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), submitCheckRun, detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true },
+        checkRun: { enabled: true }
+      });
+
+      expect(result.checkRunConclusion).toBe("success");
+    });
   });
 
   it("throws publish errors with the completed review usage attached", async () => {

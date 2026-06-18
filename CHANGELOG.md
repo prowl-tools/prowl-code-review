@@ -5,6 +5,20 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Approval rubric + break-glass override (backlog #52): an opt-in gate
+  (`approval.enabled`) that maps findings to a single GitHub review event — any finding at or above
+  `requestChangesAt` (default `critical`) makes the bot **request changes**; an otherwise clean review
+  **comments** (or **approves**, with `approveWhenClean`, or when a prior prowl-review request-changes
+  review must be cleared). The same decision drives the #24 Check Run
+  conclusion, so the published review and the merge gate can never disagree. The escape hatch: a repo
+  owner/member/collaborator can comment **`@prowl-review break glass <head-sha>`** to force-approve past a blocking
+  finding — gated by GitHub author association (a drive-by fork contributor can't self-unblock) and
+  the exact current head SHA, and recorded in the review summary + check for auditability.
+  The gate withholds approval when review coverage is incomplete, when files were skipped, or when prior
+  review-state history hits its cap; incomplete coverage also fails the #24 Check Run. Off by default the bot only ever comments (the
+  prior behavior); non-`COMMENT` review events now post a short verdict pointing at the updatable summary
+  instead of duplicating the walkthrough. Configurable via the `approval` block; the decision is logged
+  to the CLI/Action output. Exports `planApprovalDecision`/`detectBreakGlass`/`hasActiveRequestChanges`.
 - More grounding runners — Ruff + Gitleaks (backlog #16b): the grounding registry now runs **Ruff**
   (Python lint, selected via the #5 language detector) and **Gitleaks** (secret scanning) alongside
   ESLint. Unlike ESLint, both run **ungated** even on untrusted checkouts — they use their own

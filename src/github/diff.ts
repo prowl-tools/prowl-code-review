@@ -51,7 +51,10 @@ interface RawPullRequest {
   /** Base branch information. */
   base: { sha: string };
   /** Head branch information. */
-  head: { sha: string };
+  head: {
+    sha: string;
+    repo?: { name?: string; owner?: { login?: string | null } | null } | null;
+  };
   /** Whether the pull request is currently a draft. */
   draft?: boolean;
   /** GitHub pull request state. */
