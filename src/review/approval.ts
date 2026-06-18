@@ -65,6 +65,8 @@ export interface ApprovalDecision {
   clearsPriorRequestChanges: boolean;
   /** True when break-glass was disabled because head freshness could not be verified. */
   breakGlassFreshnessUnknown?: boolean;
+  /** True when break-glass overrides are disabled by configuration. */
+  breakGlassDisabled?: boolean;
   /** True when prior review history hit the pagination cap before a complete answer. */
   priorRequestChangesTruncated?: boolean;
   /** Login of the override actor, when overridden (audit). */
@@ -91,6 +93,7 @@ export function planApprovalDecision(input: {
   const coverageDegraded = input.coverageDegraded === true;
   const priorRequestChanges = input.priorRequestChanges === true;
   const breakGlassFreshnessUnknown = input.breakGlassFreshnessUnknown === true;
+  const breakGlassDisabled = config.breakGlass === false;
   const priorRequestChangesTruncated = input.priorRequestChangesTruncated === true;
   const blocking = input.findings.filter(
     (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[requestChangesAt]
@@ -106,6 +109,7 @@ export function planApprovalDecision(input: {
       coverageDegraded,
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
+      breakGlassDisabled,
       priorRequestChangesTruncated,
       reason: "Approval gate disabled; posting as a comment."
     };
@@ -121,6 +125,7 @@ export function planApprovalDecision(input: {
       coverageDegraded,
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
+      breakGlassDisabled,
       priorRequestChangesTruncated,
       reason:
         blocking > 0
@@ -131,7 +136,7 @@ export function planApprovalDecision(input: {
 
   if (blocking > 0) {
     const breakGlassHonored =
-      !breakGlassFreshnessUnknown && config.breakGlass !== false && input.breakGlass?.active === true;
+      !breakGlassFreshnessUnknown && !breakGlassDisabled && input.breakGlass?.active === true;
     if (breakGlassHonored) {
       const actor = input.breakGlass?.actor;
       return {
@@ -143,6 +148,7 @@ export function planApprovalDecision(input: {
         coverageDegraded,
         clearsPriorRequestChanges: false,
         breakGlassFreshnessUnknown: false,
+        breakGlassDisabled,
         priorRequestChangesTruncated,
         overrideActor: actor,
         reason:
@@ -159,6 +165,7 @@ export function planApprovalDecision(input: {
       coverageDegraded,
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
+      breakGlassDisabled,
       priorRequestChangesTruncated,
       reason: breakGlassFreshnessUnknown
         ? `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes because break-glass freshness could not be verified.`
@@ -176,6 +183,7 @@ export function planApprovalDecision(input: {
       coverageDegraded,
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
+      breakGlassDisabled,
       priorRequestChangesTruncated,
       reason: "Prior prowl-review history was truncated; posting as a comment instead of approving."
     };
@@ -191,6 +199,7 @@ export function planApprovalDecision(input: {
       coverageDegraded,
       clearsPriorRequestChanges: priorRequestChanges,
       breakGlassFreshnessUnknown,
+      breakGlassDisabled,
       priorRequestChangesTruncated,
       reason: priorRequestChanges
         ? `No findings at or above ${requestChangesAt}; approving to clear a prior prowl-review change request.`
@@ -207,6 +216,7 @@ export function planApprovalDecision(input: {
     coverageDegraded,
     clearsPriorRequestChanges: false,
     breakGlassFreshnessUnknown,
+    breakGlassDisabled,
     priorRequestChangesTruncated,
     reason: `No findings at or above ${requestChangesAt}; posting as a comment.`
   };
@@ -215,7 +225,8 @@ export function planApprovalDecision(input: {
 /**
  * Surface the gate decision as review notes so it isn't silent (#5). A
  * break-glass override is always recorded for auditability; a request-changes
- * decision tells the author how to override. Returns [] when the gate is off.
+ * decision tells the author how to override when that escape hatch is available.
+ * Returns [] when the gate is off.
  * The `@prowl-review` mention is wrapped in a code span so rendering it can't
  * notify anyone or self-trigger another override.
  */
@@ -231,13 +242,23 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
     ];
   }
   if (decision.event === "REQUEST_CHANGES") {
-    return [
+    const base =
       `Approval gate (#52): requesting changes — ${decision.blocking} finding(s) at or above ` +
-        `\`${decision.requestChangesAt}\`. A repo owner/member/collaborator can override by commenting ` +
-        "`@prowl-review break glass`." +
-        (decision.breakGlassFreshnessUnknown
-          ? " Break-glass overrides were ignored because the head commit timestamp could not be verified."
-          : "")
+      `\`${decision.requestChangesAt}\`.`;
+    if (decision.coverageDegraded) {
+      return [`${base} Break-glass overrides are unavailable while review coverage is incomplete.`];
+    }
+    if (decision.breakGlassDisabled) {
+      return [`${base} Break-glass overrides are disabled by configuration.`];
+    }
+    if (decision.breakGlassFreshnessUnknown) {
+      return [
+        `${base} Break-glass overrides were ignored because the head commit timestamp could not be verified.`
+      ];
+    }
+    return [
+      `${base} A repo owner/member/collaborator can override by commenting ` +
+        "`@prowl-review break glass`."
     ];
   }
   if (decision.coverageDegraded) {
