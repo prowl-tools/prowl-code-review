@@ -530,8 +530,12 @@ async function resolveApprovalDecision(
   let breakGlass: BreakGlassSignal | undefined;
   let decision = planApprovalDecision({ findings, config, coverageDegraded: options.coverageDegraded });
   if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
-    if (options.breakGlassCreatedAfter) {
-      breakGlass = await detect(octokit, ref, { createdAfter: options.breakGlassCreatedAfter });
+    const breakGlassCreatedAfter =
+      options.breakGlassCreatedAfter && Number.isFinite(Date.parse(options.breakGlassCreatedAfter))
+        ? options.breakGlassCreatedAfter
+        : undefined;
+    if (breakGlassCreatedAfter) {
+      breakGlass = await detect(octokit, ref, { createdAfter: breakGlassCreatedAfter });
       decision = planApprovalDecision({
         findings,
         config,
@@ -547,7 +551,7 @@ async function resolveApprovalDecision(
       });
     }
   }
-  if (decision.enabled && decision.event === "COMMENT" && !decision.coverageDegraded && decision.blocking === 0) {
+  if (decision.enabled && !decision.coverageDegraded && decision.blocking === 0) {
     const priorRequestChanges = await detectPriorRequestChanges(octokit, ref);
     if (priorRequestChanges.active || priorRequestChanges.truncated) {
       decision = planApprovalDecision({

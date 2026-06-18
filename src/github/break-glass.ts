@@ -51,8 +51,10 @@ export async function detectBreakGlass(
 ): Promise<BreakGlassSignal> {
   try {
     const parsedCreatedAfter = options.createdAfter ? Date.parse(options.createdAfter) : undefined;
-    const createdAfter =
-      parsedCreatedAfter === undefined || Number.isFinite(parsedCreatedAfter) ? parsedCreatedAfter : Number.POSITIVE_INFINITY;
+    if (parsedCreatedAfter !== undefined && !Number.isFinite(parsedCreatedAfter)) {
+      return { active: false };
+    }
+    const createdAfter = parsedCreatedAfter;
     const perPage = 100;
     let page = 1;
     let newest: BreakGlassSignal | undefined;
