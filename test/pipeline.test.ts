@@ -934,6 +934,55 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.approval?.event).toBe("COMMENT"); // withheld dispute → no request-changes
     });
 
+    it.each(["acknowledged", "wont-fix", "disagree"] as const)(
+      "does not auto-approve when a critical finding is withheld by a %s reply",
+      async (humanIntent) => {
+        const fp = findingFingerprint(finding({ severity: "critical" }));
+        const fetchReviewThreads = vi.fn(async () => [
+          thread({ id: "T", fingerprints: [fp], humanIntent })
+        ]);
+        const resolveReviewThread = vi.fn(async () => true);
+        const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+        deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+        const result = await reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          approval: { enabled: true, approveWhenClean: true }
+        });
+
+        expect(result.review.findings).toHaveLength(0);
+        expect(result.approval?.event).toBe("COMMENT");
+        expect(result.payload.event).toBe("COMMENT");
+        if (humanIntent === "disagree") {
+          expect(resolveReviewThread).not.toHaveBeenCalled();
+        } else {
+          expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "T");
+        }
+      }
+    );
+
+    it("does not resolve stale-looking prior threads from an empty incremental delta", async () => {
+      const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+      const fetchReviewThreads = vi.fn(async () => [thread({ id: "S", fingerprints: ["still-valid-on-full-pr"] })]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = {
+        ...makeDeps(),
+        fetchPriorState: vi.fn(async () => priorState),
+        fetchComparisonDiff: vi.fn(async () => ""),
+        fetchReviewThreads,
+        resolveReviewThread
+      };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.incremental).toBe(true);
+      expect(fetchReviewThreads).toHaveBeenCalledTimes(1);
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(result.threads?.resolvedFixed).toBe(0);
+    });
+
     it("does nothing when disabled", async () => {
       const fetchReviewThreads = vi.fn(async () => [thread()]);
       const deps = { ...makeDeps(), fetchReviewThreads };

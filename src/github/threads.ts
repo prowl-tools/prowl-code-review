@@ -79,34 +79,44 @@ export interface ThreadActionPlan {
 export function planThreadActions(input: {
   threads: ReviewThread[];
   currentFingerprints: Iterable<string>;
+  resolveStaleThreads?: boolean;
 }): ThreadActionPlan {
   const current = new Set(input.currentFingerprints);
+  const resolveStaleThreads = input.resolveStaleThreads !== false;
   const resolve: Array<{ id: string; reason: ThreadResolveReason }> = [];
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
   let keptOpenDisputed = 0;
 
   for (const thread of input.threads) {
-    if (thread.isResolved || thread.fingerprints.length === 0) {
+    if (thread.fingerprints.length === 0) {
       continue;
     }
 
     if (isDisputingIntent(thread.humanIntent)) {
       thread.fingerprints.forEach((fp) => disputed.add(fp));
-      keptOpenDisputed += 1;
+      if (!thread.isResolved) {
+        keptOpenDisputed += 1;
+      }
       continue;
     }
 
     if (isResolvingIntent(thread.humanIntent)) {
       thread.fingerprints.forEach((fp) => acknowledged.add(fp));
-      resolve.push({ id: thread.id, reason: thread.humanIntent === "wont-fix" ? "wont-fix" : "acknowledged" });
+      if (!thread.isResolved) {
+        resolve.push({ id: thread.id, reason: thread.humanIntent === "wont-fix" ? "wont-fix" : "acknowledged" });
+      }
+      continue;
+    }
+
+    if (thread.isResolved) {
       continue;
     }
 
     // No decisive human reply: resolve when the finding is gone from this review
     // (fixed) or GitHub already marked the thread outdated.
     const stillCurrent = thread.fingerprints.some((fp) => current.has(fp));
-    if (!stillCurrent || thread.isOutdated) {
+    if (resolveStaleThreads && (!stillCurrent || thread.isOutdated)) {
       resolve.push({ id: thread.id, reason: "fixed" });
     }
   }

@@ -524,6 +524,7 @@ async function tidyReviewThreads(params: {
   octokit: OctokitLike;
   ref: PullRequestRef;
   findings: Finding[];
+  resolveStaleThreads: boolean;
   enabled: boolean;
   dryRun: boolean;
 }): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult }> {
@@ -538,7 +539,7 @@ async function tidyReviewThreads(params: {
 
   const fingerprintByFinding = new Map(params.findings.map((finding) => [finding, findingFingerprint(finding)]));
   const currentFingerprints = [...fingerprintByFinding.values()];
-  const plan = planThreadActions({ threads, currentFingerprints });
+  const plan = planThreadActions({ threads, currentFingerprints, resolveStaleThreads: params.resolveStaleThreads });
 
   const acknowledged = new Set(plan.suppress.acknowledged);
   const disputed = new Set(plan.suppress.disputed);
@@ -606,6 +607,29 @@ async function tidyReviewThreads(params: {
     keptOpenDisputed: plan.keptOpenDisputed
   };
   return { findings: kept, notes, tidy };
+}
+
+function withheldThreadFindingCount(tidy: ThreadTidyResult | undefined): number {
+  if (!tidy) {
+    return 0;
+  }
+  return tidy.withheldSettled + tidy.withheldDisputed;
+}
+
+function inhibitApprovalForWithheldThreads(
+  decision: ApprovalDecision,
+  tidy: ThreadTidyResult | undefined
+): ApprovalDecision {
+  const withheld = withheldThreadFindingCount(tidy);
+  if (withheld === 0 || !decision.enabled || decision.event !== "APPROVE" || decision.overridden) {
+    return decision;
+  }
+  return {
+    ...decision,
+    event: "COMMENT",
+    clearsPriorRequestChanges: false,
+    reason: `${withheld} finding(s) were withheld by human thread reply; posting as a comment instead of approving.`
+  };
 }
 
 /**
@@ -889,13 +913,14 @@ export async function reviewPullRequest(
       octokit,
       ref,
       findings: reviewResult.findings,
+      resolveStaleThreads: incrementalBaseSha === undefined,
       enabled: tidyThreadsEnabled,
       dryRun: options.dryRun === true
     });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
     const approvalCoverageIncomplete = fullSkipped.length > 0;
-    const approval = await resolveApprovalDecision(
+    let approval = await resolveApprovalDecision(
       detectOverride,
       detectPriorRequestChanges,
       octokit,
@@ -904,6 +929,7 @@ export async function reviewPullRequest(
       options.approval,
       { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
     );
+    approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
       files: parsed.files,
@@ -1092,6 +1118,7 @@ export async function reviewPullRequest(
     octokit,
     ref,
     findings: reviewResult.findings,
+    resolveStaleThreads: incrementalBaseSha === undefined,
     enabled: tidyThreadsEnabled,
     dryRun: options.dryRun === true
   });
@@ -1099,7 +1126,7 @@ export async function reviewPullRequest(
 
   // Approval rubric (#52): map the surfaced findings (+ any break-glass override)
   // to the review event and the #24 check conclusion — one decision, both surfaces.
-  const approval = await resolveApprovalDecision(
+  let approval = await resolveApprovalDecision(
     detectOverride,
     detectPriorRequestChanges,
     octokit,
@@ -1108,6 +1135,7 @@ export async function reviewPullRequest(
     options.approval,
     { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
   );
+  approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
