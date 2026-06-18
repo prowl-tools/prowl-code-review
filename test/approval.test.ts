@@ -226,6 +226,29 @@ describe("approvalNotes (#52)", () => {
     expect(notes[0]).toContain("coverage was incomplete");
   });
 
+  it("does not advertise break-glass when incomplete coverage requests changes", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({
+        findings: [finding({ severity: "critical" })],
+        config: enabled,
+        coverageDegraded: true
+      })
+    );
+    expect(notes[0]).toContain("review coverage is incomplete");
+    expect(notes[0]).not.toContain("`@prowl-review break glass`");
+  });
+
+  it("does not advertise break-glass when overrides are disabled", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({
+        findings: [finding({ severity: "critical" })],
+        config: { enabled: true, breakGlass: false }
+      })
+    );
+    expect(notes[0]).toContain("disabled by configuration");
+    expect(notes[0]).not.toContain("`@prowl-review break glass`");
+  });
+
   it("notes when break-glass freshness is unknown", () => {
     const notes = approvalNotes(
       planApprovalDecision({
@@ -235,6 +258,7 @@ describe("approvalNotes (#52)", () => {
       })
     );
     expect(notes[0]).toContain("head commit timestamp could not be verified");
+    expect(notes[0]).not.toContain("`@prowl-review break glass`");
   });
 
   it("notes when prior request-changes history is truncated", () => {
