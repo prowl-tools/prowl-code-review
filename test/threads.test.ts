@@ -40,7 +40,7 @@ describe("planThreadActions (#22)", () => {
     expect(plan.resolve).toEqual([]);
   });
 
-  it("never touches already-resolved threads or non-bot (no-fingerprint) threads", () => {
+  it("never resolves already-resolved threads or non-bot (no-fingerprint) threads", () => {
     const plan = planThreadActions({
       threads: [
         thread({ id: "R", isResolved: true, fingerprints: ["gone"] }),
@@ -49,6 +49,18 @@ describe("planThreadActions (#22)", () => {
       currentFingerprints: []
     });
     expect(plan.resolve).toEqual([]);
+  });
+
+  it("keeps suppression for already-resolved settled threads without resolving again", () => {
+    const plan = planThreadActions({
+      threads: [
+        thread({ id: "A", isResolved: true, fingerprints: ["ack"], humanIntent: "acknowledged" }),
+        thread({ id: "W", isResolved: true, fingerprints: ["wf"], humanIntent: "wont-fix" })
+      ],
+      currentFingerprints: ["ack", "wf"]
+    });
+    expect(plan.resolve).toEqual([]);
+    expect(plan.suppress.acknowledged.sort()).toEqual(["ack", "wf"]);
   });
 
   it("resolves + suppresses on an acknowledged/won't-fix reply", () => {
@@ -75,6 +87,18 @@ describe("planThreadActions (#22)", () => {
     expect(plan.resolve).toEqual([]); // never resolved against the human's wish
     expect(plan.suppress.disputed).toEqual(["dis"]);
     expect(plan.keptOpenDisputed).toBe(1);
+  });
+
+  it("can skip fixed/outdated resolution when the current finding set is incomplete", () => {
+    const plan = planThreadActions({
+      threads: [
+        thread({ id: "G", fingerprints: ["gone"] }),
+        thread({ id: "O", isOutdated: true, fingerprints: ["fp1"] })
+      ],
+      currentFingerprints: ["fp1"],
+      resolveStaleThreads: false
+    });
+    expect(plan.resolve).toEqual([]);
   });
 
   it("honors a dispute even when the finding is also outdated", () => {
