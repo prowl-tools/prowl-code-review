@@ -59,10 +59,14 @@ export interface ApprovalDecision {
   requestChangesAt: Severity;
   /** True when a break-glass override flipped request-changes into approval. */
   overridden: boolean;
-  /** True when approval was withheld because review coverage was degraded. */
+  /** True when approval was withheld because review coverage was degraded or incomplete. */
   coverageDegraded: boolean;
   /** True when approval clears an earlier prowl-review request-changes review. */
   clearsPriorRequestChanges: boolean;
+  /** True when break-glass was disabled because head freshness could not be verified. */
+  breakGlassFreshnessUnknown?: boolean;
+  /** True when prior review history hit the pagination cap before a complete answer. */
+  priorRequestChangesTruncated?: boolean;
   /** Login of the override actor, when overridden (audit). */
   overrideActor?: string;
   /** One-line human-readable reason for the decision. */
@@ -79,11 +83,15 @@ export function planApprovalDecision(input: {
   breakGlass?: BreakGlassSignal;
   coverageDegraded?: boolean;
   priorRequestChanges?: boolean;
+  breakGlassFreshnessUnknown?: boolean;
+  priorRequestChangesTruncated?: boolean;
 }): ApprovalDecision {
   const config = input.config ?? {};
   const requestChangesAt = config.requestChangesAt ?? DEFAULT_REQUEST_CHANGES_AT;
   const coverageDegraded = input.coverageDegraded === true;
   const priorRequestChanges = input.priorRequestChanges === true;
+  const breakGlassFreshnessUnknown = input.breakGlassFreshnessUnknown === true;
+  const priorRequestChangesTruncated = input.priorRequestChangesTruncated === true;
   const blocking = input.findings.filter(
     (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[requestChangesAt]
   ).length;
@@ -97,12 +105,33 @@ export function planApprovalDecision(input: {
       overridden: false,
       coverageDegraded,
       clearsPriorRequestChanges: false,
+      breakGlassFreshnessUnknown,
+      priorRequestChangesTruncated,
       reason: "Approval gate disabled; posting as a comment."
     };
   }
 
+  if (coverageDegraded) {
+    return {
+      enabled: true,
+      event: blocking > 0 ? "REQUEST_CHANGES" : "COMMENT",
+      blocking,
+      requestChangesAt,
+      overridden: false,
+      coverageDegraded,
+      clearsPriorRequestChanges: false,
+      breakGlassFreshnessUnknown,
+      priorRequestChangesTruncated,
+      reason:
+        blocking > 0
+          ? `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes with incomplete coverage.`
+          : "Review coverage incomplete; posting as a comment instead of approving."
+    };
+  }
+
   if (blocking > 0) {
-    const breakGlassHonored = config.breakGlass !== false && input.breakGlass?.active === true;
+    const breakGlassHonored =
+      !breakGlassFreshnessUnknown && config.breakGlass !== false && input.breakGlass?.active === true;
     if (breakGlassHonored) {
       const actor = input.breakGlass?.actor;
       return {
@@ -113,6 +142,8 @@ export function planApprovalDecision(input: {
         overridden: true,
         coverageDegraded,
         clearsPriorRequestChanges: false,
+        breakGlassFreshnessUnknown: false,
+        priorRequestChangesTruncated,
         overrideActor: actor,
         reason:
           `Break-glass override${actor ? ` by @${actor}` : ""}: approving past ` +
@@ -127,11 +158,15 @@ export function planApprovalDecision(input: {
       overridden: false,
       coverageDegraded,
       clearsPriorRequestChanges: false,
-      reason: `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes.`
+      breakGlassFreshnessUnknown,
+      priorRequestChangesTruncated,
+      reason: breakGlassFreshnessUnknown
+        ? `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes because break-glass freshness could not be verified.`
+        : `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes.`
     };
   }
 
-  if (coverageDegraded) {
+  if (priorRequestChangesTruncated) {
     return {
       enabled: true,
       event: "COMMENT",
@@ -140,7 +175,9 @@ export function planApprovalDecision(input: {
       overridden: false,
       coverageDegraded,
       clearsPriorRequestChanges: false,
-      reason: "Review coverage degraded; posting as a comment instead of approving."
+      breakGlassFreshnessUnknown,
+      priorRequestChangesTruncated,
+      reason: "Prior prowl-review history was truncated; posting as a comment instead of approving."
     };
   }
 
@@ -153,6 +190,8 @@ export function planApprovalDecision(input: {
       overridden: false,
       coverageDegraded,
       clearsPriorRequestChanges: priorRequestChanges,
+      breakGlassFreshnessUnknown,
+      priorRequestChangesTruncated,
       reason: priorRequestChanges
         ? `No findings at or above ${requestChangesAt}; approving to clear a prior prowl-review change request.`
         : `No findings at or above ${requestChangesAt}; approving.`
@@ -167,6 +206,8 @@ export function planApprovalDecision(input: {
     overridden: false,
     coverageDegraded,
     clearsPriorRequestChanges: false,
+    breakGlassFreshnessUnknown,
+    priorRequestChangesTruncated,
     reason: `No findings at or above ${requestChangesAt}; posting as a comment.`
   };
 }
@@ -193,11 +234,19 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
     return [
       `Approval gate (#52): requesting changes — ${decision.blocking} finding(s) at or above ` +
         `\`${decision.requestChangesAt}\`. A repo owner/member/collaborator can override by commenting ` +
-        "`@prowl-review break glass`."
+        "`@prowl-review break glass`." +
+        (decision.breakGlassFreshnessUnknown
+          ? " Break-glass overrides were ignored because the head commit timestamp could not be verified."
+          : "")
     ];
   }
   if (decision.coverageDegraded) {
-    return ["Approval gate (#52): not approving because review coverage was degraded."];
+    return ["Approval gate (#52): not approving because review coverage was incomplete."];
+  }
+  if (decision.priorRequestChangesTruncated) {
+    return [
+      "Approval gate (#52): not approving because prior prowl-review review history hit the pagination cap."
+    ];
   }
   if (decision.clearsPriorRequestChanges) {
     return [

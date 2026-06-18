@@ -196,7 +196,7 @@ describe("hasActiveRequestChanges", () => {
       { state: "COMMENTED", user: { login: "github-actions[bot]" } }
     ]);
 
-    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(true);
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: true, truncated: false });
   });
 
   it("treats a later bot approval as clearing a prior request-changes review", async () => {
@@ -205,7 +205,7 @@ describe("hasActiveRequestChanges", () => {
       { state: "APPROVED", user: { login: "github-actions[bot]" } }
     ]);
 
-    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(false);
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: false, truncated: false });
   });
 
   it("ignores review states from other users", async () => {
@@ -213,7 +213,18 @@ describe("hasActiveRequestChanges", () => {
       { state: "CHANGES_REQUESTED", user: { login: "reviewer" } }
     ]);
 
-    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toBe(false);
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: false, truncated: false });
+  });
+
+  it("reports an incomplete answer when review history hits the pagination cap", async () => {
+    const reviews = Array.from({ length: 1000 }, () => ({
+      state: "COMMENTED",
+      user: { login: "github-actions[bot]" }
+    }));
+    const { octokit, listReviews } = mockOctokit([], [], "github-actions[bot]", reviews);
+
+    await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: false, truncated: true });
+    expect(listReviews).toHaveBeenCalledTimes(10);
   });
 });
 

@@ -130,8 +130,9 @@ describe("planCheckRun with the approval rubric (#52)", () => {
       findings: [],
       approval: decision({ event: "COMMENT", blocking: 0, coverageDegraded: true })
     });
-    expect(plan.conclusion).toBe("success");
+    expect(plan.conclusion).toBe("failure");
     expect(plan.summary).toContain("approval withheld");
+    expect(plan.summary).toContain("this check fails");
   });
 
   it("explains when approval clears a prior request-changes review", () => {

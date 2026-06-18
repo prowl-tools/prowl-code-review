@@ -95,7 +95,7 @@ function gateSummaryLine(input: {
       return `Gate: ${blocking} finding(s) at or above \`${approval.requestChangesAt}\` — requesting changes (this check fails).`;
     }
     if (approval.coverageDegraded) {
-      return "Gate: review coverage degraded — approval withheld (this check passes).";
+      return "Gate: review coverage incomplete — approval withheld (this check fails).";
     }
     if (approval.clearsPriorRequestChanges) {
       return (
@@ -117,9 +117,9 @@ function gateSummaryLine(input: {
  * Decide the check-run conclusion, summary, and annotations from the findings.
  *
  * When an approval decision (#52) is supplied and engaged, the check follows the
- * **same** rubric as the published review event — request-changes → `failure`,
- * comment/approve → `success`, and a break-glass override → `success` — so the
- * gate and the review can never disagree. Otherwise it falls back to `failOn`:
+ * **same** rubric as the published review event — request-changes or incomplete
+ * coverage → `failure`, comment/approve → `success`, and a break-glass override
+ * → `success` — so the gate and the review can never disagree. Otherwise it falls back to `failOn`:
  * any finding at or above that severity makes the conclusion `failure`, else
  * `success`; with `failOn` omitted too, the check is purely informational
  * (`neutral`). Findings without a line can't be annotated, so they are reported
@@ -143,7 +143,9 @@ export function planCheckRun(input: {
       ? findings.filter((f) => SEVERITY_ORDER[f.severity] <= SEVERITY_ORDER[failOn])
       : [];
   const conclusion: CheckConclusion = approval
-    ? approval.overridden || approval.event !== "REQUEST_CHANGES"
+    ? approval.coverageDegraded
+      ? "failure"
+      : approval.overridden || approval.event !== "REQUEST_CHANGES"
       ? "success"
       : "failure"
     : !gated

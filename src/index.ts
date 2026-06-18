@@ -111,6 +111,7 @@ export {
   fetchPriorReviewState,
   hasActiveRequestChanges,
   type SubmitReviewOptions,
+  type PriorRequestChangesState,
   type PublishPlan,
   type PriorSummaryComment
 } from "./github/review.js";

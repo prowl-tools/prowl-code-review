@@ -13,7 +13,9 @@ All notable changes to Prowl Review will be documented in this file.
   conclusion, so the published review and the merge gate can never disagree. The escape hatch: a repo
   owner/member/collaborator can comment **`@prowl-review break glass`** to force-approve past a blocking
   finding — gated by GitHub author association (a drive-by fork contributor can't self-unblock) and
-  recorded in the review summary + check for auditability. Off by default the bot only ever comments (the
+  a verified head-commit freshness timestamp, and recorded in the review summary + check for auditability.
+  The gate withholds approval when review coverage is incomplete, when files were skipped, or when prior
+  review-state history hits its cap; incomplete coverage also fails the #24 Check Run. Off by default the bot only ever comments (the
   prior behavior); non-`COMMENT` review events now post a short verdict pointing at the updatable summary
   instead of duplicating the walkthrough. Configurable via the `approval` block; the decision is logged
   to the CLI/Action output. Exports `planApprovalDecision`/`detectBreakGlass`/`hasActiveRequestChanges`.

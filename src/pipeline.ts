@@ -10,7 +10,8 @@ import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
   hasActiveRequestChanges as defaultHasActiveRequestChanges,
-  type SubmitReviewOptions
+  type SubmitReviewOptions,
+  type PriorRequestChangesState
 } from "./github/review.js";
 import {
   planCheckRun,
@@ -108,7 +109,7 @@ export interface PipelineDeps {
     options?: { botLogin?: string; createdAfter?: string }
   ) => Promise<BreakGlassSignal>;
   /** Detect whether prowl-review has an active prior request-changes review (#52). */
-  detectPriorRequestChanges?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<boolean>;
+  detectPriorRequestChanges?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PriorRequestChangesState>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -529,23 +530,33 @@ async function resolveApprovalDecision(
   let breakGlass: BreakGlassSignal | undefined;
   let decision = planApprovalDecision({ findings, config, coverageDegraded: options.coverageDegraded });
   if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
-    breakGlass = await detect(octokit, ref, { createdAfter: options.breakGlassCreatedAfter });
-    decision = planApprovalDecision({
-      findings,
-      config,
-      breakGlass,
-      coverageDegraded: options.coverageDegraded
-    });
+    if (options.breakGlassCreatedAfter) {
+      breakGlass = await detect(octokit, ref, { createdAfter: options.breakGlassCreatedAfter });
+      decision = planApprovalDecision({
+        findings,
+        config,
+        breakGlass,
+        coverageDegraded: options.coverageDegraded
+      });
+    } else {
+      decision = planApprovalDecision({
+        findings,
+        config,
+        coverageDegraded: options.coverageDegraded,
+        breakGlassFreshnessUnknown: true
+      });
+    }
   }
   if (decision.enabled && decision.event === "COMMENT" && !decision.coverageDegraded && decision.blocking === 0) {
     const priorRequestChanges = await detectPriorRequestChanges(octokit, ref);
-    if (priorRequestChanges) {
+    if (priorRequestChanges.active || priorRequestChanges.truncated) {
       decision = planApprovalDecision({
         findings,
         config,
         breakGlass,
         coverageDegraded: options.coverageDegraded,
-        priorRequestChanges
+        priorRequestChanges: priorRequestChanges.active,
+        priorRequestChangesTruncated: priorRequestChanges.truncated
       });
     }
   }
@@ -906,6 +917,7 @@ export async function reviewPullRequest(
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
   const degraded =
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
+  const approvalCoverageIncomplete = degraded || skipped.length > 0;
 
   const totalUsage = addUsage(reviewResult.usage, contextUsage);
 
@@ -918,7 +930,7 @@ export async function reviewPullRequest(
     ref,
     reviewResult.findings,
     options.approval,
-    { coverageDegraded: degraded, breakGlassCreatedAfter: meta.headCommittedAt }
+    { coverageDegraded: approvalCoverageIncomplete, breakGlassCreatedAfter: meta.headCommittedAt }
   );
 
   const summaryBody = buildWalkthrough({

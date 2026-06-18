@@ -576,7 +576,7 @@ describe("reviewPullRequest", () => {
     });
 
     it("approves a clean run to clear an active prior request-changes review", async () => {
-      const detectPriorRequestChanges = vi.fn(async () => true);
+      const detectPriorRequestChanges = vi.fn(async () => ({ active: true, truncated: false }));
       const deps = { ...makeDeps(), detectPriorRequestChanges };
 
       const result = await reviewPullRequest(octokit, ref, {
@@ -593,9 +593,30 @@ describe("reviewPullRequest", () => {
       expect(result.payload.body).toContain("clear a previous prowl-review change request");
     });
 
+    it("does not approve when prior request-changes history is truncated", async () => {
+      const detectPriorRequestChanges = vi.fn(async () => ({ active: false, truncated: true }));
+      const deps = { ...makeDeps(), detectPriorRequestChanges };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.priorRequestChangesTruncated).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("pagination cap");
+    });
+
     it("force-approves and records the override on a trusted break-glass comment", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
       const deps = { ...makeDeps(), detectBreakGlass };
+      deps.fetchPullRequest.mockResolvedValue({
+        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
+        diff: DIFF
+      });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
 
       const result = await reviewPullRequest(octokit, ref, {
@@ -638,6 +659,25 @@ describe("reviewPullRequest", () => {
       );
     });
 
+    it("does not honor break-glass when the head commit timestamp is unavailable", async () => {
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(detectBreakGlass).not.toHaveBeenCalled();
+      expect(result.approval?.event).toBe("REQUEST_CHANGES");
+      expect(result.approval?.breakGlassFreshnessUnknown).toBe(true);
+      expect(result.payload.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.body).toContain("head commit timestamp could not be verified");
+    });
+
     it("does not approve a degraded clean review", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: false }));
       const deps = { ...makeDeps(), detectBreakGlass };
@@ -664,6 +704,42 @@ describe("reviewPullRequest", () => {
       expect(result.payload.body).toContain("Review incomplete");
     });
 
+    it("does not approve when guardrails skipped part of the diff", async () => {
+      const deps = makeDeps();
+      deps.fetchPullRequest.mockResolvedValue({
+        meta,
+        diff: `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
+ const a = 1;
++const b = 2;
+diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1,1 +1,2 @@
+ const c = 1;
++const d = 2;
+`
+      });
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        diffLimits: { maxFiles: 1 },
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.payload.event).toBe("COMMENT");
+      expect(result.payload.body).toContain("not approving");
+      expect(result.payload.body).toContain("skipped - file limit reached");
+    });
+
     it("drives the #24 check conclusion from the rubric (request-changes → failure)", async () => {
       const submitCheckRun = vi.fn(async () => {});
       const deps = { ...makeDeps(), submitCheckRun };
@@ -680,10 +756,38 @@ describe("reviewPullRequest", () => {
       expect(result.checkRunConclusion).toBe("failure");
     });
 
+    it("drives the #24 check conclusion to failure when approval coverage is degraded", async () => {
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), submitCheckRun };
+      deps.gatherContext.mockRejectedValue(
+        new ContextRetrievalError("context unavailable", {
+          usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+          rounds: 1,
+          notes: []
+        })
+      );
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true },
+        checkRun: { enabled: true }
+      });
+
+      expect(result.approval?.coverageDegraded).toBe(true);
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
     it("a break-glass override also unblocks the #24 check (→ success)", async () => {
       const submitCheckRun = vi.fn(async () => {});
       const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
       const deps = { ...makeDeps(), submitCheckRun, detectBreakGlass };
+      deps.fetchPullRequest.mockResolvedValue({
+        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
+        diff: DIFF
+      });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
 
       const result = await reviewPullRequest(octokit, ref, {
