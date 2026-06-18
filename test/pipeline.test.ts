@@ -1138,6 +1138,41 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.event).toBe("COMMENT");
     });
 
+    it("does not auto-approve when an incremental rerun sees an already-resolved settled thread", async () => {
+      const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({
+          id: "A",
+          isResolved: true,
+          fingerprints: ["settled-prior-finding"],
+          humanIntent: "acknowledged"
+        })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = {
+        ...makeDeps(),
+        fetchPriorState: vi.fn(async () => priorState),
+        fetchComparisonDiff: vi.fn(async () => ""),
+        fetchReviewThreads,
+        resolveReviewThread
+      };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.incremental).toBe(true);
+      expect(result.threads?.resolvedSettled).toBe(0);
+      expect(result.threads?.withheldSettled).toBe(0);
+      expect(result.threads?.approvalBlockingSettled).toBe(1);
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
     it("can approve a full clean review after resolving a settled thread whose finding is gone", async () => {
       const fetchReviewThreads = vi.fn(async () => [
         thread({ id: "A", fingerprints: ["settled-prior-finding"], humanIntent: "acknowledged" })
