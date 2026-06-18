@@ -1,6 +1,6 @@
 import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
-import type { ReviewComment, ReviewPayload } from "../review/inline.js";
+import type { ReviewComment, ReviewEvent, ReviewPayload } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
   embedStateWithFittedState,
@@ -28,6 +28,7 @@ import {
 
 const MAX_SUMMARY_COMMENT_PAGES = 10;
 const MAX_INLINE_COMMENT_PAGES = 10;
+const MAX_REVIEW_PAGES = 10;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
@@ -59,6 +60,14 @@ export interface SubmitReviewOptions {
   preservePriorSummary?: boolean;
   /** Bot login used as a secondary check when matching our prior comment. */
   botLogin?: string;
+}
+
+/** Whether prowl-review has an active request-changes review, plus scan completeness. */
+export interface PriorRequestChangesState {
+  /** True only when a complete scan finds the latest decisive bot review requests changes. */
+  active: boolean;
+  /** True when the review history exceeded the pagination cap, making the answer incomplete. */
+  truncated: boolean;
 }
 
 /**
@@ -185,6 +194,65 @@ async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): P
   }
 }
 
+function isRequestChangesState(state: string | undefined): boolean {
+  return state === "REQUEST_CHANGES" || state === "CHANGES_REQUESTED";
+}
+
+function isDecisiveReviewState(state: string | undefined): boolean {
+  return isRequestChangesState(state) || state === "APPROVED" || state === "DISMISSED";
+}
+
+/**
+ * Return true when the bot has an active request-changes review on the PR.
+ * COMMENTED reviews do not clear GitHub's requested-changes state; a later
+ * approval or dismissal does.
+ */
+export async function hasActiveRequestChanges(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<PriorRequestChangesState> {
+  try {
+    const login = await getAuthenticatedLogin(octokit, botLogin);
+    if (!login) {
+      return { active: false, truncated: false };
+    }
+
+    const perPage = 100;
+    let page = 1;
+    let latestDecisiveState: string | undefined;
+    let truncated = false;
+    for (;;) {
+      const response = await octokit.rest.pulls.listReviews({
+        owner: ref.owner,
+        repo: ref.repo,
+        pull_number: ref.pull_number,
+        per_page: perPage,
+        page
+      });
+
+      for (const review of response.data) {
+        if (review.user?.login === login && isDecisiveReviewState(review.state)) {
+          latestDecisiveState = review.state;
+        }
+      }
+
+      if (response.data.length < perPage) {
+        break;
+      }
+      if (page >= MAX_REVIEW_PAGES) {
+        truncated = true;
+        break;
+      }
+      page += 1;
+    }
+
+    return { active: truncated ? false : isRequestChangesState(latestDecisiveState), truncated };
+  } catch {
+    return { active: false, truncated: false };
+  }
+}
+
 /** Append a hidden fingerprint marker so posted inline comments can be recovered after summary-write failures. */
 function appendInlineFingerprintMarker(body: string, fingerprint: string): string {
   return `${body.replace(INLINE_FINGERPRINT_RE, "").trimEnd()}\n\n${INLINE_FINGERPRINT_PREFIX}${fingerprint}${INLINE_FINGERPRINT_SUFFIX}`;
@@ -254,6 +322,21 @@ function inlineBatchReviewBody(commentCount: number): string {
 }
 
 /**
+ * Short body for an APPROVE/REQUEST_CHANGES review event (#52). The full
+ * walkthrough lives in the updatable summary comment, so the event review just
+ * carries the verdict + a pointer — never a second copy of the walkthrough.
+ */
+function eventReviewBody(event: ReviewEvent): string {
+  if (event === "REQUEST_CHANGES") {
+    return "prowl-review requested changes. See the prowl-review summary comment for the full review.";
+  }
+  if (event === "APPROVE") {
+    return "prowl-review approved these changes. See the prowl-review summary comment for the full review.";
+  }
+  return "";
+}
+
+/**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present unless `preservePriorSummary` is requested, and posts only
  * net-new inline findings.
@@ -303,7 +386,7 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: payload.body
+      body: eventReviewBody(payload.event)
     });
   }
 

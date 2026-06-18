@@ -353,6 +353,16 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     const cfg = { riskTiering: { enabled: false } };
     expect(resolveReviewOptions({}, cfg, env).riskTiering).toEqual({ enabled: false });
   });
+
+  it("passes the approval config straight through (#52)", () => {
+    expect(resolveReviewOptions({}, {}, env).approval).toBeUndefined(); // → gate off (comment only)
+    const cfg = { approval: { enabled: true, requestChangesAt: "major" as const, approveWhenClean: true } };
+    expect(resolveReviewOptions({}, cfg, env).approval).toEqual({
+      enabled: true,
+      requestChangesAt: "major",
+      approveWhenClean: true
+    });
+  });
 });
 
 describe("review command action env helpers", () => {

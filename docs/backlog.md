@@ -85,11 +85,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store/proxy keys.
     - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see the Codex-subscription backend item) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
 
-52. **Approval rubric + break-glass override**
-    As a developer, I want a predictable severity→decision rubric and an escape hatch, so that the gate behaves consistently and never blocks me against my judgment.
-    - Acceptance: map findings to a GitHub review event — any Critical → request changes; only suggestions/none → comment or approve (configurable thresholds), wired to #24's check conclusion.
-    - Acceptance: a `@prowl-review break glass` (override) comment force-approves past a blocking finding and is recorded in the review for auditability (Cloudflare saw this used in ~0.6% of MRs — rare, but it keeps humans in control).
-
 53. **Multi-provider ensemble review + cross-provider consensus**
     As a developer with more than one provider key, I want the same changes reviewed by multiple providers at once with their findings consolidated, so that I get cross-model consensus and more granular, higher-confidence insight — a BYOK-only edge that resale-based reviewers (CodeRabbit/Greptile) can't offer.
     - Acceptance: **opt-in, default off.** Per-provider keys (e.g. `PROWL_AI_KEY_ANTHROPIC`/`_OPENAI`/`_GEMINI`) + a configured provider list; an ensemble orchestrator runs `runReview` (the #6 pipeline) per available provider **in parallel** and pools the raw findings.

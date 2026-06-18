@@ -6,6 +6,7 @@ import {
   CHECK_ANNOTATION_BATCH
 } from "../src/github/check-run.js";
 import type { Finding, Severity } from "../src/review/findings.js";
+import type { ApprovalDecision } from "../src/review/approval.js";
 import type { OctokitLike } from "../src/github/client.js";
 
 function finding(over: Partial<Finding> = {}): Finding {
@@ -87,6 +88,88 @@ describe("planCheckRun (#24)", () => {
     expect(plan.annotations).toHaveLength(1);
     expect(plan.title).toContain("2 findings");
     expect(plan.summary).toContain("1 finding(s) without a line");
+  });
+});
+
+describe("planCheckRun with the approval rubric (#52)", () => {
+  function decision(over: Partial<ApprovalDecision> = {}): ApprovalDecision {
+    return {
+      enabled: true,
+      event: "REQUEST_CHANGES",
+      blocking: 1,
+      requestChangesAt: "critical",
+      overridden: false,
+      coverageDegraded: false,
+      clearsPriorRequestChanges: false,
+      reason: "test",
+      ...over
+    };
+  }
+
+  it("fails when the rubric requests changes", () => {
+    const plan = planCheckRun({
+      findings: [finding({ severity: "critical" })],
+      approval: decision({ event: "REQUEST_CHANGES" })
+    });
+    expect(plan.conclusion).toBe("failure");
+    expect(plan.summary).toContain("requesting changes");
+  });
+
+  it("passes when the rubric comments or approves", () => {
+    for (const event of ["COMMENT", "APPROVE"] as const) {
+      const plan = planCheckRun({
+        findings: [finding({ severity: "major" })],
+        approval: decision({ event, blocking: 0 })
+      });
+      expect(plan.conclusion).toBe("success");
+    }
+  });
+
+  it("explains when approval is withheld for degraded coverage", () => {
+    const plan = planCheckRun({
+      findings: [],
+      approval: decision({ event: "COMMENT", blocking: 0, coverageDegraded: true })
+    });
+    expect(plan.conclusion).toBe("failure");
+    expect(plan.summary).toContain("approval withheld");
+    expect(plan.summary).toContain("this check fails");
+  });
+
+  it("explains when approval clears a prior request-changes review", () => {
+    const plan = planCheckRun({
+      findings: [],
+      approval: decision({ event: "APPROVE", blocking: 0, clearsPriorRequestChanges: true })
+    });
+    expect(plan.conclusion).toBe("success");
+    expect(plan.summary).toContain("clear a previous prowl-review change request");
+  });
+
+  it("passes (and records the override) on a break-glass approval", () => {
+    const plan = planCheckRun({
+      findings: [finding({ severity: "critical" })],
+      approval: decision({ event: "APPROVE", overridden: true, overrideActor: "maintainer" })
+    });
+    expect(plan.conclusion).toBe("success");
+    expect(plan.summary).toContain("break-glass override");
+    expect(plan.summary).toContain("@maintainer");
+  });
+
+  it("uses the rubric threshold for the blocking count in the summary", () => {
+    const plan = planCheckRun({
+      findings: [finding({ severity: "major" }), finding({ severity: "major", line: 4 })],
+      approval: decision({ event: "REQUEST_CHANGES", blocking: 2, requestChangesAt: "major" })
+    });
+    expect(plan.summary).toContain("2 finding(s) at or above `major`");
+  });
+
+  it("ignores a disabled rubric and falls back to failOn", () => {
+    const plan = planCheckRun({
+      findings: [finding({ severity: "critical" })],
+      failOn: "critical",
+      approval: decision({ enabled: false })
+    });
+    expect(plan.conclusion).toBe("failure");
+    expect(plan.summary).toContain("this check fails");
   });
 });
 

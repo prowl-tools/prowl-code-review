@@ -109,7 +109,9 @@ export {
   submitReview,
   planPublish,
   fetchPriorReviewState,
+  hasActiveRequestChanges,
   type SubmitReviewOptions,
+  type PriorRequestChangesState,
   type PublishPlan,
   type PriorSummaryComment
 } from "./github/review.js";
@@ -124,6 +126,12 @@ export {
   type CheckAnnotation,
   type AnnotationLevel
 } from "./github/check-run.js";
+export {
+  detectBreakGlass,
+  matchesBreakGlass,
+  BREAK_GLASS_RE,
+  BREAK_GLASS_TRUSTED_ASSOCIATIONS
+} from "./github/break-glass.js";
 export {
   findingFingerprint,
   serializeState,
@@ -287,6 +295,14 @@ export {
   type ReviewResult,
   type SpecialistPassReport
 } from "./review/run-review.js";
+export {
+  planApprovalDecision,
+  approvalNotes,
+  DEFAULT_REQUEST_CHANGES_AT,
+  type ApprovalConfig,
+  type ApprovalDecision,
+  type BreakGlassSignal
+} from "./review/approval.js";
 
 // Quality eval harness (benchmark scoring + runner).
 export {

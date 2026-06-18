@@ -47,6 +47,19 @@ export interface OctokitLike {
         per_page?: number;
         page?: number;
       }): Promise<{ data: Array<{ body?: string; user?: { login?: string } | null }> }>;
+      /** List review submissions already posted on the PR. */
+      listReviews(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        per_page?: number;
+        page?: number;
+      }): Promise<{
+        data: Array<{
+          state?: string;
+          user?: { login?: string } | null;
+        }>;
+      }>;
     };
     /** Issue endpoints — a PR is an issue, so its top-level comments live here. */
     issues: {
@@ -59,7 +72,18 @@ export interface OctokitLike {
         page?: number;
         sort?: "created" | "updated";
         direction?: "asc" | "desc";
-      }): Promise<{ data: Array<{ id: number; body?: string; user?: { login?: string } | null }> }>;
+        since?: string;
+      }): Promise<{
+        data: Array<{
+          id: number;
+          body?: string;
+          user?: { login?: string } | null;
+          /** Comment creation timestamp, available for optional comment freshness filters. */
+          created_at?: string;
+          /** Author's relationship to the repo; gates break-glass overrides (#52). */
+          author_association?: string;
+        }>;
+      }>;
       /** Create a top-level PR/issue comment (the summary on a first run). */
       createComment(params: {
         owner: string;

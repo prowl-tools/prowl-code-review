@@ -23,7 +23,7 @@ describe("fetchPullRequest", () => {
         title: "Add thing",
         body: "does a thing",
         base: { sha: "base-sha" },
-        head: { sha: "head-sha" },
+        head: { sha: "head-sha", repo: { name: "prowl-code-review", owner: { login: "prowl-tools" } } },
         draft: true,
         state: "open",
         user: { login: "michael" },
