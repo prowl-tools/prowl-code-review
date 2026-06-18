@@ -146,6 +146,38 @@ describe("planPublish", () => {
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
 
+  it("allows reposting fingerprints whose old thread was resolved as fixed", () => {
+    const prior = {
+      id: 99,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, postedFindings: ["fp-a", "fp-b"] })}`
+    };
+    const plan = planPublish({
+      payload: payload({ comments: [comment({ fingerprint: "fp-a" }), comment({ fingerprint: "fp-b" })] }),
+      priorComment: prior,
+      priorPostedFindings: ["fp-a", "fp-b"],
+      repostableFindings: ["fp-a"],
+      headSha: "sha2"
+    });
+    expect(plan.newInlineComments.map((c) => c.fingerprint)).toEqual(["fp-a"]);
+    expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
+  });
+
+  it("drops repostable fingerprints from persisted state when they are not current", () => {
+    const prior = {
+      id: 99,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, postedFindings: ["fixed", "still-current"] })}`
+    };
+    const plan = planPublish({
+      payload: payload({ comments: [] }),
+      priorComment: prior,
+      priorPostedFindings: ["fixed", "still-current"],
+      repostableFindings: ["fixed"],
+      headSha: "sha2"
+    });
+    expect(plan.newInlineComments).toEqual([]);
+    expect(plan.state.postedFindings).toEqual(["still-current"]);
+  });
+
   it("prunes state history before truncating visible summary content", () => {
     const priorPostedFindings = Array.from({ length: 400 }, (_, index) => `fp-${index.toString().padStart(4, "0")}`);
     const plan = planPublish({

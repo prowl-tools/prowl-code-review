@@ -55,7 +55,7 @@ export type ThreadResolveReason = "fixed" | "acknowledged" | "wont-fix";
 /** The pure decision over the PR's prowl-review threads. */
 export interface ThreadActionPlan {
   /** Threads to resolve via the GraphQL mutation. */
-  resolve: Array<{ id: string; reason: ThreadResolveReason }>;
+  resolve: Array<{ id: string; reason: ThreadResolveReason; fingerprints: string[] }>;
   /**
    * Fingerprints to withhold from this run's findings: ones the human settled
    * (won't-fix/acknowledged) or disputed (disagree), so the reviewer stops
@@ -64,6 +64,8 @@ export interface ThreadActionPlan {
   suppress: { acknowledged: string[]; disputed: string[] };
   /** Count of disputed threads left open for the human (kept, not resolved). */
   keptOpenDisputed: number;
+  /** Fingerprints whose old resolved thread should not suppress a future inline comment. */
+  repostable: string[];
 }
 
 /**
@@ -86,9 +88,10 @@ export function planThreadActions(input: {
 }): ThreadActionPlan {
   const current = new Set(input.currentFingerprints);
   const resolveStaleThreads = input.resolveStaleThreads !== false;
-  const resolve: Array<{ id: string; reason: ThreadResolveReason }> = [];
+  const resolve: ThreadActionPlan["resolve"] = [];
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
+  const repostable = new Set<string>();
   let keptOpenDisputed = 0;
 
   for (const thread of input.threads) {
@@ -107,12 +110,17 @@ export function planThreadActions(input: {
     if (isResolvingIntent(thread.humanIntent)) {
       thread.fingerprints.forEach((fp) => acknowledged.add(fp));
       if (!thread.isResolved) {
-        resolve.push({ id: thread.id, reason: thread.humanIntent === "wont-fix" ? "wont-fix" : "acknowledged" });
+        resolve.push({
+          id: thread.id,
+          reason: thread.humanIntent === "wont-fix" ? "wont-fix" : "acknowledged",
+          fingerprints: [...thread.fingerprints]
+        });
       }
       continue;
     }
 
     if (thread.isResolved) {
+      thread.fingerprints.forEach((fp) => repostable.add(fp));
       continue;
     }
 
@@ -121,14 +129,15 @@ export function planThreadActions(input: {
     // close the only inline thread for a still-valid finding.
     const stillCurrent = thread.fingerprints.some((fp) => current.has(fp));
     if (resolveStaleThreads && !stillCurrent) {
-      resolve.push({ id: thread.id, reason: "fixed" });
+      resolve.push({ id: thread.id, reason: "fixed", fingerprints: [...thread.fingerprints] });
     }
   }
 
   return {
     resolve,
     suppress: { acknowledged: [...acknowledged], disputed: [...disputed] },
-    keptOpenDisputed
+    keptOpenDisputed,
+    repostable: [...repostable]
   };
 }
 
