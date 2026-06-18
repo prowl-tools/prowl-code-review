@@ -106,8 +106,10 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # request-changes review). Opt-in; off by default the
 # bot only ever comments. A repo owner/member/collaborator can override a
 # request-changes by commenting "@prowl-review break glass" — that force-approves
-# past the blocking finding and is recorded in the review for auditability. When
-# the Check Run (above) is also enabled, it follows this same decision.
+# past the blocking finding only when head freshness is verified, and is recorded
+# in the review for auditability. Approval is withheld if review coverage is
+# incomplete or files were skipped. When the Check Run (above) is also enabled,
+# it follows this same decision and fails on incomplete coverage.
 # approval:
 #   enabled: false
 #   requestChangesAt: critical  # critical | major | minor | trivial | info

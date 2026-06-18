@@ -92,7 +92,7 @@ describe("planApprovalDecision (#52)", () => {
     });
     expect(decision.event).toBe("COMMENT");
     expect(decision.coverageDegraded).toBe(true);
-    expect(decision.reason).toContain("degraded");
+    expect(decision.reason).toContain("incomplete");
   });
 
   it("does not approve a degraded review just to clear a prior request", () => {
@@ -104,6 +104,30 @@ describe("planApprovalDecision (#52)", () => {
     });
     expect(decision.event).toBe("COMMENT");
     expect(decision.clearsPriorRequestChanges).toBe(false);
+  });
+
+  it("requests changes instead of honoring break-glass when freshness is unknown", () => {
+    const decision = planApprovalDecision({
+      findings: [finding({ severity: "critical" })],
+      config: enabled,
+      breakGlass: { active: true, actor: "maintainer", association: "OWNER" },
+      breakGlassFreshnessUnknown: true
+    });
+    expect(decision.event).toBe("REQUEST_CHANGES");
+    expect(decision.overridden).toBe(false);
+    expect(decision.breakGlassFreshnessUnknown).toBe(true);
+  });
+
+  it("does not approve when prior request-changes history is truncated", () => {
+    const decision = planApprovalDecision({
+      findings: [],
+      config: enabled,
+      priorRequestChanges: true,
+      priorRequestChangesTruncated: true
+    });
+    expect(decision.event).toBe("COMMENT");
+    expect(decision.clearsPriorRequestChanges).toBe(false);
+    expect(decision.priorRequestChangesTruncated).toBe(true);
   });
 
   describe("break-glass override", () => {
@@ -199,7 +223,25 @@ describe("approvalNotes (#52)", () => {
       })
     );
     expect(notes[0]).toContain("not approving");
-    expect(notes[0]).toContain("coverage was degraded");
+    expect(notes[0]).toContain("coverage was incomplete");
+  });
+
+  it("notes when break-glass freshness is unknown", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({
+        findings: [finding({ severity: "critical" })],
+        config: enabled,
+        breakGlassFreshnessUnknown: true
+      })
+    );
+    expect(notes[0]).toContain("head commit timestamp could not be verified");
+  });
+
+  it("notes when prior request-changes history is truncated", () => {
+    const notes = approvalNotes(
+      planApprovalDecision({ findings: [], config: enabled, priorRequestChangesTruncated: true })
+    );
+    expect(notes[0]).toContain("pagination cap");
   });
 
   it("emits no note for a plain comment decision", () => {

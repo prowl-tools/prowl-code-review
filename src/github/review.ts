@@ -62,6 +62,14 @@ export interface SubmitReviewOptions {
   botLogin?: string;
 }
 
+/** Whether prowl-review has an active request-changes review, plus scan completeness. */
+export interface PriorRequestChangesState {
+  /** True only when a complete scan finds the latest decisive bot review requests changes. */
+  active: boolean;
+  /** True when the review history exceeded the pagination cap, making the answer incomplete. */
+  truncated: boolean;
+}
+
 /**
  * Decide what to publish: which inline findings are net-new, and the summary
  * body (with refreshed state) to create or update. Pure — no GitHub calls.
@@ -203,16 +211,17 @@ export async function hasActiveRequestChanges(
   octokit: OctokitLike,
   ref: PullRequestRef,
   botLogin?: string
-): Promise<boolean> {
+): Promise<PriorRequestChangesState> {
   try {
     const login = await getAuthenticatedLogin(octokit, botLogin);
     if (!login) {
-      return false;
+      return { active: false, truncated: false };
     }
 
     const perPage = 100;
     let page = 1;
     let latestDecisiveState: string | undefined;
+    let truncated = false;
     for (;;) {
       const response = await octokit.rest.pulls.listReviews({
         owner: ref.owner,
@@ -228,15 +237,19 @@ export async function hasActiveRequestChanges(
         }
       }
 
-      if (response.data.length < perPage || page >= MAX_REVIEW_PAGES) {
+      if (response.data.length < perPage) {
+        break;
+      }
+      if (page >= MAX_REVIEW_PAGES) {
+        truncated = true;
         break;
       }
       page += 1;
     }
 
-    return isRequestChangesState(latestDecisiveState);
+    return { active: truncated ? false : isRequestChangesState(latestDecisiveState), truncated };
   } catch {
-    return false;
+    return { active: false, truncated: false };
   }
 }
 
