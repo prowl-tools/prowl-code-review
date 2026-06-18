@@ -27,9 +27,17 @@ describe("planThreadActions (#22)", () => {
     expect(plan.suppress).toEqual({ acknowledged: [], disputed: [] });
   });
 
-  it("resolves a thread GitHub marked outdated even if the fingerprint is still current", () => {
+  it("keeps a thread open when GitHub marked it outdated but the fingerprint is still current", () => {
     const plan = planThreadActions({
       threads: [thread({ isOutdated: true, fingerprints: ["fp1"] })],
+      currentFingerprints: ["fp1"]
+    });
+    expect(plan.resolve).toEqual([]);
+  });
+
+  it("resolves an outdated thread once its finding is absent from the current review", () => {
+    const plan = planThreadActions({
+      threads: [thread({ isOutdated: true, fingerprints: ["old"] })],
       currentFingerprints: ["fp1"]
     });
     expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed" }]);
@@ -89,7 +97,7 @@ describe("planThreadActions (#22)", () => {
     expect(plan.keptOpenDisputed).toBe(1);
   });
 
-  it("can skip fixed/outdated resolution when the current finding set is incomplete", () => {
+  it("can skip fixed resolution when the current finding set is incomplete", () => {
     const plan = planThreadActions({
       threads: [
         thread({ id: "G", fingerprints: ["gone"] }),
