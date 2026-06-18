@@ -5,7 +5,7 @@ import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
 import type { ReviewResult } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
-import type { ReviewState } from "../src/review/state.js";
+import { findingFingerprint, type ReviewState } from "../src/review/state.js";
 import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
@@ -860,6 +860,100 @@ diff --git a/src/b.ts b/src/b.ts
       });
 
       expect(result.checkRunConclusion).toBe("success");
+    });
+  });
+
+  describe("prior-thread tidy-up (#22)", () => {
+    function thread(over: Record<string, unknown> = {}) {
+      return { id: "T1", isResolved: false, isOutdated: false, fingerprints: ["stale"], humanIntent: "other", ...over };
+    }
+
+    it("resolves a thread whose finding is gone, and reports it", async () => {
+      const fetchReviewThreads = vi.fn(async () => [thread({ fingerprints: ["stale"] })]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "T1");
+      expect(result.threads?.resolvedFixed).toBe(1);
+      expect(result.payload.body).toContain("Resolved 1 prior finding thread");
+    });
+
+    it("withholds an acknowledged finding and resolves its thread", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "A", fingerprints: [fp], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.review.findings).toHaveLength(0); // withheld, not re-raised
+      expect(result.payload.comments).toHaveLength(0);
+      expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "A");
+      expect(result.threads?.withheldSettled).toBe(1);
+      expect(result.threads?.resolvedSettled).toBe(1);
+    });
+
+    it("keeps a disputed thread open and withholds the finding (no re-raise, no resolve)", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.review.findings).toHaveLength(0); // withheld pending re-review
+      expect(resolveReviewThread).not.toHaveBeenCalled(); // never resolved against the human
+      expect(result.threads?.withheldDisputed).toBe(1);
+      expect(result.threads?.keptOpenDisputed).toBe(1);
+      expect(result.payload.body).toContain("disputed");
+    });
+
+    it("a disputed finding does not drive the approval gate to request changes (#52 interplay)", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree" })
+      ]);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread: vi.fn(async () => true) };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT"); // withheld dispute → no request-changes
+    });
+
+    it("does nothing when disabled", async () => {
+      const fetchReviewThreads = vi.fn(async () => [thread()]);
+      const deps = { ...makeDeps(), fetchReviewThreads };
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        resolveThreads: false
+      });
+      expect(fetchReviewThreads).not.toHaveBeenCalled();
+      expect(result.threads).toBeUndefined();
+    });
+
+    it("never resolves threads on a dry run, but still plans the tidy", async () => {
+      const fetchReviewThreads = vi.fn(async () => [thread({ fingerprints: ["stale"] })]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, dryRun: true });
+      expect(fetchReviewThreads).toHaveBeenCalledTimes(1);
+      expect(resolveReviewThread).not.toHaveBeenCalled();
     });
   });
 

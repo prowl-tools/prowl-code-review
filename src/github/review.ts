@@ -181,7 +181,7 @@ export async function fetchPriorReviewState(
 }
 
 /** Resolve the authenticated bot login used to trust prior prowl-review comments. */
-async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
+export async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
   if (botLogin) {
     return botLogin;
   }
@@ -259,7 +259,7 @@ function appendInlineFingerprintMarker(body: string, fingerprint: string): strin
 }
 
 /** Extract hidden prowl-review fingerprints from an existing inline review comment body. */
-function parseInlineFingerprintMarkers(body: string | undefined): string[] {
+export function parseInlineFingerprintMarkers(body: string | undefined): string[] {
   if (!body) {
     return [];
   }
