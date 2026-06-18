@@ -609,26 +609,26 @@ async function tidyReviewThreads(params: {
   return { findings: kept, notes, tidy };
 }
 
-function withheldThreadFindingCount(tidy: ThreadTidyResult | undefined): number {
+function approvalBlockingThreadCount(tidy: ThreadTidyResult | undefined): number {
   if (!tidy) {
     return 0;
   }
-  return tidy.withheldSettled + tidy.withheldDisputed;
+  return tidy.withheldSettled + Math.max(tidy.withheldDisputed, tidy.keptOpenDisputed);
 }
 
 function inhibitApprovalForWithheldThreads(
   decision: ApprovalDecision,
   tidy: ThreadTidyResult | undefined
 ): ApprovalDecision {
-  const withheld = withheldThreadFindingCount(tidy);
-  if (withheld === 0 || !decision.enabled || decision.event !== "APPROVE" || decision.overridden) {
+  const blocked = approvalBlockingThreadCount(tidy);
+  if (blocked === 0 || !decision.enabled || decision.event !== "APPROVE" || decision.overridden) {
     return decision;
   }
   return {
     ...decision,
     event: "COMMENT",
     clearsPriorRequestChanges: false,
-    reason: `${withheld} finding(s) were withheld by human thread reply; posting as a comment instead of approving.`
+    reason: `${blocked} finding thread(s) were withheld or left open by human reply; posting as a comment instead of approving.`
   };
 }
 

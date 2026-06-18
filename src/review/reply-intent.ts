@@ -48,6 +48,14 @@ const ACKNOWLEDGED_PATTERNS: RegExp[] = [
   /\bwill (fix|address|handle|do|update)\b/
 ];
 
+/** Mentions that a fix/acknowledgement has not happened yet — do not resolve. */
+const NEGATED_ACKNOWLEDGEMENT_PATTERNS: RegExp[] = [
+  /\b(?:not|isn'?t|aren'?t|wasn'?t|weren'?t|still not)\s+(?:fixed|resolved|addressed|done)\b/,
+  /\b(?:hasn'?t|haven'?t|hadn'?t)\s+been\s+(?:fixed|resolved|addressed|done)\b/,
+  /\b(?:fixed|resolved|addressed|done)\s+(?:not|yet|nope)\b/,
+  /\bstill\s+(?:unfixed|unresolved|unaddressed)\b/
+];
+
 function matchesAny(text: string, patterns: RegExp[]): boolean {
   return patterns.some((pattern) => pattern.test(text));
 }
@@ -68,6 +76,9 @@ export function classifyReplyIntent(body: string | null | undefined): ReplyInten
   }
   if (matchesAny(text, WONT_FIX_PATTERNS)) {
     return "wont-fix";
+  }
+  if (matchesAny(text, NEGATED_ACKNOWLEDGEMENT_PATTERNS)) {
+    return "other";
   }
   if (matchesAny(text, ACKNOWLEDGED_PATTERNS)) {
     return "acknowledged";

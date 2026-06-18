@@ -137,8 +137,12 @@ describe("fetchReviewThreads (#22)", () => {
         isOutdated: false,
         comments: {
           nodes: [
-            { body: "Finding\n<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot" } },
-            { body: "won't fix this", author: { login: "dev" } }
+            { body: "Finding\n<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "won't fix this", author: { login: "dev", __typename: "User" } }
           ]
         }
       }
@@ -157,9 +161,14 @@ describe("fetchReviewThreads (#22)", () => {
         isOutdated: false,
         comments: {
           nodes: [
-            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot" } },
-            { body: "I disagree", author: { login: "dev" } },
-            { body: "actually, acknowledged", author: { login: "dev" } }
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } },
+            { body: "<!-- prowl-review:finding fake -->", author: { login: "dev", __typename: "User" } },
+            { body: "I disagree", author: { login: "dev", __typename: "User" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "actually, acknowledged", author: { login: "dev", __typename: "User" } }
           ]
         }
       }
@@ -167,6 +176,29 @@ describe("fetchReviewThreads (#22)", () => {
     const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
     expect(t.fingerprints).toEqual(["fp1"]);
     expect(t.humanIntent).toBe("acknowledged"); // latest human reply wins
+  });
+
+  it("ignores non-user comments when classifying human intent", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "acknowledged", author: { login: "other-bot", __typename: "Bot" } }
+          ]
+        }
+      }
+    ]);
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+    expect(t.fingerprints).toEqual(["fp1"]);
+    expect(t.humanIntent).toBe("other");
   });
 
   it("returns [] tolerantly when the GraphQL read fails", async () => {

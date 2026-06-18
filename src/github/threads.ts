@@ -131,6 +131,11 @@ export function planThreadActions(input: {
   };
 }
 
+interface ReviewThreadCommentNode {
+  body?: string | null;
+  author?: { login?: string | null; __typename?: string | null } | null;
+}
+
 /** GraphQL shape for the review-threads query (only the fields we read). */
 interface ReviewThreadsQueryResult {
   repository?: {
@@ -142,7 +147,10 @@ interface ReviewThreadsQueryResult {
           isResolved?: boolean;
           isOutdated?: boolean;
           comments?: {
-            nodes?: Array<{ body?: string | null; author?: { login?: string | null } | null } | null>;
+            nodes?: Array<ReviewThreadCommentNode | null>;
+          } | null;
+          recentComments?: {
+            nodes?: Array<ReviewThreadCommentNode | null>;
           } | null;
         } | null> | null;
       } | null;
@@ -161,7 +169,10 @@ query ReviewThreads($owner: String!, $repo: String!, $number: Int!, $cursor: Str
           isResolved
           isOutdated
           comments(first: ${COMMENTS_PER_THREAD}) {
-            nodes { body author { login } }
+            nodes { body author { login __typename } }
+          }
+          recentComments: comments(last: ${COMMENTS_PER_THREAD}) {
+            nodes { body author { login __typename } }
           }
         }
       }
@@ -179,8 +190,8 @@ mutation ResolveThread($threadId: ID!) {
 /**
  * Fetch prowl-review's review threads on the PR, mapped to {@link ReviewThread}.
  * A thread's fingerprints come from comments authored by the bot; its
- * `humanIntent` is the classified intent of the latest comment authored by
- * anyone else. Tolerant — any read failure returns `[]` so the review proceeds.
+ * `humanIntent` is the classified intent of the latest GitHub User comment from
+ * the recent page. Tolerant — any read failure returns `[]` so the review proceeds.
  */
 export async function fetchReviewThreads(
   octokit: OctokitLike,
@@ -209,6 +220,7 @@ export async function fetchReviewThreads(
           continue;
         }
         const comments = node.comments?.nodes ?? [];
+        const recentComments = node.recentComments?.nodes ?? [];
         const fingerprints = new Set<string>();
         let humanIntent: ReplyIntent = "other";
         for (const comment of comments) {
@@ -218,8 +230,18 @@ export async function fetchReviewThreads(
           const author = comment.author?.login ?? undefined;
           if (author === login) {
             parseInlineFingerprintMarkers(comment.body ?? undefined).forEach((fp) => fingerprints.add(fp));
-          } else {
-            // Latest non-bot reply wins (comments arrive oldest-first).
+          }
+        }
+        for (const comment of recentComments) {
+          if (!comment) {
+            continue;
+          }
+          const author = comment.author?.login ?? undefined;
+          const authorType = comment.author?.__typename ?? undefined;
+          if (author === login) {
+            parseInlineFingerprintMarkers(comment.body ?? undefined).forEach((fp) => fingerprints.add(fp));
+          } else if (authorType === "User") {
+            // Latest human reply wins (comments arrive oldest-first).
             humanIntent = classifyReplyIntent(comment.body ?? undefined);
           }
         }
