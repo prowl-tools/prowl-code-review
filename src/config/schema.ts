@@ -170,7 +170,7 @@ const approvalSchema = z
     requestChangesAt: severityEnum.optional(),
     /** Approve (not just comment) when nothing is at/above the threshold. Default false. */
     approveWhenClean: z.boolean().optional(),
-    /** Honor `@prowl-review break glass` overrides from trusted authors. Default true. */
+    /** Honor `@prowl-review break glass <head-sha>` overrides from trusted authors. Default true. */
     breakGlass: z.boolean().optional()
   })
   .strict();

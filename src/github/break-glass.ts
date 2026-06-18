@@ -10,12 +10,14 @@ import type { BreakGlassSignal } from "../review/approval.js";
  * when one is present from a **trusted** author (repo owner/member/collaborator),
  * reports it so the approval rubric can force-approve past a blocking finding.
  *
- * Two guards keep the override honest:
+ * Four guards keep the override honest:
  *  - **Author association** must be OWNER/MEMBER/COLLABORATOR, so a drive-by fork
  *    contributor (association NONE/CONTRIBUTOR) can't unblock their own PR. This
  *    needs no extra API call — GitHub returns `author_association` on each comment.
- *  - When a head commit timestamp is supplied, the override comment must be newer
- *    than that commit, so an override cannot silently carry forward to later commits.
+ *  - When a head SHA is supplied, the override comment must name that exact SHA,
+ *    so an override cannot silently carry forward to a later commit.
+ *  - When a timestamp cutoff is supplied by a caller, the override comment must
+ *    be newer than that cutoff.
  *  - prowl-review's **own** summary comment is skipped (it carries the hidden
  *    {@link REVIEW_MARKER} and, when requesting changes, literally contains the
  *    override phrase as guidance) so the bot can never self-trigger an override —
@@ -39,6 +41,13 @@ export function matchesBreakGlass(body: string | null | undefined): boolean {
   return typeof body === "string" && BREAK_GLASS_RE.test(body);
 }
 
+function mentionsHeadSha(body: string | null | undefined, headSha: string | undefined): boolean {
+  if (!headSha) {
+    return true;
+  }
+  return typeof body === "string" && body.toLowerCase().includes(headSha.toLowerCase());
+}
+
 /**
  * Scan PR comments for a trusted `@prowl-review break glass` override. GitHub
  * returns issue comments in ascending order, so we keep the newest trusted match
@@ -47,7 +56,7 @@ export function matchesBreakGlass(body: string | null | undefined): boolean {
 export async function detectBreakGlass(
   octokit: OctokitLike,
   ref: PullRequestRef,
-  options: { botLogin?: string; createdAfter?: string } = {}
+  options: { botLogin?: string; createdAfter?: string; headSha?: string } = {}
 ): Promise<BreakGlassSignal> {
   try {
     const parsedCreatedAfter = options.createdAfter ? Date.parse(options.createdAfter) : undefined;
@@ -79,6 +88,9 @@ export async function detectBreakGlass(
           continue;
         }
         if (!matchesBreakGlass(comment.body)) {
+          continue;
+        }
+        if (!mentionsHeadSha(comment.body, options.headSha)) {
           continue;
         }
         if (createdAfter !== undefined) {

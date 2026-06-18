@@ -210,6 +210,43 @@ describe("detectBreakGlass (#52)", () => {
     expect(signal).toEqual({ active: true, actor: "maintainer", association: "OWNER" });
   });
 
+  it("requires the current head SHA when one is supplied", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass old-head",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      },
+      {
+        id: 2,
+        body: "@prowl-review break glass new-head",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T15:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "new-head" });
+    expect(signal).toEqual({ active: true, actor: "maintainer", association: "OWNER" });
+  });
+
+  it("does not carry a break-glass override across head SHAs", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass old-head",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "new-head" });
+    expect(signal.active).toBe(false);
+  });
+
   it("is inactive (never accidentally approves) when the read fails", async () => {
     const listComments = vi.fn(async () => {
       throw new Error("github unavailable");

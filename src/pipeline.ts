@@ -102,11 +102,11 @@ export interface PipelineDeps {
     ref: PullRequestRef,
     input: { headSha: string; plan: CheckRunPlan; name?: string }
   ) => Promise<void>;
-  /** Detect a `@prowl-review break glass` override for the approval gate (#52). */
+  /** Detect a `@prowl-review break glass <head-sha>` override for the approval gate (#52). */
   detectBreakGlass?: (
     octokit: OctokitLike,
     ref: PullRequestRef,
-    options?: { botLogin?: string; createdAfter?: string }
+    options?: { botLogin?: string; createdAfter?: string; headSha?: string }
   ) => Promise<BreakGlassSignal>;
   /** Detect whether prowl-review has an active prior request-changes review (#52). */
   detectPriorRequestChanges?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PriorRequestChangesState>;
@@ -169,7 +169,7 @@ export interface ReviewPullRequestOptions {
   /**
    * Approval rubric + break-glass override (#52). Opt-in (`approval.enabled`).
    * When engaged, the findings map to the published review event (and the #24
-   * check conclusion); a trusted `@prowl-review break glass` comment overrides a
+   * check conclusion); a trusted `@prowl-review break glass <head-sha>` comment overrides a
    * request-changes into an approval. Omitted/disabled → the review only comments.
    */
   approval?: ApprovalConfig;
@@ -513,7 +513,7 @@ async function maybeSubmitCheckRun(
 
 /**
  * Resolve the approval-rubric decision (#52). When the gate is enabled and honors
- * break-glass, detect a `@prowl-review break glass` override first; the pure
+ * break-glass, detect a `@prowl-review break glass <head-sha>` override first; the pure
  * rubric then maps the findings (+ override) to the review event. With the gate
  * disabled this is a cheap pure call that returns a COMMENT decision and makes no
  * GitHub request.
@@ -525,28 +525,31 @@ async function resolveApprovalDecision(
   ref: PullRequestRef,
   findings: Finding[],
   config: ApprovalConfig | undefined,
-  options: { coverageDegraded?: boolean; breakGlassCreatedAfter?: string } = {}
+  options: { coverageDegraded?: boolean; breakGlassHeadSha?: string } = {}
 ): Promise<ApprovalDecision> {
   let breakGlass: BreakGlassSignal | undefined;
-  let decision = planApprovalDecision({ findings, config, coverageDegraded: options.coverageDegraded });
+  let decision = planApprovalDecision({
+    findings,
+    config,
+    coverageDegraded: options.coverageDegraded,
+    breakGlassTarget: options.breakGlassHeadSha
+  });
   if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
-    const breakGlassCreatedAfter =
-      options.breakGlassCreatedAfter && Number.isFinite(Date.parse(options.breakGlassCreatedAfter))
-        ? options.breakGlassCreatedAfter
-        : undefined;
-    if (breakGlassCreatedAfter) {
-      breakGlass = await detect(octokit, ref, { createdAfter: breakGlassCreatedAfter });
+    if (options.breakGlassHeadSha) {
+      breakGlass = await detect(octokit, ref, { headSha: options.breakGlassHeadSha });
       decision = planApprovalDecision({
         findings,
         config,
         breakGlass,
-        coverageDegraded: options.coverageDegraded
+        coverageDegraded: options.coverageDegraded,
+        breakGlassTarget: options.breakGlassHeadSha
       });
     } else {
       decision = planApprovalDecision({
         findings,
         config,
         coverageDegraded: options.coverageDegraded,
+        breakGlassTarget: options.breakGlassHeadSha,
         breakGlassFreshnessUnknown: true
       });
     }
@@ -559,6 +562,7 @@ async function resolveApprovalDecision(
         config,
         breakGlass,
         coverageDegraded: options.coverageDegraded,
+        breakGlassTarget: options.breakGlassHeadSha,
         priorRequestChanges: priorRequestChanges.active,
         priorRequestChangesTruncated: priorRequestChanges.truncated
       });
@@ -669,6 +673,10 @@ export async function reviewPullRequest(
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
+  const fullSkipped =
+    incrementalBaseSha === undefined
+      ? skipped
+      : filterAndGuardDiffFiles(fullParsed.files, ignorePatterns, options.diffLimits).skipped;
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
@@ -745,7 +753,7 @@ export async function reviewPullRequest(
       ref,
       reviewResult.findings,
       options.approval,
-      { coverageDegraded: true, breakGlassCreatedAfter: meta.headCommittedAt }
+      { coverageDegraded: true, breakGlassHeadSha: meta.headSha }
     );
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
@@ -782,7 +790,7 @@ export async function reviewPullRequest(
     };
     if (!options.dryRun) {
       try {
-        await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha));
+        await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, fullSkipped.length === 0));
         result.posted = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -921,7 +929,7 @@ export async function reviewPullRequest(
   const coverage = { passed: passesPassed, total: reviewResult.passes.length };
   const degraded =
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
-  const approvalCoverageIncomplete = degraded || skipped.length > 0;
+  const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
 
   const totalUsage = addUsage(reviewResult.usage, contextUsage);
 
@@ -934,7 +942,7 @@ export async function reviewPullRequest(
     ref,
     reviewResult.findings,
     options.approval,
-    { coverageDegraded: approvalCoverageIncomplete, breakGlassCreatedAfter: meta.headCommittedAt }
+    { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
   );
 
   const summaryBody = buildWalkthrough({
@@ -984,7 +992,7 @@ export async function reviewPullRequest(
   };
   if (!options.dryRun) {
     try {
-      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, !degraded));
+      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, !approvalCoverageIncomplete));
       result.posted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

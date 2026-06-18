@@ -288,6 +288,46 @@ describe("reviewPullRequest", () => {
     });
   });
 
+  it("does not approve or advance incremental state when the full PR still has skipped files", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fullDiffWithSensitiveFile = `diff --git a/.env b/.env
+--- a/.env
++++ b/.env
+@@ -1,1 +1,2 @@
+ TOKEN=old
++TOKEN=new
+
+${DELTA_DIFF}`;
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF),
+      submitCheckRun
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: fullDiffWithSensitiveFile }));
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      approval: { enabled: true, approveWhenClean: true },
+      checkRun: { enabled: true }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(result.skipped).toEqual([]);
+    expect(result.approval?.coverageDegraded).toBe(true);
+    expect(result.approval?.event).toBe("COMMENT");
+    expect(result.payload.event).toBe("COMMENT");
+    expect(result.checkRunConclusion).toBe("failure");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      preservePriorSummary: true
+    });
+  });
+
   it("treats an empty compare diff as an incremental no-op (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);
@@ -631,10 +671,6 @@ describe("reviewPullRequest", () => {
     it("force-approves and records the override on a trusted break-glass comment", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
       const deps = { ...makeDeps(), detectBreakGlass };
-      deps.fetchPullRequest.mockResolvedValue({
-        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
-        diff: DIFF
-      });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
 
       const result = await reviewPullRequest(octokit, ref, {
@@ -654,13 +690,9 @@ describe("reviewPullRequest", () => {
       expect(result.payload.body).toContain("maintainer");
     });
 
-    it("passes the head commit timestamp to break-glass detection", async () => {
+    it("passes the exact head SHA to break-glass detection", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: false }));
       const deps = { ...makeDeps(), detectBreakGlass };
-      deps.fetchPullRequest.mockResolvedValue({
-        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
-        diff: DIFF
-      });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
 
       await reviewPullRequest(octokit, ref, {
@@ -673,50 +705,8 @@ describe("reviewPullRequest", () => {
       expect(detectBreakGlass).toHaveBeenCalledWith(
         octokit,
         ref,
-        expect.objectContaining({ createdAfter: "2026-06-17T21:45:23Z" })
+        expect.objectContaining({ headSha: "head" })
       );
-    });
-
-    it("does not honor break-glass when the head commit timestamp is unavailable", async () => {
-      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
-      const deps = { ...makeDeps(), detectBreakGlass };
-      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
-
-      const result = await reviewPullRequest(octokit, ref, {
-        config,
-        toolkitRoot: "/repo",
-        deps,
-        approval: { enabled: true }
-      });
-
-      expect(detectBreakGlass).not.toHaveBeenCalled();
-      expect(result.approval?.event).toBe("REQUEST_CHANGES");
-      expect(result.approval?.breakGlassFreshnessUnknown).toBe(true);
-      expect(result.payload.event).toBe("REQUEST_CHANGES");
-      expect(result.payload.body).toContain("head commit timestamp could not be verified");
-    });
-
-    it("does not honor break-glass when the head commit timestamp is invalid", async () => {
-      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
-      const deps = { ...makeDeps(), detectBreakGlass };
-      deps.fetchPullRequest.mockResolvedValue({
-        meta: { ...meta, headCommittedAt: "not a date" },
-        diff: DIFF
-      });
-      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
-
-      const result = await reviewPullRequest(octokit, ref, {
-        config,
-        toolkitRoot: "/repo",
-        deps,
-        approval: { enabled: true }
-      });
-
-      expect(detectBreakGlass).not.toHaveBeenCalled();
-      expect(result.approval?.event).toBe("REQUEST_CHANGES");
-      expect(result.approval?.breakGlassFreshnessUnknown).toBe(true);
-      expect(result.payload.event).toBe("REQUEST_CHANGES");
-      expect(result.payload.body).toContain("head commit timestamp could not be verified");
     });
 
     it("does not approve a degraded clean review", async () => {
@@ -825,10 +815,6 @@ diff --git a/src/b.ts b/src/b.ts
       const submitCheckRun = vi.fn(async () => {});
       const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
       const deps = { ...makeDeps(), submitCheckRun, detectBreakGlass };
-      deps.fetchPullRequest.mockResolvedValue({
-        meta: { ...meta, headCommittedAt: "2026-06-17T21:45:23Z" },
-        diff: DIFF
-      });
       deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
 
       const result = await reviewPullRequest(octokit, ref, {

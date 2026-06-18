@@ -78,7 +78,7 @@ export interface OctokitLike {
           id: number;
           body?: string;
           user?: { login?: string } | null;
-          /** Comment creation timestamp, used to expire break-glass overrides on new pushes. */
+          /** Comment creation timestamp, available for optional comment freshness filters. */
           created_at?: string;
           /** Author's relationship to the repo; gates break-glass overrides (#52). */
           author_association?: string;
@@ -101,12 +101,6 @@ export interface OctokitLike {
     };
     /** Repository endpoints — commit comparison for incremental re-review (#23). */
     repos: {
-      /** Fetch one commit's metadata. */
-      getCommit(params: {
-        owner: string;
-        repo: string;
-        ref: string;
-      }): Promise<{ data: unknown }>;
       /** Compare two commits; with `mediaType.format: "diff"` returns the raw delta diff. */
       compareCommitsWithBasehead(params: {
         owner: string;

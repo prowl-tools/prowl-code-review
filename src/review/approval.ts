@@ -13,7 +13,7 @@ import type { ReviewEvent } from "./inline.js";
  *
  * The whole gate is **opt-in** (`approval.enabled`): a bot that requests changes
  * is intrusive, so by default prowl-review only ever comments (the prior
- * behavior). The escape hatch is a `@prowl-review break glass` comment from a
+ * behavior). The escape hatch is a `@prowl-review break glass <head-sha>` comment from a
  * repo owner/member/collaborator (see {@link ../github/break-glass.js}): it
  * force-approves past a blocking finding and is recorded in the review for
  * auditability, keeping a human in control of the merge.
@@ -30,14 +30,14 @@ export interface ApprovalConfig {
   requestChangesAt?: Severity;
   /** Approve (not just comment) when nothing is at/above the threshold. Default false. */
   approveWhenClean?: boolean;
-  /** Honor `@prowl-review break glass` overrides. Default true. */
+  /** Honor `@prowl-review break glass <head-sha>` overrides. Default true. */
   breakGlass?: boolean;
 }
 
 /** Default severity that triggers a request-changes decision. */
 export const DEFAULT_REQUEST_CHANGES_AT: Severity = "critical";
 
-/** A detected `@prowl-review break glass` override signal from the PR. */
+/** A detected `@prowl-review break glass <head-sha>` override signal from the PR. */
 export interface BreakGlassSignal {
   /** True when a trusted override comment is present. */
   active: boolean;
@@ -63,10 +63,12 @@ export interface ApprovalDecision {
   coverageDegraded: boolean;
   /** True when approval clears an earlier prowl-review request-changes review. */
   clearsPriorRequestChanges: boolean;
-  /** True when break-glass was disabled because head freshness could not be verified. */
+  /** True when break-glass was disabled because the head identity could not be verified. */
   breakGlassFreshnessUnknown?: boolean;
   /** True when break-glass overrides are disabled by configuration. */
   breakGlassDisabled?: boolean;
+  /** Exact head SHA that a break-glass override comment must name, when required. */
+  breakGlassTarget?: string;
   /** True when prior review history hit the pagination cap before a complete answer. */
   priorRequestChangesTruncated?: boolean;
   /** Login of the override actor, when overridden (audit). */
@@ -83,6 +85,7 @@ export function planApprovalDecision(input: {
   findings: Finding[];
   config?: ApprovalConfig;
   breakGlass?: BreakGlassSignal;
+  breakGlassTarget?: string;
   coverageDegraded?: boolean;
   priorRequestChanges?: boolean;
   breakGlassFreshnessUnknown?: boolean;
@@ -94,6 +97,7 @@ export function planApprovalDecision(input: {
   const priorRequestChanges = input.priorRequestChanges === true;
   const breakGlassFreshnessUnknown = input.breakGlassFreshnessUnknown === true;
   const breakGlassDisabled = config.breakGlass === false;
+  const breakGlassTarget = input.breakGlassTarget;
   const priorRequestChangesTruncated = input.priorRequestChangesTruncated === true;
   const blocking = input.findings.filter(
     (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[requestChangesAt]
@@ -110,6 +114,7 @@ export function planApprovalDecision(input: {
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
       breakGlassDisabled,
+      breakGlassTarget,
       priorRequestChangesTruncated,
       reason: "Approval gate disabled; posting as a comment."
     };
@@ -126,6 +131,7 @@ export function planApprovalDecision(input: {
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
       breakGlassDisabled,
+      breakGlassTarget,
       priorRequestChangesTruncated,
       reason:
         blocking > 0
@@ -149,6 +155,7 @@ export function planApprovalDecision(input: {
         clearsPriorRequestChanges: false,
         breakGlassFreshnessUnknown: false,
         breakGlassDisabled,
+        breakGlassTarget,
         priorRequestChangesTruncated,
         overrideActor: actor,
         reason:
@@ -166,9 +173,10 @@ export function planApprovalDecision(input: {
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
       breakGlassDisabled,
+      breakGlassTarget,
       priorRequestChangesTruncated,
       reason: breakGlassFreshnessUnknown
-        ? `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes because break-glass freshness could not be verified.`
+        ? `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes because the break-glass head could not be verified.`
         : `${blocking} finding(s) at or above ${requestChangesAt}; requesting changes.`
     };
   }
@@ -184,6 +192,7 @@ export function planApprovalDecision(input: {
       clearsPriorRequestChanges: false,
       breakGlassFreshnessUnknown,
       breakGlassDisabled,
+      breakGlassTarget,
       priorRequestChangesTruncated,
       reason: "Prior prowl-review history was truncated; posting as a comment instead of approving."
     };
@@ -200,6 +209,7 @@ export function planApprovalDecision(input: {
       clearsPriorRequestChanges: priorRequestChanges,
       breakGlassFreshnessUnknown,
       breakGlassDisabled,
+      breakGlassTarget,
       priorRequestChangesTruncated,
       reason: priorRequestChanges
         ? `No findings at or above ${requestChangesAt}; approving to clear a prior prowl-review change request.`
@@ -217,6 +227,7 @@ export function planApprovalDecision(input: {
     clearsPriorRequestChanges: false,
     breakGlassFreshnessUnknown,
     breakGlassDisabled,
+    breakGlassTarget,
     priorRequestChangesTruncated,
     reason: `No findings at or above ${requestChangesAt}; posting as a comment.`
   };
@@ -253,13 +264,13 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
     }
     if (decision.breakGlassFreshnessUnknown) {
       return [
-        `${base} Break-glass overrides were ignored because the head commit timestamp could not be verified.`
+        `${base} Break-glass overrides were ignored because the head SHA could not be verified.`
       ];
     }
-    return [
-      `${base} A repo owner/member/collaborator can override by commenting ` +
-        "`@prowl-review break glass`."
-    ];
+    const command = decision.breakGlassTarget
+      ? `@prowl-review break glass ${decision.breakGlassTarget}`
+      : "@prowl-review break glass";
+    return [`${base} A repo owner/member/collaborator can override by commenting \`${command}\`.`];
   }
   if (decision.coverageDegraded) {
     return ["Approval gate (#52): not approving because review coverage was incomplete."];
