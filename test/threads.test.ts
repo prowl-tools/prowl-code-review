@@ -142,7 +142,7 @@ describe("fetchReviewThreads (#22)", () => {
         },
         recentComments: {
           nodes: [
-            { body: "won't fix this", author: { login: "dev", __typename: "User" } }
+            { body: "won't fix this", authorAssociation: "COLLABORATOR", author: { login: "dev", __typename: "User" } }
           ]
         }
       }
@@ -168,7 +168,7 @@ describe("fetchReviewThreads (#22)", () => {
         },
         recentComments: {
           nodes: [
-            { body: "actually, acknowledged", author: { login: "dev", __typename: "User" } }
+            { body: "actually, acknowledged", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } }
           ]
         }
       }
@@ -192,6 +192,33 @@ describe("fetchReviewThreads (#22)", () => {
         recentComments: {
           nodes: [
             { body: "acknowledged", author: { login: "other-bot", __typename: "Bot" } }
+          ]
+        }
+      }
+    ]);
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+    expect(t.fingerprints).toEqual(["fp1"]);
+    expect(t.humanIntent).toBe("other");
+  });
+
+  it("ignores untrusted user comments when classifying human intent", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            {
+              body: "won't fix",
+              authorAssociation: "CONTRIBUTOR",
+              author: { login: "fork-author", __typename: "User" }
+            }
           ]
         }
       }

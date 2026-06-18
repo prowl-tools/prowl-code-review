@@ -1,5 +1,6 @@
 import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
+import { BREAK_GLASS_TRUSTED_ASSOCIATIONS } from "./break-glass.js";
 import { getAuthenticatedLogin, parseInlineFingerprintMarkers } from "./review.js";
 import {
   classifyReplyIntent,
@@ -44,7 +45,7 @@ export interface ReviewThread {
   isOutdated: boolean;
   /** Finding fingerprints recovered from prowl-review's comments in this thread. */
   fingerprints: string[];
-  /** Classified intent of the latest human (non-bot) reply, if any. */
+  /** Classified intent of the latest trusted human reply, if any. */
   humanIntent: ReplyIntent;
 }
 
@@ -133,6 +134,7 @@ export function planThreadActions(input: {
 
 interface ReviewThreadCommentNode {
   body?: string | null;
+  authorAssociation?: string | null;
   author?: { login?: string | null; __typename?: string | null } | null;
 }
 
@@ -169,10 +171,10 @@ query ReviewThreads($owner: String!, $repo: String!, $number: Int!, $cursor: Str
           isResolved
           isOutdated
           comments(first: ${COMMENTS_PER_THREAD}) {
-            nodes { body author { login __typename } }
+            nodes { body authorAssociation author { login __typename } }
           }
           recentComments: comments(last: ${COMMENTS_PER_THREAD}) {
-            nodes { body author { login __typename } }
+            nodes { body authorAssociation author { login __typename } }
           }
         }
       }
@@ -190,8 +192,9 @@ mutation ResolveThread($threadId: ID!) {
 /**
  * Fetch prowl-review's review threads on the PR, mapped to {@link ReviewThread}.
  * A thread's fingerprints come from comments authored by the bot; its
- * `humanIntent` is the classified intent of the latest GitHub User comment from
- * the recent page. Tolerant — any read failure returns `[]` so the review proceeds.
+ * `humanIntent` is the classified intent of the latest trusted GitHub User
+ * comment from the recent page. Tolerant — any read failure returns `[]` so the
+ * review proceeds.
  */
 export async function fetchReviewThreads(
   octokit: OctokitLike,
@@ -238,10 +241,13 @@ export async function fetchReviewThreads(
           }
           const author = comment.author?.login ?? undefined;
           const authorType = comment.author?.__typename ?? undefined;
+          const association = comment.authorAssociation ?? "NONE";
+          const isTrustedHuman =
+            authorType === "User" && BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association);
           if (author === login) {
             parseInlineFingerprintMarkers(comment.body ?? undefined).forEach((fp) => fingerprints.add(fp));
-          } else if (authorType === "User") {
-            // Latest human reply wins (comments arrive oldest-first).
+          } else if (isTrustedHuman) {
+            // Latest trusted human reply wins (comments arrive oldest-first).
             humanIntent = classifyReplyIntent(comment.body ?? undefined);
           }
         }
