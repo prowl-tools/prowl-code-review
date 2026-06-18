@@ -1126,7 +1126,8 @@ export async function reviewPullRequest(
     octokit,
     ref,
     findings: reviewResult.findings,
-    resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
+    resolveStaleThreads:
+      incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
     enabled: tidyThreadsEnabled,
     dryRun: options.dryRun === true
   });

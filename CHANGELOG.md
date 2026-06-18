@@ -17,7 +17,7 @@ All notable changes to Prowl Review will be documented in this file.
   settled thread actions from incomplete re-runs are handled **before** the approval gate (#52), so a
   finding a human settled or disputed no longer drives request-changes, but it also prevents automatic
   approval until an explicit human approval or break-glass override. Fixed auto-resolution is skipped on incremental
-  delta-only or otherwise incomplete reviews, where the current findings are not a full-PR set. All thread I/O is GraphQL and tolerant (a failure never
+  delta-only, capped, or otherwise incomplete reviews, where the current findings are not a full-PR set. All thread I/O is GraphQL and tolerant (a failure never
   sinks the review); opt out via `review.resolveThreads` / `--no-resolve-threads`. Exports
   `planThreadActions`/`fetchReviewThreads`/`resolveReviewThread`/`classifyReplyIntent`. **Deferred (still
   #22):** on "I disagree", have the judge actively re-justify or formally withdraw the finding (rides with

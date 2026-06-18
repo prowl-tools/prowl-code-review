@@ -915,6 +915,29 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.threads?.resolvedFixed).toBe(0);
     });
 
+    it("does not resolve stale-looking threads when findings were capped", async () => {
+      const surfaced = finding();
+      const fetchReviewThreads = vi.fn(async () => [thread({ id: "C", fingerprints: ["capped-out-finding"] })]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(
+        reviewResult([surfaced], {
+          judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 1 }
+        })
+      );
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        maxFindings: 1
+      });
+
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(result.threads?.resolvedFixed).toBe(0);
+      expect(result.payload.body).toContain("1 additional lower");
+    });
+
     it("keeps an outdated thread open when the finding is still current", async () => {
       const current = finding();
       const fp = findingFingerprint(current);
