@@ -179,6 +179,22 @@ describe("detectBreakGlass (#52)", () => {
     expect(signal.active).toBe(false);
   });
 
+  it("fails closed without querying when createdAfter is invalid", async () => {
+    const { octokit, listComments } = mockOctokit([
+      {
+        id: 1,
+        body: "@prowl-review break glass",
+        user: { login: "maintainer" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { createdAfter: "not a date" });
+    expect(signal.active).toBe(false);
+    expect(listComments).not.toHaveBeenCalled();
+  });
+
   it("honors override comments after the current head commit", async () => {
     const { octokit } = mockOctokit([
       {
