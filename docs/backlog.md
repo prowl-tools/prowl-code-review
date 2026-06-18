@@ -36,10 +36,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer who pushes often, I want superseded reviews cancelled, so that rapid re-pushes don't spawn overlapping reviews that race to comment.
     - Acceptance: the Action/workflow uses a `concurrency` group keyed to the PR with `cancel-in-progress`; in-flight reviews for an outdated SHA are cancelled cleanly.
 
-22. **Update-not-duplicate: resolve outdated threads + respect human replies** *(core + thread tidy-up done — see resolved.md)*
+22. **Update-not-duplicate: resolve fixed threads + respect human replies** *(core + thread tidy-up done — see resolved.md)*
     As a developer, I want re-runs to also tidy up stale threads and honor my replies, so that the PR stays clean and the bot isn't argumentative.
     - **Done (core):** the summary is found by marker and updated in place (now a top-level PR comment, not a stacked review); only net-new inline findings are posted (deduped via the #12 state fingerprints).
-    - **Done:** fixed/outdated finding threads are resolved via GraphQL `resolveReviewThread` when the finding no longer appears (or GitHub marks the thread outdated).
+    - **Done:** fixed finding threads are resolved via GraphQL `resolveReviewThread` when the finding no longer appears in the latest full review.
     - **Done:** human replies are honored — "won't fix"/"acknowledged" resolves the thread and withholds the finding; "I disagree" keeps the thread open and withholds the finding (withdrawn from re-emit) instead of blindly re-posting it.
     - Acceptance (remaining): on "I disagree", have the judge actively **re-justify** the finding (defend with reasoning) or formally **withdraw** it, rather than just withholding it — rides with the bot-command/event infra (#26/#27) that owns reply-driven re-review.
 

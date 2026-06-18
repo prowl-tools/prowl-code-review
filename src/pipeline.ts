@@ -186,7 +186,7 @@ export interface ReviewPullRequestOptions {
   approval?: ApprovalConfig;
   /**
    * Tidy prior finding threads on a re-run (#22): resolve threads whose finding
-   * is fixed/outdated or that a human settled (won't-fix/acknowledged), and
+   * is no longer current or that a human settled (won't-fix/acknowledged), and
    * withhold findings the human settled or disputed instead of re-raising them.
    * Default on; set false to leave threads untouched. Tolerant — GraphQL failures
    * never sink the review.
@@ -498,7 +498,7 @@ function incrementalDeltaIsWithinPrDiff(deltaFiles: DiffFile[], prFiles: DiffFil
 
 /** Outcome of the prior-thread tidy-up (#22), surfaced on the result for reporting. */
 export interface ThreadTidyResult {
-  /** Threads resolved because their finding is fixed/outdated. */
+  /** Threads resolved because their finding is no longer current. */
   resolvedFixed: number;
   /** Threads resolved because a human settled them (won't-fix/acknowledged). */
   resolvedSettled: number;
@@ -511,8 +511,8 @@ export interface ThreadTidyResult {
 }
 
 /**
- * Tidy prior finding threads (#22): resolve threads whose finding is now fixed
- * (gone from this run) or that a human settled (won't-fix/acknowledged), and
+ * Tidy prior finding threads (#22): resolve threads whose finding is no longer
+ * current (gone from this run) or that a human settled (won't-fix/acknowledged), and
  * withhold findings the human settled or disputed so the reviewer doesn't
  * re-raise them. Returns the (possibly reduced) findings, reviewer-visible notes,
  * and a structured tidy result. Tolerant: a GraphQL failure yields an empty
@@ -579,7 +579,7 @@ async function tidyReviewThreads(params: {
   if (resolvedTotal > 0) {
     const parts: string[] = [];
     if (resolvedFixed > 0) {
-      parts.push(`${resolvedFixed} now fixed/outdated`);
+      parts.push(`${resolvedFixed} no longer current`);
     }
     if (resolvedSettled > 0) {
       parts.push(`${resolvedSettled} you settled`);

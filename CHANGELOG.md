@@ -5,16 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
-- Resolve outdated threads + respect human replies (backlog #22 remainder): on a
+- Resolve fixed threads + respect human replies (backlog #22 remainder): on a
   re-run prowl-review now tidies its prior finding threads. It **resolves** a thread (via the GraphQL
   `resolveReviewThread` mutation — the REST API can't) when the finding is gone from the latest review
-  (fixed) or GitHub marks the thread outdated, and it **honors human replies**: replying "won't fix" /
+  (fixed), and it **honors human replies**: replying "won't fix" /
   "acknowledged" resolves the thread and withholds the finding so it isn't re-raised, while "I disagree"
   keeps the thread open and withholds the finding (withdrawn from re-emit) pending re-review instead of
   blindly re-posting it. Reply intent is classified by a pure, conservative matcher (ambiguous → no
   action). Withheld findings are removed **before** the approval gate (#52), so a finding a human settled
   or disputed no longer drives request-changes, but it also prevents automatic approval until an explicit
-  human approval or break-glass override. Fixed/outdated auto-resolution is skipped on incremental
+  human approval or break-glass override. Fixed auto-resolution is skipped on incremental
   delta-only reviews, where the current findings are not a full-PR set. All thread I/O is GraphQL and tolerant (a failure never
   sinks the review); opt out via `review.resolveThreads` / `--no-resolve-threads`. Exports
   `planThreadActions`/`fetchReviewThreads`/`resolveReviewThread`/`classifyReplyIntent`. **Deferred (still

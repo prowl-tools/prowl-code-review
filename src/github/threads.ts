@@ -9,7 +9,7 @@ import {
 } from "../review/reply-intent.js";
 
 /**
- * Review-thread tidy-up (backlog #22 remainder): resolve outdated/settled finding
+ * Review-thread tidy-up (backlog #22 remainder): resolve fixed/settled finding
  * threads and honor human replies, so re-runs keep the PR clean instead of
  * leaving stale threads open or re-nagging on a finding the author already
  * addressed or disputed.
@@ -18,7 +18,7 @@ import {
  * (`reviewThreads` query + `resolveReviewThread` mutation). For each thread
  * prowl-review authored (identified by the hidden finding fingerprint in its
  * comment body) we decide, purely, whether to:
- *  - **resolve** it — the finding is gone from the latest review (fixed/outdated),
+ *  - **resolve** it — the finding is gone from the latest full review (fixed),
  *    or a human reply settled it (won't-fix / acknowledged); or
  *  - **keep it open** — a human disputed it ("I disagree"): the finding is
  *    withheld from re-raising (#22) pending re-justification, but the thread is
@@ -73,8 +73,10 @@ export interface ThreadActionPlan {
  *
  * Precedence per thread: a human dispute wins (keep open, withhold the finding);
  * then a human settle (resolve + withhold); then "finding no longer present"
- * (resolve as fixed/outdated). A still-current finding with no human reply is
- * left untouched.
+ * (resolve as fixed). A still-current finding with no human reply is left
+ * untouched, even when GitHub marks its old diff position outdated, because the
+ * publisher dedupes by fingerprint and may not create a replacement inline
+ * thread for the same finding.
  */
 export function planThreadActions(input: {
   threads: ReviewThread[];
@@ -113,10 +115,11 @@ export function planThreadActions(input: {
       continue;
     }
 
-    // No decisive human reply: resolve when the finding is gone from this review
-    // (fixed) or GitHub already marked the thread outdated.
+    // No decisive human reply: resolve only when the finding is gone from this
+    // full review. An outdated-but-current thread stays open so dedupe cannot
+    // close the only inline thread for a still-valid finding.
     const stillCurrent = thread.fingerprints.some((fp) => current.has(fp));
-    if (resolveStaleThreads && (!stillCurrent || thread.isOutdated)) {
+    if (resolveStaleThreads && !stillCurrent) {
       resolve.push({ id: thread.id, reason: "fixed" });
     }
   }
