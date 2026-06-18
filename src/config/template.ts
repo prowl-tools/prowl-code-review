@@ -59,6 +59,8 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   verify: true             # run the skeptical false-positive verification pass
 #   verifyConfidence: 0.8    # non-blocking findings at/above this confidence skip verification (0–1)
 #   incremental: true        # on a re-push, review only the delta since the last reviewed commit (#23)
+#   resolveThreads: true     # on a re-push, resolve fixed/settled finding threads and honor replies (#22)
+#                            # (reply to a finding "won't fix" / "acknowledged" to resolve it; "disagree" keeps it open)
 
 # --- Specialist reviewers -----------------------------------------------------
 # The multi-pass review runs built-in lenses (correctness, security, performance,

@@ -7,6 +7,11 @@ import type { ReviewEvent, ReviewSide } from "../review/inline.js";
  * without depending on the full Octokit type.
  */
 export interface OctokitLike {
+  /**
+   * GraphQL endpoint — used for review-thread resolution (#22), which the REST
+   * API doesn't expose. Typed loosely (the caller validates the shape it needs).
+   */
+  graphql<T = unknown>(query: string, variables?: Record<string, unknown>): Promise<T>;
   /** REST API namespaces used by prowl-review. */
   rest: {
     /** Pull request endpoints used for metadata and raw diff retrieval. */

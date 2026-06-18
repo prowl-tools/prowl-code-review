@@ -145,6 +145,11 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ review: { incremental: "no" } })).toThrow();
   });
 
+  it("accepts review.resolveThreads and rejects a non-boolean (#22)", () => {
+    expect(configSchema.parse({ review: { resolveThreads: false } })).toEqual({ review: { resolveThreads: false } });
+    expect(() => configSchema.parse({ review: { resolveThreads: "no" } })).toThrow();
+  });
+
   it("accepts a checkRun block and rejects malformed values (#24)", () => {
     expect(configSchema.parse({ checkRun: { enabled: true, failOn: "critical" } })).toEqual({
       checkRun: { enabled: true, failOn: "critical" }

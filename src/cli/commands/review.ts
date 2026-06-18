@@ -153,6 +153,8 @@ interface ReviewCommandOptions {
   verify?: boolean;
   /** `--no-incremental` → false; otherwise true/undefined (#23). */
   incremental?: boolean;
+  /** `--no-resolve-threads` → false; otherwise true/undefined (#22). */
+  resolveThreads?: boolean;
   grounding?: boolean;
   trustWorkspace?: boolean;
   agentPrompt?: boolean;
@@ -180,6 +182,7 @@ type ResolvedReviewOptions = Pick<
   | "specialists"
   | "riskTiering"
   | "incremental"
+  | "resolveThreads"
   | "checkRun"
   | "approval"
 >;
@@ -278,6 +281,8 @@ export function resolveReviewOptions(
     verifyConfidence: config.review?.verifyConfidence,
     // CLI --no-incremental (or config) forces a full-PR review (#23).
     incremental: cli.incremental === false ? false : config.review?.incremental,
+    // CLI --no-resolve-threads (or config) leaves prior threads untouched (#22).
+    resolveThreads: cli.resolveThreads === false ? false : config.review?.resolveThreads,
     skipContext:
       cli.context === false || config.context?.enabled === false ? true : undefined,
     contextLimits: compact({
@@ -346,6 +351,16 @@ export function reportReviewCommandResult(
       : "";
     console.log(`prowl-review: approval gate → ${verdict}${override}`);
   }
+  if (result.threads) {
+    const t = result.threads;
+    const resolved = t.resolvedFixed + t.resolvedSettled;
+    const withheld = t.withheldSettled + t.withheldDisputed;
+    if (resolved > 0 || withheld > 0) {
+      console.log(
+        `prowl-review: threads → resolved ${resolved}, withheld ${withheld} (disputed ${t.withheldDisputed})`
+      );
+    }
+  }
 
   const outputPath = env.GITHUB_OUTPUT;
   if (outputPath) {
@@ -410,6 +425,7 @@ export function buildReviewCommand(): Command {
     .option("--trust-workspace", "allow repo-local linter/SAST tools to execute in the workspace")
     .option("--no-verify", "skip the skeptical false-positive verification pass")
     .option("--no-incremental", "review the full PR diff, not just the delta since the last review")
+    .option("--no-resolve-threads", "leave prior finding threads untouched (skip resolve + reply handling)")
     .option("--no-agent-prompt", "omit the per-finding \"Resolve with an AI agent\" prompt")
     .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
