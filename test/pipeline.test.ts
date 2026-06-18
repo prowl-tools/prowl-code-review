@@ -349,6 +349,40 @@ ${DELTA_DIFF}`;
     });
   });
 
+  it("does not fail approval checks for an empty incremental no-op", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const submitCheckRun = vi.fn(async () => {});
+    const detectPriorRequestChanges = vi.fn(async () => ({ active: false, truncated: false }));
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ""),
+      submitCheckRun,
+      detectPriorRequestChanges
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      approval: { enabled: true, approveWhenClean: true },
+      checkRun: { enabled: true }
+    });
+
+    expect(result.incremental).toBe(true);
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(detectPriorRequestChanges).toHaveBeenCalled();
+    expect(result.approval?.coverageDegraded).toBe(false);
+    expect(result.approval?.event).toBe("APPROVE");
+    expect(result.payload.event).toBe("APPROVE");
+    expect(result.checkRunConclusion).toBe("success");
+    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+      commitId: "head",
+      headSha: "head",
+      preservePriorSummary: true
+    });
+  });
+
   it("falls back when an incremental delta line is absent from the full PR diff (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);
