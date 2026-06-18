@@ -24,7 +24,8 @@ import {
   fetchReviewThreads as defaultFetchReviewThreads,
   resolveReviewThread as defaultResolveReviewThread,
   planThreadActions,
-  type ReviewThread
+  type ReviewThread,
+  type ThreadActionPlan
 } from "./github/threads.js";
 import { findingFingerprint } from "./review/state.js";
 import {
@@ -208,6 +209,8 @@ export interface ReviewPullRequestOptions {
   dryRun?: boolean;
   deps?: PipelineDeps;
 }
+
+const THREAD_RESOLUTION_CONCURRENCY = 4;
 
 export interface ReviewPullRequestResult {
   meta: PullRequestMeta;
@@ -512,6 +515,39 @@ export interface ThreadTidyResult {
   keptOpenDisputed: number;
 }
 
+type ThreadResolveAction = ThreadActionPlan["resolve"][number];
+
+async function resolveThreadActions(params: {
+  actions: ThreadResolveAction[];
+  resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
+  octokit: OctokitLike;
+}): Promise<{ resolvedFixed: number; resolvedSettled: number }> {
+  let resolvedFixed = 0;
+  let resolvedSettled = 0;
+  let next = 0;
+  const workerCount = Math.min(THREAD_RESOLUTION_CONCURRENCY, params.actions.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (next < params.actions.length) {
+      const action = params.actions[next];
+      next += 1;
+      if (!action) {
+        continue;
+      }
+      const ok = await params.resolveThread(params.octokit, action.id);
+      if (!ok) {
+        continue;
+      }
+      if (action.reason === "fixed") {
+        resolvedFixed += 1;
+      } else {
+        resolvedSettled += 1;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return { resolvedFixed, resolvedSettled };
+}
+
 /**
  * Tidy prior finding threads (#22): resolve threads whose finding is no longer
  * current (gone from this run) or that a human settled (won't-fix/acknowledged), and
@@ -565,17 +601,11 @@ async function tidyReviewThreads(params: {
   let resolvedFixed = 0;
   let resolvedSettled = 0;
   if (!params.dryRun) {
-    for (const action of plan.resolve) {
-      const ok = await params.resolveThread(params.octokit, action.id);
-      if (!ok) {
-        continue;
-      }
-      if (action.reason === "fixed") {
-        resolvedFixed += 1;
-      } else {
-        resolvedSettled += 1;
-      }
-    }
+    ({ resolvedFixed, resolvedSettled } = await resolveThreadActions({
+      actions: plan.resolve,
+      resolveThread: params.resolveThread,
+      octokit: params.octokit
+    }));
   }
 
   const notes: string[] = [];

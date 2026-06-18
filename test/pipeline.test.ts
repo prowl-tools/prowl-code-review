@@ -880,6 +880,29 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.body).toContain("Resolved 1 prior finding thread");
     });
 
+    it("resolves stale threads with bounded concurrency", async () => {
+      const fetchReviewThreads = vi.fn(async () =>
+        Array.from({ length: 6 }, (_, index) => thread({ id: `R${index}`, fingerprints: [`stale-${index}`] }))
+      );
+      let active = 0;
+      let maxActive = 0;
+      const resolveReviewThread = vi.fn(async () => {
+        active += 1;
+        maxActive = Math.max(maxActive, active);
+        await new Promise((resolve) => setTimeout(resolve, 1));
+        active -= 1;
+        return true;
+      });
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(resolveReviewThread).toHaveBeenCalledTimes(6);
+      expect(result.threads?.resolvedFixed).toBe(6);
+      expect(maxActive).toBeGreaterThan(1);
+      expect(maxActive).toBeLessThanOrEqual(4);
+    });
+
     it("does not resolve stale-looking threads when a full review skipped files", async () => {
       const fetchReviewThreads = vi.fn(async () => [thread({ id: "S", fingerprints: ["stale-skipped-area"] })]);
       const resolveReviewThread = vi.fn(async () => true);
