@@ -914,6 +914,7 @@ export async function reviewPullRequest(
 
   if (reviewFiles.length === 0) {
     const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
+    const approvalCoverageIncomplete = fullSkipped.length > 0;
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
     const tidied = await tidyReviewThreads({
       fetchThreads,
@@ -921,13 +922,12 @@ export async function reviewPullRequest(
       octokit,
       ref,
       findings: reviewResult.findings,
-      resolveStaleThreads: incrementalBaseSha === undefined,
+      resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
       enabled: tidyThreadsEnabled,
       dryRun: options.dryRun === true
     });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
-    const approvalCoverageIncomplete = fullSkipped.length > 0;
     let approval = await resolveApprovalDecision(
       detectOverride,
       detectPriorRequestChanges,
@@ -1126,7 +1126,7 @@ export async function reviewPullRequest(
     octokit,
     ref,
     findings: reviewResult.findings,
-    resolveStaleThreads: incrementalBaseSha === undefined,
+    resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
     enabled: tidyThreadsEnabled,
     dryRun: options.dryRun === true
   });

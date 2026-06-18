@@ -880,6 +880,41 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.body).toContain("Resolved 1 prior finding thread");
     });
 
+    it("does not resolve stale-looking threads when a full review skipped files", async () => {
+      const fetchReviewThreads = vi.fn(async () => [thread({ id: "S", fingerprints: ["stale-skipped-area"] })]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.fetchPullRequest.mockResolvedValue({
+        meta,
+        diff: `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
+ const a = 1;
++const b = 2;
+diff --git a/src/b.ts b/src/b.ts
+--- a/src/b.ts
++++ b/src/b.ts
+@@ -1,1 +1,2 @@
+ const c = 1;
++const d = 2;
+`
+      });
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        diffLimits: { maxFiles: 1 }
+      });
+
+      expect(result.incremental).toBe(false);
+      expect(result.skipped).toContainEqual({ path: "src/b.ts", reason: "maxFiles" });
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(result.threads?.resolvedFixed).toBe(0);
+    });
+
     it("keeps an outdated thread open when the finding is still current", async () => {
       const current = finding();
       const fp = findingFingerprint(current);
