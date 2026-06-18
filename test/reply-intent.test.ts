@@ -58,9 +58,12 @@ describe("classifyReplyIntent (#22)", () => {
 
   it.each([
     "not fixed",
+    "not yet fixed",
     "not resolved yet",
+    "not fully addressed",
     "still not addressed",
     "this hasn't been fixed",
+    "this hasn't been fully fixed",
     "still unresolved"
   ])("does not treat negated completion %j as acknowledged", (body) => {
     expect(classifyReplyIntent(body)).toBe("other");

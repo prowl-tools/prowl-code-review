@@ -50,8 +50,8 @@ const ACKNOWLEDGED_PATTERNS: RegExp[] = [
 
 /** Mentions that a fix/acknowledgement has not happened yet — do not resolve. */
 const NEGATED_ACKNOWLEDGEMENT_PATTERNS: RegExp[] = [
-  /\b(?:not|isn'?t|aren'?t|wasn'?t|weren'?t|still not)\s+(?:fixed|resolved|addressed|done)\b/,
-  /\b(?:hasn'?t|haven'?t|hadn'?t)\s+been\s+(?:fixed|resolved|addressed|done)\b/,
+  /\b(?:not|isn'?t|aren'?t|wasn'?t|weren'?t|still not)\s+(?:(?:yet|fully|really|actually|quite|completely)\s+)*(?:fixed|resolved|addressed|done)\b/,
+  /\b(?:hasn'?t|haven'?t|hadn'?t)\s+been\s+(?:(?:yet|fully|really|actually|quite|completely)\s+)*(?:fixed|resolved|addressed|done)\b/,
   /\b(?:fixed|resolved|addressed|done)\s+(?:not|yet|nope)\b/,
   /\bstill\s+(?:unfixed|unresolved|unaddressed)\b/
 ];

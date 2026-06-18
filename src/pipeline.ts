@@ -581,8 +581,7 @@ async function tidyReviewThreads(params: {
 
   const acknowledged = new Set(plan.suppress.acknowledged);
   const disputed = new Set(plan.suppress.disputed);
-  const plannedSettled = plan.resolve.filter((action) => action.reason !== "fixed").length;
-  const approvalBlockingSettled = params.resolveStaleThreads ? 0 : plannedSettled;
+  const approvalBlockingSettled = params.resolveStaleThreads ? 0 : acknowledged.size;
   let withheldSettled = 0;
   let withheldDisputed = 0;
   const kept: Finding[] = [];
