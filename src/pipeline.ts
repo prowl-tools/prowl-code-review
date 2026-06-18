@@ -428,12 +428,14 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
 function submitOptionsForReview(
   meta: PullRequestMeta,
   incrementalBaseSha: string | undefined,
-  complete = true
+  complete = true,
+  repostableFindings: string[] = []
 ): SubmitReviewOptions {
   return {
     commitId: meta.headSha,
     ...(complete ? { headSha: meta.headSha } : {}),
-    ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {})
+    ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {}),
+    ...(repostableFindings.length > 0 ? { repostableFindings } : {})
   };
 }
 
@@ -513,6 +515,8 @@ export interface ThreadTidyResult {
   withheldDisputed: number;
   /** Disputed threads left open for the human (not resolved). */
   keptOpenDisputed: number;
+  /** Prior inline fingerprints that may be posted again because the old thread was fixed. */
+  repostableFindings: string[];
 }
 
 type ThreadResolveAction = ThreadActionPlan["resolve"][number];
@@ -521,9 +525,10 @@ async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
   resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
   octokit: OctokitLike;
-}): Promise<{ resolvedFixed: number; resolvedSettled: number }> {
+}): Promise<{ resolvedFixed: number; resolvedSettled: number; resolvedFixedFingerprints: string[] }> {
   let resolvedFixed = 0;
   let resolvedSettled = 0;
+  const resolvedFixedFingerprints = new Set<string>();
   let next = 0;
   const workerCount = Math.min(THREAD_RESOLUTION_CONCURRENCY, params.actions.length);
   const workers = Array.from({ length: workerCount }, async () => {
@@ -539,13 +544,14 @@ async function resolveThreadActions(params: {
       }
       if (action.reason === "fixed") {
         resolvedFixed += 1;
+        action.fingerprints.forEach((fingerprint) => resolvedFixedFingerprints.add(fingerprint));
       } else {
         resolvedSettled += 1;
       }
     }
   });
   await Promise.all(workers);
-  return { resolvedFixed, resolvedSettled };
+  return { resolvedFixed, resolvedSettled, resolvedFixedFingerprints: [...resolvedFixedFingerprints] };
 }
 
 /**
@@ -599,8 +605,9 @@ async function tidyReviewThreads(params: {
   // Resolve threads (skipped on a dry run, which never mutates PR state).
   let resolvedFixed = 0;
   let resolvedSettled = 0;
+  let resolvedFixedFingerprints: string[] = [];
   if (!params.dryRun) {
-    ({ resolvedFixed, resolvedSettled } = await resolveThreadActions({
+    ({ resolvedFixed, resolvedSettled, resolvedFixedFingerprints } = await resolveThreadActions({
       actions: plan.resolve,
       resolveThread: params.resolveThread,
       octokit: params.octokit
@@ -638,7 +645,8 @@ async function tidyReviewThreads(params: {
     approvalBlockingSettled,
     withheldSettled,
     withheldDisputed,
-    keptOpenDisputed: plan.keptOpenDisputed
+    keptOpenDisputed: plan.keptOpenDisputed,
+    repostableFindings: [...new Set([...plan.repostable, ...resolvedFixedFingerprints])]
   };
   return { findings: kept, notes, tidy };
 }
@@ -1004,7 +1012,17 @@ export async function reviewPullRequest(
     };
     if (!options.dryRun) {
       try {
-        await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, fullSkipped.length === 0));
+        await submit(
+          octokit,
+          ref,
+          payload,
+          submitOptionsForReview(
+            meta,
+            incrementalBaseSha,
+            fullSkipped.length === 0,
+            tidied.tidy?.repostableFindings
+          )
+        );
         result.posted = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1224,7 +1242,17 @@ export async function reviewPullRequest(
   };
   if (!options.dryRun) {
     try {
-      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, !approvalCoverageIncomplete));
+      await submit(
+        octokit,
+        ref,
+        payload,
+        submitOptionsForReview(
+          meta,
+          incrementalBaseSha,
+          !approvalCoverageIncomplete,
+          tidied.tidy?.repostableFindings
+        )
+      );
       result.posted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

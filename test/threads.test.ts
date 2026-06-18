@@ -23,8 +23,9 @@ function thread(over: Partial<ReviewThread> = {}): ReviewThread {
 describe("planThreadActions (#22)", () => {
   it("resolves a thread whose finding is gone from this run (fixed)", () => {
     const plan = planThreadActions({ threads: [thread({ fingerprints: ["gone"] })], currentFingerprints: ["fp1"] });
-    expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed" }]);
+    expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed", fingerprints: ["gone"] }]);
     expect(plan.suppress).toEqual({ acknowledged: [], disputed: [] });
+    expect(plan.repostable).toEqual([]);
   });
 
   it("keeps a thread open when GitHub marked it outdated but the fingerprint is still current", () => {
@@ -40,7 +41,7 @@ describe("planThreadActions (#22)", () => {
       threads: [thread({ isOutdated: true, fingerprints: ["old"] })],
       currentFingerprints: ["fp1"]
     });
-    expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed" }]);
+    expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed", fingerprints: ["old"] }]);
   });
 
   it("leaves a still-current finding's thread untouched", () => {
@@ -57,6 +58,7 @@ describe("planThreadActions (#22)", () => {
       currentFingerprints: []
     });
     expect(plan.resolve).toEqual([]);
+    expect(plan.repostable).toEqual(["gone"]);
   });
 
   it("keeps suppression for already-resolved settled threads without resolving again", () => {
@@ -80,8 +82,8 @@ describe("planThreadActions (#22)", () => {
       currentFingerprints: ["ack", "wf"]
     });
     expect(plan.resolve).toEqual([
-      { id: "A", reason: "acknowledged" },
-      { id: "W", reason: "wont-fix" }
+      { id: "A", reason: "acknowledged", fingerprints: ["ack"] },
+      { id: "W", reason: "wont-fix", fingerprints: ["wf"] }
     ]);
     expect(plan.suppress.acknowledged.sort()).toEqual(["ack", "wf"]);
     expect(plan.suppress.disputed).toEqual([]);

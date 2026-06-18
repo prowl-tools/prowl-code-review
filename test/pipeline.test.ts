@@ -877,7 +877,26 @@ diff --git a/src/b.ts b/src/b.ts
 
       expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "T1");
       expect(result.threads?.resolvedFixed).toBe(1);
+      expect(result.threads?.repostableFindings).toEqual(["stale"]);
+      expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({ repostableFindings: ["stale"] }));
       expect(result.payload.body).toContain("Resolved 1 prior finding thread");
+    });
+
+    it("allows a current finding to be reposted when its old thread was resolved as fixed", async () => {
+      const current = finding();
+      const fp = findingFingerprint(current);
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "R", isResolved: true, fingerprints: [fp] })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(reviewResult([current]));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(result.threads?.repostableFindings).toEqual([fp]);
+      expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({ repostableFindings: [fp] }));
     });
 
     it("resolves stale threads with bounded concurrency", async () => {
