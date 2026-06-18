@@ -502,6 +502,8 @@ export interface ThreadTidyResult {
   resolvedFixed: number;
   /** Threads resolved because a human settled them (won't-fix/acknowledged). */
   resolvedSettled: number;
+  /** Settled thread actions that block approval because this run's finding set is incomplete. */
+  approvalBlockingSettled: number;
   /** Current findings withheld because a human settled them (won't-fix/acknowledged). */
   withheldSettled: number;
   /** Current findings withheld because a human disputed them ("disagree"). */
@@ -543,6 +545,8 @@ async function tidyReviewThreads(params: {
 
   const acknowledged = new Set(plan.suppress.acknowledged);
   const disputed = new Set(plan.suppress.disputed);
+  const plannedSettled = plan.resolve.filter((action) => action.reason !== "fixed").length;
+  const approvalBlockingSettled = params.resolveStaleThreads ? 0 : plannedSettled;
   let withheldSettled = 0;
   let withheldDisputed = 0;
   const kept: Finding[] = [];
@@ -602,6 +606,7 @@ async function tidyReviewThreads(params: {
   const tidy: ThreadTidyResult = {
     resolvedFixed,
     resolvedSettled,
+    approvalBlockingSettled,
     withheldSettled,
     withheldDisputed,
     keptOpenDisputed: plan.keptOpenDisputed
@@ -613,7 +618,10 @@ function approvalBlockingThreadCount(tidy: ThreadTidyResult | undefined): number
   if (!tidy) {
     return 0;
   }
-  return tidy.withheldSettled + Math.max(tidy.withheldDisputed, tidy.keptOpenDisputed);
+  return (
+    Math.max(tidy.withheldSettled, tidy.approvalBlockingSettled) +
+    Math.max(tidy.withheldDisputed, tidy.keptOpenDisputed)
+  );
 }
 
 function inhibitApprovalForWithheldThreads(

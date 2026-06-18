@@ -1027,6 +1027,58 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.event).toBe("COMMENT");
     });
 
+    it("does not auto-approve when an incremental rerun resolves a settled prior thread", async () => {
+      const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "A", fingerprints: ["settled-prior-finding"], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = {
+        ...makeDeps(),
+        fetchPriorState: vi.fn(async () => priorState),
+        fetchComparisonDiff: vi.fn(async () => ""),
+        fetchReviewThreads,
+        resolveReviewThread
+      };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.incremental).toBe(true);
+      expect(result.threads?.resolvedSettled).toBe(1);
+      expect(result.threads?.withheldSettled).toBe(0);
+      expect(result.threads?.approvalBlockingSettled).toBe(1);
+      expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "A");
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.payload.event).toBe("COMMENT");
+    });
+
+    it("can approve a full clean review after resolving a settled thread whose finding is gone", async () => {
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "A", fingerprints: ["settled-prior-finding"], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(reviewResult([]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.incremental).toBe(false);
+      expect(result.threads?.resolvedSettled).toBe(1);
+      expect(result.threads?.approvalBlockingSettled).toBe(0);
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.payload.event).toBe("APPROVE");
+    });
+
     it("does nothing when disabled", async () => {
       const fetchReviewThreads = vi.fn(async () => [thread()]);
       const deps = { ...makeDeps(), fetchReviewThreads };
