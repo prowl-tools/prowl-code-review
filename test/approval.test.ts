@@ -193,11 +193,15 @@ describe("approvalNotes (#52)", () => {
 
   it("explains a request-changes decision and how to override (mention is a code span)", () => {
     const notes = approvalNotes(
-      planApprovalDecision({ findings: [finding({ severity: "critical" })], config: enabled })
+      planApprovalDecision({
+        findings: [finding({ severity: "critical" })],
+        config: enabled,
+        breakGlassTarget: "abc123"
+      })
     );
     expect(notes[0]).toContain("requesting changes");
     // The mention is wrapped in backticks so it can't notify or self-trigger.
-    expect(notes[0]).toContain("`@prowl-review break glass`");
+    expect(notes[0]).toContain("`@prowl-review break glass abc123`");
   });
 
   it("notes an approval decision", () => {
@@ -257,7 +261,7 @@ describe("approvalNotes (#52)", () => {
         breakGlassFreshnessUnknown: true
       })
     );
-    expect(notes[0]).toContain("head commit timestamp could not be verified");
+    expect(notes[0]).toContain("head SHA could not be verified");
     expect(notes[0]).not.toContain("`@prowl-review break glass`");
   });
 
