@@ -746,6 +746,7 @@ export async function reviewPullRequest(
 
   if (reviewFiles.length === 0) {
     const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
+    const approvalCoverageIncomplete = fullSkipped.length > 0;
     const approval = await resolveApprovalDecision(
       detectOverride,
       detectPriorRequestChanges,
@@ -753,7 +754,7 @@ export async function reviewPullRequest(
       ref,
       reviewResult.findings,
       options.approval,
-      { coverageDegraded: true, breakGlassHeadSha: meta.headSha }
+      { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
     );
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
