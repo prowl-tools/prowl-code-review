@@ -1,7 +1,9 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { createOctokit } from "../../github/client.js";
+import { createOctokit, type OctokitLike } from "../../github/client.js";
+import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
+import type { PullRequestRef } from "../../github/diff.js";
 import { fetchPriorReviewState } from "../../github/review.js";
 import {
   ReviewPublishError,
@@ -278,6 +280,36 @@ export function resolveDryRun(
   return Boolean(cli.dryRun) || truthyEnv(env.PROWL_DRY_RUN);
 }
 
+async function maybeSubmitPausedCheckRun(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  input: {
+    checkRun?: ProwlReviewConfig["checkRun"];
+    dryRun: boolean;
+    headSha?: string;
+  }
+): Promise<CheckConclusion | undefined> {
+  if (input.dryRun || !input.checkRun?.enabled || !input.headSha) {
+    return undefined;
+  }
+
+  const plan: CheckRunPlan = {
+    conclusion: "neutral",
+    title: "Auto-review paused",
+    summary:
+      "prowl-review is paused for this pull request. Comment `@prowl-review resume` to re-enable automatic reviews.\n\n" +
+      "No review was run for this commit.",
+    annotations: []
+  };
+
+  try {
+    await submitCheckRun(octokit, ref, { headSha: input.headSha, plan });
+    return plan.conclusion;
+  } catch {
+    return undefined;
+  }
+}
+
 /**
  * Resolve where (if anywhere) to append the per-run usage record (#36).
  * `PROWL_USAGE_LOG` wins when it stays inside the workspace; otherwise local
@@ -506,19 +538,30 @@ export async function runReviewWithOptions(
   const pullNumber = resolvePullNumber(options.pr);
   const ref = { owner, repo, pull_number: pullNumber };
   const octokit = createOctokit(token);
+  const root = resolveWorkspace();
+  const { config } = loadConfig(resolveConfigLoadOptions(options, root));
+  const reviewedHeadSha = resolveReviewedHeadSha();
+  const dryRun = resolveDryRun(options);
 
   if (runtime.respectPause) {
     const prior = await fetchPriorReviewState(octokit, ref);
     if (prior?.paused) {
+      const pausedCheckRunConclusion = await maybeSubmitPausedCheckRun(octokit, ref, {
+        checkRun: config.checkRun,
+        dryRun,
+        headSha: reviewedHeadSha
+      });
       console.log(
         `prowl-review: auto-review paused for ${owner}/${repo}#${pullNumber} ` +
           "— comment `@prowl-review resume` to re-enable."
       );
+      if (pausedCheckRunConclusion) {
+        console.log(`prowl-review: merge-gate check run → ${pausedCheckRunConclusion}`);
+      }
       return;
     }
   }
 
-  const root = resolveWorkspace();
   const guidelinesRoot = resolveGuidelinesWorkspace();
   const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
   const orgGuidelinesPath = resolveOrgGuidelinesPath();
@@ -527,7 +570,6 @@ export async function runReviewWithOptions(
   // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
-  const { config } = loadConfig(resolveConfigLoadOptions(options, root));
   const providerConfig = resolveProviderConfig(process.env, {
     provider: config.provider,
     model: config.model
@@ -552,8 +594,8 @@ export async function runReviewWithOptions(
     guidelines,
     learnedPatterns,
     budgetTokens: budget.tokens ?? undefined,
-    reviewedHeadSha: resolveReviewedHeadSha(),
-    dryRun: resolveDryRun(options)
+    reviewedHeadSha,
+    dryRun
   };
 
   try {
