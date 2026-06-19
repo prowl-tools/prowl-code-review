@@ -2,6 +2,7 @@ import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOctokit } from "../../github/client.js";
+import { fetchPriorReviewState } from "../../github/review.js";
 import {
   ReviewPublishError,
   reviewPullRequest,
@@ -478,77 +479,98 @@ export function buildReviewCommand(): Command {
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
     .option("--dry-run", "build the review but do not publish it")
     .action(async (options: ReviewCommandOptions) => {
-      const token = process.env.GITHUB_TOKEN;
-      if (!token) {
-        throw new Error("GITHUB_TOKEN environment variable is required to post reviews.");
-      }
-
-      const { owner, repo } = resolveRepo(options.repo);
-      const pullNumber = resolvePullNumber(options.pr);
-      const root = resolveWorkspace();
-      const guidelinesRoot = resolveGuidelinesWorkspace();
-      const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
-      const orgGuidelinesPath = resolveOrgGuidelinesPath();
-      const orgGuidelines = orgGuidelinesPath ? readOptionalFile(orgGuidelinesPath) : undefined;
-      const guidelines = composeGuidelines(orgGuidelines, repoGuidelines);
-      // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
-      const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
-
-      const { config } = loadConfig(resolveConfigLoadOptions(options, root));
-      const providerConfig = resolveProviderConfig(process.env, {
-        provider: config.provider,
-        model: config.model
-      });
-      const resolved = resolveReviewOptions(options, config);
-
-      // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
-      const budget = resolveTokenBudget(
-        config.budget,
-        providerConfig.provider,
-        providerConfig.model,
-        config.pricing ?? {}
-      );
-      for (const note of budget.notes) {
-        console.warn(`prowl-review: ${note}`);
-      }
-
-      const octokit = createOctokit(token);
-      const reviewOptions = {
-        ...resolved,
-        config: providerConfig,
-        toolkitRoot: root,
-        guidelines,
-        learnedPatterns,
-        budgetTokens: budget.tokens ?? undefined,
-        reviewedHeadSha: resolveReviewedHeadSha(),
-        dryRun: resolveDryRun(options)
-      };
-
-      try {
-        const result = await reviewPullRequest(octokit, { owner, repo, pull_number: pullNumber }, reviewOptions);
-        reportReviewCommandResult(result, {
-          owner,
-          repo,
-          pullNumber,
-          root,
-          providerConfig,
-          pricing: config.pricing ?? {}
-        });
-      } catch (error) {
-        if (error instanceof ReviewPublishError) {
-          reportReviewCommandResult(error.result, {
-            owner,
-            repo,
-            pullNumber,
-            root,
-            providerConfig,
-            pricing: config.pricing ?? {},
-            publishFailed: true
-          });
-        }
-        throw error;
-      }
+      // The auto path (pull_request trigger) respects `@prowl-review pause` (#26).
+      await runReviewWithOptions(options, { respectPause: true });
     });
 
   return command;
+}
+
+/**
+ * Resolve config + flags and run the end-to-end review, reporting cost/usage.
+ * Shared by the `review` CLI command (auto path) and the `command` handler's
+ * `review` / `full review` verbs (#26). `respectPause` skips the run when the PR
+ * is paused — set for auto reviews, cleared for an explicit `@prowl-review
+ * review` request, which always runs.
+ */
+export async function runReviewWithOptions(
+  options: ReviewCommandOptions,
+  runtime: { respectPause?: boolean } = {}
+): Promise<void> {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) {
+    throw new Error("GITHUB_TOKEN environment variable is required to post reviews.");
+  }
+
+  const { owner, repo } = resolveRepo(options.repo);
+  const pullNumber = resolvePullNumber(options.pr);
+  const ref = { owner, repo, pull_number: pullNumber };
+  const octokit = createOctokit(token);
+
+  if (runtime.respectPause) {
+    const prior = await fetchPriorReviewState(octokit, ref);
+    if (prior?.paused) {
+      console.log(
+        `prowl-review: auto-review paused for ${owner}/${repo}#${pullNumber} ` +
+          "— comment `@prowl-review resume` to re-enable."
+      );
+      return;
+    }
+  }
+
+  const root = resolveWorkspace();
+  const guidelinesRoot = resolveGuidelinesWorkspace();
+  const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
+  const orgGuidelinesPath = resolveOrgGuidelinesPath();
+  const orgGuidelines = orgGuidelinesPath ? readOptionalFile(orgGuidelinesPath) : undefined;
+  const guidelines = composeGuidelines(orgGuidelines, repoGuidelines);
+  // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
+  const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
+
+  const { config } = loadConfig(resolveConfigLoadOptions(options, root));
+  const providerConfig = resolveProviderConfig(process.env, {
+    provider: config.provider,
+    model: config.model
+  });
+  const resolved = resolveReviewOptions(options, config);
+
+  // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
+  const budget = resolveTokenBudget(
+    config.budget,
+    providerConfig.provider,
+    providerConfig.model,
+    config.pricing ?? {}
+  );
+  for (const note of budget.notes) {
+    console.warn(`prowl-review: ${note}`);
+  }
+
+  const reviewOptions = {
+    ...resolved,
+    config: providerConfig,
+    toolkitRoot: root,
+    guidelines,
+    learnedPatterns,
+    budgetTokens: budget.tokens ?? undefined,
+    reviewedHeadSha: resolveReviewedHeadSha(),
+    dryRun: resolveDryRun(options)
+  };
+
+  try {
+    const result = await reviewPullRequest(octokit, ref, reviewOptions);
+    reportReviewCommandResult(result, { owner, repo, pullNumber, root, providerConfig, pricing: config.pricing ?? {} });
+  } catch (error) {
+    if (error instanceof ReviewPublishError) {
+      reportReviewCommandResult(error.result, {
+        owner,
+        repo,
+        pullNumber,
+        root,
+        providerConfig,
+        pricing: config.pricing ?? {},
+        publishFailed: true
+      });
+    }
+    throw error;
+  }
 }

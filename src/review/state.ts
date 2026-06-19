@@ -35,6 +35,8 @@ export const ReviewStateSchema = z.object({
   v: z.literal(REVIEW_STATE_VERSION),
   /** Head SHA the last review ran against (for incremental re-review, #23). */
   lastReviewedSha: z.string().min(1).optional(),
+  /** Auto-review paused for this PR via `@prowl-review pause` (#26); resumed clears it. */
+  paused: z.boolean().optional(),
   /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
   postedFindings: z.array(z.string()).default([])
 });

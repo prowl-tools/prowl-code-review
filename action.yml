@@ -49,6 +49,10 @@ inputs:
     description: "Token used to post the review (needs pull-requests: write and issues: write)."
     required: false
     default: ${{ github.token }}
+  mode:
+    description: "What to run: 'review' (default) for a PR review, or 'command' to handle an @prowl-review comment (#26)."
+    required: false
+    default: "review"
 
 outputs:
   findings:
@@ -88,4 +92,5 @@ runs:
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
         PROWL_REVIEWED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
-      run: node "${{ github.action_path }}/dist/cli.js" review
+      # 'review' reviews the PR; 'command' handles an @prowl-review comment (#26).
+      run: node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"

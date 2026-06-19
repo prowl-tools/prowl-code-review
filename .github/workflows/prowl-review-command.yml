@@ -1,0 +1,52 @@
+name: prowl-review command
+
+# Handle @prowl-review chat commands on pull requests (#26).
+on:
+  issue_comment:
+    types: [created]
+
+# Serialize commands per PR so two quick comments don't race; don't cancel an
+# in-flight command (unlike review runs, a command is a one-shot side effect).
+concurrency:
+  group: prowl-review-command-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  command:
+    # Only PR comments that mention the bot; never act on issue comments or forks.
+    if: |
+      github.event.issue.pull_request &&
+      contains(github.event.comment.body, '@prowl-review')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Check trusted action availability
+        id: trusted-action
+        shell: bash
+        run: |
+          if [ -f action.yml ] || [ -f action.yaml ] || [ -f Dockerfile ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Trusted base does not contain prowl-review yet; skipping command run."
+          fi
+
+      - name: prowl-review command
+        if: steps.trusted-action.outputs.available == 'true'
+        uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        with:
+          mode: command
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          ai-provider: gemini
+          ai-model: gemini-2.5-flash
+          guidelines-path: ${{ github.workspace }}

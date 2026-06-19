@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import pkg from "../../package.json";
 import { buildReviewCommand } from "./commands/review.js";
+import { buildCommandCommand } from "./commands/command.js";
 import { buildEvalCommand } from "./commands/eval.js";
 import { buildInitCommand } from "./commands/init.js";
 import { buildCostsCommand } from "./commands/costs.js";
@@ -18,6 +19,7 @@ export function buildProgram(): Command {
     .version(CLI_VERSION);
 
   program.addCommand(buildReviewCommand());
+  program.addCommand(buildCommandCommand());
   program.addCommand(buildEvalCommand());
   program.addCommand(buildInitCommand());
   program.addCommand(buildCostsCommand());

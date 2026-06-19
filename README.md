@@ -53,6 +53,43 @@ The `concurrency` block is the recommended pattern: keying the group to the PR
 number with `cancel-in-progress` means an in-flight review for an outdated commit
 is cancelled cleanly when you push again.
 
+### Bot commands
+
+Drive the reviewer from the PR by commenting `@prowl-review <command>` (only a
+repo owner/member/collaborator is honored):
+
+| Command | Effect |
+|---|---|
+| `@prowl-review review` | Re-review the latest changes (incremental). |
+| `@prowl-review full review` | Re-scan the entire PR from scratch. |
+| `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
+| `@prowl-review resume` | Re-enable auto-review. |
+| `@prowl-review help` | List the available commands. |
+
+Commands need a second workflow listening for comments:
+
+```yaml
+# .github/workflows/prowl-review-command.yml
+name: prowl-review command
+on:
+  issue_comment:
+    types: [created]
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+jobs:
+  command:
+    if: github.event.issue.pull_request && contains(github.event.comment.body, '@prowl-review')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          mode: command
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+```
+
 ## Development
 
 ```bash
