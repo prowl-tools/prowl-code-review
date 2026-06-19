@@ -405,6 +405,36 @@ describe("submitReview", () => {
     });
   });
 
+  it("re-reads the summary before updating so a concurrent pause is preserved", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const pausedPrior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, listComments, updateComment } = mockOctokit([]);
+    listComments.mockResolvedValueOnce({ data: [prior] }).mockResolvedValueOnce({ data: [pausedPrior] });
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({ body: `${REVIEW_MARKER}\n## prowl-review\n\nslow review`, comments: [] }),
+      { headSha: "head-after-pause" }
+    );
+
+    expect(listComments).toHaveBeenCalledTimes(2);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-after-pause",
+      paused: true,
+      postedFindings: ["fp-a"]
+    });
+  });
+
   it("does not post inline comments when no commit id is available", async () => {
     const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(octokit, ref, payload());
@@ -555,13 +585,13 @@ describe("submitReview", () => {
     expect(listComments).toHaveBeenCalledWith(
       expect.objectContaining({ sort: "created", direction: "desc" })
     );
-    expect(listComments).toHaveBeenCalledTimes(1);
+    expect(listComments).toHaveBeenCalledTimes(2);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).toHaveBeenCalledTimes(1);
     expect((updateComment.mock.calls[0][0] as { comment_id: number }).comment_id).toBe(201);
   });
 
-  it("caps the prior summary scan to avoid unbounded pagination", async () => {
+  it("caps each prior summary scan to avoid unbounded pagination", async () => {
     const filler = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, body: "noise" }));
     const priorBeforeCap = {
       id: 1001,
@@ -575,7 +605,7 @@ describe("submitReview", () => {
 
     await submitReview(octokit, ref, payload());
 
-    expect(listComments).toHaveBeenCalledTimes(10);
+    expect(listComments).toHaveBeenCalledTimes(20);
     expect(updateComment).not.toHaveBeenCalled();
     expect(createReview).not.toHaveBeenCalled();
     expect(createComment).toHaveBeenCalledTimes(1);
