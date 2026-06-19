@@ -79,6 +79,15 @@ describe("classifyReplyIntent (#22)", () => {
     expect(classifyReplyIntent(body)).toBe("other");
   });
 
+  it.each([
+    "not a false positive",
+    "this is not a false positive",
+    "I don't think this is fixed",
+    "I do not think this has been fully resolved"
+  ])("does not treat negated dispute wording %j as disagree", (body) => {
+    expect(classifyReplyIntent(body)).toBe("other");
+  });
+
   it("returns other for non-strings", () => {
     expect(classifyReplyIntent(undefined)).toBe("other");
     expect(classifyReplyIntent(null)).toBe("other");

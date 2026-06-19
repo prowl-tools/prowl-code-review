@@ -22,8 +22,16 @@ const DISAGREE_PATTERNS: RegExp[] = [
   /\bfalse[ -]?positive\b/,
   /\bnot a (real )?(bug|issue|problem|concern)\b/,
   /\b(this|that)('?s| is) (wrong|incorrect|not right|not correct)\b/,
-  /\bi (don'?t|do not) (agree|think)\b/,
+  /\bi (don'?t|do not) agree\b/,
+  /\bi (don'?t|do not) think (?:this|that|it|the finding|the issue)?\s*(?:applies|is applicable|is relevant|is correct|is right|is a (real )?(bug|issue|problem|concern))\b/,
   /\b(this|that) is incorrect\b/
+];
+
+/** Mentions that a dispute signal does not apply — keep the finding visible. */
+const NEGATED_DISAGREE_PATTERNS: RegExp[] = [
+  /\bnot (?:a )?false[ -]?positive\b/,
+  /\b(?:isn'?t|is not|wasn'?t|was not)\s+(?:a\s+)?false[ -]?positive\b/,
+  /\bi (don'?t|do not) think (?:this|that|it|the finding|the issue)?\s*(?:is|was|has been)?\s*(?:(?:yet|fully|really|actually|quite|completely)\s+)*(?:fixed|resolved|addressed|done)\b/
 ];
 
 /** The human declines to fix — a decision; resolve the thread. */
@@ -77,6 +85,9 @@ export function classifyReplyIntent(body: string | null | undefined): ReplyInten
     return "other";
   }
   const text = body.toLowerCase();
+  if (matchesAny(text, NEGATED_DISAGREE_PATTERNS)) {
+    return "other";
+  }
   if (matchesAny(text, DISAGREE_PATTERNS)) {
     return "disagree";
   }
