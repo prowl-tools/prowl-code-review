@@ -5,12 +5,11 @@ on:
   issue_comment:
     types: [created]
 
-# Serialize commands per PR so two quick comments don't race; keep this separate
-# from auto-review cancellation because a command is a one-shot side effect.
-# Review publishing re-reads summary state before its final write, so pause/resume
-# commands cannot be overwritten by an in-flight auto review.
+# Serialize commands with auto reviews for the same PR so review publishing and
+# inline finding dedupe cannot race. Keep command runs queued instead of
+# replacing pending maintainer requests.
 concurrency:
-  group: prowl-review-command-${{ github.event.issue.number }}
+  group: prowl-review-${{ github.event.issue.number }}
   queue: max
   cancel-in-progress: false
 
@@ -34,9 +33,28 @@ jobs:
       contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
     steps:
+      - name: Resolve PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping command from fork PR head ${head_repo}."
+          fi
+
       - name: Checkout trusted base
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ steps.pr.outputs.base_sha }}
           persist-credentials: false
 
       - name: Check trusted action availability
@@ -48,23 +66,6 @@ jobs:
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "Trusted base does not contain prowl-review yet; skipping command run."
-          fi
-
-      - name: Resolve PR metadata
-        if: steps.trusted-action.outputs.available == 'true'
-        id: pr
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
-          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
-          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
-          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
-            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping command from fork PR head ${head_repo}."
           fi
 
       - name: Checkout PR head for context

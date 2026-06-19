@@ -141,13 +141,17 @@ describe("command workflow metadata", () => {
   it("filters bot comments and reviews the PR head workspace", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
 
-    expect(workflow).toContain("group: prowl-review-command-${{ github.event.issue.number }}");
+    expect(workflow).toContain("group: prowl-review-${{ github.event.issue.number }}");
     expect(workflow).toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
     expect(workflow).toContain("github.event.comment.author_association == 'MEMBER'");
     expect(workflow).toContain("github.event.comment.author_association == 'COLLABORATOR'");
+    expect(workflow.indexOf("Resolve PR metadata")).toBeLessThan(workflow.indexOf("Checkout trusted base"));
+    expect(workflow).toContain("base_sha=\"$(gh api");
+    expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
+    expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
