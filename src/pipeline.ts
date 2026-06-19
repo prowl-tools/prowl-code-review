@@ -204,6 +204,11 @@ export interface ReviewPullRequestOptions {
    * re-check publishes normally). Never skips a dry run.
    */
   cancelIfHeadAdvanced?: boolean;
+  /**
+   * Exact PR head SHA represented by the checked-out workspace/event. Omitted
+   * falls back to the PR metadata head SHA fetched at run start.
+   */
+  reviewedHeadSha?: string;
   /** Explicit review event override; wins over the approval rubric when set. */
   event?: ReviewEvent;
   /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
@@ -539,6 +544,7 @@ async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
   resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
   octokit: OctokitLike;
+  shouldResolveThread?: () => Promise<boolean>;
 }): Promise<{ resolvedFixed: number; resolvedSettled: number; resolvedFixedFingerprints: string[] }> {
   let resolvedFixed = 0;
   let resolvedSettled = 0;
@@ -551,6 +557,9 @@ async function resolveThreadActions(params: {
       next += 1;
       if (!action) {
         continue;
+      }
+      if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
+        break;
       }
       const ok = await params.resolveThread(params.octokit, action.id);
       if (!ok) {
@@ -586,6 +595,7 @@ async function tidyReviewThreads(params: {
   resolveStaleThreads: boolean;
   enabled: boolean;
   dryRun: boolean;
+  shouldResolveThread?: () => Promise<boolean>;
 }): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
   if (!params.enabled) {
     return { findings: params.findings, notes: [] };
@@ -631,7 +641,8 @@ async function tidyReviewThreads(params: {
     ({ resolvedFixed, resolvedSettled, resolvedFixedFingerprints } = await resolveThreadActions({
       actions: plan.resolve,
       resolveThread: params.resolveThread,
-      octokit: params.octokit
+      octokit: params.octokit,
+      shouldResolveThread: params.shouldResolveThread
     }));
   }
 
@@ -917,15 +928,17 @@ export async function reviewPullRequest(
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
   const { meta, diff } = await fetchPr(octokit, ref);
+  const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
   const hasHeadAdvanced = () =>
     headAdvancedPastReview({
       fetchHeadSha,
       octokit,
       ref,
-      reviewedSha: meta.headSha,
+      reviewedSha: reviewedHeadSha,
       enabled: staleGuardEnabled,
       dryRun: options.dryRun === true
     });
+  const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
@@ -1048,7 +1061,8 @@ export async function reviewPullRequest(
           candidateFindings: reviewResult.uncappedFindings,
           resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
           enabled: tidyThreadsEnabled,
-          dryRun: options.dryRun === true
+          dryRun: options.dryRun === true,
+          shouldResolveThread
         });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
@@ -1281,7 +1295,8 @@ export async function reviewPullRequest(
         resolveStaleThreads:
           incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
         enabled: tidyThreadsEnabled,
-        dryRun: options.dryRun === true
+        dryRun: options.dryRun === true,
+        shouldResolveThread
       });
   reviewResult.findings = tidied.findings;
   if (tidied.capped !== undefined) {

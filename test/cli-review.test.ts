@@ -14,6 +14,7 @@ import {
   resolveDryRun,
   resolvePullNumber,
   resolveRepo,
+  resolveReviewedHeadSha,
   resolveReviewOptions,
   resolveTrustWorkspace,
   resolveUsageLogPath,
@@ -223,6 +224,16 @@ describe("review command helpers", () => {
       process.env.PROWL_TRUST_WORKSPACE = value;
       expect(resolveTrustWorkspace()).toBe(false);
     }
+  });
+
+  it("resolves the reviewed head SHA from env or the pull request event payload", () => {
+    expect(resolveReviewedHeadSha({ PROWL_REVIEWED_HEAD_SHA: "  abc123  " } as NodeJS.ProcessEnv)).toBe("abc123");
+
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(eventPath, JSON.stringify({ pull_request: { head: { sha: "event-head" } } }));
+    expect(resolveReviewedHeadSha({ GITHUB_EVENT_PATH: eventPath } as NodeJS.ProcessEnv)).toBe("event-head");
+    expect(resolveReviewedHeadSha({ GITHUB_EVENT_PATH: join(dir, "missing.json") } as NodeJS.ProcessEnv)).toBeUndefined();
   });
 });
 
@@ -519,6 +530,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe("${{ github.event.pull_request.head.sha }}");
     expect(reviewStep?.run).toBe('node "${{ github.action_path }}/dist/cli.js" review');
   });
 });

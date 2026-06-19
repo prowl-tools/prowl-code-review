@@ -145,6 +145,26 @@ export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boo
   return value === "true" || value === "1" || value === "yes";
 }
 
+/** Resolve the PR head SHA represented by the checked-out Action workspace. */
+export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const explicit = env.PROWL_REVIEWED_HEAD_SHA?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (eventPath && existsSync(eventPath)) {
+    try {
+      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+        pull_request?: { head?: { sha?: string } };
+      };
+      return event.pull_request?.head?.sha?.trim() || undefined;
+    } catch {
+      // fall through to undefined
+    }
+  }
+  return undefined;
+}
+
 interface ReviewCommandOptions {
   pr?: string;
   repo?: string;
@@ -475,6 +495,7 @@ export function buildReviewCommand(): Command {
         guidelines,
         learnedPatterns,
         budgetTokens: budget.tokens ?? undefined,
+        reviewedHeadSha: resolveReviewedHeadSha(),
         dryRun: resolveDryRun(options)
       };
 

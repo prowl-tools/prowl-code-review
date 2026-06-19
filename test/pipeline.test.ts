@@ -1359,6 +1359,25 @@ diff --git a/src/b.ts b/src/b.ts
       expect(deps.submitReview).not.toHaveBeenCalled();
     });
 
+    it("compares the stale guard against the explicit reviewed head SHA", async () => {
+      const fetchHeadSha = vi.fn(async () => "new-head");
+      const deps = { ...makeDeps(), fetchHeadSha };
+      deps.fetchPullRequest = vi.fn(async () => ({
+        meta: { ...meta, headSha: "new-head" },
+        diff: DIFF
+      }));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        reviewedHeadSha: "event-head"
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
     it("does not post the check run when the head advanced", async () => {
       const fetchHeadSha = vi.fn(async () => "newer-sha");
       const submitCheckRun = vi.fn(async () => {});
@@ -1380,6 +1399,22 @@ diff --git a/src/b.ts b/src/b.ts
       expect(resolveReviewThread).not.toHaveBeenCalled();
       expect(submitCheckRun).not.toHaveBeenCalled();
       expect(result.checkRunConclusion).toBeUndefined();
+    });
+
+    it("re-checks stale heads before resolving prior threads", async () => {
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const fetchReviewThreads = vi.fn(async () => [
+        { id: "T", isResolved: false, isOutdated: false, fingerprints: ["stale"], humanIntent: "other" as const }
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchHeadSha, fetchReviewThreads, resolveReviewThread };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(fetchReviewThreads).toHaveBeenCalledTimes(1);
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(deps.submitReview).not.toHaveBeenCalled();
     });
 
     it("skips thread tidy in the no-reviewable-files path when the head advanced", async () => {
