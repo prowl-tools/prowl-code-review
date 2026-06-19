@@ -180,6 +180,33 @@ describe("fetchReviewThreads (#22)", () => {
     expect(t.humanIntent).toBe("acknowledged"); // latest human reply wins
   });
 
+  it("keeps the newest decisive human intent when later trusted replies are non-decisive", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "won't fix this", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            { body: "pushed an update", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            { body: "thanks", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.fingerprints).toEqual(["fp1"]);
+    expect(t.humanIntent).toBe("wont-fix");
+  });
+
   it("ignores non-user comments when classifying human intent", async () => {
     const { octokit } = mockOctokit([
       {

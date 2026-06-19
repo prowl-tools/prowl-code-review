@@ -86,6 +86,8 @@ export interface SpecialistPassReport {
 export interface ReviewResult {
   /** Consolidated, ranked findings after the judge. */
   findings: Finding[];
+  /** Consolidated, ranked findings before the final volume cap. */
+  uncappedFindings?: Finding[];
   /** Every pre-judge finding: specialist output plus deterministic grounding. */
   raw: Finding[];
   /** Per-specialist outcome (count, ok/failed). */
@@ -252,14 +254,24 @@ export async function runReview(
     skippedForBudget: verification.skippedForBudget
   };
 
-  const { findings, ...judge } = judgeFindings(verification.findings, {
+  const judged = judgeFindings(verification.findings, {
     minSeverity: options.minSeverity,
     minConfidence: options.minConfidence,
     maxFindings: options.maxFindings
   });
+  const uncappedFindings =
+    judged.capped > 0
+      ? judgeFindings(verification.findings, {
+          minSeverity: options.minSeverity,
+          minConfidence: options.minConfidence,
+          maxFindings: Infinity
+        }).findings
+      : judged.findings;
+  const { findings, ...judge } = judged;
 
   return {
     findings,
+    uncappedFindings,
     raw,
     passes: outcomes.map((outcome) => outcome.report),
     verification: verificationReport,
