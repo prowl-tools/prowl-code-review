@@ -21,13 +21,13 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
-# Cancel a superseded review when new commits land on the same PR, so rapid
-# re-pushes don't spawn overlapping reviews racing to comment (#21). prowl-review
-# also re-checks the PR head before publishing and skips if it advanced, so a
-# just-cancelled run can't post stale results for an outdated commit.
+# Queue reviews and bot commands for the same PR so command side effects are not
+# lost when new commits arrive. prowl-review re-checks the PR head before
+# publishing and skips if it advanced, so queued stale reviews do not post.
 concurrency:
   group: prowl-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 permissions:
   pull-requests: write   # post the review + inline comments
@@ -50,8 +50,85 @@ jobs:
 ```
 
 The `concurrency` block is the recommended pattern: keying the group to the PR
-number with `cancel-in-progress` means an in-flight review for an outdated commit
-is cancelled cleanly when you push again.
+number serializes auto reviews with bot commands. `queue: max` and
+`cancel-in-progress: false` preserve maintainer-requested side effects such as
+`pause`, `resume`, and `break glass`; stale queued auto reviews skip publishing
+when the PR head has advanced.
+
+### Bot commands
+
+Drive the reviewer from the PR by commenting `@prowl-review <command>` (only a
+repo owner/member/collaborator is honored):
+
+| Command | Effect |
+|---|---|
+| `@prowl-review review` | Re-review the latest changes (incremental). |
+| `@prowl-review full review` | Re-scan the entire PR from scratch. |
+| `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
+| `@prowl-review resume` | Re-enable auto-review. |
+| `@prowl-review help` | List the available commands. |
+
+Commands need a second workflow listening for comments:
+
+```yaml
+# .github/workflows/prowl-review-command.yml
+name: prowl-review command
+on:
+  issue_comment:
+    types: [created]
+concurrency:
+  group: prowl-review-${{ github.event.issue.number }}
+  queue: max
+  cancel-in-progress: false
+permissions:
+  pull-requests: write
+  checks: write
+  issues: write
+  contents: read
+jobs:
+  command:
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review')
+    runs-on: ubuntu-latest
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.trusted_head == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+      - uses: prowl-tools/prowl-code-review@v1
+        if: steps.pr.outputs.trusted_head == 'true'
+        env:
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        with:
+          mode: command
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          workspace-path: ${{ github.workspace }}/pr-head
+```
 
 ## Development
 

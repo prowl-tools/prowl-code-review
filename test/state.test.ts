@@ -65,6 +65,13 @@ describe("serializeState / parseState round-trip", () => {
     expect(parseState(body)).toEqual(state);
   });
 
+  it("round-trips the paused flag (#26)", () => {
+    const paused: ReviewState = { v: REVIEW_STATE_VERSION, paused: true, postedFindings: [] };
+    expect(parseState(serializeState(paused))).toEqual(paused);
+    // Absent → parses without the field (not paused).
+    expect(parseState('<!-- prowl-review:state {"v":1,"postedFindings":[]} -->')?.paused).toBeUndefined();
+  });
+
   it("returns null for missing/empty/markerless bodies", () => {
     expect(parseState(null)).toBeNull();
     expect(parseState("")).toBeNull();
