@@ -5,8 +5,10 @@ on:
   issue_comment:
     types: [created]
 
-# Serialize commands per PR so two quick comments don't race; don't cancel an
-# in-flight command (unlike review runs, a command is a one-shot side effect).
+# Serialize commands per PR so two quick comments don't race; keep this separate
+# from auto-review cancellation because a command is a one-shot side effect.
+# Review publishing re-reads summary state before its final write, so pause/resume
+# commands cannot be overwritten by an in-flight auto review.
 concurrency:
   group: prowl-review-command-${{ github.event.issue.number }}
   cancel-in-progress: false
