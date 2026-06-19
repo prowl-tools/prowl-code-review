@@ -20,6 +20,8 @@ import { resolveRepo, runReviewWithOptions } from "./review.js";
  * collaborator, like break-glass #52), and dispatches:
  *  - `review` / `full review` → re-run the pipeline (incremental, or a full
  *    re-scan); always runs, ignoring pause (it's an explicit request).
+ *  - `break glass <head-sha>` → re-run the pipeline so the approval gate can
+ *    consume the trusted override comment.
  *  - `pause` / `resume` → toggle the auto-review pause flag persisted in the
  *    summary comment's state marker.
  *  - `help` / anything unrecognized → reply with the supported-command list.
@@ -118,6 +120,9 @@ export async function dispatchCommand(
       return { verb: parsed.verb, reviewed: true };
     case "full-review":
       await runReview({ pr, repo, incremental: false }, { respectPause: false });
+      return { verb: parsed.verb, reviewed: true };
+    case "break-glass":
+      await runReview({ pr, repo }, { respectPause: false });
       return { verb: parsed.verb, reviewed: true };
     case "pause": {
       await setPaused(ctx.octokit, ctx.ref, true);

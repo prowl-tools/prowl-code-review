@@ -13,7 +13,7 @@
  */
 
 /** Verbs the bot honors today. Anything else parses to `unknown` (→ help). */
-export const COMMAND_VERBS = ["review", "full-review", "pause", "resume", "help"] as const;
+export const COMMAND_VERBS = ["review", "full-review", "break-glass", "pause", "resume", "help"] as const;
 
 /** A recognized bot command verb. */
 export type CommandVerb = (typeof COMMAND_VERBS)[number];
@@ -64,6 +64,15 @@ export function parseCommand(body: string | null | undefined): ParsedCommand | n
     return { verb: "full-review", argument: tokens.slice(consumed).join(" ") };
   }
 
+  if (
+    (first === "break" && tokens[1]?.toLowerCase() === "glass") ||
+    first === "break-glass" ||
+    first === "breakglass"
+  ) {
+    const consumed = first === "break" ? 2 : 1;
+    return { verb: "break-glass", argument: tokens.slice(consumed).join(" ") };
+  }
+
   if ((COMMAND_VERBS as readonly string[]).includes(first)) {
     return { verb: first as CommandVerb, argument: tokens.slice(1).join(" ") };
   }
@@ -78,6 +87,7 @@ export function commandHelpText(): string {
     "",
     "- `review` — re-review the latest changes (incremental).",
     "- `full review` — re-scan the entire PR from scratch.",
+    "- `break glass <head-sha>` — re-run the approval gate after a trusted override.",
     "- `pause` — stop auto-reviewing this PR on new pushes.",
     "- `resume` — re-enable auto-review.",
     "- `help` — show this message.",

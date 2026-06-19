@@ -25,6 +25,12 @@ describe("parseCommand (#26)", () => {
     expect(parseCommand("@prowl-review full-review")).toEqual({ verb: "full-review", argument: "" });
   });
 
+  it("treats break-glass aliases as approval override reviews", () => {
+    expect(parseCommand("@prowl-review break glass abc123")).toEqual({ verb: "break-glass", argument: "abc123" });
+    expect(parseCommand("@prowl-review break-glass abc123")).toEqual({ verb: "break-glass", argument: "abc123" });
+    expect(parseCommand("@prowl-review breakglass abc123")).toEqual({ verb: "break-glass", argument: "abc123" });
+  });
+
   it("maps a bare mention to help", () => {
     expect(parseCommand("@prowl-review")).toEqual({ verb: "help", argument: "" });
   });
@@ -66,8 +72,9 @@ describe("commandHelpText (#26)", () => {
   it("lists every supported verb", () => {
     const help = commandHelpText();
     for (const verb of COMMAND_VERBS) {
-      // full-review is shown as "full review" in prose.
-      const shown = verb === "full-review" ? "full review" : verb;
+      // Multiword commands are shown in prose.
+      const shown =
+        verb === "full-review" ? "full review" : verb === "break-glass" ? "break glass <head-sha>" : verb;
       expect(help).toContain(`\`${shown}\``);
     }
   });
