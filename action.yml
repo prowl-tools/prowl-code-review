@@ -87,4 +87,5 @@ runs:
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
+        PROWL_REVIEWED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: node "${{ github.action_path }}/dist/cli.js" review
