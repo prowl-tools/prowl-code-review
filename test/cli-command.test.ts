@@ -142,6 +142,9 @@ describe("command workflow metadata", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
 
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
+    expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
+    expect(workflow).toContain("github.event.comment.author_association == 'MEMBER'");
+    expect(workflow).toContain("github.event.comment.author_association == 'COLLABORATOR'");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");

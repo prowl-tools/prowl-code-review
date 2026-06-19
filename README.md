@@ -81,7 +81,15 @@ permissions:
   contents: read
 jobs:
   command:
-    if: github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@prowl-review')
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
