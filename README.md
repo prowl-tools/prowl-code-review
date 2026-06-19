@@ -76,18 +76,40 @@ on:
     types: [created]
 permissions:
   pull-requests: write
+  checks: write
   issues: write
   contents: read
 jobs:
   command:
-    if: github.event.issue.pull_request && contains(github.event.comment.body, '@prowl-review')
+    if: github.event.issue.pull_request && github.event.comment.user.type != 'Bot' && contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.pr.outputs.trusted_head == 'true'
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
       - uses: prowl-tools/prowl-code-review@v1
+        if: steps.pr.outputs.trusted_head == 'true'
+        env:
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
           mode: command
           ai-key: ${{ secrets.PROWL_AI_KEY }}
+          workspace-path: ${{ github.workspace }}/pr-head
 ```
 
 ## Development
