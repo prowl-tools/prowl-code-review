@@ -1,15 +1,40 @@
 import { Command } from "commander";
 import { existsSync, readFileSync } from "node:fs";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
-import type { PullRequestRef } from "../../github/diff.js";
-import { setPausedState, postPullRequestComment } from "../../github/review.js";
+import {
+  fetchPullRequest as defaultFetchPullRequest,
+  type FetchedPullRequest,
+  type PullRequestRef
+} from "../../github/diff.js";
+import { setPausedState, postPullRequestComment, replyToReviewComment } from "../../github/review.js";
 import {
   parseCommand,
   commandHelpText,
   isTrustedCommandAuthor,
   type ParsedCommand
 } from "../../review/commands.js";
-import { resolveRepo, runReviewWithOptions } from "./review.js";
+import {
+  generateChatReply as defaultGenerateChatReply,
+  DEFAULT_CHAT_MAX_TOKENS,
+  type ChatReplyInput,
+  type ChatThreadContext
+} from "../../review/chat.js";
+import { parseDiff } from "../../review/parse-diff.js";
+import { applyDiffLimits } from "../../review/size-guards.js";
+import { renderGuardedDiff } from "../../review/render-diff.js";
+import { redactSecrets } from "../../review/redact.js";
+import { loadConfig } from "../../config/loader.js";
+import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
+import {
+  resolveRepo,
+  runReviewWithOptions,
+  resolveConfigLoadOptions,
+  resolveWorkspace,
+  resolveGuidelinesWorkspace,
+  loadGuidelines,
+  resolveOrgGuidelinesPath,
+  composeGuidelines
+} from "./review.js";
 
 /**
  * `prowl-review command` — handle an `@prowl-review <verb>` bot command from a PR
@@ -31,12 +56,18 @@ import { resolveRepo, runReviewWithOptions } from "./review.js";
  * learnings write-back and #22 reply infra.
  */
 
-/** A bot-command comment event reduced to what dispatch needs. */
+/** A bot-command comment event reduced to what dispatch + chat need. */
 export interface CommentEvent {
   body: string;
   association: string | undefined;
   login: string | undefined;
   pullNumber: number;
+  /** The comment's REST id (for in-thread chat replies, #27). */
+  commentId?: number;
+  /** True when the event is an inline review-comment (vs a top-level PR comment). */
+  isReviewComment: boolean;
+  /** Inline-thread context, present on review-comment events (#27). */
+  thread?: ChatThreadContext;
 }
 
 /** Read and normalize the triggering comment event from `GITHUB_EVENT_PATH`. */
@@ -47,7 +78,16 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
   }
   try {
     const event = JSON.parse(readFileSync(path, "utf8")) as {
-      comment?: { body?: string; author_association?: string; user?: { login?: string; type?: string } | null };
+      comment?: {
+        id?: number;
+        body?: string;
+        author_association?: string;
+        user?: { login?: string; type?: string } | null;
+        path?: string;
+        line?: number | null;
+        original_line?: number | null;
+        diff_hunk?: string;
+      };
       issue?: { number?: number; pull_request?: unknown };
       pull_request?: { number?: number };
     };
@@ -58,9 +98,12 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
     if (comment.user?.type === "Bot") {
       return null;
     }
+    // An inline review-comment event carries a top-level `pull_request`; an
+    // issue_comment carries `issue` and is only a PR comment when `pull_request`
+    // is present on the issue.
+    const isReviewComment = Boolean(event.pull_request) && !event.issue;
     let pullNumber: number | undefined;
     if (event.issue) {
-      // An issue_comment is only a PR comment when `pull_request` is present.
       if (!event.issue.pull_request) {
         return null;
       }
@@ -71,11 +114,24 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
     if (!pullNumber) {
       return null;
     }
+
+    const thread: ChatThreadContext | undefined =
+      isReviewComment && comment.path
+        ? {
+            path: comment.path,
+            line: comment.line ?? comment.original_line ?? undefined,
+            diffHunk: comment.diff_hunk
+          }
+        : undefined;
+
     return {
       body: comment.body,
       association: comment.author_association,
       login: comment.user?.login ?? undefined,
-      pullNumber
+      pullNumber,
+      commentId: comment.id,
+      isReviewComment,
+      thread
     };
   } catch {
     return null;
@@ -90,6 +146,8 @@ export interface CommandDispatchDeps {
   ) => Promise<void>;
   setPaused?: (octokit: OctokitLike, ref: PullRequestRef, paused: boolean) => Promise<{ updatedExisting: boolean }>;
   postComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
+  /** Answer a free-form `@prowl-review` question (#27). When absent, dispatch falls back to help. */
+  respond?: (question: string) => Promise<void>;
 }
 
 /** Result of dispatching a parsed command (for logging/tests). */
@@ -97,6 +155,8 @@ export interface CommandOutcome {
   verb: ParsedCommand["verb"];
   /** True when the command triggered a review run. */
   reviewed: boolean;
+  /** True when a free-form question was answered with a chat reply (#27). */
+  responded?: boolean;
 }
 
 /**
@@ -110,6 +170,7 @@ export async function dispatchCommand(
   const runReview = ctx.deps?.runReview ?? runReviewWithOptions;
   const setPaused = ctx.deps?.setPaused ?? setPausedState;
   const postComment = ctx.deps?.postComment ?? postPullRequestComment;
+  const respond = ctx.deps?.respond;
   const repo = `${ctx.ref.owner}/${ctx.ref.repo}`;
   const pr = String(ctx.ref.pull_number);
 
@@ -143,10 +204,102 @@ export async function dispatchCommand(
       return { verb: parsed.verb, reviewed: false };
     }
     case "help":
+      await postComment(ctx.octokit, ctx.ref, commandHelpText());
+      return { verb: parsed.verb, reviewed: false };
+    case "unknown":
+      // A free-form mention is a question → answer it in-thread (#27). Without a
+      // chat capability wired in, fall back to the command help.
+      if (respond) {
+        await respond(parsed.argument);
+        return { verb: parsed.verb, reviewed: false, responded: true };
+      }
+      await postComment(ctx.octokit, ctx.ref, commandHelpText());
+      return { verb: parsed.verb, reviewed: false };
     default:
       await postComment(ctx.octokit, ctx.ref, commandHelpText());
       return { verb: parsed.verb, reviewed: false };
   }
+}
+
+/** Cap the diff fed into a chat reply, so the prompt stays bounded. */
+const CHAT_DIFF_MAX_BYTES = 60_000;
+
+/** Injectable side effects for the chat-reply orchestration (#27). */
+export interface ChatHandlerDeps {
+  fetchPr?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
+  generateReply?: (
+    input: ChatReplyInput,
+    options: { config: ProviderConfig; maxTokens?: number }
+  ) => Promise<{ reply: string; usage: TokenUsage }>;
+  postIssueComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
+  postReviewReply?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number, body: string) => Promise<void>;
+}
+
+/**
+ * Answer a free-form `@prowl-review` question (#27): fetch the PR, build a
+ * size-guarded + secret-redacted diff context, generate a grounded reply, and
+ * post it — in-thread for an inline review comment, or as a PR comment otherwise.
+ */
+export async function respondToComment(params: {
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  event: CommentEvent;
+  question: string;
+  config: ProviderConfig;
+  guidelines?: string;
+  maxTokens?: number;
+  deps?: ChatHandlerDeps;
+}): Promise<void> {
+  const fetchPr = params.deps?.fetchPr ?? defaultFetchPullRequest;
+  const generateReply = params.deps?.generateReply ?? defaultGenerateChatReply;
+  const postIssueComment = params.deps?.postIssueComment ?? postPullRequestComment;
+  const postReviewReply = params.deps?.postReviewReply ?? replyToReviewComment;
+
+  const { meta, diff } = await fetchPr(params.octokit, params.ref);
+  const parsed = parseDiff(diff);
+  const guarded = applyDiffLimits({ files: parsed.files }, { maxDiffBytes: CHAT_DIFF_MAX_BYTES });
+  const rendered = renderGuardedDiff(guarded.files);
+  const redactedDiff = redactSecrets(rendered).text;
+  const diffNote = guarded.skipped.length > 0 ? "\n\n(diff truncated to fit the chat context)" : "";
+
+  const input: ChatReplyInput = {
+    question: params.question,
+    prTitle: meta.title,
+    prBody: meta.body,
+    diff: `${redactedDiff}${diffNote}`,
+    guidelines: params.guidelines,
+    thread: params.event.thread
+  };
+  const { reply } = await generateReply(input, {
+    config: params.config,
+    maxTokens: params.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS
+  });
+  // The reply is our bot's own output; redact defensively in case the model
+  // echoed a secret from the diff.
+  const safeReply = redactSecrets(reply).text;
+  const body = `${safeReply}\n\n<sub>🦝 prowl-review — reply to your \`@prowl-review\` comment</sub>`;
+
+  if (params.event.isReviewComment && params.event.commentId !== undefined) {
+    await postReviewReply(params.octokit, params.ref, params.event.commentId, body);
+  } else {
+    await postIssueComment(params.octokit, params.ref, body);
+  }
+}
+
+/** Compose trusted org + repo guidelines for a chat reply (mirrors the review path). */
+function loadChatGuidelines(): string | undefined {
+  const guidelinesRoot = resolveGuidelinesWorkspace();
+  const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
+  const orgPath = resolveOrgGuidelinesPath();
+  let orgGuidelines: string | undefined;
+  if (orgPath && existsSync(orgPath)) {
+    try {
+      orgGuidelines = readFileSync(orgPath, "utf8");
+    } catch {
+      orgGuidelines = undefined;
+    }
+  }
+  return composeGuidelines(orgGuidelines, repoGuidelines);
 }
 
 /** Build the `command` CLI subcommand wired to the comment-event dispatch. */
@@ -184,10 +337,30 @@ export function buildCommandCommand(): Command {
       const octokit = createOctokit(token);
       const ref = { owner, repo, pull_number: event.pullNumber };
 
-      const outcome = await dispatchCommand(parsed, { octokit, ref });
+      // Free-form questions (#27) answer in-thread. The provider config is
+      // resolved lazily inside the closure so non-chat verbs (pause/resume) never
+      // require an AI key.
+      const respond = async (question: string): Promise<void> => {
+        const root = resolveWorkspace();
+        const { config } = loadConfig(resolveConfigLoadOptions({}, root));
+        const providerConfig = resolveProviderConfig(process.env, {
+          provider: config.provider,
+          model: config.model
+        });
+        await respondToComment({
+          octokit,
+          ref,
+          event,
+          question,
+          config: providerConfig,
+          guidelines: loadChatGuidelines()
+        });
+      };
+
+      const outcome = await dispatchCommand(parsed, { octokit, ref, deps: { respond } });
       console.log(
         `prowl-review: handled \`@prowl-review ${parsed.verb}\` on ${owner}/${repo}#${event.pullNumber}` +
-          (outcome.reviewed ? " (review run)" : "")
+          (outcome.reviewed ? " (review run)" : outcome.responded ? " (chat reply)" : "")
       );
     });
 
