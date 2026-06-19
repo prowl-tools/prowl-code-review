@@ -32,9 +32,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As an OSS maintainer, I want defined behavior on fork PRs, so that the tool degrades safely when secrets and write tokens aren't available.
     - Acceptance: detect fork PRs (read-only token / no `PROWL_AI_KEY`); fall back to a documented mode (e.g. summary-only via `pull_request_target` guidance, or skip with a clear message). No secret leakage to fork code.
 
-21. **Workflow concurrency control**
-    As a developer who pushes often, I want superseded reviews cancelled, so that rapid re-pushes don't spawn overlapping reviews that race to comment.
-    - Acceptance: the Action/workflow uses a `concurrency` group keyed to the PR with `cancel-in-progress`; in-flight reviews for an outdated SHA are cancelled cleanly.
 
 22. **Update-not-duplicate: resolve fixed threads + respect human replies** *(core + thread tidy-up done — see resolved.md)*
     As a developer, I want re-runs to also tidy up stale threads and honor my replies, so that the PR stays clean and the bot isn't argumentative.

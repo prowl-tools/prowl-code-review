@@ -114,6 +114,27 @@ export async function fetchPullRequest(
 }
 
 /**
+ * Fetch just the PR's current head SHA (a single lightweight `pulls.get`), used
+ * for the stale-publish guard (#21): before publishing, the pipeline re-checks
+ * that the PR head hasn't advanced past the SHA it reviewed. Tolerant — returns
+ * undefined on any error, so a failed check never blocks an otherwise-valid
+ * publish (the workflow's `concurrency: cancel-in-progress` is the primary guard;
+ * this only closes the brief overlap window).
+ */
+export async function fetchPullRequestHeadSha(
+  octokit: OctokitLike,
+  ref: PullRequestRef
+): Promise<string | undefined> {
+  try {
+    const response = await octokit.rest.pulls.get({ ...ref });
+    const pr = response.data as RawPullRequest;
+    return pr.head?.sha;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Fetch the raw unified diff between two commits (incremental re-review, #23) via
  * `repos.compareCommitsWithBasehead` with `format: "diff"`. Used to review only
  * the delta a push added since the last reviewed SHA. Throws if the range can't

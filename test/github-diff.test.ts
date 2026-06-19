@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPullRequest, fetchComparisonDiff } from "../src/github/diff.js";
+import { fetchPullRequest, fetchComparisonDiff, fetchPullRequestHeadSha } from "../src/github/diff.js";
 import type { OctokitLike } from "../src/github/client.js";
 
 function mockOctokit(prData: unknown, diff: string) {
@@ -122,5 +122,25 @@ describe("fetchComparisonDiff (#23)", () => {
     });
     const octokit = { rest: { repos: { compareCommitsWithBasehead } } } as unknown as OctokitLike;
     await expect(fetchComparisonDiff(octokit, ref, "old", "new")).rejects.toThrow(/404/);
+  });
+});
+
+describe("fetchPullRequestHeadSha (#21)", () => {
+  const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
+
+  it("returns the current PR head SHA", async () => {
+    const get = vi.fn(async () => ({ data: { head: { sha: "current-head" } } }));
+    const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
+    expect(await fetchPullRequestHeadSha(octokit, ref)).toBe("current-head");
+    // A lightweight metadata-only call (no diff media type).
+    expect(get).toHaveBeenCalledWith(expect.not.objectContaining({ mediaType: expect.anything() }));
+  });
+
+  it("returns undefined tolerantly when the read fails (never blocks publishing)", async () => {
+    const get = vi.fn(async () => {
+      throw new Error("502");
+    });
+    const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
+    expect(await fetchPullRequestHeadSha(octokit, ref)).toBeUndefined();
   });
 });

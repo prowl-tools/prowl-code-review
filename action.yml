@@ -42,7 +42,7 @@ inputs:
     required: false
     default: ""
   trust-workspace:
-    description: "Allow repo-local linter/SAST tools to execute in workspace-path. Use only for trusted checkouts."
+    description: "Allow repo-local linter/SAST tools to execute in workspace-path. Disabled automatically for fork PR events; use only for trusted checkouts."
     required: false
     default: "false"
   github-token:
@@ -87,4 +87,5 @@ runs:
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
+        PROWL_REVIEWED_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       run: node "${{ github.action_path }}/dist/cli.js" review
