@@ -7,6 +7,7 @@ import {
   loadGuidelines,
   loadLearnedPatterns,
   composeGuidelines,
+  isForkPullRequestEvent,
   resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
@@ -226,6 +227,42 @@ describe("review command helpers", () => {
     }
   });
 
+  it("detects fork pull request events", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "fork/prowl-code-review" } } }
+      })
+    );
+
+    expect(
+      isForkPullRequestEvent({
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv)
+    ).toBe(true);
+  });
+
+  it("treats same-repository pull request events as trusted candidates", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" } } }
+      })
+    );
+
+    expect(
+      isForkPullRequestEvent({
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv)
+    ).toBe(false);
+  });
+
   it("resolves the reviewed head SHA from env or the pull request event payload", () => {
     expect(resolveReviewedHeadSha({ PROWL_REVIEWED_HEAD_SHA: "  abc123  " } as NodeJS.ProcessEnv)).toBe("abc123");
 
@@ -302,6 +339,25 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   it("uses only out-of-band inputs to enable workspace execution trust", () => {
     expect(resolveReviewOptions({}, {}, { PROWL_TRUST_WORKSPACE: "true" } as NodeJS.ProcessEnv).trustWorkspace).toBe(true);
     expect(resolveReviewOptions({ trustWorkspace: true }, {}, env).trustWorkspace).toBe(true);
+  });
+
+  it("disables workspace execution trust for fork pull request events", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    const forkEnv = {
+      GITHUB_EVENT_PATH: eventPath,
+      GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
+      PROWL_TRUST_WORKSPACE: "true"
+    } as NodeJS.ProcessEnv;
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+
+    expect(resolveReviewOptions({}, {}, forkEnv).trustWorkspace).toBe(false);
+    expect(resolveReviewOptions({ trustWorkspace: true }, {}, forkEnv).trustWorkspace).toBe(false);
   });
 
   it("resolves the usage-log path: explicit env > local default > none in CI (#36)", () => {
@@ -520,13 +576,14 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
 describe("GitHub Action provider metadata", () => {
   it("keeps provider and config policy in out-of-band action inputs", () => {
     const action = parseYaml(readFileSync(join(process.cwd(), "action.yml"), "utf8")) as {
-      inputs?: Record<string, { default?: unknown }>;
+      inputs?: Record<string, { default?: unknown; description?: string }>;
       runs?: { steps?: Array<{ id?: string; env?: Record<string, string>; run?: string }> };
     };
     const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
 
     expect(action.inputs?.["ai-provider"]?.default).toBe("anthropic");
     expect(action.inputs?.["config-path"]?.default).toBe("");
+    expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
