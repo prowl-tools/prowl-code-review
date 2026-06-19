@@ -917,6 +917,15 @@ export async function reviewPullRequest(
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
   const { meta, diff } = await fetchPr(octokit, ref);
+  const hasHeadAdvanced = () =>
+    headAdvancedPastReview({
+      fetchHeadSha,
+      octokit,
+      ref,
+      reviewedSha: meta.headSha,
+      enabled: staleGuardEnabled,
+      dryRun: options.dryRun === true
+    });
   const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
@@ -1026,18 +1035,21 @@ export async function reviewPullRequest(
       raw: groundingFindings
     };
     const approvalCoverageIncomplete = fullSkipped.length > 0;
+    const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
-    const tidied = await tidyReviewThreads({
-      fetchThreads,
-      resolveThread,
-      octokit,
-      ref,
-      findings: reviewResult.findings,
-      candidateFindings: reviewResult.uncappedFindings,
-      resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
-      enabled: tidyThreadsEnabled,
-      dryRun: options.dryRun === true
-    });
+    const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
+      ? { findings: reviewResult.findings, notes: [] }
+      : await tidyReviewThreads({
+          fetchThreads,
+          resolveThread,
+          octokit,
+          ref,
+          findings: reviewResult.findings,
+          candidateFindings: reviewResult.uncappedFindings,
+          resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
+          enabled: tidyThreadsEnabled,
+          dryRun: options.dryRun === true
+        });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
     if (tidied.capped !== undefined) {
@@ -1093,16 +1105,7 @@ export async function reviewPullRequest(
       posted: false
     };
     // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
-    if (
-      await headAdvancedPastReview({
-        fetchHeadSha,
-        octokit,
-        ref,
-        reviewedSha: meta.headSha,
-        enabled: staleGuardEnabled,
-        dryRun: options.dryRun === true
-      })
-    ) {
+    if (headAdvancedBeforeTidy || (await hasHeadAdvanced())) {
       result.headAdvanced = true;
       return result;
     }
@@ -1263,20 +1266,23 @@ export async function reviewPullRequest(
 
   const totalUsage = addUsage(reviewResult.usage, contextUsage);
 
+  const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human
   // already settled or disputed are withheld and don't drive request-changes.
-  const tidied = await tidyReviewThreads({
-    fetchThreads,
-    resolveThread,
-    octokit,
-    ref,
-    findings: reviewResult.findings,
-    candidateFindings: reviewResult.uncappedFindings,
-    resolveStaleThreads:
-      incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
-    enabled: tidyThreadsEnabled,
-    dryRun: options.dryRun === true
-  });
+  const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
+    ? { findings: reviewResult.findings, notes: [] }
+    : await tidyReviewThreads({
+        fetchThreads,
+        resolveThread,
+        octokit,
+        ref,
+        findings: reviewResult.findings,
+        candidateFindings: reviewResult.uncappedFindings,
+        resolveStaleThreads:
+          incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
+        enabled: tidyThreadsEnabled,
+        dryRun: options.dryRun === true
+      });
   reviewResult.findings = tidied.findings;
   if (tidied.capped !== undefined) {
     reviewResult.judge.capped = tidied.capped;
@@ -1347,16 +1353,7 @@ export async function reviewPullRequest(
     posted: false
   };
   // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
-  if (
-    await headAdvancedPastReview({
-      fetchHeadSha,
-      octokit,
-      ref,
-      reviewedSha: meta.headSha,
-      enabled: staleGuardEnabled,
-      dryRun: options.dryRun === true
-    })
-  ) {
+  if (headAdvancedBeforeTidy || (await hasHeadAdvanced())) {
     result.headAdvanced = true;
     return result;
   }

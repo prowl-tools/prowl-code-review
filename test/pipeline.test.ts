@@ -1362,7 +1362,11 @@ diff --git a/src/b.ts b/src/b.ts
     it("does not post the check run when the head advanced", async () => {
       const fetchHeadSha = vi.fn(async () => "newer-sha");
       const submitCheckRun = vi.fn(async () => {});
-      const deps = { ...makeDeps(), fetchHeadSha, submitCheckRun };
+      const fetchReviewThreads = vi.fn(async () => [
+        { id: "T", isResolved: false, isOutdated: false, fingerprints: ["stale"], humanIntent: "other" as const }
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchHeadSha, submitCheckRun, fetchReviewThreads, resolveReviewThread };
 
       const result = await reviewPullRequest(octokit, ref, {
         config,
@@ -1372,8 +1376,37 @@ diff --git a/src/b.ts b/src/b.ts
       });
 
       expect(result.headAdvanced).toBe(true);
+      expect(fetchReviewThreads).not.toHaveBeenCalled();
+      expect(resolveReviewThread).not.toHaveBeenCalled();
       expect(submitCheckRun).not.toHaveBeenCalled();
       expect(result.checkRunConclusion).toBeUndefined();
+    });
+
+    it("skips thread tidy in the no-reviewable-files path when the head advanced", async () => {
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const fetchReviewThreads = vi.fn(async () => [
+        { id: "T", isResolved: false, isOutdated: false, fingerprints: ["stale"], humanIntent: "other" as const }
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchHeadSha, fetchReviewThreads, resolveReviewThread };
+      deps.fetchPullRequest = vi.fn(async () => ({
+        meta,
+        diff: `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+      }));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(fetchReviewThreads).not.toHaveBeenCalled();
+      expect(resolveReviewThread).not.toHaveBeenCalled();
+      expect(deps.submitReview).not.toHaveBeenCalled();
     });
 
     it("publishes normally when the head is unchanged", async () => {
