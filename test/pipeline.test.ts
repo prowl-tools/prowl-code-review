@@ -1389,7 +1389,12 @@ diff --git a/src/b.ts b/src/b.ts
 
     it("skips publishing when the fetched PR head already differs from the reviewed head", async () => {
       const fetchHeadSha = vi.fn(async () => undefined);
-      const deps = { ...makeDeps(), fetchHeadSha };
+      const fetchPriorState = vi.fn(async () => null);
+      const fetchReviewThreads = vi.fn(async () => [
+        { id: "T", isResolved: false, isOutdated: false, fingerprints: ["stale"], humanIntent: "other" as const }
+      ]);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), fetchHeadSha, fetchPriorState, fetchReviewThreads, submitCheckRun };
       deps.fetchPullRequest = vi.fn(async () => ({
         meta: { ...meta, headSha: "new-head" },
         diff: DIFF
@@ -1399,12 +1404,22 @@ diff --git a/src/b.ts b/src/b.ts
         config,
         toolkitRoot: "/repo",
         deps,
-        reviewedHeadSha: "event-head"
+        reviewedHeadSha: "event-head",
+        checkRun: { enabled: true, failOn: "major" }
       });
 
       expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(result.contextFiles).toBe(0);
+      expect(result.payload.body).toContain("advanced past the reviewed commit");
       expect(fetchHeadSha).not.toHaveBeenCalled();
+      expect(fetchPriorState).not.toHaveBeenCalled();
+      expect(deps.gatherContext).not.toHaveBeenCalled();
+      expect(deps.gatherGrounding).not.toHaveBeenCalled();
+      expect(deps.runReview).not.toHaveBeenCalled();
+      expect(fetchReviewThreads).not.toHaveBeenCalled();
       expect(deps.submitReview).not.toHaveBeenCalled();
+      expect(submitCheckRun).not.toHaveBeenCalled();
     });
 
     it("does not post the check run when the head advanced", async () => {
