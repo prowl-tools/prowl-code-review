@@ -37,6 +37,12 @@ const WONT_FIX_PATTERNS: RegExp[] = [
   /\bintentional\b/
 ];
 
+/** Mentions that a design/intentional rationale does not apply — do not resolve. */
+const NEGATED_WONT_FIX_PATTERNS: RegExp[] = [
+  /\bnot\s+(?:as[ -]designed|by design|working as intended|intentional)\b/,
+  /\b(?:isn'?t|aren'?t|wasn'?t|weren'?t)\s+(?:as[ -]designed|by design|working as intended|intentional)\b/
+];
+
 /** The human accepts the finding (or already fixed it) — resolve the thread. */
 const ACKNOWLEDGED_PATTERNS: RegExp[] = [
   /\backnowledg/,
@@ -73,6 +79,9 @@ export function classifyReplyIntent(body: string | null | undefined): ReplyInten
   const text = body.toLowerCase();
   if (matchesAny(text, DISAGREE_PATTERNS)) {
     return "disagree";
+  }
+  if (matchesAny(text, NEGATED_WONT_FIX_PATTERNS)) {
+    return "other";
   }
   if (matchesAny(text, WONT_FIX_PATTERNS)) {
     return "wont-fix";

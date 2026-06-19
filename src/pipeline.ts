@@ -727,16 +727,19 @@ async function resolveApprovalDecision(
   ref: PullRequestRef,
   findings: Finding[],
   config: ApprovalConfig | undefined,
-  options: { coverageDegraded?: boolean; breakGlassHeadSha?: string } = {}
+  options: { coverageDegraded?: boolean; breakGlassHeadSha?: string; threadApprovalBlockers?: number } = {}
 ): Promise<ApprovalDecision> {
   let breakGlass: BreakGlassSignal | undefined;
+  const threadApprovalBlockers = options.threadApprovalBlockers ?? 0;
   let decision = planApprovalDecision({
     findings,
     config,
     coverageDegraded: options.coverageDegraded,
     breakGlassTarget: options.breakGlassHeadSha
   });
-  if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
+  const shouldDetectBreakGlass =
+    decision.enabled && (decision.blocking > 0 || threadApprovalBlockers > 0) && config?.breakGlass !== false;
+  if (shouldDetectBreakGlass) {
     if (options.breakGlassHeadSha) {
       breakGlass = await detect(octokit, ref, { headSha: options.breakGlassHeadSha });
       decision = planApprovalDecision({
@@ -769,6 +772,25 @@ async function resolveApprovalDecision(
         priorRequestChangesTruncated: priorRequestChanges.truncated
       });
     }
+  }
+  if (
+    decision.enabled &&
+    !decision.coverageDegraded &&
+    decision.blocking === 0 &&
+    threadApprovalBlockers > 0 &&
+    breakGlass?.active === true
+  ) {
+    return {
+      ...decision,
+      event: "APPROVE",
+      overridden: true,
+      clearsPriorRequestChanges: false,
+      breakGlassFreshnessUnknown: false,
+      overrideActor: breakGlass.actor,
+      reason:
+        `Break-glass override${breakGlass.actor ? ` by @${breakGlass.actor}` : ""}: approving past ` +
+        `${threadApprovalBlockers} finding thread(s) withheld or left open by human reply.`
+    };
   }
   return decision;
 }
@@ -972,7 +994,11 @@ export async function reviewPullRequest(
       ref,
       reviewResult.findings,
       options.approval,
-      { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
+      {
+        coverageDegraded: approvalCoverageIncomplete,
+        breakGlassHeadSha: meta.headSha,
+        threadApprovalBlockers: approvalBlockingThreadCount(tidied.tidy)
+      }
     );
     approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
     const summaryBody = buildWalkthrough({
@@ -1189,7 +1215,11 @@ export async function reviewPullRequest(
     ref,
     reviewResult.findings,
     options.approval,
-    { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
+    {
+      coverageDegraded: approvalCoverageIncomplete,
+      breakGlassHeadSha: meta.headSha,
+      threadApprovalBlockers: approvalBlockingThreadCount(tidied.tidy)
+    }
   );
   approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
 

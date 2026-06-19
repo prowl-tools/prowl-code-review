@@ -1078,6 +1078,31 @@ diff --git a/src/b.ts b/src/b.ts
       }
     );
 
+    it("honors break-glass when withheld findings would otherwise block approval", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "T", fingerprints: [fp], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const detectBreakGlass = vi.fn(async () => ({ active: true, actor: "maintainer", association: "OWNER" }));
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, detectBreakGlass };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(result.review.findings).toHaveLength(0);
+      expect(detectBreakGlass).toHaveBeenCalledWith(octokit, ref, { headSha: meta.headSha });
+      expect(result.approval?.event).toBe("APPROVE");
+      expect(result.approval?.overridden).toBe(true);
+      expect(result.payload.event).toBe("APPROVE");
+      expect(result.payload.body).toContain("Break-glass override");
+    });
+
     it("does not resolve stale-looking prior threads from an empty incremental delta", async () => {
       const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
       const fetchReviewThreads = vi.fn(async () => [thread({ id: "S", fingerprints: ["still-valid-on-full-pr"] })]);
