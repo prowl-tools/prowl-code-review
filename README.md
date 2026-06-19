@@ -21,13 +21,13 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
-# Cancel a superseded review when new commits land on the same PR, so rapid
-# re-pushes don't spawn overlapping reviews racing to comment (#21). prowl-review
-# also re-checks the PR head before publishing and skips if it advanced, so a
-# just-cancelled run can't post stale results for an outdated commit.
+# Queue reviews and bot commands for the same PR so command side effects are not
+# lost when new commits arrive. prowl-review re-checks the PR head before
+# publishing and skips if it advanced, so queued stale reviews do not post.
 concurrency:
   group: prowl-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 permissions:
   pull-requests: write   # post the review + inline comments
@@ -50,8 +50,10 @@ jobs:
 ```
 
 The `concurrency` block is the recommended pattern: keying the group to the PR
-number with `cancel-in-progress` means an in-flight review for an outdated commit
-is cancelled cleanly when you push again.
+number serializes auto reviews with bot commands. `queue: max` and
+`cancel-in-progress: false` preserve maintainer-requested side effects such as
+`pause`, `resume`, and `break glass`; stale queued auto reviews skip publishing
+when the PR head has advanced.
 
 ### Bot commands
 
