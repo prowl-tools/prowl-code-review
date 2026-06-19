@@ -4,10 +4,12 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
-# Cancel a superseded review when new commits arrive on the same PR.
+# Queue auto reviews with manual commands for the same PR so pushes do not
+# cancel command side effects; stale-head checks prevent outdated publishes.
 concurrency:
   group: prowl-review-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  queue: max
+  cancel-in-progress: false
 
 permissions:
   pull-requests: write

@@ -140,10 +140,14 @@ describe("resolveCommentEvent (#26)", () => {
 describe("command workflow metadata", () => {
   it("filters bot comments and reviews the PR head workspace", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
+    const reviewWorkflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review.yml"), "utf8");
 
     expect(workflow).toContain("group: prowl-review-${{ github.event.issue.number }}");
     expect(workflow).toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
+    expect(reviewWorkflow).toContain("group: prowl-review-${{ github.event.pull_request.number }}");
+    expect(reviewWorkflow).toContain("queue: max");
+    expect(reviewWorkflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
     expect(workflow).toContain("github.event.comment.author_association == 'MEMBER'");
