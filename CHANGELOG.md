@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Bot command set (backlog #26): drive the reviewer from the PR by commenting
+  `@prowl-review <verb>`. A pure, conservative parser + verb allowlist (#14) recognizes **`review`**
+  (re-review the latest changes), **`full review`** (force a full re-scan), **`pause`** / **`resume`**
+  (toggle auto-review on new pushes, persisted in the summary comment's state marker), and **`help`**;
+  anything else replies with the command list. Commands are honored only from a trusted author
+  (owner/member/collaborator, mirroring break-glass #52); `review`/`full review` override pause since
+  they're explicit. A new `command` CLI subcommand reads the `issue_comment` / `pull_request_review_comment`
+  event, trust-gates, and dispatches; the composite Action gains a `mode: command` input and a documented
+  `prowl-review-command.yml` workflow listens for `@prowl-review` PR comments. Exports
+  `parseCommand`/`commandHelpText`/`setPausedState`. **Deferred (still #26):** `ignore` / `resolve` /
+  `configure` — these target a specific finding/thread from the reply context, which rides with the #30
+  learnings write-back and #22 reply infra.
 - Workflow concurrency control (backlog #21): the GitHub Action workflow uses a
   PR-keyed `concurrency` group with `cancel-in-progress`, so rapid re-pushes cancel the superseded
   review instead of spawning overlapping runs that race to comment. To close the brief overlap window

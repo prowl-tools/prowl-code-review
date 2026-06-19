@@ -1,0 +1,99 @@
+name: prowl-review command
+
+# Handle @prowl-review chat commands on pull requests (#26).
+on:
+  issue_comment:
+    types: [created]
+
+# Serialize commands with auto reviews for the same PR so review publishing and
+# inline finding dedupe cannot race. Keep command runs queued instead of
+# replacing pending maintainer requests.
+concurrency:
+  group: prowl-review-${{ github.event.issue.number }}
+  queue: max
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  command:
+    # Only PR comments that mention the bot; never act on issue comments or forks.
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping command from fork PR head ${head_repo}."
+          fi
+
+      - name: Checkout trusted base
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          persist-credentials: false
+
+      - name: Check trusted action availability
+        id: trusted-action
+        shell: bash
+        run: |
+          action_file=""
+          if [ -f action.yml ]; then
+            action_file="action.yml"
+          elif [ -f action.yaml ]; then
+            action_file="action.yaml"
+          fi
+
+          if [ -n "${action_file}" ] &&
+            grep -Eq '^[[:space:]]{2}mode:' "${action_file}" &&
+            grep -q 'inputs.mode' "${action_file}"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "Trusted base does not support prowl-review command mode yet; skipping command run."
+          fi
+
+      - name: Checkout PR head for context
+        if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+
+      - name: prowl-review command
+        if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
+        uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        env:
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+        with:
+          mode: command
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          ai-provider: gemini
+          ai-model: gemini-2.5-flash
+          workspace-path: ${{ github.workspace }}/pr-head
+          guidelines-path: ${{ github.workspace }}

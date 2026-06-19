@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { submitReview, planPublish, hasActiveRequestChanges } from "../src/github/review.js";
+import { submitReview, planPublish, hasActiveRequestChanges, setPausedState } from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
@@ -144,6 +144,21 @@ describe("planPublish", () => {
     });
     expect(plan.newInlineComments.map((c) => c.fingerprint)).toEqual(["fp-b"]);
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
+  });
+
+  it("preserves the paused flag from prior summary state", () => {
+    const prior = {
+      id: 99,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`
+    };
+    const plan = planPublish({
+      payload: payload({ comments: [comment({ fingerprint: "fp-a" })] }),
+      priorComment: prior,
+      headSha: "sha2"
+    });
+
+    expect(plan.state).toEqual({ v: 1, lastReviewedSha: "sha2", paused: true, postedFindings: ["fp-a"] });
+    expect(parseState(plan.summaryBody)?.paused).toBe(true);
   });
 
   it("allows reposting fingerprints whose old thread was resolved as fixed", () => {
@@ -367,6 +382,59 @@ describe("submitReview", () => {
     });
   });
 
+  it("preserves paused state when refreshing the summary", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, updateComment } = mockOctokit([prior]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({ body: `${REVIEW_MARKER}\n## prowl-review\n\nmanual review`, comments: [] }),
+      { headSha: "head-paused" }
+    );
+
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-paused",
+      paused: true,
+      postedFindings: ["fp-a"]
+    });
+  });
+
+  it("re-reads the summary before updating so a concurrent pause is preserved", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const pausedPrior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, listComments, updateComment } = mockOctokit([]);
+    listComments.mockResolvedValueOnce({ data: [prior] }).mockResolvedValueOnce({ data: [pausedPrior] });
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({ body: `${REVIEW_MARKER}\n## prowl-review\n\nslow review`, comments: [] }),
+      { headSha: "head-after-pause" }
+    );
+
+    expect(listComments).toHaveBeenCalledTimes(2);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-after-pause",
+      paused: true,
+      postedFindings: ["fp-a"]
+    });
+  });
+
   it("does not post inline comments when no commit id is available", async () => {
     const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(octokit, ref, payload());
@@ -404,8 +472,8 @@ describe("submitReview", () => {
     expect(updateComment).not.toHaveBeenCalled();
   });
 
-  it("re-checks the publish guard before the summary write", async () => {
-    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+  it("re-checks the publish guard after the summary re-read", async () => {
+    const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([]);
     const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     const result = await submitReview(octokit, ref, payload(), {
@@ -416,6 +484,8 @@ describe("submitReview", () => {
 
     expect(result).toEqual({ posted: true, cancelled: true });
     expect(shouldPublish).toHaveBeenCalledTimes(2);
+    expect(listComments).toHaveBeenCalledTimes(2);
+    expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
@@ -517,13 +587,13 @@ describe("submitReview", () => {
     expect(listComments).toHaveBeenCalledWith(
       expect.objectContaining({ sort: "created", direction: "desc" })
     );
-    expect(listComments).toHaveBeenCalledTimes(1);
+    expect(listComments).toHaveBeenCalledTimes(2);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).toHaveBeenCalledTimes(1);
     expect((updateComment.mock.calls[0][0] as { comment_id: number }).comment_id).toBe(201);
   });
 
-  it("caps the prior summary scan to avoid unbounded pagination", async () => {
+  it("caps each prior summary scan to avoid unbounded pagination", async () => {
     const filler = Array.from({ length: 1000 }, (_, index) => ({ id: index + 1, body: "noise" }));
     const priorBeforeCap = {
       id: 1001,
@@ -537,7 +607,7 @@ describe("submitReview", () => {
 
     await submitReview(octokit, ref, payload());
 
-    expect(listComments).toHaveBeenCalledTimes(10);
+    expect(listComments).toHaveBeenCalledTimes(20);
     expect(updateComment).not.toHaveBeenCalled();
     expect(createReview).not.toHaveBeenCalled();
     expect(createComment).toHaveBeenCalledTimes(1);
@@ -598,5 +668,42 @@ describe("submitReview", () => {
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
       "fp-a"
     ]);
+  });
+});
+
+describe("setPausedState (#26)", () => {
+  it("sets paused in the existing summary marker, preserving prior state", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
+      v: 1,
+      lastReviewedSha: "abc",
+      postedFindings: ["fp-a"]
+    })}`;
+    const { octokit, updateComment, createComment } = mockOctokit([
+      { id: 5, body: prior, user: { login: "github-actions[bot]" } }
+    ]);
+    const result = await setPausedState(octokit, ref, true);
+    expect(result.updatedExisting).toBe(true);
+    expect(createComment).not.toHaveBeenCalled();
+    const state = parseState((updateComment.mock.calls[0][0] as { body: string }).body);
+    expect(state?.paused).toBe(true);
+    expect(state?.lastReviewedSha).toBe("abc"); // preserved
+    expect(state?.postedFindings).toEqual(["fp-a"]); // preserved
+  });
+
+  it("creates a marked comment when no summary exists yet", async () => {
+    const { octokit, createComment, updateComment } = mockOctokit([]);
+    const result = await setPausedState(octokit, ref, true);
+    expect(result.updatedExisting).toBe(false);
+    expect(updateComment).not.toHaveBeenCalled();
+    const body = (createComment.mock.calls[0][0] as { body: string }).body;
+    expect(body).toContain(REVIEW_MARKER);
+    expect(parseState(body)?.paused).toBe(true);
+  });
+
+  it("clears paused on resume", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({ v: 1, paused: true, postedFindings: [] })}`;
+    const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
+    await setPausedState(octokit, ref, false);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.paused).toBe(false);
   });
 });

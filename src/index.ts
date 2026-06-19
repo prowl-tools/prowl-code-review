@@ -112,12 +112,23 @@ export {
   planPublish,
   fetchPriorReviewState,
   hasActiveRequestChanges,
+  setPausedState,
+  postPullRequestComment,
   type SubmitReviewOptions,
   type SubmitReviewResult,
   type PriorRequestChangesState,
   type PublishPlan,
   type PriorSummaryComment
 } from "./github/review.js";
+export {
+  parseCommand,
+  commandHelpText,
+  isTrustedCommandAuthor,
+  COMMAND_VERBS,
+  TRUSTED_COMMAND_ASSOCIATIONS,
+  type CommandVerb,
+  type ParsedCommand
+} from "./review/commands.js";
 export {
   planCheckRun,
   submitCheckRun,
