@@ -12,7 +12,8 @@ All notable changes to Prowl Review will be documented in this file.
   "acknowledged" resolves the thread and withholds the finding so it isn't re-raised, while "I disagree"
   keeps the thread open and withholds the finding (withdrawn from re-emit) pending re-review instead of
   blindly re-posting it. Reply intent is classified from the newest decisive recent User-authored comment by a pure,
-  conservative matcher (ambiguous or negated completion like "not fixed" -> no action; later non-decisive
+  conservative matcher (ambiguous, negated completion like "not fixed", or negated dispute wording
+  like "not a false positive" -> no action; later non-decisive
   follow-ups like "thanks" do not erase an earlier settle/dispute; bot/app comments and untrusted PR
   authors cannot settle a thread). Withheld findings, kept-open disputed threads, and
   settled thread actions from incomplete re-runs are handled **before** the approval gate (#52), so a
