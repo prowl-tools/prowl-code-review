@@ -75,7 +75,7 @@ on:
   issue_comment:
     types: [created]
 concurrency:
-  group: prowl-review-command-${{ github.event.issue.number }}
+  group: prowl-review-${{ github.event.issue.number }}
   queue: max
   cancel-in-progress: false
 permissions:
@@ -96,19 +96,23 @@ jobs:
       contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
           head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
           head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
           if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
             echo "trusted_head=true" >> "$GITHUB_OUTPUT"
           else
             echo "trusted_head=false" >> "$GITHUB_OUTPUT"
           fi
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
       - uses: actions/checkout@v4
         if: steps.pr.outputs.trusted_head == 'true'
         with:
