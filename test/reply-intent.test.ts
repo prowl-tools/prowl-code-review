@@ -49,7 +49,17 @@ describe("classifyReplyIntent (#22)", () => {
     expect(classifyReplyIntent(body)).toBe("acknowledged");
   });
 
-  it.each(["thanks", "ok", "hmm", "let me look", "", "interesting"])(
+  it.each([
+    "thanks",
+    "ok",
+    "hmm",
+    "let me look",
+    "",
+    "interesting",
+    "not working as intended",
+    "not intentional",
+    "not by design"
+  ])(
     "classifies %j as other",
     (body) => {
       expect(classifyReplyIntent(body)).toBe("other");
