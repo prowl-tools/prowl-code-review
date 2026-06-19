@@ -37,6 +37,16 @@ describe("dispatchCommand (#26)", () => {
     );
   });
 
+  it("runs an incremental review for `break-glass`, ignoring pause", async () => {
+    const d = deps();
+    const outcome = await dispatchCommand({ verb: "break-glass", argument: "abc123" }, { octokit, ref, deps: d });
+    expect(d.runReview).toHaveBeenCalledWith(
+      { pr: "7", repo: "prowl-tools/prowl-code-review" },
+      { respectPause: false }
+    );
+    expect(outcome.reviewed).toBe(true);
+  });
+
   it("pauses and acknowledges", async () => {
     const d = deps();
     const outcome = await dispatchCommand({ verb: "pause", argument: "" }, { octokit, ref, deps: d });
