@@ -12,6 +12,7 @@ import {
   fetchPriorReviewState as defaultFetchPriorReviewState,
   hasActiveRequestChanges as defaultHasActiveRequestChanges,
   type SubmitReviewOptions,
+  type SubmitReviewResult,
   type PriorRequestChangesState
 } from "./github/review.js";
 import {
@@ -104,7 +105,7 @@ export interface PipelineDeps {
     ref: PullRequestRef,
     payload: ReviewPayload,
     options?: SubmitReviewOptions
-  ) => Promise<void>;
+  ) => Promise<SubmitReviewResult | void>;
   /** Publish the merge-gate Check Run (#24). */
   submitCheckRun?: (
     octokit: OctokitLike,
@@ -448,14 +449,20 @@ function submitOptionsForReview(
   meta: PullRequestMeta,
   incrementalBaseSha: string | undefined,
   complete = true,
-  repostableFindings: string[] = []
+  repostableFindings: string[] = [],
+  shouldPublish?: () => Promise<boolean>
 ): SubmitReviewOptions {
   return {
     commitId: meta.headSha,
     ...(complete ? { headSha: meta.headSha } : {}),
     ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {}),
-    ...(repostableFindings.length > 0 ? { repostableFindings } : {})
+    ...(repostableFindings.length > 0 ? { repostableFindings } : {}),
+    ...(shouldPublish ? { shouldPublish } : {})
   };
+}
+
+function normalizeSubmitReviewResult(result: SubmitReviewResult | void): SubmitReviewResult {
+  return result ?? { posted: true, cancelled: false };
 }
 
 function filterAndGuardDiffFiles(
@@ -939,6 +946,7 @@ export async function reviewPullRequest(
       dryRun: options.dryRun === true
     });
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
+  const shouldPublishReview = async () => !(await hasHeadAdvanced());
   const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
@@ -1125,18 +1133,25 @@ export async function reviewPullRequest(
     }
     if (!options.dryRun) {
       try {
-        await submit(
-          octokit,
-          ref,
-          payload,
-          submitOptionsForReview(
-            meta,
-            incrementalBaseSha,
-            fullSkipped.length === 0,
-            tidied.tidy?.repostableFindings
+        const submitResult = normalizeSubmitReviewResult(
+          await submit(
+            octokit,
+            ref,
+            payload,
+            submitOptionsForReview(
+              meta,
+              incrementalBaseSha,
+              fullSkipped.length === 0,
+              tidied.tidy?.repostableFindings,
+              shouldPublishReview
+            )
           )
         );
-        result.posted = true;
+        result.posted = submitResult.posted;
+        if (submitResult.cancelled) {
+          result.headAdvanced = true;
+          return result;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new ReviewPublishError(message, result);
@@ -1374,18 +1389,25 @@ export async function reviewPullRequest(
   }
   if (!options.dryRun) {
     try {
-      await submit(
-        octokit,
-        ref,
-        payload,
-        submitOptionsForReview(
-          meta,
-          incrementalBaseSha,
-          !approvalCoverageIncomplete,
-          tidied.tidy?.repostableFindings
+      const submitResult = normalizeSubmitReviewResult(
+        await submit(
+          octokit,
+          ref,
+          payload,
+          submitOptionsForReview(
+            meta,
+            incrementalBaseSha,
+            !approvalCoverageIncomplete,
+            tidied.tidy?.repostableFindings,
+            shouldPublishReview
+          )
         )
       );
-      result.posted = true;
+      result.posted = submitResult.posted;
+      if (submitResult.cancelled) {
+        result.headAdvanced = true;
+        return result;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ReviewPublishError(message, result);
