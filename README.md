@@ -74,6 +74,10 @@ name: prowl-review command
 on:
   issue_comment:
     types: [created]
+concurrency:
+  group: prowl-review-command-${{ github.event.issue.number }}
+  queue: max
+  cancel-in-progress: false
 permissions:
   pull-requests: write
   checks: write

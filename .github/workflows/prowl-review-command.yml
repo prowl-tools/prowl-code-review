@@ -11,6 +11,7 @@ on:
 # commands cannot be overwritten by an in-flight auto review.
 concurrency:
   group: prowl-review-command-${{ github.event.issue.number }}
+  queue: max
   cancel-in-progress: false
 
 permissions:
