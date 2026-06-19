@@ -45,7 +45,7 @@ export interface ReviewThread {
   isOutdated: boolean;
   /** Finding fingerprints recovered from prowl-review's comments in this thread. */
   fingerprints: string[];
-  /** Classified intent of the latest trusted human reply, if any. */
+  /** Classified intent of the newest decisive trusted human reply, if any. */
   humanIntent: ReplyIntent;
 }
 
@@ -201,9 +201,10 @@ mutation ResolveThread($threadId: ID!) {
 /**
  * Fetch prowl-review's review threads on the PR, mapped to {@link ReviewThread}.
  * A thread's fingerprints come from comments authored by the bot; its
- * `humanIntent` is the classified intent of the latest trusted GitHub User
- * comment from the recent page. Tolerant — any read failure returns `[]` so the
- * review proceeds.
+ * `humanIntent` is the classified intent of the newest decisive trusted GitHub
+ * User comment from the recent page. Non-decisive follow-ups do not erase an
+ * earlier settled/disputed decision. Tolerant — any read failure returns `[]` so
+ * the review proceeds.
  */
 export async function fetchReviewThreads(
   octokit: OctokitLike,
@@ -249,15 +250,27 @@ export async function fetchReviewThreads(
             continue;
           }
           const author = comment.author?.login ?? undefined;
+          if (author === login) {
+            parseInlineFingerprintMarkers(comment.body ?? undefined).forEach((fp) => fingerprints.add(fp));
+          }
+        }
+        for (let i = recentComments.length - 1; i >= 0; i -= 1) {
+          const comment = recentComments[i];
+          if (!comment) {
+            continue;
+          }
+          const author = comment.author?.login ?? undefined;
           const authorType = comment.author?.__typename ?? undefined;
           const association = comment.authorAssociation ?? "NONE";
           const isTrustedHuman =
             authorType === "User" && BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association);
-          if (author === login) {
-            parseInlineFingerprintMarkers(comment.body ?? undefined).forEach((fp) => fingerprints.add(fp));
-          } else if (isTrustedHuman) {
-            // Latest trusted human reply wins (comments arrive oldest-first).
-            humanIntent = classifyReplyIntent(comment.body ?? undefined);
+          if (author === login || !isTrustedHuman) {
+            continue;
+          }
+          const intent = classifyReplyIntent(comment.body ?? undefined);
+          if (intent !== "other") {
+            humanIntent = intent;
+            break;
           }
         }
         threads.push({

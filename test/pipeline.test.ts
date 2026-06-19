@@ -980,6 +980,36 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.body).toContain("1 additional lower");
     });
 
+    it("refills capped findings after withholding settled thread findings", async () => {
+      const settled = finding({ title: "Settled", body: "settled", severity: "critical" });
+      const visible = finding({ title: "Visible", body: "visible", severity: "major" });
+      const refill = finding({ title: "Refill", body: "refill", severity: "major" });
+      const fp = findingFingerprint(settled);
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "S", fingerprints: [fp], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread };
+      deps.runReview.mockResolvedValue(
+        reviewResult([settled, visible], {
+          uncappedFindings: [settled, visible, refill],
+          judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 1 }
+        })
+      );
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        maxFindings: 2
+      });
+
+      expect(result.review.findings.map((f) => f.title)).toEqual(["Visible", "Refill"]);
+      expect(result.review.judge.capped).toBe(0);
+      expect(result.threads?.withheldSettled).toBe(1);
+      expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "S");
+    });
+
     it("keeps an outdated thread open when the finding is still current", async () => {
       const current = finding();
       const fp = findingFingerprint(current);

@@ -255,6 +255,7 @@ function truncateNote(value: string, maxLength = 500): string {
 function emptyReviewResult(): ReviewResult {
   return {
     findings: [],
+    uncappedFindings: [],
     raw: [],
     passes: [],
     verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
@@ -568,10 +569,11 @@ async function tidyReviewThreads(params: {
   octokit: OctokitLike;
   ref: PullRequestRef;
   findings: Finding[];
+  candidateFindings?: Finding[];
   resolveStaleThreads: boolean;
   enabled: boolean;
   dryRun: boolean;
-}): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult }> {
+}): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
   if (!params.enabled) {
     return { findings: params.findings, notes: [] };
   }
@@ -582,7 +584,10 @@ async function tidyReviewThreads(params: {
   }
 
   const fingerprintByFinding = new Map(params.findings.map((finding) => [finding, findingFingerprint(finding)]));
-  const currentFingerprints = [...fingerprintByFinding.values()];
+  const hasCandidateFindings = params.candidateFindings !== undefined;
+  const candidateFindings = params.candidateFindings ?? params.findings;
+  const fingerprintByCandidate = new Map(candidateFindings.map((finding) => [finding, findingFingerprint(finding)]));
+  const currentFingerprints = [...new Set([...fingerprintByFinding.values(), ...fingerprintByCandidate.values()])];
   const plan = planThreadActions({ threads, currentFingerprints, resolveStaleThreads: params.resolveStaleThreads });
 
   const acknowledged = new Set(plan.suppress.acknowledged);
@@ -591,8 +596,9 @@ async function tidyReviewThreads(params: {
   let withheldSettled = 0;
   let withheldDisputed = 0;
   const kept: Finding[] = [];
-  for (const finding of params.findings) {
-    const fingerprint = fingerprintByFinding.get(finding)!;
+  const visibleLimit = params.findings.length;
+  for (const finding of candidateFindings) {
+    const fingerprint = fingerprintByCandidate.get(finding)!;
     if (acknowledged.has(fingerprint)) {
       withheldSettled += 1;
     } else if (disputed.has(fingerprint)) {
@@ -601,6 +607,8 @@ async function tidyReviewThreads(params: {
       kept.push(finding);
     }
   }
+  const refilled = kept.slice(0, visibleLimit);
+  const capped = hasCandidateFindings ? Math.max(0, kept.length - refilled.length) : undefined;
 
   // Resolve threads (skipped on a dry run, which never mutates PR state).
   let resolvedFixed = 0;
@@ -648,7 +656,7 @@ async function tidyReviewThreads(params: {
     keptOpenDisputed: plan.keptOpenDisputed,
     repostableFindings: [...new Set([...plan.repostable, ...resolvedFixedFingerprints])]
   };
-  return { findings: kept, notes, tidy };
+  return { findings: refilled, notes, tidy, capped };
 }
 
 function approvalBlockingThreadCount(tidy: ThreadTidyResult | undefined): number {
@@ -981,12 +989,16 @@ export async function reviewPullRequest(
       octokit,
       ref,
       findings: reviewResult.findings,
+      candidateFindings: reviewResult.uncappedFindings,
       resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
       enabled: tidyThreadsEnabled,
       dryRun: options.dryRun === true
     });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
+    if (tidied.capped !== undefined) {
+      reviewResult.judge.capped = tidied.capped;
+    }
     let approval = await resolveApprovalDecision(
       detectOverride,
       detectPriorRequestChanges,
@@ -1172,8 +1184,10 @@ export async function reviewPullRequest(
     }
   );
   if (directGroundingFindings.length > 0) {
+    const uncappedFindings = reviewResult.uncappedFindings ?? reviewResult.findings;
     reviewResult.raw = [...reviewResult.raw, ...directGroundingFindings];
     reviewResult.findings = [...directGroundingFindings, ...reviewResult.findings];
+    reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
@@ -1199,12 +1213,16 @@ export async function reviewPullRequest(
     octokit,
     ref,
     findings: reviewResult.findings,
+    candidateFindings: reviewResult.uncappedFindings,
     resolveStaleThreads:
       incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
     enabled: tidyThreadsEnabled,
     dryRun: options.dryRun === true
   });
   reviewResult.findings = tidied.findings;
+  if (tidied.capped !== undefined) {
+    reviewResult.judge.capped = tidied.capped;
+  }
 
   // Approval rubric (#52): map the surfaced findings (+ any break-glass override)
   // to the review event and the #24 check conclusion — one decision, both surfaces.
