@@ -82,6 +82,10 @@ describe("classifyReplyIntent (#22)", () => {
   it.each([
     "not a false positive",
     "this is not a false positive",
+    "I don't think this is a false positive",
+    "I do not think this was a false-positive",
+    "I don't think the finding is a false positive",
+    "I don't think it has been a false positive",
     "I don't think this is fixed",
     "I do not think this has been fully resolved"
   ])("does not treat negated dispute wording %j as disagree", (body) => {

@@ -31,6 +31,7 @@ const DISAGREE_PATTERNS: RegExp[] = [
 const NEGATED_DISAGREE_PATTERNS: RegExp[] = [
   /\bnot (?:a )?false[ -]?positive\b/,
   /\b(?:isn'?t|is not|wasn'?t|was not)\s+(?:a\s+)?false[ -]?positive\b/,
+  /\bi (don'?t|do not) think (?:this|that|it|the finding|the issue)?\s*(?:is|was|has been)?\s*(?:a\s+)?false[ -]?positive\b/,
   /\bi (don'?t|do not) think (?:this|that|it|the finding|the issue)?\s*(?:is|was|has been)?\s*(?:(?:yet|fully|really|actually|quite|completely)\s+)*(?:fixed|resolved|addressed|done)\b/
 ];
 
