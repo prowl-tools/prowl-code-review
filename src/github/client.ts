@@ -52,6 +52,14 @@ export interface OctokitLike {
         per_page?: number;
         page?: number;
       }): Promise<{ data: Array<{ body?: string; user?: { login?: string } | null }> }>;
+      /** Reply in-thread to an existing review comment (#27 chat replies). */
+      createReplyForReviewComment(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        comment_id: number;
+        body: string;
+      }): Promise<{ data: unknown }>;
       /** List review submissions already posted on the PR. */
       listReviews(params: {
         owner: string;

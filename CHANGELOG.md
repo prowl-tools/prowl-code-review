@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `@prowl-review` chat replies (backlog #27): mention the bot with a free-form
+  question and get a contextual, in-thread answer grounded in the PR. Any `@prowl-review` comment that
+  isn't a known command verb is treated as a question (`@prowl-review why is this O(n²)?`): the new
+  `command` handler fetches the PR, builds a size-guarded + secret-redacted diff context, and asks the
+  configured provider for a concise, Markdown answer (`src/review/chat.ts` — `generateChatReply`). The PR
+  title/body/diff and the question are framed as **untrusted data** in the prompt so an injection in the PR
+  can't redirect the bot, and the reply is redacted again before posting. Replies thread correctly: inline
+  for a `pull_request_review_comment` (via `createReplyForReviewComment`, carrying the file/line/hunk
+  context), or a top-level PR comment otherwise. Honored only from a trusted author
+  (owner/member/collaborator); the provider key is resolved lazily so non-chat verbs never require it. The
+  command workflow now also triggers on `pull_request_review_comment`. Exports
+  `generateChatReply`/`buildChatPrompt`/`respondToComment`.
 - Bot command set (backlog #26): drive the reviewer from the PR by commenting
   `@prowl-review <verb>`. A pure, conservative parser + verb allowlist (#14) recognizes **`review`**
   (re-review the latest changes), **`full review`** (force a full re-scan), **`pause`** / **`resume`**

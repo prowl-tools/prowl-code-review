@@ -67,8 +67,12 @@ repo owner/member/collaborator is honored):
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
 | `@prowl-review resume` | Re-enable auto-review. |
 | `@prowl-review help` | List the available commands. |
+| `@prowl-review <question>` | Ask a free-form question — answered in-thread, grounded in the PR diff (#27). |
 
-Commands need a second workflow listening for comments:
+Anything after the mention that isn't a known command is treated as a question:
+`@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
+thread (inline, when asked on a specific review comment). The command workflow
+listens on both `issue_comment` and `pull_request_review_comment`:
 
 ```yaml
 # .github/workflows/prowl-review-command.yml

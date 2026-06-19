@@ -2,13 +2,18 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dispatchCommand, resolveCommentEvent, type CommandDispatchDeps } from "../src/cli/commands/command.js";
+import {
+  dispatchCommand,
+  resolveCommentEvent,
+  respondToComment,
+  type CommandDispatchDeps
+} from "../src/cli/commands/command.js";
 import type { OctokitLike } from "../src/github/client.js";
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 const octokit = {} as unknown as OctokitLike;
 
-function deps(over: Partial<CommandDispatchDeps> = {}): Required<CommandDispatchDeps> {
+function deps(over: Partial<CommandDispatchDeps> = {}): CommandDispatchDeps {
   return {
     runReview: vi.fn(async () => {}),
     setPaused: vi.fn(async () => ({ updatedExisting: true })),
@@ -63,13 +68,29 @@ describe("dispatchCommand (#26)", () => {
     expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("resumed"));
   });
 
-  it("replies with help for help and unknown verbs", async () => {
-    for (const verb of ["help", "unknown"] as const) {
-      const d = deps();
-      await dispatchCommand({ verb, argument: "" }, { octokit, ref, deps: d });
-      expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
-      expect(d.runReview).not.toHaveBeenCalled();
-    }
+  it("replies with help for the help verb", async () => {
+    const d = deps();
+    await dispatchCommand({ verb: "help", argument: "" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
+    expect(d.runReview).not.toHaveBeenCalled();
+  });
+
+  it("answers a free-form question (unknown verb) via the chat responder (#27)", async () => {
+    const respond = vi.fn(async () => {});
+    const d = deps({ respond });
+    const outcome = await dispatchCommand(
+      { verb: "unknown", argument: "why is this O(n^2)?" },
+      { octokit, ref, deps: d }
+    );
+    expect(respond).toHaveBeenCalledWith("why is this O(n^2)?");
+    expect(outcome.responded).toBe(true);
+    expect(d.postComment).not.toHaveBeenCalled();
+  });
+
+  it("falls back to help for an unknown verb when no chat responder is wired", async () => {
+    const d = deps(); // no respond
+    await dispatchCommand({ verb: "unknown", argument: "hello?" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
   });
 });
 
@@ -90,14 +111,41 @@ describe("resolveCommentEvent (#26)", () => {
 
   it("parses an issue_comment on a PR", () => {
     const env = writeEvent({
-      comment: { body: "@prowl-review review", author_association: "OWNER", user: { login: "maintainer" } },
+      comment: { id: 555, body: "@prowl-review review", author_association: "OWNER", user: { login: "maintainer" } },
       issue: { number: 7, pull_request: { url: "..." } }
     });
     expect(resolveCommentEvent(env)).toEqual({
       body: "@prowl-review review",
       association: "OWNER",
       login: "maintainer",
-      pullNumber: 7
+      pullNumber: 7,
+      commentId: 555,
+      isReviewComment: false,
+      thread: undefined
+    });
+  });
+
+  it("captures inline-thread context from a pull_request_review_comment (#27)", () => {
+    const env = writeEvent({
+      comment: {
+        id: 999,
+        body: "@prowl-review why is this unsafe?",
+        author_association: "MEMBER",
+        user: { login: "dev" },
+        path: "src/a.ts",
+        line: 42,
+        diff_hunk: "@@ -1 +1 @@\n+const x = 1;"
+      },
+      pull_request: { number: 12 }
+    });
+    expect(resolveCommentEvent(env)).toEqual({
+      body: "@prowl-review why is this unsafe?",
+      association: "MEMBER",
+      login: "dev",
+      pullNumber: 12,
+      commentId: 999,
+      isReviewComment: true,
+      thread: { path: "src/a.ts", line: 42, diffHunk: "@@ -1 +1 @@\n+const x = 1;" }
     });
   });
 
@@ -137,14 +185,80 @@ describe("resolveCommentEvent (#26)", () => {
   });
 });
 
+describe("respondToComment (#27)", () => {
+  const config = { provider: "anthropic" as const, model: "m", apiKey: "k" };
+  const baseEvent = {
+    body: "@prowl-review why?",
+    association: "OWNER",
+    login: "dev",
+    pullNumber: 7,
+    isReviewComment: false
+  };
+
+  function chatDeps() {
+    return {
+      fetchPr: vi.fn(async () => ({
+        meta: { title: "T", body: "desc", headSha: "h", baseSha: "b" },
+        diff: "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+secret = \"AKIA1234567890ABCD99\"\n"
+      })),
+      generateReply: vi.fn(async () => ({
+        reply: "It loops twice.",
+        usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+      })),
+      postIssueComment: vi.fn(async () => {}),
+      postReviewReply: vi.fn(async () => {})
+    };
+  }
+
+  it("posts a top-level reply for a PR comment, grounded in the fetched diff", async () => {
+    const deps = chatDeps();
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.fetchPr).toHaveBeenCalled();
+    expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("It loops twice."));
+    expect(deps.postReviewReply).not.toHaveBeenCalled();
+    // The fetched diff reaches the generator (redacted of secrets).
+    const chatInput = deps.generateReply.mock.calls[0][0];
+    expect(chatInput.diff).not.toContain("AKIA1234567890ABCD99");
+  });
+
+  it("replies in-thread for an inline review comment", async () => {
+    const deps = chatDeps();
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent, isReviewComment: true, commentId: 321, thread: { path: "src/a.ts", line: 5 } },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 321, expect.stringContaining("It loops twice."));
+    expect(deps.postIssueComment).not.toHaveBeenCalled();
+    expect(deps.generateReply.mock.calls[0][0].thread).toEqual({ path: "src/a.ts", line: 5 });
+  });
+});
+
 describe("command workflow metadata", () => {
   it("filters bot comments and reviews the PR head workspace", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
     const reviewWorkflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review.yml"), "utf8");
 
-    expect(workflow).toContain("group: prowl-review-${{ github.event.issue.number }}");
+    expect(workflow).toContain(
+      "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
+    );
     expect(workflow).toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
+    // Triggers on both top-level and inline PR comments (#27).
+    expect(workflow).toContain("issue_comment:");
+    expect(workflow).toContain("pull_request_review_comment:");
     expect(reviewWorkflow).toContain("group: prowl-review-${{ github.event.pull_request.number }}");
     expect(reviewWorkflow).toContain("queue: max");
     expect(reviewWorkflow).toContain("cancel-in-progress: false");

@@ -514,3 +514,19 @@ export async function postPullRequestComment(
     body
   });
 }
+
+/** Reply in-thread to an existing review comment — used for inline chat replies (#27). */
+export async function replyToReviewComment(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number,
+  body: string
+): Promise<void> {
+  await octokit.rest.pulls.createReplyForReviewComment({
+    owner: ref.owner,
+    repo: ref.repo,
+    pull_number: ref.pull_number,
+    comment_id: commentId,
+    body
+  });
+}
