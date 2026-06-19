@@ -445,3 +445,69 @@ export async function submitReview(
   }
   return { posted: true, cancelled: false };
 }
+
+/**
+ * Toggle the auto-review "paused" flag for a PR (#26). Persists `paused` in the
+ * state marker on prowl-review's summary comment — editing it in place when
+ * present, or creating a minimal marked comment when the bot hasn't reviewed the
+ * PR yet (so the flag survives and `fetchPriorReviewState` finds it). Preserves
+ * the existing `lastReviewedSha` + `postedFindings` so toggling pause never
+ * disturbs incremental/dedup state. Returns whether a prior summary was updated.
+ */
+export async function setPausedState(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  paused: boolean,
+  botLogin?: string
+): Promise<{ updatedExisting: boolean }> {
+  const login = await getAuthenticatedLogin(octokit, botLogin);
+  const prior = await findPriorSummary(octokit, ref, login);
+
+  if (prior) {
+    const priorState = parseState(prior.body);
+    const nextState: ReviewState = {
+      v: REVIEW_STATE_VERSION,
+      ...(priorState?.lastReviewedSha ? { lastReviewedSha: priorState.lastReviewedSha } : {}),
+      paused,
+      postedFindings: priorState?.postedFindings ?? []
+    };
+    const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
+    await octokit.rest.issues.updateComment({
+      owner: ref.owner,
+      repo: ref.repo,
+      comment_id: prior.id,
+      body
+    });
+    return { updatedExisting: true };
+  }
+
+  const note = paused
+    ? "prowl-review is **paused** for this PR. Comment `@prowl-review resume` to re-enable auto-review."
+    : "prowl-review is **active** for this PR.";
+  const { body } = embedStateWithFittedState(
+    `${REVIEW_MARKER}\n\n${note}`,
+    { v: REVIEW_STATE_VERSION, paused, postedFindings: [] },
+    GITHUB_COMMENT_BODY_LIMIT
+  );
+  await octokit.rest.issues.createComment({
+    owner: ref.owner,
+    repo: ref.repo,
+    issue_number: ref.pull_number,
+    body
+  });
+  return { updatedExisting: false };
+}
+
+/** Post a top-level PR comment — used for bot-command acknowledgments (#26). */
+export async function postPullRequestComment(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  body: string
+): Promise<void> {
+  await octokit.rest.issues.createComment({
+    owner: ref.owner,
+    repo: ref.repo,
+    issue_number: ref.pull_number,
+    body
+  });
+}

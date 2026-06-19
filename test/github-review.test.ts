@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { submitReview, planPublish, hasActiveRequestChanges } from "../src/github/review.js";
+import { submitReview, planPublish, hasActiveRequestChanges, setPausedState } from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
@@ -598,5 +598,42 @@ describe("submitReview", () => {
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
       "fp-a"
     ]);
+  });
+});
+
+describe("setPausedState (#26)", () => {
+  it("sets paused in the existing summary marker, preserving prior state", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
+      v: 1,
+      lastReviewedSha: "abc",
+      postedFindings: ["fp-a"]
+    })}`;
+    const { octokit, updateComment, createComment } = mockOctokit([
+      { id: 5, body: prior, user: { login: "github-actions[bot]" } }
+    ]);
+    const result = await setPausedState(octokit, ref, true);
+    expect(result.updatedExisting).toBe(true);
+    expect(createComment).not.toHaveBeenCalled();
+    const state = parseState((updateComment.mock.calls[0][0] as { body: string }).body);
+    expect(state?.paused).toBe(true);
+    expect(state?.lastReviewedSha).toBe("abc"); // preserved
+    expect(state?.postedFindings).toEqual(["fp-a"]); // preserved
+  });
+
+  it("creates a marked comment when no summary exists yet", async () => {
+    const { octokit, createComment, updateComment } = mockOctokit([]);
+    const result = await setPausedState(octokit, ref, true);
+    expect(result.updatedExisting).toBe(false);
+    expect(updateComment).not.toHaveBeenCalled();
+    const body = (createComment.mock.calls[0][0] as { body: string }).body;
+    expect(body).toContain(REVIEW_MARKER);
+    expect(parseState(body)?.paused).toBe(true);
+  });
+
+  it("clears paused on resume", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({ v: 1, paused: true, postedFindings: [] })}`;
+    const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
+    await setPausedState(octokit, ref, false);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.paused).toBe(false);
   });
 });
