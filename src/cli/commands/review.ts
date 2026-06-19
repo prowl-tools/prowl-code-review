@@ -335,7 +335,9 @@ export function reportReviewCommandResult(
     ? "— posted"
     : options.publishFailed
       ? "— publish failed (not posted)"
-      : "— dry run (not posted)";
+      : result.headAdvanced
+        ? "— skipped (PR head advanced; superseded by a newer run)"
+        : "— dry run (not posted)";
 
   console.log(
     `prowl-review: ${count} finding(s), ${inline} inline, ${result.contextFiles} context file(s) on ` +

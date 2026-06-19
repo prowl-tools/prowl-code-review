@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Workflow concurrency control (backlog #21): the GitHub Action workflow uses a
+  PR-keyed `concurrency` group with `cancel-in-progress`, so rapid re-pushes cancel the superseded
+  review instead of spawning overlapping runs that race to comment. To close the brief overlap window
+  `cancel-in-progress` leaves (a just-cancelled run can still be mid-publish), prowl-review now **re-checks
+  the PR head right before publishing** and skips the publish (and the #24 check run) when the head has
+  advanced past the SHA it reviewed — a newer run supersedes it — so stale results never clobber the
+  summary for an outdated commit. The guard is tolerant (a failed head re-check publishes normally), never
+  runs on `--dry-run`, and can be disabled via `cancelIfHeadAdvanced: false`. README gains a documented
+  sample workflow carrying the concurrency pattern + permissions. Exports `fetchPullRequestHeadSha`.
 - Resolve fixed threads + respect human replies (backlog #22 remainder): on a
   re-run prowl-review now tidies its prior finding threads. It **resolves** a thread (via the GraphQL
   `resolveReviewThread` mutation — the REST API can't) when the finding is gone from the latest review

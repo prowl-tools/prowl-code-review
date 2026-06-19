@@ -8,6 +8,51 @@ It's delivered as a **GitHub Action + local CLI** (zero hosting), and is built t
 
 > Status: **early development.** This package currently contains the project scaffold and CLI surface. See [`docs/backlog.md`](docs/backlog.md) for the roadmap and [`CLAUDE.md`](CLAUDE.md) for the design principles.
 
+## Usage (GitHub Action)
+
+Add a workflow that runs the review on pull requests. Store your provider key as
+the `PROWL_AI_KEY` repository secret.
+
+```yaml
+# .github/workflows/prowl-review.yml
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# Cancel a superseded review when new commits land on the same PR, so rapid
+# re-pushes don't spawn overlapping reviews racing to comment (#21). prowl-review
+# also re-checks the PR head before publishing and skips if it advanced, so a
+# just-cancelled run can't post stale results for an outdated commit.
+concurrency:
+  group: prowl-review-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  pull-requests: write   # post the review + inline comments
+  issues: write          # create/update the summary comment
+  checks: write          # optional merge-gate check run
+  contents: read
+
+jobs:
+  review:
+    # Skip drafts and fork PRs (forks don't receive provider secrets).
+    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          # ai-provider: anthropic   # anthropic | openai | gemini (default anthropic)
+          # ai-model: claude-...     # optional per-provider model override
+```
+
+The `concurrency` block is the recommended pattern: keying the group to the PR
+number with `cancel-in-progress` means an in-flight review for an outdated commit
+is cancelled cleanly when you push again.
+
 ## Development
 
 ```bash

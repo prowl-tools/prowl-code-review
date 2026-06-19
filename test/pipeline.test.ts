@@ -1347,6 +1347,82 @@ diff --git a/src/b.ts b/src/b.ts
     });
   });
 
+  describe("stale-publish guard (#21)", () => {
+    it("skips publishing when the PR head advanced past the reviewed SHA", async () => {
+      const fetchHeadSha = vi.fn(async () => "newer-sha"); // meta.headSha is "head"
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
+    it("does not post the check run when the head advanced", async () => {
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), fetchHeadSha, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(submitCheckRun).not.toHaveBeenCalled();
+      expect(result.checkRunConclusion).toBeUndefined();
+    });
+
+    it("publishes normally when the head is unchanged", async () => {
+      const fetchHeadSha = vi.fn(async () => "head"); // matches meta.headSha
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBeUndefined();
+      expect(result.posted).toBe(true);
+      expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes tolerantly when the head re-check is unavailable", async () => {
+      const fetchHeadSha = vi.fn(async () => undefined);
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.posted).toBe(true);
+      expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    });
+
+    it("does not run the guard (or skip) on a dry run", async () => {
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, dryRun: true });
+
+      expect(fetchHeadSha).not.toHaveBeenCalled();
+      expect(result.headAdvanced).toBeUndefined();
+    });
+
+    it("can be disabled via cancelIfHeadAdvanced: false", async () => {
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        cancelIfHeadAdvanced: false
+      });
+
+      expect(fetchHeadSha).not.toHaveBeenCalled();
+      expect(result.posted).toBe(true);
+    });
+  });
+
   it("throws publish errors with the completed review usage attached", async () => {
     const deps = makeDeps();
     deps.gatherContext.mockResolvedValue({
