@@ -415,10 +415,6 @@ export async function submitReview(
     posted = true;
   }
 
-  // Summary: update in place, or create on the first run.
-  if (options.shouldPublish && !(await options.shouldPublish())) {
-    return { posted, cancelled: true };
-  }
   // Re-read the summary just before writing so command-side state changes
   // (pause/resume) that landed during a long review are not overwritten.
   const latestPrior = await findPriorSummary(octokit, ref, botLogin);
@@ -431,6 +427,10 @@ export async function submitReview(
     repostableFindings: options.repostableFindings,
     postedInlineComments
   });
+  // Summary: update in place, or create on the first run.
+  if (options.shouldPublish && !(await options.shouldPublish())) {
+    return { posted, cancelled: true };
+  }
   if (finalPlan.priorCommentId !== undefined) {
     await octokit.rest.issues.updateComment({
       owner: ref.owner,

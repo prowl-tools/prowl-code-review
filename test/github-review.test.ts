@@ -472,8 +472,8 @@ describe("submitReview", () => {
     expect(updateComment).not.toHaveBeenCalled();
   });
 
-  it("re-checks the publish guard before the summary write", async () => {
-    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+  it("re-checks the publish guard after the summary re-read", async () => {
+    const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([]);
     const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     const result = await submitReview(octokit, ref, payload(), {
@@ -484,6 +484,8 @@ describe("submitReview", () => {
 
     expect(result).toEqual({ posted: true, cancelled: true });
     expect(shouldPublish).toHaveBeenCalledTimes(2);
+    expect(listComments).toHaveBeenCalledTimes(2);
+    expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
