@@ -152,6 +152,10 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("base_sha=\"$(gh api");
     expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
     expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
+    expect(workflow).toContain("action_file=\"action.yml\"");
+    expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
+    expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
+    expect(workflow).toContain("Trusted base does not support prowl-review command mode yet");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
