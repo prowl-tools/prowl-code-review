@@ -58,6 +58,8 @@ export interface SubmitReviewOptions {
   headSha?: string;
   /** Create a fresh summary comment so earlier visible findings remain on the PR. */
   preservePriorSummary?: boolean;
+  /** Prior inline fingerprints to ignore because their old thread was resolved as fixed. */
+  repostableFindings?: string[];
   /** Bot login used as a secondary check when matching our prior comment. */
   botLogin?: string;
 }
@@ -82,14 +84,17 @@ export function planPublish(input: {
   preservePriorSummary?: boolean;
   /** Fingerprints recovered from prior bot-authored inline comments. */
   priorPostedFindings?: string[];
+  /** Prior inline fingerprints to ignore because their old thread was resolved as fixed. */
+  repostableFindings?: string[];
   /** Inline comments known to have been posted; defaults to all net-new comments for pure planning. */
   postedInlineComments?: ReviewComment[];
 }): PublishPlan {
   const priorState = parseState(input.priorComment?.body);
+  const repostable = new Set(input.repostableFindings ?? []);
   const alreadyPosted = new Set([
     ...(priorState?.postedFindings ?? []),
     ...(input.priorPostedFindings ?? [])
-  ]);
+  ].filter((fingerprint) => !repostable.has(fingerprint)));
 
   const newInlineComments = input.payload.comments.filter(
     (comment) => !alreadyPosted.has(comment.fingerprint)
@@ -181,7 +186,7 @@ export async function fetchPriorReviewState(
 }
 
 /** Resolve the authenticated bot login used to trust prior prowl-review comments. */
-async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
+export async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
   if (botLogin) {
     return botLogin;
   }
@@ -259,7 +264,7 @@ function appendInlineFingerprintMarker(body: string, fingerprint: string): strin
 }
 
 /** Extract hidden prowl-review fingerprints from an existing inline review comment body. */
-function parseInlineFingerprintMarkers(body: string | undefined): string[] {
+export function parseInlineFingerprintMarkers(body: string | undefined): string[] {
   if (!body) {
     return [];
   }
@@ -358,6 +363,7 @@ export async function submitReview(
     headSha: options.headSha,
     preservePriorSummary: options.preservePriorSummary,
     priorPostedFindings,
+    repostableFindings: options.repostableFindings,
     postedInlineComments: []
   });
 
@@ -396,6 +402,7 @@ export async function submitReview(
     headSha: options.headSha,
     preservePriorSummary: options.preservePriorSummary,
     priorPostedFindings,
+    repostableFindings: options.repostableFindings,
     postedInlineComments
   });
 

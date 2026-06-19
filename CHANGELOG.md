@@ -5,6 +5,33 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Resolve fixed threads + respect human replies (backlog #22 remainder): on a
+  re-run prowl-review now tidies its prior finding threads. It **resolves** a thread (via the GraphQL
+  `resolveReviewThread` mutation — the REST API can't) when the finding is gone from the latest review
+  (fixed), and it **honors human replies**: replying "won't fix" /
+  "acknowledged" resolves the thread and withholds the finding so it isn't re-raised, while "I disagree"
+  keeps the thread open and withholds the finding (withdrawn from re-emit) pending re-review instead of
+  blindly re-posting it. Reply intent is classified from the newest decisive recent User-authored comment by a pure,
+  conservative matcher (ambiguous, negated completion like "not fixed", or negated dispute wording
+  like "not a false positive" / "I don't think this is a false positive" -> no action; later non-decisive
+  follow-ups like "thanks" do not erase an earlier settle/dispute; bot/app comments and untrusted PR
+  authors cannot settle a thread). Withheld findings, kept-open disputed threads, and
+  settled thread actions from incomplete re-runs are handled **before** the approval gate (#52), so a
+  finding a human settled or disputed no longer drives request-changes, but it also prevents automatic
+  approval until an explicit human approval or break-glass override, and required #24 Check Runs fail
+  while those thread blockers remain; break-glass overrides can explicitly unblock
+  withheld thread blockers. Fixed auto-resolution is skipped on incremental
+  delta-only, capped, or otherwise incomplete reviews, where the current findings are not a full-PR set; after
+  settled/disputed findings are withheld, capped reviews refill from the uncapped ranked set so lower-ranked
+  unsuppressed findings are not hidden by already-settled ones. Fingerprints from
+  fixed/resolved threads are allowed to post a fresh inline comment if the issue reappears, but stop being
+  considered repostable once an open replacement thread already carries the same fingerprint. Sensitive-file
+  grounding findings are preserved even when no provider-reviewable files remain and prior threads are fetched. Thread resolution
+  mutations run with bounded concurrency. All thread I/O is GraphQL and tolerant (a failure never
+  sinks the review); opt out via `review.resolveThreads` / `--no-resolve-threads`. Exports
+  `planThreadActions`/`fetchReviewThreads`/`resolveReviewThread`/`classifyReplyIntent`. **Deferred (still
+  #22):** on "I disagree", have the judge actively re-justify or formally withdraw the finding (rides with
+  the bot-command/event infra, #26/#27) — today the finding is withheld, not re-argued.
 - Approval rubric + break-glass override (backlog #52): an opt-in gate
   (`approval.enabled`) that maps findings to a single GitHub review event — any finding at or above
   `requestChangesAt` (default `critical`) makes the bot **request changes**; an otherwise clean review

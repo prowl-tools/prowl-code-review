@@ -13,6 +13,7 @@ export {
   reviewPullRequest,
   type ReviewPullRequestOptions,
   type ReviewPullRequestResult,
+  type ThreadTidyResult,
   type PipelineDeps
 } from "./pipeline.js";
 export { renderGuardedDiff } from "./review/render-diff.js";
@@ -132,6 +133,20 @@ export {
   BREAK_GLASS_RE,
   BREAK_GLASS_TRUSTED_ASSOCIATIONS
 } from "./github/break-glass.js";
+export {
+  fetchReviewThreads,
+  resolveReviewThread,
+  planThreadActions,
+  type ReviewThread,
+  type ThreadActionPlan,
+  type ThreadResolveReason
+} from "./github/threads.js";
+export {
+  classifyReplyIntent,
+  isResolvingIntent,
+  isDisputingIntent,
+  type ReplyIntent
+} from "./review/reply-intent.js";
 export {
   findingFingerprint,
   serializeState,

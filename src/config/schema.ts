@@ -40,7 +40,9 @@ const reviewSchema = z
     /** Findings at/above this confidence skip verification (0–1). Default 0.8. */
     verifyConfidence: z.number().min(0).max(1).optional(),
     /** On a re-run, review only the delta since the last reviewed SHA. Default true (#23). */
-    incremental: z.boolean().optional()
+    incremental: z.boolean().optional(),
+    /** On a re-run, resolve fixed/settled threads and honor human replies. Default true (#22). */
+    resolveThreads: z.boolean().optional()
   })
   .strict();
 
