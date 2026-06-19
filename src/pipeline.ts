@@ -980,7 +980,12 @@ export async function reviewPullRequest(
   }
 
   if (reviewFiles.length === 0) {
-    const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
+    const reviewResult = {
+      ...emptyReviewResult(),
+      findings: groundingFindings,
+      uncappedFindings: groundingFindings,
+      raw: groundingFindings
+    };
     const approvalCoverageIncomplete = fullSkipped.length > 0;
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
     const tidied = await tidyReviewThreads({

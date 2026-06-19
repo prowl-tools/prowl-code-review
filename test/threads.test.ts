@@ -61,6 +61,18 @@ describe("planThreadActions (#22)", () => {
     expect(plan.repostable).toEqual(["gone"]);
   });
 
+  it("does not keep reposting a resolved fingerprint that already has an open thread", () => {
+    const plan = planThreadActions({
+      threads: [
+        thread({ id: "old", isResolved: true, fingerprints: ["fp1"] }),
+        thread({ id: "new", isResolved: false, fingerprints: ["fp1"] })
+      ],
+      currentFingerprints: ["fp1"]
+    });
+    expect(plan.resolve).toEqual([]);
+    expect(plan.repostable).toEqual([]);
+  });
+
   it("keeps suppression for already-resolved settled threads without resolving again", () => {
     const plan = planThreadActions({
       threads: [

@@ -92,7 +92,14 @@ export function planThreadActions(input: {
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
   const repostable = new Set<string>();
+  const openThreadFingerprints = new Set<string>();
   let keptOpenDisputed = 0;
+
+  for (const thread of input.threads) {
+    if (!thread.isResolved) {
+      thread.fingerprints.forEach((fp) => openThreadFingerprints.add(fp));
+    }
+  }
 
   for (const thread of input.threads) {
     if (thread.fingerprints.length === 0) {
@@ -120,7 +127,11 @@ export function planThreadActions(input: {
     }
 
     if (thread.isResolved) {
-      thread.fingerprints.forEach((fp) => repostable.add(fp));
+      thread.fingerprints.forEach((fp) => {
+        if (!openThreadFingerprints.has(fp)) {
+          repostable.add(fp);
+        }
+      });
       continue;
     }
 

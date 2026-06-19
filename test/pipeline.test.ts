@@ -1975,6 +1975,46 @@ new file mode 100644
     expect(result.payload.body).toContain("provider review skipped");
   });
 
+  it("preserves secret grounding in no-provider-files runs when threads are fetched", async () => {
+    const deps = makeDeps();
+    const secretDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+`;
+    const secretFinding = {
+      file: ".env",
+      line: 1,
+      severity: "critical" as const,
+      category: "security",
+      title: "generic-api-key",
+      body: "Detected a Generic API Key (generic-api-key)",
+      confidence: 0.9
+    };
+    const fp = findingFingerprint(secretFinding);
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: secretDiff });
+    deps.gatherGrounding.mockResolvedValue({
+      findings: [secretFinding],
+      notes: ["Gitleaks: 1 potential secret(s) on changed lines."]
+    });
+    const fetchReviewThreads = vi.fn(async () => [
+      { id: "S", isResolved: false, isOutdated: false, fingerprints: [fp], humanIntent: "other" }
+    ]);
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps: { ...deps, fetchReviewThreads }
+    });
+
+    expect(fetchReviewThreads).toHaveBeenCalled();
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(result.review.findings).toEqual([secretFinding]);
+    expect(result.payload.body).toContain("generic-api-key");
+  });
+
   it("surfaces sensitive secret grounding without provider verification when reviewable files remain", async () => {
     const deps = makeDeps();
     const mixedDiff = `diff --git a/.env b/.env
