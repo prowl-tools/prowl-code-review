@@ -146,6 +146,21 @@ describe("planPublish", () => {
     expect(plan.state.postedFindings.sort()).toEqual(["fp-a", "fp-b"]);
   });
 
+  it("preserves the paused flag from prior summary state", () => {
+    const prior = {
+      id: 99,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`
+    };
+    const plan = planPublish({
+      payload: payload({ comments: [comment({ fingerprint: "fp-a" })] }),
+      priorComment: prior,
+      headSha: "sha2"
+    });
+
+    expect(plan.state).toEqual({ v: 1, lastReviewedSha: "sha2", paused: true, postedFindings: ["fp-a"] });
+    expect(parseState(plan.summaryBody)?.paused).toBe(true);
+  });
+
   it("allows reposting fingerprints whose old thread was resolved as fixed", () => {
     const prior = {
       id: 99,
@@ -363,6 +378,29 @@ describe("submitReview", () => {
     expect(parseState(updated.body)).toEqual({
       v: 1,
       lastReviewedSha: "head3",
+      postedFindings: ["fp-a"]
+    });
+  });
+
+  it("preserves paused state when refreshing the summary", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, paused: true, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, updateComment } = mockOctokit([prior]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({ body: `${REVIEW_MARKER}\n## prowl-review\n\nmanual review`, comments: [] }),
+      { headSha: "head-paused" }
+    );
+
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-paused",
+      paused: true,
       postedFindings: ["fp-a"]
     });
   });

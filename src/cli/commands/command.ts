@@ -45,12 +45,15 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
   }
   try {
     const event = JSON.parse(readFileSync(path, "utf8")) as {
-      comment?: { body?: string; author_association?: string; user?: { login?: string } | null };
+      comment?: { body?: string; author_association?: string; user?: { login?: string; type?: string } | null };
       issue?: { number?: number; pull_request?: unknown };
       pull_request?: { number?: number };
     };
     const comment = event.comment;
     if (!comment?.body) {
+      return null;
+    }
+    if (comment.user?.type === "Bot") {
       return null;
     }
     let pullNumber: number | undefined;

@@ -22,6 +22,7 @@ jobs:
     # Only PR comments that mention the bot; never act on issue comments or forks.
     if: |
       github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
       contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
     steps:
@@ -41,12 +42,40 @@ jobs:
             echo "Trusted base does not contain prowl-review yet; skipping command run."
           fi
 
-      - name: prowl-review command
+      - name: Resolve PR metadata
         if: steps.trusted-action.outputs.available == 'true'
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping command from fork PR head ${head_repo}."
+          fi
+
+      - name: Checkout PR head for context
+        if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+
+      - name: prowl-review command
+        if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        env:
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
           mode: command
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           ai-provider: gemini
           ai-model: gemini-2.5-flash
+          workspace-path: ${{ github.workspace }}/pr-head
           guidelines-path: ${{ github.workspace }}

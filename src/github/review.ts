@@ -119,6 +119,7 @@ export function planPublish(input: {
   const requestedState: ReviewState = {
     v: REVIEW_STATE_VERSION,
     ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
+    ...(priorState?.paused !== undefined ? { paused: priorState.paused } : {}),
     postedFindings
   };
   const { body: summaryBody, state } = embedStateWithFittedState(

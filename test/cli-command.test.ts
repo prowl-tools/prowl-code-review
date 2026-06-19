@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import { writeFileSync, mkdtempSync, rmSync } from "node:fs";
+import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { dispatchCommand, resolveCommentEvent, type CommandDispatchDeps } from "../src/cli/commands/command.js";
@@ -91,6 +91,19 @@ describe("resolveCommentEvent (#26)", () => {
     });
   });
 
+  it("ignores bot-authored comments", () => {
+    const env = writeEvent({
+      comment: {
+        body: "@prowl-review pause",
+        author_association: "OWNER",
+        user: { login: "github-actions[bot]", type: "Bot" }
+      },
+      issue: { number: 7, pull_request: { url: "..." } }
+    });
+
+    expect(resolveCommentEvent(env)).toBeNull();
+  });
+
   it("ignores an issue_comment that is not on a PR", () => {
     const env = writeEvent({
       comment: { body: "@prowl-review review", author_association: "OWNER" },
@@ -111,5 +124,16 @@ describe("resolveCommentEvent (#26)", () => {
     expect(resolveCommentEvent({} as NodeJS.ProcessEnv)).toBeNull();
     const env = writeEvent({ issue: { number: 7, pull_request: {} } });
     expect(resolveCommentEvent(env)).toBeNull();
+  });
+});
+
+describe("command workflow metadata", () => {
+  it("filters bot comments and reviews the PR head workspace", () => {
+    const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
+
+    expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
+    expect(workflow).toContain("Checkout PR head for context");
+    expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
+    expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
   });
 });
