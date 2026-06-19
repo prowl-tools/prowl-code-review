@@ -40,9 +40,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Done:** human replies are honored — "won't fix"/"acknowledged" resolves the thread and withholds the finding; "I disagree" keeps the thread open and withholds the finding (withdrawn from re-emit) instead of blindly re-posting it.
     - Acceptance (remaining): on "I disagree", have the judge actively **re-justify** the finding (defend with reasoning) or formally **withdraw** it, rather than just withholding it — rides with the bot-command/event infra (#26/#27) that owns reply-driven re-review.
 
-26. **Bot command set**
+26. **Bot command set** *(core verbs done — see resolved.md)*
     As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
-    - Acceptance: support `review` / `full review` (manual + full re-scan), `pause`/`resume`, `ignore`, `resolve`, `configure` via `@prowl-review <cmd>` comments (verb allowlist per #14).
+    - **Done:** `@prowl-review` command parsing + verb allowlist (#14), trust-gated to owner/member/collaborator, dispatched from an `issue_comment` workflow + a `command` CLI subcommand (Action `mode: command`). Verbs: `review` (re-review latest), `full review` (full re-scan), `pause`/`resume` (auto-review toggle persisted in the summary state marker), `help`.
+    - Acceptance (remaining): `ignore` and `resolve` verbs — these act on a **specific finding/thread** from the reply context (`pull_request_review_comment`), so they need comment→thread/fingerprint mapping; `ignore` is the #30 learnings write-back (suppress a finding going forward), `resolve` overlaps #22's thread resolution. Rides with the #27/#30 reply infra.
+    - Acceptance (remaining): `configure` verb — adjust review settings from a comment (scope/semantics TBD; likely a thin wrapper over `.prowl-review.yml` keys).
 
 27. **`@prowl-review` chat replies**
     As a developer, I want to mention the bot in a PR comment and get a contextual, in-thread reply, so that I can ask follow-ups.
