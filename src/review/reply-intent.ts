@@ -48,8 +48,9 @@ const WONT_FIX_PATTERNS: RegExp[] = [
 
 /** Mentions that a design/intentional rationale does not apply — do not resolve. */
 const NEGATED_WONT_FIX_PATTERNS: RegExp[] = [
-  /\bnot\s+(?:as[ -]designed|by design|working as intended|intentional)\b/,
-  /\b(?:isn'?t|aren'?t|wasn'?t|weren'?t)\s+(?:as[ -]designed|by design|working as intended|intentional)\b/
+  /\bnot\s+(?:(?:really|actually|quite|fully|clearly)\s+)*(?:as[ -]designed|by design|working as intended|intentional)\b/,
+  /\b(?:isn'?t|aren'?t|wasn'?t|weren'?t|is not|are not|was not|were not)\s+(?:(?:really|actually|quite|fully|clearly)\s+)*(?:as[ -]designed|by design|working as intended|intentional)\b/,
+  /\bi (don'?t|do not) think (?:this|that|it|the finding|the issue)?\s*(?:is|are|was|were|has been)?\s*(?:(?:really|actually|quite|fully|clearly)\s+)*(?:as[ -]designed|by design|working as intended|intentional)\b/
 ];
 
 /** The human accepts the finding (or already fixed it) — resolve the thread. */

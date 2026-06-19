@@ -786,6 +786,7 @@ async function resolveApprovalDecision(
     decision.enabled &&
     !decision.coverageDegraded &&
     decision.blocking === 0 &&
+    decision.event === "APPROVE" &&
     threadApprovalBlockers > 0 &&
     breakGlass?.active === true
   ) {

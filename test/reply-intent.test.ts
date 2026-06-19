@@ -57,8 +57,12 @@ describe("classifyReplyIntent (#22)", () => {
     "",
     "interesting",
     "not working as intended",
+    "not actually working as intended",
     "not intentional",
-    "not by design"
+    "not by design",
+    "I don't think this is by design",
+    "I don't think this is working as intended",
+    "I do not think the issue was intentional"
   ])(
     "classifies %j as other",
     (body) => {
