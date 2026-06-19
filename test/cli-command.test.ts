@@ -149,6 +149,42 @@ describe("resolveCommentEvent (#26)", () => {
     });
   });
 
+  it("redacts inline-thread diff hunks before they reach the chat prompt", () => {
+    const env = writeEvent({
+      comment: {
+        id: 999,
+        body: "@prowl-review why is this unsafe?",
+        author_association: "MEMBER",
+        user: { login: "dev" },
+        path: "src/a.ts",
+        line: 42,
+        diff_hunk: "@@ -1 +1 @@\n+const key = \"AKIA1234567890ABCD99\";"
+      },
+      pull_request: { number: 12 }
+    });
+
+    const event = resolveCommentEvent(env);
+    expect(event?.thread?.diffHunk).not.toContain("AKIA1234567890ABCD99");
+    expect(event?.thread?.diffHunk).toContain("[REDACTED:aws-access-key]");
+  });
+
+  it("omits inline diff hunks from sensitive files", () => {
+    const env = writeEvent({
+      comment: {
+        id: 999,
+        body: "@prowl-review why is this unsafe?",
+        author_association: "MEMBER",
+        user: { login: "dev" },
+        path: ".env",
+        line: 1,
+        diff_hunk: "@@ -0,0 +1 @@\n+CUSTOM_VALUE=plainsecretvalue"
+      },
+      pull_request: { number: 12 }
+    });
+
+    expect(resolveCommentEvent(env)?.thread).toEqual({ path: ".env", line: 1, diffHunk: undefined });
+  });
+
   it("ignores bot-authored comments", () => {
     const env = writeEvent({
       comment: {
@@ -195,11 +231,11 @@ describe("respondToComment (#27)", () => {
     isReviewComment: false
   };
 
-  function chatDeps() {
+  function chatDeps(diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+secret = \"AKIA1234567890ABCD99\"\n") {
     return {
       fetchPr: vi.fn(async () => ({
         meta: { title: "T", body: "desc", headSha: "h", baseSha: "b" },
-        diff: "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+secret = \"AKIA1234567890ABCD99\"\n"
+        diff
       })),
       generateReply: vi.fn(async () => ({
         reply: "It loops twice.",
@@ -227,6 +263,65 @@ describe("respondToComment (#27)", () => {
     // The fetched diff reaches the generator (redacted of secrets).
     const chatInput = deps.generateReply.mock.calls[0][0];
     expect(chatInput.diff).not.toContain("AKIA1234567890ABCD99");
+  });
+
+  it("filters sensitive diff files before generating a chat reply", async () => {
+    const deps = chatDeps(
+      [
+        "diff --git a/.env b/.env",
+        "new file mode 100644",
+        "--- /dev/null",
+        "+++ b/.env",
+        "@@ -0,0 +1 @@",
+        "+CUSTOM_VALUE=plainsecretvalue",
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1 +1 @@",
+        "+export const shown = true;"
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      deps
+    });
+
+    const chatInput = deps.generateReply.mock.calls[0][0];
+    expect(chatInput.diff).not.toContain("plainsecretvalue");
+    expect(chatInput.diff).not.toContain(".env");
+    expect(chatInput.diff).toContain("src/app.ts");
+    expect(chatInput.diff).not.toContain("(diff truncated to fit the chat context)");
+  });
+
+  it("does not label binary skips as chat diff truncation", async () => {
+    const deps = chatDeps(
+      [
+        "diff --git a/img.png b/img.png",
+        "new file mode 100644",
+        "Binary files /dev/null and b/img.png differ",
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1 +1 @@",
+        "+export const shown = true;"
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.generateReply.mock.calls[0][0].diff).not.toContain("(diff truncated to fit the chat context)");
   });
 
   it("replies in-thread for an inline review comment", async () => {
