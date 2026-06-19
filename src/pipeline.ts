@@ -21,6 +21,14 @@ import {
 } from "./github/check-run.js";
 import { detectBreakGlass as defaultDetectBreakGlass } from "./github/break-glass.js";
 import {
+  fetchReviewThreads as defaultFetchReviewThreads,
+  resolveReviewThread as defaultResolveReviewThread,
+  planThreadActions,
+  type ReviewThread,
+  type ThreadActionPlan
+} from "./github/threads.js";
+import { findingFingerprint } from "./review/state.js";
+import {
   planApprovalDecision,
   approvalNotes,
   type ApprovalConfig,
@@ -110,6 +118,10 @@ export interface PipelineDeps {
   ) => Promise<BreakGlassSignal>;
   /** Detect whether prowl-review has an active prior request-changes review (#52). */
   detectPriorRequestChanges?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PriorRequestChangesState>;
+  /** List prowl-review's prior review threads for tidy-up (#22). */
+  fetchReviewThreads?: (octokit: OctokitLike, ref: PullRequestRef, botLogin?: string) => Promise<ReviewThread[]>;
+  /** Resolve a single review thread via GraphQL (#22). */
+  resolveReviewThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -173,6 +185,14 @@ export interface ReviewPullRequestOptions {
    * request-changes into an approval. Omitted/disabled → the review only comments.
    */
   approval?: ApprovalConfig;
+  /**
+   * Tidy prior finding threads on a re-run (#22): resolve threads whose finding
+   * is no longer current or that a human settled (won't-fix/acknowledged), and
+   * withhold findings the human settled or disputed instead of re-raising them.
+   * Default on; set false to leave threads untouched. Tolerant — GraphQL failures
+   * never sink the review.
+   */
+  resolveThreads?: boolean;
   /** Explicit review event override; wins over the approval rubric when set. */
   event?: ReviewEvent;
   /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
@@ -189,6 +209,8 @@ export interface ReviewPullRequestOptions {
   dryRun?: boolean;
   deps?: PipelineDeps;
 }
+
+const THREAD_RESOLUTION_CONCURRENCY = 4;
 
 export interface ReviewPullRequestResult {
   meta: PullRequestMeta;
@@ -208,6 +230,8 @@ export interface ReviewPullRequestResult {
   checkRunConclusion?: CheckConclusion;
   /** Approval rubric decision (#52); undefined when the gate is disabled. */
   approval?: ApprovalDecision;
+  /** Prior-thread tidy-up outcome (#22); undefined when disabled or no prior threads. */
+  threads?: ThreadTidyResult;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -231,6 +255,7 @@ function truncateNote(value: string, maxLength = 500): string {
 function emptyReviewResult(): ReviewResult {
   return {
     findings: [],
+    uncappedFindings: [],
     raw: [],
     passes: [],
     verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
@@ -404,12 +429,14 @@ function incrementalNotes(baseSha: string | undefined, fallback: boolean): strin
 function submitOptionsForReview(
   meta: PullRequestMeta,
   incrementalBaseSha: string | undefined,
-  complete = true
+  complete = true,
+  repostableFindings: string[] = []
 ): SubmitReviewOptions {
   return {
     commitId: meta.headSha,
     ...(complete ? { headSha: meta.headSha } : {}),
-    ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {})
+    ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {}),
+    ...(repostableFindings.length > 0 ? { repostableFindings } : {})
   };
 }
 
@@ -475,6 +502,190 @@ function incrementalDeltaIsWithinPrDiff(deltaFiles: DiffFile[], prFiles: DiffFil
   return true;
 }
 
+/** Outcome of the prior-thread tidy-up (#22), surfaced on the result for reporting. */
+export interface ThreadTidyResult {
+  /** Threads resolved because their finding is no longer current. */
+  resolvedFixed: number;
+  /** Threads resolved because a human settled them (won't-fix/acknowledged). */
+  resolvedSettled: number;
+  /** Settled thread actions that block approval because this run's finding set is incomplete. */
+  approvalBlockingSettled: number;
+  /** Current findings withheld because a human settled them (won't-fix/acknowledged). */
+  withheldSettled: number;
+  /** Current findings withheld because a human disputed them ("disagree"). */
+  withheldDisputed: number;
+  /** Disputed threads left open for the human (not resolved). */
+  keptOpenDisputed: number;
+  /** Prior inline fingerprints that may be posted again because the old thread was fixed. */
+  repostableFindings: string[];
+}
+
+type ThreadResolveAction = ThreadActionPlan["resolve"][number];
+
+async function resolveThreadActions(params: {
+  actions: ThreadResolveAction[];
+  resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
+  octokit: OctokitLike;
+}): Promise<{ resolvedFixed: number; resolvedSettled: number; resolvedFixedFingerprints: string[] }> {
+  let resolvedFixed = 0;
+  let resolvedSettled = 0;
+  const resolvedFixedFingerprints = new Set<string>();
+  let next = 0;
+  const workerCount = Math.min(THREAD_RESOLUTION_CONCURRENCY, params.actions.length);
+  const workers = Array.from({ length: workerCount }, async () => {
+    while (next < params.actions.length) {
+      const action = params.actions[next];
+      next += 1;
+      if (!action) {
+        continue;
+      }
+      const ok = await params.resolveThread(params.octokit, action.id);
+      if (!ok) {
+        continue;
+      }
+      if (action.reason === "fixed") {
+        resolvedFixed += 1;
+        action.fingerprints.forEach((fingerprint) => resolvedFixedFingerprints.add(fingerprint));
+      } else {
+        resolvedSettled += 1;
+      }
+    }
+  });
+  await Promise.all(workers);
+  return { resolvedFixed, resolvedSettled, resolvedFixedFingerprints: [...resolvedFixedFingerprints] };
+}
+
+/**
+ * Tidy prior finding threads (#22): resolve threads whose finding is no longer
+ * current (gone from this run) or that a human settled (won't-fix/acknowledged), and
+ * withhold findings the human settled or disputed so the reviewer doesn't
+ * re-raise them. Returns the (possibly reduced) findings, reviewer-visible notes,
+ * and a structured tidy result. Tolerant: a GraphQL failure yields an empty
+ * thread list, so the review proceeds unchanged.
+ */
+async function tidyReviewThreads(params: {
+  fetchThreads: NonNullable<PipelineDeps["fetchReviewThreads"]>;
+  resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  findings: Finding[];
+  candidateFindings?: Finding[];
+  resolveStaleThreads: boolean;
+  enabled: boolean;
+  dryRun: boolean;
+}): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
+  if (!params.enabled) {
+    return { findings: params.findings, notes: [] };
+  }
+
+  const threads = await params.fetchThreads(params.octokit, params.ref);
+  if (threads.length === 0) {
+    return { findings: params.findings, notes: [] };
+  }
+
+  const fingerprintByFinding = new Map(params.findings.map((finding) => [finding, findingFingerprint(finding)]));
+  const hasCandidateFindings = params.candidateFindings !== undefined;
+  const candidateFindings = params.candidateFindings ?? params.findings;
+  const fingerprintByCandidate = new Map(candidateFindings.map((finding) => [finding, findingFingerprint(finding)]));
+  const currentFingerprints = [...new Set([...fingerprintByFinding.values(), ...fingerprintByCandidate.values()])];
+  const plan = planThreadActions({ threads, currentFingerprints, resolveStaleThreads: params.resolveStaleThreads });
+
+  const acknowledged = new Set(plan.suppress.acknowledged);
+  const disputed = new Set(plan.suppress.disputed);
+  const approvalBlockingSettled = params.resolveStaleThreads ? 0 : acknowledged.size;
+  let withheldSettled = 0;
+  let withheldDisputed = 0;
+  const kept: Finding[] = [];
+  const visibleLimit = params.findings.length;
+  for (const finding of candidateFindings) {
+    const fingerprint = fingerprintByCandidate.get(finding)!;
+    if (acknowledged.has(fingerprint)) {
+      withheldSettled += 1;
+    } else if (disputed.has(fingerprint)) {
+      withheldDisputed += 1;
+    } else {
+      kept.push(finding);
+    }
+  }
+  const refilled = kept.slice(0, visibleLimit);
+  const capped = hasCandidateFindings ? Math.max(0, kept.length - refilled.length) : undefined;
+
+  // Resolve threads (skipped on a dry run, which never mutates PR state).
+  let resolvedFixed = 0;
+  let resolvedSettled = 0;
+  let resolvedFixedFingerprints: string[] = [];
+  if (!params.dryRun) {
+    ({ resolvedFixed, resolvedSettled, resolvedFixedFingerprints } = await resolveThreadActions({
+      actions: plan.resolve,
+      resolveThread: params.resolveThread,
+      octokit: params.octokit
+    }));
+  }
+
+  const notes: string[] = [];
+  const resolvedTotal = resolvedFixed + resolvedSettled;
+  if (resolvedTotal > 0) {
+    const parts: string[] = [];
+    if (resolvedFixed > 0) {
+      parts.push(`${resolvedFixed} no longer current`);
+    }
+    if (resolvedSettled > 0) {
+      parts.push(`${resolvedSettled} you settled`);
+    }
+    notes.push(`Resolved ${resolvedTotal} prior finding thread(s) — ${parts.join(", ")} (#22).`);
+  }
+  if (withheldSettled > 0) {
+    notes.push(
+      `Withheld ${withheldSettled} finding(s) you marked acknowledged/won't-fix so they aren't re-raised (#22).`
+    );
+  }
+  if (withheldDisputed > 0) {
+    notes.push(
+      `Withheld ${withheldDisputed} disputed finding(s) (you replied "disagree"); left the thread open for re-review rather than re-raising (#22).`
+    );
+  } else if (plan.keptOpenDisputed > 0) {
+    notes.push(`Left ${plan.keptOpenDisputed} disputed thread(s) open for re-review (#22).`);
+  }
+
+  const tidy: ThreadTidyResult = {
+    resolvedFixed,
+    resolvedSettled,
+    approvalBlockingSettled,
+    withheldSettled,
+    withheldDisputed,
+    keptOpenDisputed: plan.keptOpenDisputed,
+    repostableFindings: [...new Set([...plan.repostable, ...resolvedFixedFingerprints])]
+  };
+  return { findings: refilled, notes, tidy, capped };
+}
+
+function approvalBlockingThreadCount(tidy: ThreadTidyResult | undefined): number {
+  if (!tidy) {
+    return 0;
+  }
+  return (
+    Math.max(tidy.withheldSettled, tidy.approvalBlockingSettled) +
+    Math.max(tidy.withheldDisputed, tidy.keptOpenDisputed)
+  );
+}
+
+function inhibitApprovalForWithheldThreads(
+  decision: ApprovalDecision,
+  tidy: ThreadTidyResult | undefined
+): ApprovalDecision {
+  const blocked = approvalBlockingThreadCount(tidy);
+  if (blocked === 0 || !decision.enabled || decision.event !== "APPROVE" || decision.overridden) {
+    return decision;
+  }
+  return {
+    ...decision,
+    event: "COMMENT",
+    clearsPriorRequestChanges: false,
+    threadApprovalBlocked: true,
+    reason: `${blocked} finding thread(s) were withheld or left open by human reply; posting as a comment instead of approving.`
+  };
+}
+
 /**
  * Publish the merge-gate Check Run (#24) when enabled. Non-fatal: a failure
  * (e.g. missing `checks: write`) never sinks the review, which is the primary
@@ -525,16 +736,19 @@ async function resolveApprovalDecision(
   ref: PullRequestRef,
   findings: Finding[],
   config: ApprovalConfig | undefined,
-  options: { coverageDegraded?: boolean; breakGlassHeadSha?: string } = {}
+  options: { coverageDegraded?: boolean; breakGlassHeadSha?: string; threadApprovalBlockers?: number } = {}
 ): Promise<ApprovalDecision> {
   let breakGlass: BreakGlassSignal | undefined;
+  const threadApprovalBlockers = options.threadApprovalBlockers ?? 0;
   let decision = planApprovalDecision({
     findings,
     config,
     coverageDegraded: options.coverageDegraded,
     breakGlassTarget: options.breakGlassHeadSha
   });
-  if (decision.enabled && decision.blocking > 0 && config?.breakGlass !== false) {
+  const shouldDetectBreakGlass =
+    decision.enabled && (decision.blocking > 0 || threadApprovalBlockers > 0) && config?.breakGlass !== false;
+  if (shouldDetectBreakGlass) {
     if (options.breakGlassHeadSha) {
       breakGlass = await detect(octokit, ref, { headSha: options.breakGlassHeadSha });
       decision = planApprovalDecision({
@@ -567,6 +781,26 @@ async function resolveApprovalDecision(
         priorRequestChangesTruncated: priorRequestChanges.truncated
       });
     }
+  }
+  if (
+    decision.enabled &&
+    !decision.coverageDegraded &&
+    decision.blocking === 0 &&
+    decision.event === "APPROVE" &&
+    threadApprovalBlockers > 0 &&
+    breakGlass?.active === true
+  ) {
+    return {
+      ...decision,
+      event: "APPROVE",
+      overridden: true,
+      clearsPriorRequestChanges: false,
+      breakGlassFreshnessUnknown: false,
+      overrideActor: breakGlass.actor,
+      reason:
+        `Break-glass override${breakGlass.actor ? ` by @${breakGlass.actor}` : ""}: approving past ` +
+        `${threadApprovalBlockers} finding thread(s) withheld or left open by human reply.`
+    };
   }
   return decision;
 }
@@ -639,6 +873,9 @@ export async function reviewPullRequest(
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
   const detectPriorRequestChanges = deps.detectPriorRequestChanges ?? defaultHasActiveRequestChanges;
+  const fetchThreads = deps.fetchReviewThreads ?? defaultFetchReviewThreads;
+  const resolveThread = deps.resolveReviewThread ?? defaultResolveReviewThread;
+  const tidyThreadsEnabled = options.resolveThreads !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
@@ -745,17 +982,44 @@ export async function reviewPullRequest(
   }
 
   if (reviewFiles.length === 0) {
-    const reviewResult = { ...emptyReviewResult(), findings: groundingFindings, raw: groundingFindings };
+    const reviewResult = {
+      ...emptyReviewResult(),
+      findings: groundingFindings,
+      uncappedFindings: groundingFindings,
+      raw: groundingFindings
+    };
     const approvalCoverageIncomplete = fullSkipped.length > 0;
-    const approval = await resolveApprovalDecision(
+    // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
+    const tidied = await tidyReviewThreads({
+      fetchThreads,
+      resolveThread,
+      octokit,
+      ref,
+      findings: reviewResult.findings,
+      candidateFindings: reviewResult.uncappedFindings,
+      resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
+      enabled: tidyThreadsEnabled,
+      dryRun: options.dryRun === true
+    });
+    reviewResult.findings = tidied.findings;
+    reviewResult.raw = tidied.findings;
+    if (tidied.capped !== undefined) {
+      reviewResult.judge.capped = tidied.capped;
+    }
+    let approval = await resolveApprovalDecision(
       detectOverride,
       detectPriorRequestChanges,
       octokit,
       ref,
       reviewResult.findings,
       options.approval,
-      { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
+      {
+        coverageDegraded: approvalCoverageIncomplete,
+        breakGlassHeadSha: meta.headSha,
+        threadApprovalBlockers: approvalBlockingThreadCount(tidied.tidy)
+      }
     );
+    approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
       files: parsed.files,
@@ -763,6 +1027,7 @@ export async function reviewPullRequest(
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
+        ...tidied.notes,
         ...redactionNotes,
         ...groundingNotes,
         incrementalBaseSha
@@ -787,11 +1052,22 @@ export async function reviewPullRequest(
       contextFiles: 0,
       incremental: incrementalBaseSha !== undefined,
       ...(approval.enabled ? { approval } : {}),
+      ...(tidied.tidy ? { threads: tidied.tidy } : {}),
       posted: false
     };
     if (!options.dryRun) {
       try {
-        await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, fullSkipped.length === 0));
+        await submit(
+          octokit,
+          ref,
+          payload,
+          submitOptionsForReview(
+            meta,
+            incrementalBaseSha,
+            fullSkipped.length === 0,
+            tidied.tidy?.repostableFindings
+          )
+        );
         result.posted = true;
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -915,8 +1191,10 @@ export async function reviewPullRequest(
     }
   );
   if (directGroundingFindings.length > 0) {
+    const uncappedFindings = reviewResult.uncappedFindings ?? reviewResult.findings;
     reviewResult.raw = [...reviewResult.raw, ...directGroundingFindings];
     reviewResult.findings = [...directGroundingFindings, ...reviewResult.findings];
+    reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"
@@ -934,17 +1212,41 @@ export async function reviewPullRequest(
 
   const totalUsage = addUsage(reviewResult.usage, contextUsage);
 
+  // Tidy prior threads (#22) before the gate decision, so findings a human
+  // already settled or disputed are withheld and don't drive request-changes.
+  const tidied = await tidyReviewThreads({
+    fetchThreads,
+    resolveThread,
+    octokit,
+    ref,
+    findings: reviewResult.findings,
+    candidateFindings: reviewResult.uncappedFindings,
+    resolveStaleThreads:
+      incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
+    enabled: tidyThreadsEnabled,
+    dryRun: options.dryRun === true
+  });
+  reviewResult.findings = tidied.findings;
+  if (tidied.capped !== undefined) {
+    reviewResult.judge.capped = tidied.capped;
+  }
+
   // Approval rubric (#52): map the surfaced findings (+ any break-glass override)
   // to the review event and the #24 check conclusion — one decision, both surfaces.
-  const approval = await resolveApprovalDecision(
+  let approval = await resolveApprovalDecision(
     detectOverride,
     detectPriorRequestChanges,
     octokit,
     ref,
     reviewResult.findings,
     options.approval,
-    { coverageDegraded: approvalCoverageIncomplete, breakGlassHeadSha: meta.headSha }
+    {
+      coverageDegraded: approvalCoverageIncomplete,
+      breakGlassHeadSha: meta.headSha,
+      threadApprovalBlockers: approvalBlockingThreadCount(tidied.tidy)
+    }
   );
+  approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
 
   const summaryBody = buildWalkthrough({
     findings: reviewResult.findings,
@@ -955,6 +1257,7 @@ export async function reviewPullRequest(
     notes: [
       ...incrementalNotesList,
       ...approvalNotes(approval),
+      ...tidied.notes,
       ...tierNotes,
       ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
       ...redactionNotes,
@@ -989,11 +1292,22 @@ export async function reviewPullRequest(
     riskTier: tierSelection.tier,
     incremental: incrementalBaseSha !== undefined,
     ...(approval.enabled ? { approval } : {}),
+    ...(tidied.tidy ? { threads: tidied.tidy } : {}),
     posted: false
   };
   if (!options.dryRun) {
     try {
-      await submit(octokit, ref, payload, submitOptionsForReview(meta, incrementalBaseSha, !approvalCoverageIncomplete));
+      await submit(
+        octokit,
+        ref,
+        payload,
+        submitOptionsForReview(
+          meta,
+          incrementalBaseSha,
+          !approvalCoverageIncomplete,
+          tidied.tidy?.repostableFindings
+        )
+      );
       result.posted = true;
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

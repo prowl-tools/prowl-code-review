@@ -97,6 +97,9 @@ function gateSummaryLine(input: {
     if (approval.coverageDegraded) {
       return "Gate: review coverage incomplete — approval withheld (this check fails).";
     }
+    if (approval.threadApprovalBlocked) {
+      return "Gate: prior finding thread(s) were withheld or left open by human reply — approval withheld (this check fails).";
+    }
     if (approval.clearsPriorRequestChanges) {
       return (
         `Gate: no findings at or above \`${approval.requestChangesAt}\` — ` +
@@ -145,6 +148,8 @@ export function planCheckRun(input: {
   const conclusion: CheckConclusion = approval
     ? approval.coverageDegraded
       ? "failure"
+      : approval.threadApprovalBlocked
+        ? "failure"
       : approval.overridden || approval.event !== "REQUEST_CHANGES"
       ? "success"
       : "failure"

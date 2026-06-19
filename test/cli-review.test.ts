@@ -354,6 +354,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({}, cfg, env).riskTiering).toEqual({ enabled: false });
   });
 
+  it("resolves the resolveThreads toggle (CLI --no-resolve-threads wins, else config) (#22)", () => {
+    expect(resolveReviewOptions({}, {}, env).resolveThreads).toBeUndefined(); // → default on
+    expect(resolveReviewOptions({ resolveThreads: false }, {}, env).resolveThreads).toBe(false);
+    expect(resolveReviewOptions({}, { review: { resolveThreads: false } }, env).resolveThreads).toBe(false);
+  });
+
   it("passes the approval config straight through (#52)", () => {
     expect(resolveReviewOptions({}, {}, env).approval).toBeUndefined(); // → gate off (comment only)
     const cfg = { approval: { enabled: true, requestChangesAt: "major" as const, approveWhenClean: true } };
