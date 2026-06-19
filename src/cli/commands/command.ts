@@ -22,7 +22,8 @@ import {
 import { parseDiff } from "../../review/parse-diff.js";
 import { applyDiffLimits } from "../../review/size-guards.js";
 import { renderGuardedDiff } from "../../review/render-diff.js";
-import { redactSecrets } from "../../review/redact.js";
+import { redactSecrets, isSensitiveFile } from "../../review/redact.js";
+import { filterSensitiveDiffFiles } from "../../review/sensitive-diff.js";
 import { loadConfig } from "../../config/loader.js";
 import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
 import {
@@ -120,7 +121,7 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
         ? {
             path: comment.path,
             line: comment.line ?? comment.original_line ?? undefined,
-            diffHunk: comment.diff_hunk
+            diffHunk: isSensitiveFile(comment.path) ? undefined : redactSecrets(comment.diff_hunk ?? "").text || undefined
           }
         : undefined;
 
@@ -257,10 +258,11 @@ export async function respondToComment(params: {
 
   const { meta, diff } = await fetchPr(params.octokit, params.ref);
   const parsed = parseDiff(diff);
-  const guarded = applyDiffLimits({ files: parsed.files }, { maxDiffBytes: CHAT_DIFF_MAX_BYTES });
+  const filtered = filterSensitiveDiffFiles(parsed.files);
+  const guarded = applyDiffLimits({ files: filtered.files }, { maxDiffBytes: CHAT_DIFF_MAX_BYTES });
   const rendered = renderGuardedDiff(guarded.files);
   const redactedDiff = redactSecrets(rendered).text;
-  const diffNote = guarded.skipped.length > 0 ? "\n\n(diff truncated to fit the chat context)" : "";
+  const diffNote = guarded.truncated ? "\n\n(diff truncated to fit the chat context)" : "";
 
   const input: ChatReplyInput = {
     question: params.question,
