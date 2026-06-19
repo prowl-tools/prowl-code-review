@@ -22,7 +22,9 @@ All notable changes to Prowl Review will be documented in this file.
   delta-only, capped, or otherwise incomplete reviews, where the current findings are not a full-PR set; after
   settled/disputed findings are withheld, capped reviews refill from the uncapped ranked set so lower-ranked
   unsuppressed findings are not hidden by already-settled ones. Fingerprints from
-  fixed/resolved threads are allowed to post a fresh inline comment if the issue reappears. Thread resolution
+  fixed/resolved threads are allowed to post a fresh inline comment if the issue reappears, but stop being
+  considered repostable once an open replacement thread already carries the same fingerprint. Sensitive-file
+  grounding findings are preserved even when no provider-reviewable files remain and prior threads are fetched. Thread resolution
   mutations run with bounded concurrency. All thread I/O is GraphQL and tolerant (a failure never
   sinks the review); opt out via `review.resolveThreads` / `--no-resolve-threads`. Exports
   `planThreadActions`/`fetchReviewThreads`/`resolveReviewThread`/`classifyReplyIntent`. **Deferred (still
