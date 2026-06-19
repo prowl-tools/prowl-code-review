@@ -71,6 +71,8 @@ export interface ApprovalDecision {
   breakGlassTarget?: string;
   /** True when prior review history hit the pagination cap before a complete answer. */
   priorRequestChangesTruncated?: boolean;
+  /** True when prior finding threads withheld automatic approval. */
+  threadApprovalBlocked?: boolean;
   /** Login of the override actor, when overridden (audit). */
   overrideActor?: string;
   /** One-line human-readable reason for the decision. */
@@ -278,6 +280,11 @@ export function approvalNotes(decision: ApprovalDecision): string[] {
   if (decision.priorRequestChangesTruncated) {
     return [
       "Approval gate (#52): not approving because prior prowl-review review history hit the pagination cap."
+    ];
+  }
+  if (decision.threadApprovalBlocked) {
+    return [
+      "Approval gate (#52): not approving because prior finding thread(s) were withheld or left open by human reply."
     ];
   }
   if (decision.clearsPriorRequestChanges) {

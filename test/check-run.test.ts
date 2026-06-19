@@ -135,6 +135,16 @@ describe("planCheckRun with the approval rubric (#52)", () => {
     expect(plan.summary).toContain("this check fails");
   });
 
+  it("fails when prior finding threads block automatic approval", () => {
+    const plan = planCheckRun({
+      findings: [],
+      approval: decision({ event: "COMMENT", blocking: 0, threadApprovalBlocked: true })
+    });
+    expect(plan.conclusion).toBe("failure");
+    expect(plan.summary).toContain("prior finding thread");
+    expect(plan.summary).toContain("this check fails");
+  });
+
   it("explains when approval clears a prior request-changes review", () => {
     const plan = planCheckRun({
       findings: [],

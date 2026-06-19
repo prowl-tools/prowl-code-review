@@ -1099,7 +1099,9 @@ diff --git a/src/b.ts b/src/b.ts
 
         expect(result.review.findings).toHaveLength(0);
         expect(result.approval?.event).toBe("COMMENT");
+        expect(result.approval?.threadApprovalBlocked).toBe(true);
         expect(result.payload.event).toBe("COMMENT");
+        expect(result.payload.body).toContain("prior finding thread");
         if (humanIntent === "disagree") {
           expect(resolveReviewThread).not.toHaveBeenCalled();
         } else {
@@ -1107,6 +1109,34 @@ diff --git a/src/b.ts b/src/b.ts
         }
       }
     );
+
+    it("fails the #24 check when prior finding threads block automatic approval", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "T", fingerprints: [fp], humanIntent: "acknowledged" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, submitCheckRun };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true },
+        checkRun: { enabled: true }
+      });
+
+      expect(result.review.findings).toHaveLength(0);
+      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.threadApprovalBlocked).toBe(true);
+      expect(result.checkRunConclusion).toBe("failure");
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.plan.summary).toContain("prior finding thread");
+      expect(input.plan.summary).toContain("this check fails");
+    });
 
     it("honors break-glass when withheld findings would otherwise block approval", async () => {
       const fp = findingFingerprint(finding({ severity: "critical" }));
