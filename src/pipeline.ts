@@ -936,15 +936,19 @@ export async function reviewPullRequest(
 
   const { meta, diff } = await fetchPr(octokit, ref);
   const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
+  const reviewedHeadAlreadyStale =
+    staleGuardEnabled && options.dryRun !== true && reviewedHeadSha !== meta.headSha;
   const hasHeadAdvanced = () =>
-    headAdvancedPastReview({
-      fetchHeadSha,
-      octokit,
-      ref,
-      reviewedSha: reviewedHeadSha,
-      enabled: staleGuardEnabled,
-      dryRun: options.dryRun === true
-    });
+    reviewedHeadAlreadyStale
+      ? Promise.resolve(true)
+      : headAdvancedPastReview({
+          fetchHeadSha,
+          octokit,
+          ref,
+          reviewedSha: reviewedHeadSha,
+          enabled: staleGuardEnabled,
+          dryRun: options.dryRun === true
+        });
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const shouldPublishReview = async () => !(await hasHeadAdvanced());
   const fullParsed = parseDiff(diff);

@@ -1387,6 +1387,26 @@ diff --git a/src/b.ts b/src/b.ts
       expect(deps.submitReview).not.toHaveBeenCalled();
     });
 
+    it("skips publishing when the fetched PR head already differs from the reviewed head", async () => {
+      const fetchHeadSha = vi.fn(async () => undefined);
+      const deps = { ...makeDeps(), fetchHeadSha };
+      deps.fetchPullRequest = vi.fn(async () => ({
+        meta: { ...meta, headSha: "new-head" },
+        diff: DIFF
+      }));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        reviewedHeadSha: "event-head"
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(fetchHeadSha).not.toHaveBeenCalled();
+      expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
     it("does not post the check run when the head advanced", async () => {
       const fetchHeadSha = vi.fn(async () => "newer-sha");
       const submitCheckRun = vi.fn(async () => {});
