@@ -145,6 +145,31 @@ export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boo
   return value === "true" || value === "1" || value === "yes";
 }
 
+/** Detect fork PR events where repo-local tooling must not be trusted. */
+export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): boolean {
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) {
+    return false;
+  }
+  try {
+    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+      pull_request?: { head?: { repo?: { fork?: boolean; full_name?: string } } };
+    };
+    const headRepo = event.pull_request?.head?.repo;
+    if (!headRepo) {
+      return false;
+    }
+    if (headRepo.fork === true) {
+      return true;
+    }
+    const baseRepository = env.GITHUB_REPOSITORY?.trim().toLowerCase();
+    const headRepository = headRepo.full_name?.trim().toLowerCase();
+    return Boolean(baseRepository && headRepository && baseRepository !== headRepository);
+  } catch {
+    return false;
+  }
+}
+
 /** Resolve the PR head SHA represented by the checked-out Action workspace. */
 export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const explicit = env.PROWL_REVIEWED_HEAD_SHA?.trim();
@@ -291,6 +316,7 @@ export function resolveReviewOptions(
   env: NodeJS.ProcessEnv = process.env
 ): ResolvedReviewOptions {
   const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
+  const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
@@ -311,8 +337,7 @@ export function resolveReviewOptions(
     }),
     skipGrounding:
       cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
-    trustWorkspace:
-      cli.trustWorkspace ?? resolveTrustWorkspace(env),
+    trustWorkspace: requestedTrustWorkspace && !isForkPullRequestEvent(env),
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes

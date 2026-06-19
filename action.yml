@@ -42,7 +42,7 @@ inputs:
     required: false
     default: ""
   trust-workspace:
-    description: "Allow repo-local linter/SAST tools to execute in workspace-path. Use only for trusted checkouts."
+    description: "Allow repo-local linter/SAST tools to execute in workspace-path. Disabled automatically for fork PR events; use only for trusted checkouts."
     required: false
     default: "false"
   github-token:
