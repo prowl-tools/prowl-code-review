@@ -84,7 +84,11 @@ describe("reviewPullRequest", () => {
 
     expect(deps.submitReview).toHaveBeenCalledTimes(1);
     const [, , payload, submitOptions] = deps.submitReview.mock.calls[0];
-    expect(submitOptions).toEqual({ commitId: "head", headSha: "head" });
+    expect(submitOptions).toEqual(expect.objectContaining({
+      commitId: "head",
+      headSha: "head",
+      shouldPublish: expect.any(Function)
+    }));
     expect(payload.body).toContain("prowl-review");
     expect(payload.comments).toHaveLength(1); // finding on line 2 anchors inline
 
@@ -254,11 +258,12 @@ describe("reviewPullRequest", () => {
     expect(reviewInput.diff).not.toContain("src/a.ts"); // full-PR file not re-scanned
     expect(result.payload.body).toContain("Incremental review");
     expect(result.payload.body).toContain("old-sha"); // sha7 disclosure
-    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+    expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({
       commitId: "head",
       headSha: "head",
-      preservePriorSummary: true
-    });
+      preservePriorSummary: true,
+      shouldPublish: expect.any(Function)
+    }));
   });
 
   it("does not advance the incremental base when review coverage is degraded (#23)", async () => {
@@ -282,10 +287,11 @@ describe("reviewPullRequest", () => {
 
     expect(result.incremental).toBe(true);
     expect(result.payload.body).toContain("Review incomplete");
-    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+    expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({
       commitId: "head",
-      preservePriorSummary: true
-    });
+      preservePriorSummary: true,
+      shouldPublish: expect.any(Function)
+    }));
   });
 
   it("does not approve or advance incremental state when the full PR still has skipped files", async () => {
@@ -322,10 +328,11 @@ ${DELTA_DIFF}`;
     expect(result.approval?.event).toBe("COMMENT");
     expect(result.payload.event).toBe("COMMENT");
     expect(result.checkRunConclusion).toBe("failure");
-    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+    expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({
       commitId: "head",
-      preservePriorSummary: true
-    });
+      preservePriorSummary: true,
+      shouldPublish: expect.any(Function)
+    }));
   });
 
   it("treats an empty compare diff as an incremental no-op (#23)", async () => {
@@ -342,11 +349,12 @@ ${DELTA_DIFF}`;
     expect(deps.gatherGrounding).not.toHaveBeenCalled();
     expect(deps.runReview).not.toHaveBeenCalled();
     expect(result.payload.body).toContain("No reviewable changes since the last reviewed commit");
-    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+    expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({
       commitId: "head",
       headSha: "head",
-      preservePriorSummary: true
-    });
+      preservePriorSummary: true,
+      shouldPublish: expect.any(Function)
+    }));
   });
 
   it("does not fail approval checks for an empty incremental no-op", async () => {
@@ -376,11 +384,12 @@ ${DELTA_DIFF}`;
     expect(result.approval?.event).toBe("APPROVE");
     expect(result.payload.event).toBe("APPROVE");
     expect(result.checkRunConclusion).toBe("success");
-    expect(deps.submitReview.mock.calls[0][3]).toEqual({
+    expect(deps.submitReview.mock.calls[0][3]).toEqual(expect.objectContaining({
       commitId: "head",
       headSha: "head",
-      preservePriorSummary: true
-    });
+      preservePriorSummary: true,
+      shouldPublish: expect.any(Function)
+    }));
   });
 
   it("falls back when an incremental delta line is absent from the full PR diff (#23)", async () => {
@@ -1442,6 +1451,34 @@ diff --git a/src/b.ts b/src/b.ts
       expect(fetchReviewThreads).not.toHaveBeenCalled();
       expect(resolveReviewThread).not.toHaveBeenCalled();
       expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
+    it("treats a publisher guard cancellation as a stale head and skips the check run", async () => {
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const submitCheckRun = vi.fn(async () => {});
+      const submitReview = vi.fn(async (
+        _octokit: OctokitLike,
+        _ref: typeof ref,
+        _payload: unknown,
+        options?: { shouldPublish?: () => Promise<boolean> }
+      ) => {
+        const allowed = await options?.shouldPublish?.();
+        return { posted: false, cancelled: allowed === false };
+      });
+      const deps = { ...makeDeps(), fetchHeadSha, submitCheckRun, submitReview };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(deps.submitReview).toHaveBeenCalledTimes(1);
+      expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(submitCheckRun).not.toHaveBeenCalled();
+      expect(result.checkRunConclusion).toBeUndefined();
     });
 
     it("publishes normally when the head is unchanged", async () => {

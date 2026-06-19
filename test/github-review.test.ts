@@ -387,6 +387,40 @@ describe("submitReview", () => {
     expect(updateComment).not.toHaveBeenCalled();
   });
 
+  it("cancels before the first publish write when the publish guard fails", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+    const shouldPublish = vi.fn(async () => false);
+
+    const result = await submitReview(octokit, ref, payload(), {
+      commitId: "head",
+      headSha: "head",
+      shouldPublish
+    });
+
+    expect(result).toEqual({ posted: false, cancelled: true });
+    expect(shouldPublish).toHaveBeenCalledTimes(1);
+    expect(createReview).not.toHaveBeenCalled();
+    expect(createComment).not.toHaveBeenCalled();
+    expect(updateComment).not.toHaveBeenCalled();
+  });
+
+  it("re-checks the publish guard before the summary write", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+    const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+
+    const result = await submitReview(octokit, ref, payload(), {
+      commitId: "head",
+      headSha: "head",
+      shouldPublish
+    });
+
+    expect(result).toEqual({ posted: true, cancelled: true });
+    expect(shouldPublish).toHaveBeenCalledTimes(2);
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(createComment).not.toHaveBeenCalled();
+    expect(updateComment).not.toHaveBeenCalled();
+  });
+
   it("does not trust marker comments from other users", async () => {
     const untrusted = {
       id: 88,

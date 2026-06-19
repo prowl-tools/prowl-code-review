@@ -56,12 +56,21 @@ export interface SubmitReviewOptions {
   commitId?: string;
   /** Head SHA recorded as `lastReviewedSha` for incremental re-review (#23). */
   headSha?: string;
+  /** Return false to cancel before a publish write, e.g. when the PR head advanced. */
+  shouldPublish?: () => Promise<boolean>;
   /** Create a fresh summary comment so earlier visible findings remain on the PR. */
   preservePriorSummary?: boolean;
   /** Prior inline fingerprints to ignore because their old thread was resolved as fixed. */
   repostableFindings?: string[];
   /** Bot login used as a secondary check when matching our prior comment. */
   botLogin?: string;
+}
+
+export interface SubmitReviewResult {
+  /** True when at least one GitHub publish mutation completed. */
+  posted: boolean;
+  /** True when `shouldPublish` cancelled before a pending publish mutation. */
+  cancelled: boolean;
 }
 
 /** Whether prowl-review has an active request-changes review, plus scan completeness. */
@@ -351,7 +360,7 @@ export async function submitReview(
   ref: PullRequestRef,
   payload: ReviewPayload,
   options: SubmitReviewOptions = {}
-): Promise<void> {
+): Promise<SubmitReviewResult> {
   const botLogin = await getAuthenticatedLogin(octokit, options.botLogin);
   const [prior, priorPostedFindings] = await Promise.all([
     findPriorSummary(octokit, ref, botLogin),
@@ -368,11 +377,15 @@ export async function submitReview(
   });
 
   let postedInlineComments: ReviewComment[] = [];
+  let posted = false;
   const reviewComments = options.commitId ? initialPlan.newInlineComments.map(toGitHubComment) : [];
 
   if (reviewComments.length > 0) {
     // Post before persisting fingerprints; otherwise a failed GitHub review
     // submission would suppress retries for inline comments that never existed.
+    if (options.shouldPublish && !(await options.shouldPublish())) {
+      return { posted, cancelled: true };
+    }
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
@@ -382,10 +395,14 @@ export async function submitReview(
       body: inlineBatchReviewBody(reviewComments.length),
       comments: reviewComments
     });
+    posted = true;
     postedInlineComments = initialPlan.newInlineComments;
   }
 
   if (payload.event !== "COMMENT") {
+    if (options.shouldPublish && !(await options.shouldPublish())) {
+      return { posted, cancelled: true };
+    }
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
@@ -394,6 +411,7 @@ export async function submitReview(
       ...(options.commitId ? { commit_id: options.commitId } : {}),
       body: eventReviewBody(payload.event)
     });
+    posted = true;
   }
 
   const finalPlan = planPublish({
@@ -407,6 +425,9 @@ export async function submitReview(
   });
 
   // Summary: update in place, or create on the first run.
+  if (options.shouldPublish && !(await options.shouldPublish())) {
+    return { posted, cancelled: true };
+  }
   if (finalPlan.priorCommentId !== undefined) {
     await octokit.rest.issues.updateComment({
       owner: ref.owner,
@@ -422,4 +443,5 @@ export async function submitReview(
       body: finalPlan.summaryBody
     });
   }
+  return { posted: true, cancelled: false };
 }
