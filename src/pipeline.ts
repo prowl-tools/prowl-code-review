@@ -681,6 +681,7 @@ function inhibitApprovalForWithheldThreads(
     ...decision,
     event: "COMMENT",
     clearsPriorRequestChanges: false,
+    threadApprovalBlocked: true,
     reason: `${blocked} finding thread(s) were withheld or left open by human reply; posting as a comment instead of approving.`
   };
 }

@@ -17,7 +17,8 @@ All notable changes to Prowl Review will be documented in this file.
   authors cannot settle a thread). Withheld findings, kept-open disputed threads, and
   settled thread actions from incomplete re-runs are handled **before** the approval gate (#52), so a
   finding a human settled or disputed no longer drives request-changes, but it also prevents automatic
-  approval until an explicit human approval or break-glass override; break-glass overrides can explicitly unblock
+  approval until an explicit human approval or break-glass override, and required #24 Check Runs fail
+  while those thread blockers remain; break-glass overrides can explicitly unblock
   withheld thread blockers. Fixed auto-resolution is skipped on incremental
   delta-only, capped, or otherwise incomplete reviews, where the current findings are not a full-PR set; after
   settled/disputed findings are withheld, capped reviews refill from the uncapped ranked set so lower-ranked
