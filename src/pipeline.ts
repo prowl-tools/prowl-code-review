@@ -938,17 +938,43 @@ export async function reviewPullRequest(
   const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
   const reviewedHeadAlreadyStale =
     staleGuardEnabled && options.dryRun !== true && reviewedHeadSha !== meta.headSha;
+  if (reviewedHeadAlreadyStale) {
+    const reviewResult = emptyReviewResult();
+    const summaryBody = buildWalkthrough({
+      findings: reviewResult.findings,
+      files: [],
+      skipped: [],
+      notes: ["Skipped review because the PR head advanced past the reviewed commit before review work started."]
+    });
+    const payload = buildReviewPayload({
+      findings: reviewResult.findings,
+      diff: { files: [] },
+      summaryBody,
+      event: options.event,
+      agentPrompt: options.agentPrompt,
+      maxInlineComments: options.maxInlineComments
+    });
+    return {
+      meta,
+      payload,
+      review: reviewResult,
+      usage: reviewResult.usage,
+      skipped: [],
+      contextFiles: 0,
+      incremental: false,
+      headAdvanced: true,
+      posted: false
+    };
+  }
   const hasHeadAdvanced = () =>
-    reviewedHeadAlreadyStale
-      ? Promise.resolve(true)
-      : headAdvancedPastReview({
-          fetchHeadSha,
-          octokit,
-          ref,
-          reviewedSha: reviewedHeadSha,
-          enabled: staleGuardEnabled,
-          dryRun: options.dryRun === true
-        });
+    headAdvancedPastReview({
+      fetchHeadSha,
+      octokit,
+      ref,
+      reviewedSha: reviewedHeadSha,
+      enabled: staleGuardEnabled,
+      dryRun: options.dryRun === true
+    });
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const shouldPublishReview = async () => !(await hasHeadAdvanced());
   const fullParsed = parseDiff(diff);
