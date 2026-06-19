@@ -2,6 +2,7 @@ import type { OctokitLike } from "./github/client.js";
 import {
   fetchPullRequest as defaultFetchPullRequest,
   fetchComparisonDiff as defaultFetchComparisonDiff,
+  fetchPullRequestHeadSha as defaultFetchPullRequestHeadSha,
   type FetchedPullRequest,
   type PullRequestMeta,
   type PullRequestRef
@@ -11,6 +12,7 @@ import {
   fetchPriorReviewState as defaultFetchPriorReviewState,
   hasActiveRequestChanges as defaultHasActiveRequestChanges,
   type SubmitReviewOptions,
+  type SubmitReviewResult,
   type PriorRequestChangesState
 } from "./github/review.js";
 import {
@@ -103,7 +105,7 @@ export interface PipelineDeps {
     ref: PullRequestRef,
     payload: ReviewPayload,
     options?: SubmitReviewOptions
-  ) => Promise<void>;
+  ) => Promise<SubmitReviewResult | void>;
   /** Publish the merge-gate Check Run (#24). */
   submitCheckRun?: (
     octokit: OctokitLike,
@@ -122,6 +124,8 @@ export interface PipelineDeps {
   fetchReviewThreads?: (octokit: OctokitLike, ref: PullRequestRef, botLogin?: string) => Promise<ReviewThread[]>;
   /** Resolve a single review thread via GraphQL (#22). */
   resolveReviewThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
+  /** Re-fetch the PR's current head SHA for the stale-publish guard (#21). */
+  fetchHeadSha?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<string | undefined>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -193,6 +197,19 @@ export interface ReviewPullRequestOptions {
    * never sink the review.
    */
   resolveThreads?: boolean;
+  /**
+   * Skip publishing when the PR head advanced past the reviewed SHA (#21). Closes
+   * the brief overlap window left by the workflow's `concurrency:
+   * cancel-in-progress`, so a just-superseded run can't clobber the summary with
+   * stale results for an outdated commit. Default on; tolerant (a failed head
+   * re-check publishes normally). Never skips a dry run.
+   */
+  cancelIfHeadAdvanced?: boolean;
+  /**
+   * Exact PR head SHA represented by the checked-out workspace/event. Omitted
+   * falls back to the PR metadata head SHA fetched at run start.
+   */
+  reviewedHeadSha?: string;
   /** Explicit review event override; wins over the approval rubric when set. */
   event?: ReviewEvent;
   /** Append a copy-paste "Resolve with an AI agent" prompt to each finding (default true, #57). */
@@ -232,6 +249,8 @@ export interface ReviewPullRequestResult {
   approval?: ApprovalDecision;
   /** Prior-thread tidy-up outcome (#22); undefined when disabled or no prior threads. */
   threads?: ThreadTidyResult;
+  /** True when publishing was skipped because the PR head advanced past the reviewed SHA (#21). */
+  headAdvanced?: boolean;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -430,14 +449,20 @@ function submitOptionsForReview(
   meta: PullRequestMeta,
   incrementalBaseSha: string | undefined,
   complete = true,
-  repostableFindings: string[] = []
+  repostableFindings: string[] = [],
+  shouldPublish?: () => Promise<boolean>
 ): SubmitReviewOptions {
   return {
     commitId: meta.headSha,
     ...(complete ? { headSha: meta.headSha } : {}),
     ...(incrementalBaseSha !== undefined ? { preservePriorSummary: true } : {}),
-    ...(repostableFindings.length > 0 ? { repostableFindings } : {})
+    ...(repostableFindings.length > 0 ? { repostableFindings } : {}),
+    ...(shouldPublish ? { shouldPublish } : {})
   };
+}
+
+function normalizeSubmitReviewResult(result: SubmitReviewResult | void): SubmitReviewResult {
+  return result ?? { posted: true, cancelled: false };
 }
 
 function filterAndGuardDiffFiles(
@@ -526,6 +551,7 @@ async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
   resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
   octokit: OctokitLike;
+  shouldResolveThread?: () => Promise<boolean>;
 }): Promise<{ resolvedFixed: number; resolvedSettled: number; resolvedFixedFingerprints: string[] }> {
   let resolvedFixed = 0;
   let resolvedSettled = 0;
@@ -538,6 +564,9 @@ async function resolveThreadActions(params: {
       next += 1;
       if (!action) {
         continue;
+      }
+      if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
+        break;
       }
       const ok = await params.resolveThread(params.octokit, action.id);
       if (!ok) {
@@ -573,6 +602,7 @@ async function tidyReviewThreads(params: {
   resolveStaleThreads: boolean;
   enabled: boolean;
   dryRun: boolean;
+  shouldResolveThread?: () => Promise<boolean>;
 }): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
   if (!params.enabled) {
     return { findings: params.findings, notes: [] };
@@ -618,7 +648,8 @@ async function tidyReviewThreads(params: {
     ({ resolvedFixed, resolvedSettled, resolvedFixedFingerprints } = await resolveThreadActions({
       actions: plan.resolve,
       resolveThread: params.resolveThread,
-      octokit: params.octokit
+      octokit: params.octokit,
+      shouldResolveThread: params.shouldResolveThread
     }));
   }
 
@@ -684,6 +715,28 @@ function inhibitApprovalForWithheldThreads(
     threadApprovalBlocked: true,
     reason: `${blocked} finding thread(s) were withheld or left open by human reply; posting as a comment instead of approving.`
   };
+}
+
+/**
+ * Stale-publish guard (#21): return true when the PR head has advanced past the
+ * SHA we reviewed, so this run should not publish (a newer run supersedes it).
+ * Closes the overlap window the workflow's `concurrency: cancel-in-progress`
+ * can't fully cover. Never engages on a dry run, when disabled, or when the head
+ * re-check is unavailable (tolerant — prefer publishing over silent skipping).
+ */
+async function headAdvancedPastReview(params: {
+  fetchHeadSha: NonNullable<PipelineDeps["fetchHeadSha"]>;
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  reviewedSha: string;
+  enabled: boolean;
+  dryRun: boolean;
+}): Promise<boolean> {
+  if (!params.enabled || params.dryRun) {
+    return false;
+  }
+  const current = await params.fetchHeadSha(params.octokit, params.ref);
+  return current !== undefined && current !== params.reviewedSha;
 }
 
 /**
@@ -875,11 +928,55 @@ export async function reviewPullRequest(
   const detectPriorRequestChanges = deps.detectPriorRequestChanges ?? defaultHasActiveRequestChanges;
   const fetchThreads = deps.fetchReviewThreads ?? defaultFetchReviewThreads;
   const resolveThread = deps.resolveReviewThread ?? defaultResolveReviewThread;
+  const fetchHeadSha = deps.fetchHeadSha ?? defaultFetchPullRequestHeadSha;
   const tidyThreadsEnabled = options.resolveThreads !== false;
+  const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
 
   const { meta, diff } = await fetchPr(octokit, ref);
+  const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
+  const reviewedHeadAlreadyStale =
+    staleGuardEnabled && options.dryRun !== true && reviewedHeadSha !== meta.headSha;
+  if (reviewedHeadAlreadyStale) {
+    const reviewResult = emptyReviewResult();
+    const summaryBody = buildWalkthrough({
+      findings: reviewResult.findings,
+      files: [],
+      skipped: [],
+      notes: ["Skipped review because the PR head advanced past the reviewed commit before review work started."]
+    });
+    const payload = buildReviewPayload({
+      findings: reviewResult.findings,
+      diff: { files: [] },
+      summaryBody,
+      event: options.event,
+      agentPrompt: options.agentPrompt,
+      maxInlineComments: options.maxInlineComments
+    });
+    return {
+      meta,
+      payload,
+      review: reviewResult,
+      usage: reviewResult.usage,
+      skipped: [],
+      contextFiles: 0,
+      incremental: false,
+      headAdvanced: true,
+      posted: false
+    };
+  }
+  const hasHeadAdvanced = () =>
+    headAdvancedPastReview({
+      fetchHeadSha,
+      octokit,
+      ref,
+      reviewedSha: reviewedHeadSha,
+      enabled: staleGuardEnabled,
+      dryRun: options.dryRun === true
+    });
+  const shouldResolveThread = async () => !(await hasHeadAdvanced());
+  const shouldPublishReview = async () => !(await hasHeadAdvanced());
   const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
@@ -989,18 +1086,22 @@ export async function reviewPullRequest(
       raw: groundingFindings
     };
     const approvalCoverageIncomplete = fullSkipped.length > 0;
+    const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
-    const tidied = await tidyReviewThreads({
-      fetchThreads,
-      resolveThread,
-      octokit,
-      ref,
-      findings: reviewResult.findings,
-      candidateFindings: reviewResult.uncappedFindings,
-      resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
-      enabled: tidyThreadsEnabled,
-      dryRun: options.dryRun === true
-    });
+    const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
+      ? { findings: reviewResult.findings, notes: [] }
+      : await tidyReviewThreads({
+          fetchThreads,
+          resolveThread,
+          octokit,
+          ref,
+          findings: reviewResult.findings,
+          candidateFindings: reviewResult.uncappedFindings,
+          resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
+          enabled: tidyThreadsEnabled,
+          dryRun: options.dryRun === true,
+          shouldResolveThread
+        });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
     if (tidied.capped !== undefined) {
@@ -1055,20 +1156,32 @@ export async function reviewPullRequest(
       ...(tidied.tidy ? { threads: tidied.tidy } : {}),
       posted: false
     };
+    // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
+    if (headAdvancedBeforeTidy || (await hasHeadAdvanced())) {
+      result.headAdvanced = true;
+      return result;
+    }
     if (!options.dryRun) {
       try {
-        await submit(
-          octokit,
-          ref,
-          payload,
-          submitOptionsForReview(
-            meta,
-            incrementalBaseSha,
-            fullSkipped.length === 0,
-            tidied.tidy?.repostableFindings
+        const submitResult = normalizeSubmitReviewResult(
+          await submit(
+            octokit,
+            ref,
+            payload,
+            submitOptionsForReview(
+              meta,
+              incrementalBaseSha,
+              fullSkipped.length === 0,
+              tidied.tidy?.repostableFindings,
+              shouldPublishReview
+            )
           )
         );
-        result.posted = true;
+        result.posted = submitResult.posted;
+        if (submitResult.cancelled) {
+          result.headAdvanced = true;
+          return result;
+        }
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new ReviewPublishError(message, result);
@@ -1212,20 +1325,24 @@ export async function reviewPullRequest(
 
   const totalUsage = addUsage(reviewResult.usage, contextUsage);
 
+  const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human
   // already settled or disputed are withheld and don't drive request-changes.
-  const tidied = await tidyReviewThreads({
-    fetchThreads,
-    resolveThread,
-    octokit,
-    ref,
-    findings: reviewResult.findings,
-    candidateFindings: reviewResult.uncappedFindings,
-    resolveStaleThreads:
-      incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
-    enabled: tidyThreadsEnabled,
-    dryRun: options.dryRun === true
-  });
+  const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
+    ? { findings: reviewResult.findings, notes: [] }
+    : await tidyReviewThreads({
+        fetchThreads,
+        resolveThread,
+        octokit,
+        ref,
+        findings: reviewResult.findings,
+        candidateFindings: reviewResult.uncappedFindings,
+        resolveStaleThreads:
+          incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
+        enabled: tidyThreadsEnabled,
+        dryRun: options.dryRun === true,
+        shouldResolveThread
+      });
   reviewResult.findings = tidied.findings;
   if (tidied.capped !== undefined) {
     reviewResult.judge.capped = tidied.capped;
@@ -1295,20 +1412,32 @@ export async function reviewPullRequest(
     ...(tidied.tidy ? { threads: tidied.tidy } : {}),
     posted: false
   };
+  // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
+  if (headAdvancedBeforeTidy || (await hasHeadAdvanced())) {
+    result.headAdvanced = true;
+    return result;
+  }
   if (!options.dryRun) {
     try {
-      await submit(
-        octokit,
-        ref,
-        payload,
-        submitOptionsForReview(
-          meta,
-          incrementalBaseSha,
-          !approvalCoverageIncomplete,
-          tidied.tidy?.repostableFindings
+      const submitResult = normalizeSubmitReviewResult(
+        await submit(
+          octokit,
+          ref,
+          payload,
+          submitOptionsForReview(
+            meta,
+            incrementalBaseSha,
+            !approvalCoverageIncomplete,
+            tidied.tidy?.repostableFindings,
+            shouldPublishReview
+          )
         )
       );
-      result.posted = true;
+      result.posted = submitResult.posted;
+      if (submitResult.cancelled) {
+        result.headAdvanced = true;
+        return result;
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ReviewPublishError(message, result);

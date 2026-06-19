@@ -145,6 +145,51 @@ export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boo
   return value === "true" || value === "1" || value === "yes";
 }
 
+/** Detect fork PR events where repo-local tooling must not be trusted. */
+export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): boolean {
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) {
+    return false;
+  }
+  try {
+    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+      pull_request?: { head?: { repo?: { fork?: boolean; full_name?: string } } };
+    };
+    const headRepo = event.pull_request?.head?.repo;
+    if (!headRepo) {
+      return false;
+    }
+    if (headRepo.fork === true) {
+      return true;
+    }
+    const baseRepository = env.GITHUB_REPOSITORY?.trim().toLowerCase();
+    const headRepository = headRepo.full_name?.trim().toLowerCase();
+    return Boolean(baseRepository && headRepository && baseRepository !== headRepository);
+  } catch {
+    return false;
+  }
+}
+
+/** Resolve the PR head SHA represented by the checked-out Action workspace. */
+export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  const explicit = env.PROWL_REVIEWED_HEAD_SHA?.trim();
+  if (explicit) {
+    return explicit;
+  }
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (eventPath && existsSync(eventPath)) {
+    try {
+      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+        pull_request?: { head?: { sha?: string } };
+      };
+      return event.pull_request?.head?.sha?.trim() || undefined;
+    } catch {
+      // fall through to undefined
+    }
+  }
+  return undefined;
+}
+
 interface ReviewCommandOptions {
   pr?: string;
   repo?: string;
@@ -271,6 +316,7 @@ export function resolveReviewOptions(
   env: NodeJS.ProcessEnv = process.env
 ): ResolvedReviewOptions {
   const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
+  const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
@@ -291,8 +337,7 @@ export function resolveReviewOptions(
     }),
     skipGrounding:
       cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
-    trustWorkspace:
-      cli.trustWorkspace ?? resolveTrustWorkspace(env),
+    trustWorkspace: requestedTrustWorkspace && !isForkPullRequestEvent(env),
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes
@@ -335,7 +380,9 @@ export function reportReviewCommandResult(
     ? "— posted"
     : options.publishFailed
       ? "— publish failed (not posted)"
-      : "— dry run (not posted)";
+      : result.headAdvanced
+        ? "— skipped (PR head advanced; superseded by a newer run)"
+        : "— dry run (not posted)";
 
   console.log(
     `prowl-review: ${count} finding(s), ${inline} inline, ${result.contextFiles} context file(s) on ` +
@@ -473,6 +520,7 @@ export function buildReviewCommand(): Command {
         guidelines,
         learnedPatterns,
         budgetTokens: budget.tokens ?? undefined,
+        reviewedHeadSha: resolveReviewedHeadSha(),
         dryRun: resolveDryRun(options)
       };
 
