@@ -61,11 +61,20 @@ jobs:
         id: trusted-action
         shell: bash
         run: |
-          if [ -f action.yml ] || [ -f action.yaml ] || [ -f Dockerfile ]; then
+          action_file=""
+          if [ -f action.yml ]; then
+            action_file="action.yml"
+          elif [ -f action.yaml ]; then
+            action_file="action.yaml"
+          fi
+
+          if [ -n "${action_file}" ] &&
+            grep -Eq '^[[:space:]]{2}mode:' "${action_file}" &&
+            grep -q 'inputs.mode' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base does not contain prowl-review yet; skipping command run."
+            echo "Trusted base does not support prowl-review command mode yet; skipping command run."
           fi
 
       - name: Checkout PR head for context
