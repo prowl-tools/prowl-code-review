@@ -102,6 +102,7 @@ export { createOctokit, type OctokitLike } from "./github/client.js";
 export {
   fetchPullRequest,
   fetchComparisonDiff,
+  fetchPullRequestHeadSha,
   type PullRequestRef,
   type PullRequestMeta,
   type FetchedPullRequest
