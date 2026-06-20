@@ -14,8 +14,8 @@ All notable changes to Prowl Review will be documented in this file.
   linter/SAST grounding (#16) over the local checkout, multi-pass review + verification + judge, risk
   tiering (#31), per-PR budget (#18), secret redaction (#15), and the "no silent truncation" skip
   reporting (#5). New flags: `--json` (machine-readable output), `--no-color` (also honors `NO_COLOR`),
-  and `--fail-on <severity>` (non-zero exit for a pre-push gate). Local checkouts are trusted by default
-  so repo-local linters run. New modules `src/review/local-diff.ts` (injectable git exec),
+  and `--fail-on <severity>` (non-zero exit for a pre-push gate). Repo-local linter execution remains
+  opt-in via `--trust-workspace` or `PROWL_TRUST_WORKSPACE=true`. New modules `src/review/local-diff.ts` (injectable git exec),
   `src/review/format-terminal.ts` (pure findings/notes/JSON renderer), and
   `src/cli/commands/review-local.ts` (`runLocalReview`); all exported from the library surface.
 - `@prowl-review ignore` → per-PR learned mute (backlog #30 remainder, finishing the

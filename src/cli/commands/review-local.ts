@@ -17,13 +17,19 @@ import { emptyUsage, type TokenUsage } from "../../providers/index.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
 import { SEVERITY_ORDER, type Finding, type Severity } from "../../review/findings.js";
 import { formatLocalReport, formatLocalReportJson } from "../../review/format-terminal.js";
-import { assertLocalHeadMatchesCheckout, resolveLocalDiff, LocalDiffError } from "../../review/local-diff.js";
+import {
+  assertLocalHeadMatchesCheckout,
+  resolveLocalDiff,
+  resolveLocalWorkspace,
+  LocalDiffError
+} from "../../review/local-diff.js";
 import {
   loadGuidelines,
   loadLearnedPatterns,
   parseMinSeverity,
   resolveConfigLoadOptions,
-  resolveReviewOptions
+  resolveReviewOptions,
+  resolveTrustWorkspace
 } from "./review.js";
 
 /**
@@ -50,7 +56,7 @@ export interface LocalReviewCommandOptions {
   grounding?: boolean;
   /** `--no-verify` → false. */
   verify?: boolean;
-  /** `--no-trust-workspace` → false (local checkouts are trusted by default). */
+  /** `--trust-workspace` → true, or `PROWL_TRUST_WORKSPACE=true`. */
   trustWorkspace?: boolean;
   /** `--config <path>` → string; `--no-config` → false. */
   config?: string | boolean;
@@ -64,6 +70,7 @@ export interface LocalReviewCommandOptions {
 
 /** Dependencies injected for testability (git + the heavy review stages). */
 export interface LocalReviewDeps {
+  resolveRoot?: typeof resolveLocalWorkspace;
   resolveHead?: typeof assertLocalHeadMatchesCheckout;
   resolveDiff?: typeof resolveLocalDiff;
   gatherContext?: typeof gatherContext;
@@ -195,20 +202,30 @@ export async function runLocalReview(
   const env = deps.env ?? process.env;
   const out = deps.out ?? ((text: string) => console.log(text));
   const err = deps.err ?? ((text: string) => console.error(text));
+  const resolveRoot = deps.resolveRoot ?? resolveLocalWorkspace;
   const resolveHead = deps.resolveHead ?? assertLocalHeadMatchesCheckout;
   const resolveDiff = deps.resolveDiff ?? resolveLocalDiff;
   const gather = deps.gatherContext ?? gatherContext;
   const ground = deps.gatherGrounding ?? gatherGrounding;
   const review = deps.runReview ?? runReview;
 
-  const root = env.PROWL_WORKSPACE || env.GITHUB_WORKSPACE || process.cwd();
+  let root: string;
+  try {
+    root = await resolveRoot({ cwd: process.cwd(), env });
+  } catch (error) {
+    if (error instanceof LocalDiffError) {
+      err(`prowl-review: ${error.message}`);
+      return { findings: [], notes: [error.message], failed: true };
+    }
+    throw error;
+  }
+
   const { config } = loadConfig(resolveConfigLoadOptions(options, root, env));
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
   const failOn = parseMinSeverity(options.failOn);
 
-  // Reuse the GitHub command's flag→option resolution, then force local trust:
-  // the checkout is the developer's own machine, so repo-local linters may run
-  // (unless explicitly disabled with --no-trust-workspace).
+  // Reuse the GitHub command's flag→option resolution. Workspace execution is
+  // still opt-in locally because repo config can run code via linters/plugins.
   const resolved = resolveReviewOptions(
     {
       minSeverity: options.minSeverity,
@@ -220,7 +237,7 @@ export async function runLocalReview(
     config,
     env
   );
-  const trustWorkspace = options.trustWorkspace !== false;
+  const trustWorkspace = options.trustWorkspace ?? resolveTrustWorkspace(env);
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;

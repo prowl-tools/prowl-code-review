@@ -37,6 +37,15 @@ export interface AssertLocalHeadOptions {
   exec?: GitExec;
 }
 
+export interface ResolveLocalWorkspaceOptions {
+  /** Environment values that may explicitly pin the workspace. */
+  env: NodeJS.ProcessEnv;
+  /** Directory the git command runs inside when no workspace env is set. */
+  cwd: string;
+  /** Injectable git runner (defaults to a confined `git` execFile). */
+  exec?: GitExec;
+}
+
 /** Raised when the git diff cannot be produced (bad ref, not a repo, git missing). */
 export class LocalDiffError extends Error {
   constructor(message: string) {
@@ -68,6 +77,17 @@ export function defaultGitExec(cwd: string): GitExec {
         }
       );
     });
+}
+
+/** Resolve the local review workspace, defaulting to the repository top-level. */
+export async function resolveLocalWorkspace(options: ResolveLocalWorkspaceOptions): Promise<string> {
+  const explicit = options.env.PROWL_WORKSPACE?.trim() || options.env.GITHUB_WORKSPACE?.trim();
+  if (explicit) {
+    return explicit;
+  }
+
+  const exec = options.exec ?? defaultGitExec(options.cwd);
+  return (await exec(["rev-parse", "--show-toplevel"])).trim();
 }
 
 /**
@@ -112,6 +132,6 @@ export async function resolveLocalDiff(options: ResolveLocalDiffOptions): Promis
   const head = options.head?.trim();
   const exec = options.exec ?? defaultGitExec(options.cwd);
   // `git diff --merge-base A [B]` == `git diff $(git merge-base A B|HEAD) B|<worktree>`.
-  const args = ["diff", "--merge-base", base, ...(head ? [head] : [])];
+  const args = ["diff", "--no-ext-diff", "--no-color", "--merge-base", base, ...(head ? [head] : [])];
   return exec(args);
 }
