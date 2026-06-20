@@ -186,7 +186,12 @@ describe("planPublish", () => {
   it("preserves the ignore list across a review publish (#30)", () => {
     const prior = {
       id: 99,
-      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, ignoredFindings: ["fp-muted"], postedFindings: ["fp-a"] })}`
+      body: `${REVIEW_MARKER}\n${serializeState({
+        v: 1,
+        paused: true,
+        ignoredFindings: ["fp-muted"],
+        postedFindings: ["fp-a"]
+      })}`
     };
     const plan = planPublish({
       payload: payload({ comments: [comment({ fingerprint: "fp-a" })] }),
@@ -194,6 +199,7 @@ describe("planPublish", () => {
       headSha: "sha2"
     });
     // A normal review must not wipe the muted-finding list.
+    expect(plan.state.paused).toBe(true);
     expect(plan.state.ignoredFindings).toEqual(["fp-muted"]);
     expect(parseState(plan.summaryBody)?.ignoredFindings).toEqual(["fp-muted"]);
   });
@@ -734,6 +740,7 @@ describe("setPausedState (#26)", () => {
     const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
       v: 1,
       lastReviewedSha: "abc",
+      ignoredFindings: ["fp-muted"],
       postedFindings: ["fp-a"]
     })}`;
     const { octokit, updateComment, createComment } = mockOctokit([
@@ -745,6 +752,7 @@ describe("setPausedState (#26)", () => {
     const state = parseState((updateComment.mock.calls[0][0] as { body: string }).body);
     expect(state?.paused).toBe(true);
     expect(state?.lastReviewedSha).toBe("abc"); // preserved
+    expect(state?.ignoredFindings).toEqual(["fp-muted"]); // preserved
     expect(state?.postedFindings).toEqual(["fp-a"]); // preserved
   });
 
