@@ -592,22 +592,56 @@ async function resolveThreadActions(params: {
 function suppressIgnoredFindings(
   findings: Finding[],
   ignored: Set<string>
-): { findings: Finding[]; notes: string[] } {
+): { findings: Finding[]; notes: string[]; suppressed: number } {
   if (ignored.size === 0) {
-    return { findings, notes: [] };
+    return { findings, notes: [], suppressed: 0 };
   }
   const kept = findings.filter((finding) => !ignored.has(findingFingerprint(finding)));
   const suppressed = findings.length - kept.length;
   if (suppressed === 0) {
-    return { findings, notes: [] };
+    return { findings, notes: [], suppressed: 0 };
   }
   return {
     findings: kept,
+    suppressed,
     notes: [
       `Suppressed ${suppressed} finding(s) you muted with \`@prowl-review ignore\` (#30); ` +
         "they won't be raised again on this PR."
     ]
   };
+}
+
+function suppressIgnoredFindingsWithRefill(params: {
+  findings: Finding[];
+  candidateFindings?: Finding[];
+  ignored: Set<string>;
+}): { findings: Finding[]; candidateFindings?: Finding[]; notes: string[]; capped?: number } {
+  if (params.ignored.size === 0) {
+    return params.candidateFindings === undefined
+      ? { findings: params.findings, notes: [] }
+      : { findings: params.findings, candidateFindings: params.candidateFindings, notes: [] };
+  }
+
+  const hasCandidateFindings = params.candidateFindings !== undefined;
+  const candidateFindings = params.candidateFindings ?? params.findings;
+  const suppression = suppressIgnoredFindings(candidateFindings, params.ignored);
+  if (suppression.suppressed === 0) {
+    return params.candidateFindings === undefined
+      ? { findings: params.findings, notes: [] }
+      : { findings: params.findings, candidateFindings: params.candidateFindings, notes: [] };
+  }
+
+  const visibleLimit = params.findings.length;
+  const refilled = suppression.findings.slice(0, visibleLimit);
+  const result: { findings: Finding[]; candidateFindings?: Finding[]; notes: string[]; capped?: number } = {
+    findings: refilled,
+    notes: suppression.notes
+  };
+  if (hasCandidateFindings) {
+    result.candidateFindings = suppression.findings;
+    result.capped = Math.max(0, suppression.findings.length - refilled.length);
+  }
+  return result;
 }
 
 /**
@@ -1117,12 +1151,18 @@ export async function reviewPullRequest(
       raw: groundingFindings
     };
     // Drop findings muted via `@prowl-review ignore` (#30) before the gate.
-    const ignoredSuppression = suppressIgnoredFindings(reviewResult.findings, ignoredFingerprints);
+    const ignoredSuppression = suppressIgnoredFindingsWithRefill({
+      findings: reviewResult.findings,
+      candidateFindings: reviewResult.uncappedFindings,
+      ignored: ignoredFingerprints
+    });
     reviewResult.findings = ignoredSuppression.findings;
-    reviewResult.uncappedFindings = suppressIgnoredFindings(
-      reviewResult.uncappedFindings,
-      ignoredFingerprints
-    ).findings;
+    if (ignoredSuppression.candidateFindings) {
+      reviewResult.uncappedFindings = ignoredSuppression.candidateFindings;
+    }
+    if (ignoredSuppression.capped !== undefined) {
+      reviewResult.judge.capped = ignoredSuppression.capped;
+    }
     reviewResult.raw = reviewResult.findings;
     const approvalCoverageIncomplete = fullSkipped.length > 0;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
@@ -1351,13 +1391,17 @@ export async function reviewPullRequest(
   }
 
   // Drop findings muted via `@prowl-review ignore` (#30) before the gate + tidy.
-  const ignoredSuppression = suppressIgnoredFindings(reviewResult.findings, ignoredFingerprints);
+  const ignoredSuppression = suppressIgnoredFindingsWithRefill({
+    findings: reviewResult.findings,
+    candidateFindings: reviewResult.uncappedFindings,
+    ignored: ignoredFingerprints
+  });
   reviewResult.findings = ignoredSuppression.findings;
-  if (reviewResult.uncappedFindings) {
-    reviewResult.uncappedFindings = suppressIgnoredFindings(
-      reviewResult.uncappedFindings,
-      ignoredFingerprints
-    ).findings;
+  if (ignoredSuppression.candidateFindings) {
+    reviewResult.uncappedFindings = ignoredSuppression.candidateFindings;
+  }
+  if (ignoredSuppression.capped !== undefined) {
+    reviewResult.judge.capped = ignoredSuppression.capped;
   }
 
   // Coverage drives the three review-comment states (#56): a run is "degraded"

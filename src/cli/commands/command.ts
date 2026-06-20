@@ -396,7 +396,7 @@ export interface IgnoreHandlerDeps {
  * finding fingerprint from the bot's root comment in the thread, persist it to
  * the per-PR ignore list (#12 state marker), and acknowledge in-thread. Only
  * meaningful as a reply on a finding's comment; otherwise it replies with
- * guidance. Returns how many fingerprints were muted.
+ * guidance. Returns how many fingerprints were newly muted.
  */
 export async function handleIgnore(params: {
   octokit: OctokitLike;
@@ -430,9 +430,9 @@ export async function handleIgnore(params: {
     return { ignored: 0 };
   }
 
-  await setIgnored(params.octokit, params.ref, fingerprints);
+  const { added } = await setIgnored(params.octokit, params.ref, fingerprints);
   await ack("👍 Ignored — I won't raise this finding again on this PR. Comment `@prowl-review review` to refresh.");
-  return { ignored: fingerprints.length };
+  return { ignored: added };
 }
 
 /** Build the `command` CLI subcommand wired to the comment-event dispatch. */
