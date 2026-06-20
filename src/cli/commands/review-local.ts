@@ -15,6 +15,7 @@ import { buildGroundingSummary, gatherGrounding } from "../../grounding/index.js
 import { runReview, type ReviewInput } from "../../review/run-review.js";
 import { emptyUsage, type TokenUsage } from "../../providers/index.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
+import { appendUsageRecord, toUsageRecord } from "../../cost/usage-log.js";
 import { SEVERITY_ORDER, type Finding, type Severity } from "../../review/findings.js";
 import { formatLocalReport, formatLocalReportJson } from "../../review/format-terminal.js";
 import {
@@ -29,7 +30,8 @@ import {
   parseMinSeverity,
   resolveConfigLoadOptions,
   resolveReviewOptions,
-  resolveTrustWorkspace
+  resolveTrustWorkspace,
+  resolveUsageLogPath
 } from "./review.js";
 
 /**
@@ -82,6 +84,8 @@ export interface LocalReviewDeps {
   err?: (text: string) => void;
   /** Environment (defaults to `process.env`). */
   env?: NodeJS.ProcessEnv;
+  /** Clock injection for deterministic usage-log records. */
+  now?: () => Date;
 }
 
 /** Result of a local review run, surfaced for the CLI action and tests. */
@@ -226,18 +230,20 @@ export async function runLocalReview(
 
   // Reuse the GitHub command's flag→option resolution. Workspace execution is
   // still opt-in locally because repo config can run code via linters/plugins.
+  const requestedTrustWorkspace = options.trustWorkspace ?? resolveTrustWorkspace(env);
   const resolved = resolveReviewOptions(
     {
       minSeverity: options.minSeverity,
       context: options.context,
       grounding: options.grounding,
       verify: options.verify,
+      trustWorkspace: requestedTrustWorkspace,
       config: options.config
     },
     config,
     env
   );
-  const trustWorkspace = options.trustWorkspace ?? resolveTrustWorkspace(env);
+  const trustWorkspace = resolved.trustWorkspace === true;
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;
@@ -442,6 +448,19 @@ export async function runLocalReview(
   const cost = estimateCost(usage, providerConfig.provider, providerConfig.model, config.pricing ?? {});
   const tierSuffix = ` · risk tier: ${tierSelection.tier}`;
   err(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
+
+  const usageLogPath = resolveUsageLogPath(root, env);
+  if (usageLogPath) {
+    try {
+      appendUsageRecord(
+        usageLogPath,
+        toUsageRecord(cost, { ts: (deps.now?.() ?? new Date()).toISOString() }),
+        { workspace: root }
+      );
+    } catch {
+      // non-fatal: usage log unavailable
+    }
+  }
 
   const failed = failOn ? meetsFailThreshold(findings, failOn) : false;
   return { findings, notes, failed };

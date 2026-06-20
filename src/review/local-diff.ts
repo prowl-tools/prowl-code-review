@@ -103,7 +103,7 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
 
   const exec = options.exec ?? defaultGitExec(options.cwd);
   const checkoutSha = (await exec(["rev-parse", "--verify", "HEAD"])).trim();
-  const requestedSha = (await exec(["rev-parse", "--verify", `${head}^{commit}`])).trim();
+  const requestedSha = (await exec(["rev-parse", "--verify", "--end-of-options", `${head}^{commit}`])).trim();
 
   if (checkoutSha !== requestedSha) {
     throw new LocalDiffError(
@@ -132,6 +132,6 @@ export async function resolveLocalDiff(options: ResolveLocalDiffOptions): Promis
   const head = options.head?.trim();
   const exec = options.exec ?? defaultGitExec(options.cwd);
   // `git diff --merge-base A [B]` == `git diff $(git merge-base A B|HEAD) B|<worktree>`.
-  const args = ["diff", "--no-ext-diff", "--no-color", "--merge-base", base, ...(head ? [head] : [])];
+  const args = ["diff", "--no-ext-diff", "--no-color", "--merge-base", "--end-of-options", base, ...(head ? [head] : [])];
   return exec(args);
 }

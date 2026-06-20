@@ -11,25 +11,55 @@ describe("resolveLocalDiff", () => {
     const exec = vi.fn().mockResolvedValue("DIFF");
     const diff = await resolveLocalDiff({ base: "main", head: "feature", cwd: "/repo", exec });
     expect(diff).toBe("DIFF");
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main", "feature"]);
+    expect(exec).toHaveBeenCalledWith([
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--merge-base",
+      "--end-of-options",
+      "main",
+      "feature"
+    ]);
   });
 
   it("diffs base against the working tree when head is omitted", async () => {
     const exec = vi.fn().mockResolvedValue("WT");
     await resolveLocalDiff({ base: "main", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "--end-of-options", "main"]);
   });
 
   it("trims surrounding whitespace from the refs", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "  develop  ", head: "  topic  ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "develop", "topic"]);
+    expect(exec).toHaveBeenCalledWith([
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--merge-base",
+      "--end-of-options",
+      "develop",
+      "topic"
+    ]);
   });
 
   it("treats a blank head as the working tree", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "main", head: "   ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "--end-of-options", "main"]);
+  });
+
+  it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
+    const exec = vi.fn().mockResolvedValue("");
+    await resolveLocalDiff({ base: "--help", head: "--stat", cwd: "/repo", exec });
+    expect(exec).toHaveBeenCalledWith([
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--merge-base",
+      "--end-of-options",
+      "--help",
+      "--stat"
+    ]);
   });
 
   it("rejects an empty base ref", async () => {
@@ -88,8 +118,14 @@ describe("assertLocalHeadMatchesCheckout", () => {
     const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("");
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
     expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
-    expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "feature^{commit}"]);
+    expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "feature^{commit}"]);
     expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain"]);
+  });
+
+  it("passes the requested head after --end-of-options", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("");
+    await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "--help", exec });
+    expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "--help^{commit}"]);
   });
 
   it("rejects an explicit head that differs from the checkout", async () => {
