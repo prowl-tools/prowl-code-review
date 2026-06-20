@@ -97,6 +97,7 @@ describe("generateChatReply (#27)", () => {
     expect(request.system).toContain("prowl-review");
     expect(request.prompt).toContain("O(n^2)");
     expect(request).not.toHaveProperty("maxTokens");
+    expect(request).not.toHaveProperty("temperature");
   });
 
   it("passes an explicit chat token cap when configured", async () => {
