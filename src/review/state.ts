@@ -37,6 +37,8 @@ export const ReviewStateSchema = z.object({
   lastReviewedSha: z.string().min(1).optional(),
   /** Auto-review paused for this PR via `@prowl-review pause` (#26); resumed clears it. */
   paused: z.boolean().optional(),
+  /** Fingerprints muted via `@prowl-review ignore` (#30); suppressed from future reviews of this PR. */
+  ignoredFindings: z.array(z.string()).optional(),
   /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
   postedFindings: z.array(z.string()).default([])
 });

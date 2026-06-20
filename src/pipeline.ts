@@ -585,6 +585,66 @@ async function resolveThreadActions(params: {
 }
 
 /**
+ * Drop findings the user muted via `@prowl-review ignore` (#30). The ignore list
+ * is fingerprints persisted in the summary state marker; suppression runs before
+ * the approval gate so a muted finding never drives request-changes or re-posts.
+ */
+function suppressIgnoredFindings(
+  findings: Finding[],
+  ignored: Set<string>
+): { findings: Finding[]; notes: string[]; suppressed: number } {
+  if (ignored.size === 0) {
+    return { findings, notes: [], suppressed: 0 };
+  }
+  const kept = findings.filter((finding) => !ignored.has(findingFingerprint(finding)));
+  const suppressed = findings.length - kept.length;
+  if (suppressed === 0) {
+    return { findings, notes: [], suppressed: 0 };
+  }
+  return {
+    findings: kept,
+    suppressed,
+    notes: [
+      `Suppressed ${suppressed} finding(s) you muted with \`@prowl-review ignore\` (#30); ` +
+        "they won't be raised again on this PR."
+    ]
+  };
+}
+
+function suppressIgnoredFindingsWithRefill(params: {
+  findings: Finding[];
+  candidateFindings?: Finding[];
+  ignored: Set<string>;
+}): { findings: Finding[]; candidateFindings?: Finding[]; notes: string[]; capped?: number } {
+  if (params.ignored.size === 0) {
+    return params.candidateFindings === undefined
+      ? { findings: params.findings, notes: [] }
+      : { findings: params.findings, candidateFindings: params.candidateFindings, notes: [] };
+  }
+
+  const hasCandidateFindings = params.candidateFindings !== undefined;
+  const candidateFindings = params.candidateFindings ?? params.findings;
+  const suppression = suppressIgnoredFindings(candidateFindings, params.ignored);
+  if (suppression.suppressed === 0) {
+    return params.candidateFindings === undefined
+      ? { findings: params.findings, notes: [] }
+      : { findings: params.findings, candidateFindings: params.candidateFindings, notes: [] };
+  }
+
+  const visibleLimit = params.findings.length;
+  const refilled = suppression.findings.slice(0, visibleLimit);
+  const result: { findings: Finding[]; candidateFindings?: Finding[]; notes: string[]; capped?: number } = {
+    findings: refilled,
+    notes: suppression.notes
+  };
+  if (hasCandidateFindings) {
+    result.candidateFindings = suppression.findings;
+    result.capped = Math.max(0, suppression.findings.length - refilled.length);
+  }
+  return result;
+}
+
+/**
  * Tidy prior finding threads (#22): resolve threads whose finding is no longer
  * current (gone from this run) or that a human settled (won't-fix/acknowledged), and
  * withhold findings the human settled or disputed so the reviewer doesn't
@@ -983,11 +1043,16 @@ export async function reviewPullRequest(
   // since the last reviewed SHA instead of the whole PR. Best-effort — a missing
   // prior SHA, an unchanged head, or a compare failure (e.g. after a force-push)
   // falls back to the full PR diff.
+  // Load prior persisted state once: the last reviewed SHA (#23) and the per-PR
+  // ignore list (#30) both live in the summary comment's state marker.
+  const priorState = await loadPriorState(octokit, ref);
+  const ignoredFingerprints = new Set(priorState?.ignoredFindings ?? []);
+
   let parsed = fullParsed;
   let incrementalBaseSha: string | undefined;
   let incrementalFallback = false;
   if (options.incremental !== false) {
-    const priorSha = (await loadPriorState(octokit, ref))?.lastReviewedSha;
+    const priorSha = priorState?.lastReviewedSha;
     if (priorSha && priorSha !== meta.headSha) {
       try {
         const delta = await compareDiff(octokit, ref, priorSha, meta.headSha);
@@ -1085,6 +1150,20 @@ export async function reviewPullRequest(
       uncappedFindings: groundingFindings,
       raw: groundingFindings
     };
+    // Drop findings muted via `@prowl-review ignore` (#30) before the gate.
+    const ignoredSuppression = suppressIgnoredFindingsWithRefill({
+      findings: reviewResult.findings,
+      candidateFindings: reviewResult.uncappedFindings,
+      ignored: ignoredFingerprints
+    });
+    reviewResult.findings = ignoredSuppression.findings;
+    if (ignoredSuppression.candidateFindings) {
+      reviewResult.uncappedFindings = ignoredSuppression.candidateFindings;
+    }
+    if (ignoredSuppression.capped !== undefined) {
+      reviewResult.judge.capped = ignoredSuppression.capped;
+    }
+    reviewResult.raw = reviewResult.findings;
     const approvalCoverageIncomplete = fullSkipped.length > 0;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
@@ -1128,6 +1207,7 @@ export async function reviewPullRequest(
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
+        ...ignoredSuppression.notes,
         ...tidied.notes,
         ...redactionNotes,
         ...groundingNotes,
@@ -1310,6 +1390,20 @@ export async function reviewPullRequest(
     reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
+  // Drop findings muted via `@prowl-review ignore` (#30) before the gate + tidy.
+  const ignoredSuppression = suppressIgnoredFindingsWithRefill({
+    findings: reviewResult.findings,
+    candidateFindings: reviewResult.uncappedFindings,
+    ignored: ignoredFingerprints
+  });
+  reviewResult.findings = ignoredSuppression.findings;
+  if (ignoredSuppression.candidateFindings) {
+    reviewResult.uncappedFindings = ignoredSuppression.candidateFindings;
+  }
+  if (ignoredSuppression.capped !== undefined) {
+    reviewResult.judge.capped = ignoredSuppression.capped;
+  }
+
   // Coverage drives the three review-comment states (#56): a run is "degraded"
   // when the reviewer couldn't fully run — a specialist pass failed, verification
   // failed, or context retrieval threw. Benign partial coverage is NOT a failure:
@@ -1374,6 +1468,7 @@ export async function reviewPullRequest(
     notes: [
       ...incrementalNotesList,
       ...approvalNotes(approval),
+      ...ignoredSuppression.notes,
       ...tidied.notes,
       ...tierNotes,
       ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
