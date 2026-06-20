@@ -20,9 +20,11 @@ import type { BreakGlassSignal } from "../review/approval.js";
  *  - When a timestamp cutoff is supplied by a caller, the override comment must
  *    be newer than that cutoff.
  *  - prowl-review's **own** summary comment is skipped (it carries the hidden
- *    {@link REVIEW_MARKER} and, when requesting changes, literally contains the
- *    override phrase as guidance) so the bot can never self-trigger an override —
- *    including in local mode where the runner's token is the repo owner.
+ *    {@link REVIEW_MARKER}) and prowl-review's own inline finding comments are
+ *    skipped (they carry a hidden finding marker). These comments can literally
+ *    contain the override phrase as guidance or quoted context, so the bot can
+ *    never self-trigger an override — including in local mode where the runner's
+ *    token is the repo owner.
  *
  * Tolerant: an issue-comment read failure yields an inactive signal, while an
  * inline-comment read failure preserves any trusted issue-comment override that
@@ -34,6 +36,7 @@ export const BREAK_GLASS_RE = /@prowl-review\s+break[\s-]?glass\b/i;
 
 /** GitHub author associations trusted to trigger a break-glass override. */
 export const BREAK_GLASS_TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
+const INLINE_FINDING_MARKER = "<!-- prowl-review:finding ";
 
 /** Don't page issue comments forever on a very long thread. */
 const MAX_COMMENT_PAGES = 20;
@@ -98,9 +101,10 @@ function breakGlassCandidateForComment(
   order: number
 ): BreakGlassCandidate | undefined {
   const login = comment.user?.login;
-  // Never honor our own summary comment (carries the marker + the phrase as
-  // guidance) or the configured bot login.
-  if ((comment.body ?? "").includes(REVIEW_MARKER)) {
+  // Never honor our own summary/inline finding comments (they can quote the
+  // phrase as guidance or context) or the configured bot login.
+  const body = comment.body ?? "";
+  if (body.includes(REVIEW_MARKER) || body.includes(INLINE_FINDING_MARKER)) {
     return undefined;
   }
   if (options.botLogin && login === options.botLogin) {

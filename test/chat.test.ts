@@ -207,4 +207,22 @@ describe("sanitizeChatReplyMarkdown", () => {
     expect(sanitized).toContain("&amp;#x3c;script&amp;#x3e;");
     expect(sanitized).toContain("&#64;team");
   });
+
+  it("defangs encoded and normalized unsafe link protocols", () => {
+    const sanitized = sanitizeChatReplyMarkdown(
+      [
+        "[percent](java%73cript%3Aalert(1))",
+        "[entity](&#x6a;&#97;vascript:alert(1))",
+        "[fullwidth](ｄａｔａ:text/html,boom)",
+        "[ref]: vb%73cript%3Amsgbox(1)"
+      ].join("\n")
+    );
+
+    expect(sanitized).toContain("[percent](#blocked-java%73cript%3Aalert");
+    expect(sanitized).toContain("[entity](#blocked-&amp;#x6a;&amp;#97;vascript:alert");
+    expect(sanitized).toContain("[fullwidth](#blocked-ｄａｔａ:text/html,boom)");
+    expect(sanitized).toContain("[ref]: #blocked-vb%73cript%3Amsgbox(1)");
+    expect(sanitized).not.toMatch(/\]\(\s*(?:javascript|data|vbscript|java%73cript|&#x6a;|ｄａｔａ)/i);
+    expect(sanitized).not.toMatch(/^\s*\[[^\]]+\]:\s*(?:javascript|data|vbscript|vb%73cript)/im);
+  });
 });
