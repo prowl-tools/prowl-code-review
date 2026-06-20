@@ -16,7 +16,7 @@ All notable changes to Prowl Review will be documented in this file.
   context), or a top-level PR comment otherwise. Honored only from a trusted author
   (owner/member/collaborator); the provider key is resolved lazily so non-chat verbs never require it. The
   command workflow now also triggers on `pull_request_review_comment`. Exports
-  `generateChatReply`/`buildChatPrompt`/`respondToComment`.
+  `generateChatReply`/`buildChatPrompt`/`sanitizeChatReplyMarkdown`.
 - Bot command set (backlog #26): drive the reviewer from the PR by commenting
   `@prowl-review <verb>`. A pure, conservative parser + verb allowlist (#14) recognizes **`review`**
   (re-review the latest changes), **`full review`** (force a full re-scan), **`pause`** / **`resume`**
