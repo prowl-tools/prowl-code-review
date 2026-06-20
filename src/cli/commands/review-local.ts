@@ -1,6 +1,5 @@
-import { resolveProviderConfig, type ProviderConfig } from "../../providers/index.js";
+import { resolveProviderConfig } from "../../providers/index.js";
 import { loadConfig } from "../../config/loader.js";
-import type { ProwlReviewConfig } from "../../config/schema.js";
 import { parseDiff } from "../../review/parse-diff.js";
 import { applyDiffLimits, describeSkipped } from "../../review/size-guards.js";
 import { renderGuardedDiff } from "../../review/render-diff.js";
@@ -245,6 +244,7 @@ export async function runLocalReview(
   for (const note of budget.notes) {
     err(`prowl-review: ${note}`);
   }
+  const budgetTokens = budget.tokens ?? undefined;
 
   const renderedDiff = renderGuardedDiff(reviewFiles);
   const redactedDiff = redactSecrets(renderedDiff);
@@ -261,11 +261,11 @@ export async function runLocalReview(
   if (!resolved.skipContext && reviewFiles.length > 0) {
     try {
       const contextMaxTokens =
-        budget.tokens === undefined
+        budgetTokens === undefined
           ? effectiveContextLimits?.maxTokens
           : effectiveContextLimits?.maxTokens === undefined
-            ? budget.tokens
-            : Math.min(budget.tokens, effectiveContextLimits.maxTokens);
+            ? budgetTokens
+            : Math.min(budgetTokens, effectiveContextLimits.maxTokens);
       const gathered = await gather({
         toolkit: { root },
         changedPaths: reviewFiles.map((file) => file.path),
@@ -310,7 +310,7 @@ export async function runLocalReview(
   }
 
   const reviewBudgetTokens =
-    budget.tokens === undefined ? undefined : Math.max(0, budget.tokens - totalTokens(usage));
+    budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - totalTokens(usage));
   const reviewResult = await review(
     {
       diff: redactedDiff.text,
