@@ -15,6 +15,7 @@ import {
 } from "../../review/commands.js";
 import {
   generateChatReply as defaultGenerateChatReply,
+  sanitizeChatReplyMarkdown,
   type ChatReplyInput,
   type ChatThreadContext
 } from "../../review/chat.js";
@@ -23,6 +24,7 @@ import { applyDiffLimits } from "../../review/size-guards.js";
 import { renderGuardedDiff } from "../../review/render-diff.js";
 import { redactSecrets, isSensitiveFile } from "../../review/redact.js";
 import { filterSensitiveDiffFiles, isSensitiveDiffFile } from "../../review/sensitive-diff.js";
+import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../../review/ignore.js";
 import type { DiffFile } from "../../review/diff-types.js";
 import { loadConfig } from "../../config/loader.js";
 import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
@@ -267,6 +269,7 @@ export async function respondToComment(params: {
   config: ProviderConfig;
   guidelines?: string;
   maxTokens?: number;
+  ignore?: readonly string[];
   deps?: ChatHandlerDeps;
 }): Promise<void> {
   const fetchPr = params.deps?.fetchPr ?? defaultFetchPullRequest;
@@ -277,7 +280,9 @@ export async function respondToComment(params: {
   const { meta, diff } = await fetchPr(params.octokit, params.ref);
   const parsed = parseDiff(diff);
   const filtered = filterSensitiveDiffFiles(parsed.files);
-  const guarded = applyDiffLimits({ files: filtered.files }, { maxDiffBytes: CHAT_DIFF_MAX_BYTES });
+  const ignorePatterns = params.ignore ?? DEFAULT_IGNORE_GLOBS;
+  const { files: reviewableFiles } = filterIgnoredDiffFiles(filtered.files, ignorePatterns);
+  const guarded = applyDiffLimits({ files: reviewableFiles }, { maxDiffBytes: CHAT_DIFF_MAX_BYTES });
   const rendered = renderGuardedDiff(guarded.files);
   const redactedDiff = redactSecrets(rendered).text;
   const diffNote = guarded.truncated ? "\n\n(diff truncated to fit the chat context)" : "";
@@ -296,7 +301,7 @@ export async function respondToComment(params: {
   });
   // The reply is our bot's own output; redact defensively in case the model
   // echoed a secret from the diff.
-  const safeReply = redactSecrets(reply).text;
+  const safeReply = sanitizeChatReplyMarkdown(redactSecrets(reply).text);
   const body = `${safeReply}\n\n<sub>🦝 prowl-review — reply to your \`@prowl-review\` comment</sub>`;
 
   if (params.event.isReviewComment && params.event.commentId !== undefined) {
@@ -373,7 +378,8 @@ export function buildCommandCommand(): Command {
           event,
           question,
           config: providerConfig,
-          guidelines: loadChatGuidelines()
+          guidelines: loadChatGuidelines(),
+          ignore: config.ignore
         });
       };
 

@@ -50,6 +50,38 @@ export interface ChatReplyInput {
  */
 export const DEFAULT_CHAT_MAX_TOKENS: number | undefined = undefined;
 
+const DANGEROUS_MARKDOWN_LINK_PROTOCOL_RE =
+  /(\]\(\s*)(?:j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t|d\s*a\s*t\s*a|v\s*b\s*s\s*c\s*r\s*i\s*p\s*t)\s*:/gi;
+const DANGEROUS_REFERENCE_LINK_PROTOCOL_RE =
+  /^(\s*\[[^\]\r\n]+\]:\s*)(?:j\s*a\s*v\s*a\s*s\s*c\s*r\s*i\s*p\s*t|d\s*a\s*t\s*a|v\s*b\s*s\s*c\s*r\s*i\s*p\s*t)\s*:/gim;
+const UNSAFE_ENTITY_RE = /&(?!(?:amp|lt|gt|quot|apos|#39|#x27|#64);)(?=(?:#\d+|#x[0-9a-f]+|[a-z][a-z0-9]+);)/gi;
+
+/** Escape raw HTML/entity tricks without disabling normal GitHub-flavored Markdown. */
+function escapeRawHtml(value: string): string {
+  return value.replace(UNSAFE_ENTITY_RE, "&amp;").replaceAll("<", "&lt;");
+}
+
+/** Render mention markers as entities so model output cannot notify users or teams. */
+function neutralizeMentions(value: string): string {
+  return value.replaceAll("@", "&#64;");
+}
+
+/** Defang unsafe link protocols while preserving the surrounding Markdown link text. */
+function neutralizeDangerousMarkdownLinks(value: string): string {
+  return value
+    .replace(DANGEROUS_MARKDOWN_LINK_PROTOCOL_RE, "$1#blocked-")
+    .replace(DANGEROUS_REFERENCE_LINK_PROTOCOL_RE, "$1#blocked-");
+}
+
+/**
+ * Sanitize model-authored Markdown before it is posted to GitHub. GitHub also
+ * sanitizes comment rendering, but this keeps raw HTML, unsafe link protocols,
+ * encoded-tag tricks, and surprise mentions out of the body we submit.
+ */
+export function sanitizeChatReplyMarkdown(markdown: string): string {
+  return neutralizeMentions(escapeRawHtml(neutralizeDangerousMarkdownLinks(markdown)));
+}
+
 /** Build the stable, trusted system prompt for a chat reply. */
 export function buildChatSystem(guidelines?: string): string {
   const lines = [
@@ -127,5 +159,6 @@ export async function generateChatReply(
     },
     options.config
   );
-  return { reply: result.text.trim(), usage: result.usage };
+  const reply = sanitizeChatReplyMarkdown(redactSecrets(result.text.trim()).text);
+  return { reply, usage: result.usage };
 }
