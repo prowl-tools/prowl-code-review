@@ -6,9 +6,10 @@ import type { BreakGlassSignal } from "../review/approval.js";
 /**
  * Break-glass override detection (backlog #52).
  *
- * Scans the PR's issue comments for a `@prowl-review break glass` override and,
- * when one is present from a **trusted** author (repo owner/member/collaborator),
- * reports it so the approval rubric can force-approve past a blocking finding.
+ * Scans the PR's issue comments and inline review comments for a
+ * `@prowl-review break glass` override and, when one is present from a
+ * **trusted** author (repo owner/member/collaborator), reports it so the
+ * approval rubric can force-approve past a blocking finding.
  *
  * Four guards keep the override honest:
  *  - **Author association** must be OWNER/MEMBER/COLLABORATOR, so a drive-by fork
@@ -35,6 +36,20 @@ export const BREAK_GLASS_TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COL
 
 /** Don't page issue comments forever on a very long thread. */
 const MAX_COMMENT_PAGES = 20;
+const MAX_REVIEW_COMMENT_PAGES = 20;
+
+interface BreakGlassComment {
+  body?: string;
+  user?: { login?: string } | null;
+  author_association?: string;
+  created_at?: string;
+}
+
+interface BreakGlassCandidate {
+  signal: BreakGlassSignal;
+  createdAt?: number;
+  order: number;
+}
 
 /** Return true when a comment body asks prowl-review to break glass. */
 export function matchesBreakGlass(body: string | null | undefined): boolean {
@@ -46,6 +61,69 @@ function mentionsHeadSha(body: string | null | undefined, headSha: string | unde
     return true;
   }
   return typeof body === "string" && body.toLowerCase().includes(headSha.toLowerCase());
+}
+
+function parsedCommentTimestamp(comment: BreakGlassComment): number | undefined {
+  const createdAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
+  return Number.isFinite(createdAt) ? createdAt : undefined;
+}
+
+function newerBreakGlassCandidate(
+  newest: BreakGlassCandidate | undefined,
+  candidate: BreakGlassCandidate | undefined
+): BreakGlassCandidate | undefined {
+  if (!candidate) {
+    return newest;
+  }
+  if (!newest) {
+    return candidate;
+  }
+  if (candidate.createdAt !== undefined && newest.createdAt !== undefined) {
+    return candidate.createdAt >= newest.createdAt ? candidate : newest;
+  }
+  if (candidate.createdAt !== undefined) {
+    return candidate;
+  }
+  if (newest.createdAt !== undefined) {
+    return newest;
+  }
+  return candidate.order >= newest.order ? candidate : newest;
+}
+
+function breakGlassCandidateForComment(
+  comment: BreakGlassComment,
+  options: { botLogin?: string; createdAfter?: string; headSha?: string },
+  createdAfter: number | undefined,
+  order: number
+): BreakGlassCandidate | undefined {
+  const login = comment.user?.login;
+  // Never honor our own summary comment (carries the marker + the phrase as
+  // guidance) or the configured bot login.
+  if ((comment.body ?? "").includes(REVIEW_MARKER)) {
+    return undefined;
+  }
+  if (options.botLogin && login === options.botLogin) {
+    return undefined;
+  }
+  if (!matchesBreakGlass(comment.body)) {
+    return undefined;
+  }
+  if (!mentionsHeadSha(comment.body, options.headSha)) {
+    return undefined;
+  }
+  const commentCreatedAt = parsedCommentTimestamp(comment);
+  if (createdAfter !== undefined && (commentCreatedAt === undefined || commentCreatedAt <= createdAfter)) {
+    return undefined;
+  }
+  const association = comment.author_association ?? "NONE";
+  if (!BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association)) {
+    return undefined;
+  }
+  return {
+    signal: { active: true, actor: login ?? undefined, association },
+    createdAt: commentCreatedAt,
+    order
+  };
 }
 
 /**
@@ -66,7 +144,8 @@ export async function detectBreakGlass(
     const createdAfter = parsedCreatedAfter;
     const perPage = 100;
     let page = 1;
-    let newest: BreakGlassSignal | undefined;
+    let newest: BreakGlassCandidate | undefined;
+    let order = 0;
     for (;;) {
       const response = await octokit.rest.issues.listComments({
         owner: ref.owner,
@@ -78,32 +157,11 @@ export async function detectBreakGlass(
       });
 
       for (const comment of response.data) {
-        const login = comment.user?.login;
-        // Never honor our own summary comment (carries the marker + the phrase as
-        // guidance) or the configured bot login.
-        if ((comment.body ?? "").includes(REVIEW_MARKER)) {
-          continue;
-        }
-        if (options.botLogin && login === options.botLogin) {
-          continue;
-        }
-        if (!matchesBreakGlass(comment.body)) {
-          continue;
-        }
-        if (!mentionsHeadSha(comment.body, options.headSha)) {
-          continue;
-        }
-        if (createdAfter !== undefined) {
-          const createdAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
-          if (!Number.isFinite(createdAt) || createdAt <= createdAfter) {
-            continue;
-          }
-        }
-        const association = comment.author_association ?? "NONE";
-        if (!BREAK_GLASS_TRUSTED_ASSOCIATIONS.has(association)) {
-          continue;
-        }
-        newest = { active: true, actor: login ?? undefined, association };
+        order += 1;
+        newest = newerBreakGlassCandidate(
+          newest,
+          breakGlassCandidateForComment(comment, options, createdAfter, order)
+        );
       }
 
       if (response.data.length < perPage || page >= MAX_COMMENT_PAGES) {
@@ -111,8 +169,31 @@ export async function detectBreakGlass(
       }
       page += 1;
     }
+    page = 1;
+    for (;;) {
+      const response = await octokit.rest.pulls.listReviewComments({
+        owner: ref.owner,
+        repo: ref.repo,
+        pull_number: ref.pull_number,
+        per_page: perPage,
+        page
+      });
+
+      for (const comment of response.data) {
+        order += 1;
+        newest = newerBreakGlassCandidate(
+          newest,
+          breakGlassCandidateForComment(comment, options, createdAfter, order)
+        );
+      }
+
+      if (response.data.length < perPage || page >= MAX_REVIEW_COMMENT_PAGES) {
+        break;
+      }
+      page += 1;
+    }
     if (newest) {
-      return newest;
+      return newest.signal;
     }
   } catch {
     // fall through to an inactive signal

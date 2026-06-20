@@ -51,7 +51,20 @@ export interface OctokitLike {
         pull_number: number;
         per_page?: number;
         page?: number;
-      }): Promise<{ data: Array<{ body?: string; user?: { login?: string } | null }> }>;
+      }): Promise<{
+        data: Array<{
+          body?: string;
+          user?: { login?: string } | null;
+          created_at?: string;
+          author_association?: string;
+        }>;
+      }>;
+      /** Fetch one inline review comment by REST id. */
+      getReviewComment(params: {
+        owner: string;
+        repo: string;
+        comment_id: number;
+      }): Promise<{ data: { body?: string } }>;
       /** Reply in-thread to an existing review comment (#27 chat replies). */
       createReplyForReviewComment(params: {
         owner: string;

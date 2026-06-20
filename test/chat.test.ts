@@ -45,8 +45,19 @@ describe("buildChatPrompt (#27)", () => {
   });
 
   it("renders inline-thread context when present", () => {
-    const prompt = buildChatPrompt(input({ thread: { path: "src/a.ts", line: 42, diffHunk: "@@ hunk @@" } }));
+    const prompt = buildChatPrompt(
+      input({
+        thread: {
+          path: "src/a.ts",
+          line: 42,
+          parentCommentBody: "Potential issue: this leaks a token.",
+          diffHunk: "@@ hunk @@"
+        }
+      })
+    );
     expect(prompt).toContain("src/a.ts:42");
+    expect(prompt).toContain("Root review comment:");
+    expect(prompt).toContain("Potential issue");
     expect(prompt).toContain("@@ hunk @@");
   });
 

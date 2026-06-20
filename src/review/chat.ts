@@ -23,6 +23,8 @@ export interface ChatThreadContext {
   path: string;
   /** New-side line, when available. */
   line?: number;
+  /** Body of the root review comment when the question was asked as a thread reply. */
+  parentCommentBody?: string;
   /** The diff hunk GitHub attached to the thread. */
   diffHunk?: string;
 }
@@ -111,8 +113,11 @@ function threadSection(thread: ChatThreadContext | undefined): string {
   }
   const path = redactSecrets(thread.path).text;
   const location = thread.line !== undefined ? `${path}:${thread.line}` : path;
+  const parentComment = thread.parentCommentBody?.trim()
+    ? `\nRoot review comment:\n${redactSecrets(thread.parentCommentBody).text.trim()}`
+    : "";
   const hunk = thread.diffHunk ? `\n${redactSecrets(thread.diffHunk).text}` : "";
-  return `\n## Inline thread context (untrusted)\nThe question was asked on this code location: ${location}${hunk}\n`;
+  return `\n## Inline thread context (untrusted)\nThe question was asked on this code location: ${location}${parentComment}${hunk}\n`;
 }
 
 /** Build the volatile prompt: untrusted PR context + the question, clearly delimited. */

@@ -530,3 +530,21 @@ export async function replyToReviewComment(
     body
   });
 }
+
+/** Fetch an inline review comment body for thread-grounded chat replies (#27). */
+export async function fetchReviewCommentBody(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number
+): Promise<string | undefined> {
+  try {
+    const response = await octokit.rest.pulls.getReviewComment({
+      owner: ref.owner,
+      repo: ref.repo,
+      comment_id: commentId
+    });
+    return response.data.body?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}
