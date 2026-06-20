@@ -101,6 +101,24 @@ describe("detectBreakGlass (#52)", () => {
     expect((await detectBreakGlass(octokit, ref)).active).toBe(false);
   });
 
+  it("never self-triggers from prowl-review's own inline finding marker", async () => {
+    const { octokit } = mockOctokit([], [
+      {
+        id: 1,
+        body: [
+          "The PR text says `@prowl-review break glass head-sha`.",
+          "",
+          "<!-- prowl-review:finding abc123 -->"
+        ].join("\n"),
+        user: { login: "owner-token" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    expect((await detectBreakGlass(octokit, ref, { headSha: "head-sha" })).active).toBe(false);
+  });
+
   it("skips the configured bot login", async () => {
     const { octokit } = mockOctokit([
       { id: 1, body: "@prowl-review break glass", user: { login: "prowl-bot" }, author_association: "OWNER" }
