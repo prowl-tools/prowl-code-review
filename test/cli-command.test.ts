@@ -220,6 +220,37 @@ describe("resolveCommentEvent (#26)", () => {
     expect(resolveCommentEvent(env)).toBeNull();
   });
 
+  it("ignores prowl-authored inline finding comments even from trusted user tokens", () => {
+    const env = writeEvent({
+      comment: {
+        id: 999,
+        body: "Finding mentions @prowl-review review.\n\n<!-- prowl-review:finding fp-a -->",
+        author_association: "OWNER",
+        user: { login: "maintainer", type: "User" },
+        path: "src/a.ts",
+        line: 42,
+        diff_hunk: "@@ -1 +1 @@\n+const x = 1;"
+      },
+      pull_request: { number: 12 }
+    });
+
+    expect(resolveCommentEvent(env)).toBeNull();
+  });
+
+  it("ignores prowl-authored summary comments even from trusted user tokens", () => {
+    const env = writeEvent({
+      comment: {
+        id: 555,
+        body: "<!-- prowl-review:summary -->\nPaused. Comment `@prowl-review resume`.",
+        author_association: "OWNER",
+        user: { login: "maintainer", type: "User" }
+      },
+      issue: { number: 7, pull_request: { url: "..." } }
+    });
+
+    expect(resolveCommentEvent(env)).toBeNull();
+  });
+
   it("ignores an issue_comment that is not on a PR", () => {
     const env = writeEvent({
       comment: { body: "@prowl-review review", author_association: "OWNER" },
@@ -624,6 +655,8 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
     expect(workflow).toContain("github.event.comment.author_association == 'MEMBER'");
     expect(workflow).toContain("github.event.comment.author_association == 'COLLABORATOR'");
+    expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:summary -->')");
+    expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:finding ')");
     expect(workflow.indexOf("Resolve PR metadata")).toBeLessThan(workflow.indexOf("Checkout trusted base"));
     expect(workflow).toContain("gh api \"repos/${GITHUB_REPOSITORY}/pulls/${pr_number}\"");
     expect(workflow).toContain("[.base.sha, .head.sha, .head.repo.full_name] | @tsv");

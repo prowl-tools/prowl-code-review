@@ -30,6 +30,7 @@ import { renderGuardedDiff } from "../../review/render-diff.js";
 import { redactSecrets, isSensitiveFile } from "../../review/redact.js";
 import { filterSensitiveDiffFiles, isSensitiveDiffFile } from "../../review/sensitive-diff.js";
 import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../../review/ignore.js";
+import { REVIEW_MARKER } from "../../review/walkthrough.js";
 import type { DiffFile } from "../../review/diff-types.js";
 import { loadConfig } from "../../config/loader.js";
 import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
@@ -87,12 +88,18 @@ function safeInlineDiffHunk(path: string, diffHunk: string | undefined): string 
   return redactSecrets(diffHunk).text || undefined;
 }
 
+const INLINE_FINDING_MARKER = "<!-- prowl-review:finding ";
+
 function withoutSensitiveThreadText(thread: ChatThreadContext): ChatThreadContext {
   const safeThread: ChatThreadContext = { path: thread.path };
   if (thread.line !== undefined) {
     safeThread.line = thread.line;
   }
   return { ...safeThread, diffHunk: undefined };
+}
+
+function isProwlAuthoredComment(body: string): boolean {
+  return body.includes(REVIEW_MARKER) || body.includes(INLINE_FINDING_MARKER);
 }
 
 function safeThreadContext(thread: ChatThreadContext | undefined, files: DiffFile[]): ChatThreadContext | undefined {
@@ -133,6 +140,9 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
       return null;
     }
     if (comment.user?.type === "Bot") {
+      return null;
+    }
+    if (isProwlAuthoredComment(comment.body)) {
       return null;
     }
     // An inline review-comment event carries a top-level `pull_request` plus a
