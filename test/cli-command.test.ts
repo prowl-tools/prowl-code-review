@@ -422,6 +422,42 @@ describe("respondToComment (#27)", () => {
     expect(chatInput.diff).not.toContain("plainsecretvalue");
     expect(chatInput.thread).toEqual({ path: "env.example", line: 1, diffHunk: undefined });
   });
+
+  it("preserves inline thread hunks when the thread file is absent from the fetched diff", async () => {
+    const deps = chatDeps(
+      [
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1 +1 @@",
+        "+export const shown = true;"
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 321,
+        thread: {
+          path: "src/missing.ts",
+          line: 10,
+          diffHunk: "@@ -1 +1 @@\n+const value = 1;"
+        }
+      },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.generateReply.mock.calls[0][0].thread).toEqual({
+      path: "src/missing.ts",
+      line: 10,
+      diffHunk: "@@ -1 +1 @@\n+const value = 1;"
+    });
+  });
 });
 
 describe("command workflow metadata", () => {
