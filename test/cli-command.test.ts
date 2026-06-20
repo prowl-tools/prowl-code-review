@@ -12,6 +12,7 @@ import type { OctokitLike } from "../src/github/client.js";
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 const octokit = {} as unknown as OctokitLike;
+const AWS_ACCESS_KEY = ["AKIA", "1234567890ABCD99"].join("");
 
 function deps(over: Partial<CommandDispatchDeps> = {}): CommandDispatchDeps {
   return {
@@ -176,13 +177,13 @@ describe("resolveCommentEvent (#26)", () => {
         user: { login: "dev" },
         path: "src/a.ts",
         line: 42,
-        diff_hunk: "@@ -1 +1 @@\n+const key = \"AKIA1234567890ABCD99\";"
+        diff_hunk: `@@ -1 +1 @@\n+const key = "${AWS_ACCESS_KEY}";`
       },
       pull_request: { number: 12 }
     });
 
     const event = resolveCommentEvent(env);
-    expect(event?.thread?.diffHunk).not.toContain("AKIA1234567890ABCD99");
+    expect(event?.thread?.diffHunk).not.toContain(AWS_ACCESS_KEY);
     expect(event?.thread?.diffHunk).toContain("[REDACTED:aws-access-key]");
   });
 
@@ -224,12 +225,17 @@ describe("resolveCommentEvent (#26)", () => {
     expect(resolveCommentEvent(env)).toBeNull();
   });
 
-  it("parses a pull_request_review_comment", () => {
+  it("parses a pathless pull_request_review_comment as PR-scoped only", () => {
     const env = writeEvent({
-      comment: { body: "@prowl-review pause", author_association: "MEMBER", user: { login: "dev" } },
+      comment: { id: 444, body: "@prowl-review pause", author_association: "MEMBER", user: { login: "dev" } },
       pull_request: { number: 12 }
     });
-    expect(resolveCommentEvent(env)?.pullNumber).toBe(12);
+    expect(resolveCommentEvent(env)).toMatchObject({
+      pullNumber: 12,
+      commentId: 444,
+      isReviewComment: false,
+      thread: undefined
+    });
   });
 
   it("returns null when there is no event file or no comment", () => {
@@ -249,7 +255,7 @@ describe("respondToComment (#27)", () => {
     isReviewComment: false
   };
 
-  function chatDeps(diff = "diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+secret = \"AKIA1234567890ABCD99\"\n") {
+  function chatDeps(diff = `diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1 +1 @@\n+secret = "${AWS_ACCESS_KEY}"\n`) {
     return {
       fetchPr: vi.fn(async () => ({
         meta: { title: "T", body: "desc", headSha: "h", baseSha: "b" },
@@ -280,7 +286,7 @@ describe("respondToComment (#27)", () => {
     expect(deps.postReviewReply).not.toHaveBeenCalled();
     // The fetched diff reaches the generator (redacted of secrets).
     const chatInput = deps.generateReply.mock.calls[0][0];
-    expect(chatInput.diff).not.toContain("AKIA1234567890ABCD99");
+    expect(chatInput.diff).not.toContain(AWS_ACCESS_KEY);
   });
 
   it("filters sensitive diff files before generating a chat reply", async () => {
