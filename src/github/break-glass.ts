@@ -24,8 +24,9 @@ import type { BreakGlassSignal } from "../review/approval.js";
  *    override phrase as guidance) so the bot can never self-trigger an override —
  *    including in local mode where the runner's token is the repo owner.
  *
- * Tolerant: any read failure yields an inactive signal, so a transient API error
- * never accidentally approves a PR.
+ * Tolerant: an issue-comment read failure yields an inactive signal, while an
+ * inline-comment read failure preserves any trusted issue-comment override that
+ * was already found. A transient API error never invents an approval.
  */
 
 /** Matches `@prowl-review break glass` / `break-glass` / `breakglass` (case-insensitive). */
@@ -169,28 +170,35 @@ export async function detectBreakGlass(
       }
       page += 1;
     }
-    page = 1;
-    for (;;) {
-      const response = await octokit.rest.pulls.listReviewComments({
-        owner: ref.owner,
-        repo: ref.repo,
-        pull_number: ref.pull_number,
-        per_page: perPage,
-        page
-      });
+    try {
+      page = 1;
+      for (;;) {
+        const response = await octokit.rest.pulls.listReviewComments({
+          owner: ref.owner,
+          repo: ref.repo,
+          pull_number: ref.pull_number,
+          per_page: perPage,
+          page
+        });
 
-      for (const comment of response.data) {
-        order += 1;
-        newest = newerBreakGlassCandidate(
-          newest,
-          breakGlassCandidateForComment(comment, options, createdAfter, order)
-        );
-      }
+        for (const comment of response.data) {
+          order += 1;
+          newest = newerBreakGlassCandidate(
+            newest,
+            breakGlassCandidateForComment(comment, options, createdAfter, order)
+          );
+        }
 
-      if (response.data.length < perPage || page >= MAX_REVIEW_COMMENT_PAGES) {
-        break;
+        if (response.data.length < perPage || page >= MAX_REVIEW_COMMENT_PAGES) {
+          break;
+        }
+        page += 1;
       }
-      page += 1;
+    } catch {
+      if (newest) {
+        return newest.signal;
+      }
+      return { active: false };
     }
     if (newest) {
       return newest.signal;

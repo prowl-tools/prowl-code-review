@@ -262,6 +262,31 @@ describe("detectBreakGlass (#52)", () => {
     });
   });
 
+  it("preserves a trusted issue-comment override when inline review comments fail to load", async () => {
+    const listComments = vi.fn(async () => ({
+      data: [
+        {
+          id: 1,
+          body: "@prowl-review break glass",
+          user: { login: "maintainer" },
+          author_association: "OWNER",
+          created_at: "2026-06-17T14:00:00Z"
+        }
+      ]
+    }));
+    const listReviewComments = vi.fn(async () => {
+      throw new Error("review comments unavailable");
+    });
+    const octokit = { rest: { issues: { listComments }, pulls: { listReviewComments } } } as unknown as OctokitLike;
+
+    await expect(detectBreakGlass(octokit, ref)).resolves.toEqual({
+      active: true,
+      actor: "maintainer",
+      association: "OWNER"
+    });
+    expect(listReviewComments).toHaveBeenCalledWith(expect.objectContaining({ pull_number: ref.pull_number }));
+  });
+
   it("requires the current head SHA when one is supplied", async () => {
     const { octokit } = mockOctokit([
       {
