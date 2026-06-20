@@ -41,6 +41,8 @@ const INLINE_FINDING_MARKER = "<!-- prowl-review:finding ";
 /** Don't page issue comments forever on a very long thread. */
 const MAX_COMMENT_PAGES = 20;
 const MAX_REVIEW_COMMENT_PAGES = 20;
+const COMMENT_SORT = "created";
+const COMMENT_DIRECTION = "desc";
 
 interface BreakGlassComment {
   body?: string;
@@ -72,26 +74,25 @@ function parsedCommentTimestamp(comment: BreakGlassComment): number | undefined 
   return Number.isFinite(createdAt) ? createdAt : undefined;
 }
 
-function newerBreakGlassCandidate(
-  newest: BreakGlassCandidate | undefined,
-  candidate: BreakGlassCandidate | undefined
-): BreakGlassCandidate | undefined {
-  if (!candidate) {
-    return newest;
-  }
-  if (!newest) {
-    return candidate;
-  }
-  if (candidate.createdAt !== undefined && newest.createdAt !== undefined) {
-    return candidate.createdAt >= newest.createdAt ? candidate : newest;
-  }
-  if (candidate.createdAt !== undefined) {
-    return candidate;
-  }
-  if (newest.createdAt !== undefined) {
-    return newest;
-  }
-  return candidate.order >= newest.order ? candidate : newest;
+function newestBreakGlassCandidate(candidates: BreakGlassCandidate[]): BreakGlassCandidate | undefined {
+  return candidates.reduce<BreakGlassCandidate | undefined>((newest, candidate) => {
+    if (!newest) {
+      return candidate;
+    }
+    if (candidate.createdAt !== undefined && newest.createdAt !== undefined) {
+      if (candidate.createdAt === newest.createdAt) {
+        return candidate.order < newest.order ? candidate : newest;
+      }
+      return candidate.createdAt > newest.createdAt ? candidate : newest;
+    }
+    if (candidate.createdAt !== undefined) {
+      return candidate;
+    }
+    if (newest.createdAt !== undefined) {
+      return newest;
+    }
+    return candidate.order < newest.order ? candidate : newest;
+  }, undefined);
 }
 
 function breakGlassCandidateForComment(
@@ -132,9 +133,9 @@ function breakGlassCandidateForComment(
 }
 
 /**
- * Scan PR comments for a trusted `@prowl-review break glass` override. GitHub
- * returns issue comments in ascending order, so we keep the newest trusted match
- * while paging instead of assuming the first match is the latest.
+ * Scan PR comments for a trusted `@prowl-review break glass` override. Fetch
+ * newest-first pages from each comment surface, then choose the newest trusted
+ * candidate by timestamp across all collected candidates.
  */
 export async function detectBreakGlass(
   octokit: OctokitLike,
@@ -149,8 +150,8 @@ export async function detectBreakGlass(
     const createdAfter = parsedCreatedAfter;
     const perPage = 100;
     let page = 1;
-    let newest: BreakGlassCandidate | undefined;
     let order = 0;
+    const candidates: BreakGlassCandidate[] = [];
     for (;;) {
       const response = await octokit.rest.issues.listComments({
         owner: ref.owner,
@@ -158,15 +159,17 @@ export async function detectBreakGlass(
         issue_number: ref.pull_number,
         per_page: perPage,
         page,
+        sort: COMMENT_SORT,
+        direction: COMMENT_DIRECTION,
         ...(options.createdAfter ? { since: options.createdAfter } : {})
       });
 
       for (const comment of response.data) {
         order += 1;
-        newest = newerBreakGlassCandidate(
-          newest,
-          breakGlassCandidateForComment(comment, options, createdAfter, order)
-        );
+        const candidate = breakGlassCandidateForComment(comment, options, createdAfter, order);
+        if (candidate) {
+          candidates.push(candidate);
+        }
       }
 
       if (response.data.length < perPage || page >= MAX_COMMENT_PAGES) {
@@ -182,15 +185,18 @@ export async function detectBreakGlass(
           repo: ref.repo,
           pull_number: ref.pull_number,
           per_page: perPage,
-          page
+          page,
+          sort: COMMENT_SORT,
+          direction: COMMENT_DIRECTION,
+          ...(options.createdAfter ? { since: options.createdAfter } : {})
         });
 
         for (const comment of response.data) {
           order += 1;
-          newest = newerBreakGlassCandidate(
-            newest,
-            breakGlassCandidateForComment(comment, options, createdAfter, order)
-          );
+          const candidate = breakGlassCandidateForComment(comment, options, createdAfter, order);
+          if (candidate) {
+            candidates.push(candidate);
+          }
         }
 
         if (response.data.length < perPage || page >= MAX_REVIEW_COMMENT_PAGES) {
@@ -199,11 +205,13 @@ export async function detectBreakGlass(
         page += 1;
       }
     } catch {
+      const newest = newestBreakGlassCandidate(candidates);
       if (newest) {
         return newest.signal;
       }
       return { active: false };
     }
+    const newest = newestBreakGlassCandidate(candidates);
     if (newest) {
       return newest.signal;
     }

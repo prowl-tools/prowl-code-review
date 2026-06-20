@@ -474,6 +474,30 @@ describe("respondToComment (#27)", () => {
     });
   });
 
+  it("preserves parent review comment body when a current safe thread has no diff hunk", async () => {
+    const deps = chatDeps("diff --git a/src/a.ts b/src/a.ts\n--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1 +1 @@\n+const x = 1;\n");
+    await respondToComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 321,
+        parentCommentId: 321,
+        thread: { path: "src/a.ts", line: 5 }
+      },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.generateReply.mock.calls[0][0].thread).toEqual({
+      path: "src/a.ts",
+      line: 5,
+      parentCommentBody: "Parent finding body"
+    });
+  });
+
   it("sanitizes generated replies before posting them to GitHub", async () => {
     const deps = chatDeps();
     deps.generateReply.mockResolvedValueOnce({
@@ -519,6 +543,7 @@ describe("respondToComment (#27)", () => {
         ...baseEvent,
         isReviewComment: true,
         commentId: 321,
+        parentCommentId: 321,
         thread: {
           path: "env.example",
           line: 1,
@@ -533,6 +558,7 @@ describe("respondToComment (#27)", () => {
     const chatInput = deps.generateReply.mock.calls[0][0];
     expect(chatInput.diff).not.toContain("plainsecretvalue");
     expect(chatInput.thread).toEqual({ path: "env.example", line: 1, diffHunk: undefined });
+    expect(JSON.stringify(chatInput.thread)).not.toContain("Parent finding body");
   });
 
   it("drops inline thread hunks when the thread file is absent from the fetched diff", async () => {
@@ -569,10 +595,10 @@ describe("respondToComment (#27)", () => {
     expect(chatInput.thread).toEqual({
       path: "src/missing.ts",
       line: 10,
-      parentCommentBody: "Parent finding body",
       diffHunk: undefined
     });
     expect(JSON.stringify(chatInput.thread)).not.toContain("plainsecretvalue");
+    expect(JSON.stringify(chatInput.thread)).not.toContain("Parent finding body");
   });
 });
 
