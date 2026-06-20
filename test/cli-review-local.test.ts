@@ -87,6 +87,9 @@ function deps(over: Partial<LocalReviewDeps> = {}): {
       env: { PROWL_AI_KEY: "test-key" },
       out: (text) => out.push(text),
       err: (text) => err.push(text),
+      resolveRoot: vi.fn().mockImplementation((options: { cwd: string; env: NodeJS.ProcessEnv }) =>
+        Promise.resolve(options.env.PROWL_WORKSPACE || options.env.GITHUB_WORKSPACE || options.cwd)
+      ),
       resolveHead: vi.fn().mockResolvedValue(undefined),
       resolveDiff: vi.fn().mockResolvedValue(DIFF),
       gatherContext: vi.fn().mockResolvedValue({ files: [], notes: [], usage: emptyUsage() }),
@@ -164,6 +167,43 @@ describe("runLocalReview (#35)", () => {
 
     expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ cwd: injectedRoot }));
     expect(d.gatherContext).toHaveBeenCalledWith(expect.objectContaining({ toolkit: { root: injectedRoot } }));
+  });
+
+  it("resolves the git top-level when no workspace env is set", async () => {
+    isolatedWorkspace();
+    const resolveRoot = vi.fn().mockResolvedValue("/repo-root");
+    const resolveDiff = vi.fn().mockResolvedValue(DIFF);
+    const { deps: d } = deps({
+      env: { PROWL_AI_KEY: "test-key" },
+      resolveRoot,
+      resolveDiff
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(resolveRoot).toHaveBeenCalledWith(expect.objectContaining({ cwd: expect.any(String), env: d.env }));
+    expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ cwd: "/repo-root" }));
+    expect(d.gatherContext).toHaveBeenCalledWith(expect.objectContaining({ toolkit: { root: "/repo-root" } }));
+  });
+
+  it("does not trust repo-local tooling unless explicitly enabled", async () => {
+    isolatedWorkspace();
+    const { deps: d } = deps();
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(d.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: false }));
+  });
+
+  it("honors explicit local workspace trust from flag and environment", async () => {
+    isolatedWorkspace();
+    const flagRun = deps();
+    await runLocalReview({ base: "main", config: false, trustWorkspace: true }, flagRun.deps);
+    expect(flagRun.deps.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: true }));
+
+    const envRun = deps({ env: { PROWL_AI_KEY: "test-key", PROWL_TRUST_WORKSPACE: "true" } });
+    await runLocalReview({ base: "main", config: false }, envRun.deps);
+    expect(envRun.deps.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: true }));
   });
 
   it("feeds grounding findings into the review and surfaces grounding notes", async () => {

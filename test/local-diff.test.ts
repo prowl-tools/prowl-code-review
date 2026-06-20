@@ -1,30 +1,35 @@
 import { describe, expect, it, vi } from "vitest";
-import { assertLocalHeadMatchesCheckout, resolveLocalDiff, LocalDiffError } from "../src/review/local-diff.js";
+import {
+  assertLocalHeadMatchesCheckout,
+  resolveLocalDiff,
+  resolveLocalWorkspace,
+  LocalDiffError
+} from "../src/review/local-diff.js";
 
 describe("resolveLocalDiff", () => {
   it("diffs base against head using --merge-base when head is given", async () => {
     const exec = vi.fn().mockResolvedValue("DIFF");
     const diff = await resolveLocalDiff({ base: "main", head: "feature", cwd: "/repo", exec });
     expect(diff).toBe("DIFF");
-    expect(exec).toHaveBeenCalledWith(["diff", "--merge-base", "main", "feature"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main", "feature"]);
   });
 
   it("diffs base against the working tree when head is omitted", async () => {
     const exec = vi.fn().mockResolvedValue("WT");
     await resolveLocalDiff({ base: "main", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--merge-base", "main"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main"]);
   });
 
   it("trims surrounding whitespace from the refs", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "  develop  ", head: "  topic  ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--merge-base", "develop", "topic"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "develop", "topic"]);
   });
 
   it("treats a blank head as the working tree", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "main", head: "   ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--merge-base", "main"]);
+    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "main"]);
   });
 
   it("rejects an empty base ref", async () => {
@@ -36,6 +41,38 @@ describe("resolveLocalDiff", () => {
   it("propagates a git failure as a LocalDiffError", async () => {
     const exec = vi.fn().mockRejectedValue(new LocalDiffError("git diff failed: bad revision"));
     await expect(resolveLocalDiff({ base: "main", cwd: "/repo", exec })).rejects.toThrow(/bad revision/);
+  });
+});
+
+describe("resolveLocalWorkspace", () => {
+  it("prefers an explicit injected workspace", async () => {
+    const exec = vi.fn();
+    await expect(
+      resolveLocalWorkspace({
+        cwd: "/repo/subdir",
+        env: { PROWL_WORKSPACE: " /repo " } as NodeJS.ProcessEnv,
+        exec
+      })
+    ).resolves.toBe("/repo");
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("falls back to the git repository top-level", async () => {
+    const exec = vi.fn().mockResolvedValue("/repo\n");
+    await expect(resolveLocalWorkspace({ cwd: "/repo/subdir", env: {}, exec })).resolves.toBe("/repo");
+    expect(exec).toHaveBeenCalledWith(["rev-parse", "--show-toplevel"]);
+  });
+
+  it("uses GitHub workspace when PROWL_WORKSPACE is blank", async () => {
+    const exec = vi.fn();
+    await expect(
+      resolveLocalWorkspace({
+        cwd: "/repo/subdir",
+        env: { PROWL_WORKSPACE: "  ", GITHUB_WORKSPACE: " /actions/repo " } as NodeJS.ProcessEnv,
+        exec
+      })
+    ).resolves.toBe("/actions/repo");
+    expect(exec).not.toHaveBeenCalled();
   });
 });
 

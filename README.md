@@ -165,12 +165,15 @@ flags (`--pr`, `--repo`, `--dry-run`) are ignored.
 | `--head <ref>` | Checked-out head ref (default: the working tree). |
 | `--min-severity <sev>` | Drop findings below this severity. |
 | `--no-context` / `--no-grounding` / `--no-verify` | Skip cross-file context (#4), linter/SAST grounding (#16), or the false-positive pass (#8). |
+| `--trust-workspace` | Allow repo-local linter/SAST code to execute. Without this or `PROWL_TRUST_WORKSPACE=true`, repo-local execution stays disabled. |
 | `--json` | Print findings as JSON (for tooling) instead of the human report. |
 | `--no-color` | Disable ANSI color (also honors `NO_COLOR`). |
 | `--fail-on <sev>` | Exit non-zero when a finding at/above this severity is found — wire it into a pre-push hook as a gate. |
 
-The same agentic cross-file context and linter/SAST grounding run over your
-local checkout; per-run cost prints to stderr so `--json` stdout stays clean.
+The same agentic cross-file context and safe linter/SAST grounding run over the
+git repository top-level. Repo-local linter code executes only with
+`--trust-workspace` or `PROWL_TRUST_WORKSPACE=true`; per-run cost prints to
+stderr so `--json` stdout stays clean.
 
 ## Development
 
