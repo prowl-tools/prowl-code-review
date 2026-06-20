@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   dispatchCommand,
+  loadChatGuidelines,
   resolveCommentEvent,
   respondToComment,
   type CommandDispatchDeps
@@ -243,6 +244,27 @@ describe("resolveCommentEvent (#26)", () => {
     const env = writeEvent({ issue: { number: 7, pull_request: {} } });
     expect(resolveCommentEvent(env)).toBeNull();
   });
+
+  it("ignores unreadable org guidelines without throwing", () => {
+    const priorOrgPath = process.env.PROWL_ORG_GUIDELINES_PATH;
+    const priorGuidelinesWorkspace = process.env.PROWL_GUIDELINES_WORKSPACE;
+    process.env.PROWL_ORG_GUIDELINES_PATH = dir;
+    delete process.env.PROWL_GUIDELINES_WORKSPACE;
+    try {
+      expect(loadChatGuidelines()).toBeUndefined();
+    } finally {
+      if (priorOrgPath === undefined) {
+        delete process.env.PROWL_ORG_GUIDELINES_PATH;
+      } else {
+        process.env.PROWL_ORG_GUIDELINES_PATH = priorOrgPath;
+      }
+      if (priorGuidelinesWorkspace === undefined) {
+        delete process.env.PROWL_GUIDELINES_WORKSPACE;
+      } else {
+        process.env.PROWL_GUIDELINES_WORKSPACE = priorGuidelinesWorkspace;
+      }
+    }
+  });
 });
 
 describe("respondToComment (#27)", () => {
@@ -362,6 +384,43 @@ describe("respondToComment (#27)", () => {
     expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 321, expect.stringContaining("It loops twice."));
     expect(deps.postIssueComment).not.toHaveBeenCalled();
     expect(deps.generateReply.mock.calls[0][0].thread).toEqual({ path: "src/a.ts", line: 5 });
+  });
+
+  it("drops inline thread hunks when a file was renamed from a sensitive path", async () => {
+    const deps = chatDeps(
+      [
+        "diff --git a/.env b/env.example",
+        "similarity index 80%",
+        "rename from .env",
+        "rename to env.example",
+        "--- a/.env",
+        "+++ b/env.example",
+        "@@ -1 +1 @@",
+        "+CUSTOM_VALUE=plainsecretvalue"
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 321,
+        thread: {
+          path: "env.example",
+          line: 1,
+          diffHunk: "@@ -1 +1 @@\n+CUSTOM_VALUE=plainsecretvalue"
+        }
+      },
+      question: "why?",
+      config,
+      deps
+    });
+
+    const chatInput = deps.generateReply.mock.calls[0][0];
+    expect(chatInput.diff).not.toContain("plainsecretvalue");
+    expect(chatInput.thread).toEqual({ path: "env.example", line: 1, diffHunk: undefined });
   });
 });
 

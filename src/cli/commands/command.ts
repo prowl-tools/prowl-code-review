@@ -22,7 +22,8 @@ import { parseDiff } from "../../review/parse-diff.js";
 import { applyDiffLimits } from "../../review/size-guards.js";
 import { renderGuardedDiff } from "../../review/render-diff.js";
 import { redactSecrets, isSensitiveFile } from "../../review/redact.js";
-import { filterSensitiveDiffFiles } from "../../review/sensitive-diff.js";
+import { filterSensitiveDiffFiles, isSensitiveDiffFile } from "../../review/sensitive-diff.js";
+import type { DiffFile } from "../../review/diff-types.js";
 import { loadConfig } from "../../config/loader.js";
 import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
 import {
@@ -75,6 +76,17 @@ function safeInlineDiffHunk(path: string, diffHunk: string | undefined): string 
     return undefined;
   }
   return redactSecrets(diffHunk).text || undefined;
+}
+
+function safeThreadContext(thread: ChatThreadContext | undefined, files: DiffFile[]): ChatThreadContext | undefined {
+  if (!thread?.diffHunk) {
+    return thread;
+  }
+  const file = files.find((candidate) => candidate.path === thread.path);
+  if (file && isSensitiveDiffFile(file)) {
+    return { ...thread, diffHunk: undefined };
+  }
+  return thread;
 }
 
 /** Read and normalize the triggering comment event from `GITHUB_EVENT_PATH`. */
@@ -276,7 +288,7 @@ export async function respondToComment(params: {
     prBody: meta.body,
     diff: `${redactedDiff}${diffNote}`,
     guidelines: params.guidelines,
-    thread: params.event.thread
+    thread: safeThreadContext(params.event.thread, parsed.files)
   };
   const { reply } = await generateReply(input, {
     config: params.config,
@@ -295,7 +307,7 @@ export async function respondToComment(params: {
 }
 
 /** Compose trusted org + repo guidelines for a chat reply (mirrors the review path). */
-function loadChatGuidelines(): string | undefined {
+export function loadChatGuidelines(): string | undefined {
   const guidelinesRoot = resolveGuidelinesWorkspace();
   const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
   const orgPath = resolveOrgGuidelinesPath();
