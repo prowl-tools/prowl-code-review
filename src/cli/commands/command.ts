@@ -328,7 +328,7 @@ export async function respondToComment(params: {
   // The reply is our bot's own output; redact defensively in case the model
   // echoed a secret from the diff.
   const safeReply = sanitizeChatReplyMarkdown(redactSecrets(reply).text);
-  const body = `${safeReply}\n\n<sub>🦝 prowl-review — reply to your \`@prowl-review\` comment</sub>`;
+  const body = `${safeReply}\n\n<sub>🦝 prowl-review — reply to your \`&#64;prowl-review\` comment</sub>`;
 
   if (params.event.isReviewComment && params.event.commentId !== undefined) {
     await postReviewReply(params.octokit, params.ref, params.event.commentId, body);

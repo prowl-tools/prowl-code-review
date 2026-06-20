@@ -520,6 +520,8 @@ describe("respondToComment (#27)", () => {
     expect(body).not.toMatch(/javascript\s*:/i);
     expect(body).toContain("&#64;team");
     expect(body).toContain("<sub>");
+    expect(body).toContain("&#64;prowl-review");
+    expect(body).not.toContain("@prowl-review");
   });
 
   it("drops inline thread hunks when a file was renamed from a sensitive path", async () => {
