@@ -344,6 +344,64 @@ describe("respondToComment (#27)", () => {
     expect(chatInput.diff).not.toContain("(diff truncated to fit the chat context)");
   });
 
+  it("filters ignored diff files before capping chat context", async () => {
+    const lockPayload = "x".repeat(58_000);
+    const sourcePayload = "y".repeat(3_000);
+    const deps = chatDeps(
+      [
+        "diff --git a/package-lock.json b/package-lock.json",
+        "--- a/package-lock.json",
+        "+++ b/package-lock.json",
+        "@@ -1 +1 @@",
+        `+${lockPayload}`,
+        "diff --git a/src/app.ts b/src/app.ts",
+        "--- a/src/app.ts",
+        "+++ b/src/app.ts",
+        "@@ -1 +1 @@",
+        `+${sourcePayload}`
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      deps
+    });
+
+    const chatInput = deps.generateReply.mock.calls[0][0];
+    expect(chatInput.diff).not.toContain("package-lock.json");
+    expect(chatInput.diff).not.toContain(lockPayload);
+    expect(chatInput.diff).toContain("src/app.ts");
+    expect(chatInput.diff).toContain(sourcePayload);
+  });
+
+  it("honors an empty chat ignore list as an explicit opt-out", async () => {
+    const deps = chatDeps(
+      [
+        "diff --git a/package-lock.json b/package-lock.json",
+        "--- a/package-lock.json",
+        "+++ b/package-lock.json",
+        "@@ -1 +1 @@",
+        "+{}"
+      ].join("\n")
+    );
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      ignore: [],
+      deps
+    });
+
+    expect(deps.generateReply.mock.calls[0][0].diff).toContain("package-lock.json");
+  });
+
   it("does not label binary skips as chat diff truncation", async () => {
     const deps = chatDeps(
       [
@@ -384,6 +442,30 @@ describe("respondToComment (#27)", () => {
     expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 321, expect.stringContaining("It loops twice."));
     expect(deps.postIssueComment).not.toHaveBeenCalled();
     expect(deps.generateReply.mock.calls[0][0].thread).toEqual({ path: "src/a.ts", line: 5 });
+  });
+
+  it("sanitizes generated replies before posting them to GitHub", async () => {
+    const deps = chatDeps();
+    deps.generateReply.mockResolvedValueOnce({
+      reply: "**ok** <img src=x onerror=alert(1)>\n[bad](javascript:alert(1))\n@team",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    });
+
+    await respondToComment({
+      octokit,
+      ref,
+      event: { ...baseEvent },
+      question: "why?",
+      config,
+      deps
+    });
+
+    const body = deps.postIssueComment.mock.calls[0][2];
+    expect(body).toContain("**ok**");
+    expect(body).not.toContain("<img");
+    expect(body).not.toMatch(/javascript\s*:/i);
+    expect(body).toContain("&#64;team");
+    expect(body).toContain("<sub>");
   });
 
   it("drops inline thread hunks when a file was renamed from a sensitive path", async () => {

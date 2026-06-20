@@ -3,6 +3,7 @@ import {
   buildChatSystem,
   buildChatPrompt,
   generateChatReply,
+  sanitizeChatReplyMarkdown,
   type ChatReplyInput
 } from "../src/review/chat.js";
 import type { ProviderConfig } from "../src/providers/index.js";
@@ -100,6 +101,22 @@ describe("generateChatReply (#27)", () => {
     expect(request).not.toHaveProperty("temperature");
   });
 
+  it("sanitizes model-authored Markdown before returning it", async () => {
+    const complete = vi.fn(async () => ({
+      text: "  **ok** <script>alert(1)</script>\n[bad](javascript:alert(1))\n@team  ",
+      usage: { inputTokens: 10, outputTokens: 5, cachedInputTokens: 0 },
+      provider: "anthropic" as const,
+      model: "m"
+    }));
+    const result = await generateChatReply(input(), { config, deps: { complete } });
+
+    expect(result.reply).toContain("**ok**");
+    expect(result.reply).toContain("&lt;script>");
+    expect(result.reply).not.toContain("<script>");
+    expect(result.reply).not.toMatch(/javascript\s*:/i);
+    expect(result.reply).toContain("&#64;team");
+  });
+
   it("passes an explicit chat token cap when configured", async () => {
     const complete = vi.fn(async () => ({
       text: "ok",
@@ -157,5 +174,26 @@ describe("generateChatReply (#27)", () => {
     ).rejects.toThrow(/429/);
 
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("sanitizeChatReplyMarkdown", () => {
+  it("preserves normal Markdown while defanging raw HTML, unsafe links, entities, and mentions", () => {
+    const sanitized = sanitizeChatReplyMarkdown(
+      [
+        "**bold** and `code`",
+        "<img src=x onerror=alert(1)>",
+        "[bad](javascript:alert(1))",
+        "[ref]: data:text/html,<script>",
+        "@team &#x3c;script&#x3e;"
+      ].join("\n")
+    );
+
+    expect(sanitized).toContain("**bold** and `code`");
+    expect(sanitized).not.toContain("<img");
+    expect(sanitized).not.toMatch(/javascript\s*:/i);
+    expect(sanitized).not.toMatch(/data\s*:/i);
+    expect(sanitized).toContain("&amp;#x3c;script&amp;#x3e;");
+    expect(sanitized).toContain("&#64;team");
   });
 });
