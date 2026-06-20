@@ -13,7 +13,15 @@
 const RETRYABLE_STATUS = new Set([408, 425, 429]);
 
 /** Network/transport error codes (Node/undici) that are transient. */
-const RETRYABLE_CODES = new Set(["ECONNRESET", "ETIMEDOUT", "ECONNREFUSED", "EAI_AGAIN", "ENOTFOUND", "EPIPE"]);
+const RETRYABLE_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "ECONNREFUSED",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT"
+]);
 
 export interface RetryOptions {
   /** Total attempts including the first try. Default {@link DEFAULT_MAX_ATTEMPTS}. */
@@ -64,7 +72,7 @@ export function isRetryableError(error: unknown): boolean {
   if (statusMatch && isRetryableStatus(Number(statusMatch[1]))) {
     return true;
   }
-  return /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|fetch failed|network error|socket hang up/i.test(
+  return /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|fetch failed|network error|socket hang up|connect timeout/i.test(
     message
   );
 }
