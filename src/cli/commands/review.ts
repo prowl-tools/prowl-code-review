@@ -510,7 +510,7 @@ export function buildReviewCommand(): Command {
     .option("--pr <number>", "pull request number (defaults to the GitHub event)")
     .option("--repo <owner/repo>", "repository (defaults to GITHUB_REPOSITORY)")
     .option("--base <ref>", "local mode: base git ref to diff against (no GitHub posting)")
-    .option("--head <ref>", "local mode: checked-out head ref (defaults to the working tree)")
+    .option("--head <ref>", "local mode: checked-out clean head ref (defaults to the working tree)")
     .option("--min-severity <severity>", `drop findings below this severity (${SEVERITIES.join("|")})`)
     .option("--no-context", "skip agentic cross-file context retrieval")
     .option("--no-grounding", "skip linter/SAST grounding")

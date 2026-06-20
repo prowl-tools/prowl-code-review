@@ -90,6 +90,13 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
       `--head ${head} does not match the checked-out HEAD; switch to that ref or omit --head to review the working tree.`
     );
   }
+
+  const status = (await exec(["status", "--porcelain"])).trim();
+  if (status) {
+    throw new LocalDiffError(
+      `--head ${head} requires a clean worktree; commit or stash local changes, or omit --head to review the working tree.`
+    );
+  }
 }
 
 /**
