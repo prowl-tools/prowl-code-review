@@ -67,8 +67,12 @@ repo owner/member/collaborator is honored):
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
 | `@prowl-review resume` | Re-enable auto-review. |
 | `@prowl-review help` | List the available commands. |
+| `@prowl-review <question>` | Ask a free-form question — answered in-thread, grounded in the PR diff (#27). |
 
-Commands need a second workflow listening for comments:
+Anything after the mention that isn't a known command is treated as a question:
+`@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
+thread (inline, when asked on a specific review comment). The command workflow
+listens on both `issue_comment` and `pull_request_review_comment`:
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
@@ -76,8 +80,10 @@ name: prowl-review command
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
 concurrency:
-  group: prowl-review-${{ github.event.issue.number }}
+  group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
   queue: max
   cancel-in-progress: false
 permissions:
@@ -88,7 +94,7 @@ permissions:
 jobs:
   command:
     if: |
-      github.event.issue.pull_request &&
+      (github.event.issue.pull_request || github.event.pull_request) &&
       github.event.comment.user.type != 'Bot' &&
       (
         github.event.comment.author_association == 'OWNER' ||
@@ -102,9 +108,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
-          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
-          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.base.sha')"
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
           echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
           if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then

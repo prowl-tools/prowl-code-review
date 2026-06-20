@@ -130,6 +130,15 @@ export {
   type ParsedCommand
 } from "./review/commands.js";
 export {
+  generateChatReply,
+  sanitizeChatReplyMarkdown,
+  buildChatSystem,
+  buildChatPrompt,
+  DEFAULT_CHAT_MAX_TOKENS,
+  type ChatReplyInput,
+  type ChatThreadContext
+} from "./review/chat.js";
+export {
   planCheckRun,
   submitCheckRun,
   annotationLevelFor,
