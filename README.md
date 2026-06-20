@@ -80,8 +80,10 @@ name: prowl-review command
 on:
   issue_comment:
     types: [created]
+  pull_request_review_comment:
+    types: [created]
 concurrency:
-  group: prowl-review-${{ github.event.issue.number }}
+  group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
   queue: max
   cancel-in-progress: false
 permissions:
@@ -92,7 +94,7 @@ permissions:
 jobs:
   command:
     if: |
-      github.event.issue.pull_request &&
+      (github.event.issue.pull_request || github.event.pull_request) &&
       github.event.comment.user.type != 'Bot' &&
       (
         github.event.comment.author_association == 'OWNER' ||
@@ -106,9 +108,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.base.sha')"
-          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.sha')"
-          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${{ github.event.issue.number }}" --jq '.head.repo.full_name')"
+          pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
+          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.base.sha')"
+          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
+          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
           echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
           if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then

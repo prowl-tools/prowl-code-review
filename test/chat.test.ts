@@ -3,7 +3,6 @@ import {
   buildChatSystem,
   buildChatPrompt,
   generateChatReply,
-  DEFAULT_CHAT_MAX_TOKENS,
   type ChatReplyInput
 } from "../src/review/chat.js";
 import type { ProviderConfig } from "../src/providers/index.js";
@@ -97,6 +96,19 @@ describe("generateChatReply (#27)", () => {
     const request = complete.mock.calls[0][0];
     expect(request.system).toContain("prowl-review");
     expect(request.prompt).toContain("O(n^2)");
-    expect(request.maxTokens).toBe(DEFAULT_CHAT_MAX_TOKENS);
+    expect(request).not.toHaveProperty("maxTokens");
+  });
+
+  it("passes an explicit chat token cap when configured", async () => {
+    const complete = vi.fn(async () => ({
+      text: "ok",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 },
+      provider: "anthropic" as const,
+      model: "m"
+    }));
+
+    await generateChatReply(input(), { config, maxTokens: 512, deps: { complete } });
+
+    expect(complete.mock.calls[0][0]).toEqual(expect.objectContaining({ maxTokens: 512 }));
   });
 });

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vitest";
-import { submitReview, planPublish, hasActiveRequestChanges, setPausedState } from "../src/github/review.js";
+import {
+  submitReview,
+  planPublish,
+  hasActiveRequestChanges,
+  setPausedState,
+  replyToReviewComment
+} from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
@@ -46,15 +52,26 @@ function mockOctokit(
   const createComment = vi.fn(async () => ({ data: {} }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
+  const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, listReviewComments, listReviews },
+      pulls: { createReview, createReplyForReviewComment, listReviewComments, listReviews },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
   } as unknown as OctokitLike;
-  return { octokit, listComments, listReviewComments, listReviews, createComment, updateComment, createReview, getAuthenticated };
+  return {
+    octokit,
+    listComments,
+    listReviewComments,
+    listReviews,
+    createComment,
+    updateComment,
+    createReview,
+    createReplyForReviewComment,
+    getAuthenticated
+  };
 }
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
@@ -705,5 +722,21 @@ describe("setPausedState (#26)", () => {
     const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
     await setPausedState(octokit, ref, false);
     expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.paused).toBe(false);
+  });
+});
+
+describe("replyToReviewComment (#27)", () => {
+  it("posts an inline review-thread reply with the expected GitHub parameters", async () => {
+    const { octokit, createReplyForReviewComment } = mockOctokit([]);
+
+    await replyToReviewComment(octokit, ref, 444, "Answer body");
+
+    expect(createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: "prowl-tools",
+      repo: "prowl-code-review",
+      pull_number: 12,
+      comment_id: 444,
+      body: "Answer body"
+    });
   });
 });
