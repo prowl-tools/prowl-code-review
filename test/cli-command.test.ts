@@ -658,8 +658,10 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:summary -->')");
     expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:finding ')");
     expect(workflow.indexOf("Resolve PR metadata")).toBeLessThan(workflow.indexOf("Checkout trusted base"));
+    expect(workflow).toContain("set -euo pipefail");
     expect(workflow).toContain("gh api \"repos/${GITHUB_REPOSITORY}/pulls/${pr_number}\"");
     expect(workflow).toContain("[.base.sha, .head.sha, .head.repo.full_name] | @tsv");
+    expect(workflow).toContain("Failed to resolve complete PR metadata");
     expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
     expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
     expect(workflow).toContain("action_file=\"action.yml\"");

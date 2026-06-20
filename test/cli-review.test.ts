@@ -588,7 +588,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
-      "${{ github.event.pull_request.head.sha || env.PROWL_REVIEWED_HEAD_SHA }}"
+      "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"
     );
     expect(reviewStep?.run).toBe(
       'node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == \'command\' && \'command\' || \'review\' }}"'
