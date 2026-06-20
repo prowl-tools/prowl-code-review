@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -80,11 +80,17 @@ function deps(over: Partial<LocalReviewDeps> = {}): {
 } {
   const out: string[] = [];
   const err: string[] = [];
+  const { env: overrideEnv, ...overrideDeps } = over;
+  const env = {
+    PROWL_AI_KEY: "test-key",
+    ...(process.env.PROWL_WORKSPACE ? { PROWL_WORKSPACE: process.env.PROWL_WORKSPACE } : {}),
+    ...(overrideEnv ?? {})
+  } as NodeJS.ProcessEnv;
   return {
     out,
     err,
     deps: {
-      env: { PROWL_AI_KEY: "test-key" },
+      env,
       out: (text) => out.push(text),
       err: (text) => err.push(text),
       resolveRoot: vi.fn().mockImplementation((options: { cwd: string; env: NodeJS.ProcessEnv }) =>
@@ -95,7 +101,7 @@ function deps(over: Partial<LocalReviewDeps> = {}): {
       gatherContext: vi.fn().mockResolvedValue({ files: [], notes: [], usage: emptyUsage() }),
       gatherGrounding: vi.fn().mockResolvedValue({ findings: [], notes: [] }),
       runReview: vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] })),
-      ...over
+      ...overrideDeps
     }
   };
 }
@@ -174,7 +180,7 @@ describe("runLocalReview (#35)", () => {
     const resolveRoot = vi.fn().mockResolvedValue("/repo-root");
     const resolveDiff = vi.fn().mockResolvedValue(DIFF);
     const { deps: d } = deps({
-      env: { PROWL_AI_KEY: "test-key" },
+      env: { PROWL_AI_KEY: "test-key", PROWL_WORKSPACE: undefined, GITHUB_WORKSPACE: undefined },
       resolveRoot,
       resolveDiff
     });
@@ -204,6 +210,53 @@ describe("runLocalReview (#35)", () => {
     const envRun = deps({ env: { PROWL_AI_KEY: "test-key", PROWL_TRUST_WORKSPACE: "true" } });
     await runLocalReview({ base: "main", config: false }, envRun.deps);
     expect(envRun.deps.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: true }));
+  });
+
+  it("keeps workspace execution untrusted for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      }
+    });
+
+    await runLocalReview({ base: "main", config: false, trustWorkspace: true }, d);
+
+    expect(d.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: false }));
+  });
+
+  it("records local usage for cost aggregation", async () => {
+    const workspace = isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(
+      reviewResult({
+        findings: [finding()],
+        usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+    const { deps: d } = deps({
+      runReview,
+      now: () => new Date("2026-06-20T12:00:00.000Z")
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const log = readFileSync(join(workspace, ".prowl-review", "usage.jsonl"), "utf8").trim();
+    expect(JSON.parse(log)).toMatchObject({
+      ts: "2026-06-20T12:00:00.000Z",
+      provider: "anthropic",
+      model: "claude-sonnet-4-6",
+      inputTokens: 12,
+      outputTokens: 3,
+      cachedInputTokens: 4
+    });
   });
 
   it("feeds grounding findings into the review and surfaces grounding notes", async () => {
