@@ -138,6 +138,37 @@ jobs:
           workspace-path: ${{ github.workspace }}/pr-head
 ```
 
+## Local pre-push review (CLI)
+
+Run the **same** review engine against a local git diff before you open a PR —
+no GitHub token, no posting (#35). Findings print to the terminal:
+
+```bash
+# Review your branch's changes against main (uncommitted edits included)
+PROWL_AI_KEY=sk-… prowl-review review --base main
+
+# Review a specific range
+PROWL_AI_KEY=sk-… prowl-review review --base main --head my-feature
+```
+
+The diff is taken relative to the **merge base** of `--base` and `--head` (PR
+semantics — only the changes your branch introduces). Omit `--head` to review
+the working tree. Passing `--base` (or `--head`) switches the `review` command
+into local mode; the GitHub flags (`--pr`, `--repo`, `--dry-run`) are ignored.
+
+| Flag | Effect |
+|------|--------|
+| `--base <ref>` | Base ref to diff against (default `main`). |
+| `--head <ref>` | Head ref (default: the working tree). |
+| `--min-severity <sev>` | Drop findings below this severity. |
+| `--no-context` / `--no-grounding` / `--no-verify` | Skip cross-file context (#4), linter/SAST grounding (#16), or the false-positive pass (#8). |
+| `--json` | Print findings as JSON (for tooling) instead of the human report. |
+| `--no-color` | Disable ANSI color (also honors `NO_COLOR`). |
+| `--fail-on <sev>` | Exit non-zero when a finding at/above this severity is found — wire it into a pre-push hook as a gate. |
+
+The same agentic cross-file context and linter/SAST grounding run over your
+local checkout; per-run cost prints to stderr so `--json` stdout stays clean.
+
 ## Development
 
 ```bash
