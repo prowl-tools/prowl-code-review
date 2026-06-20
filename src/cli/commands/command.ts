@@ -71,6 +71,13 @@ export interface CommentEvent {
   thread?: ChatThreadContext;
 }
 
+function safeInlineDiffHunk(path: string, diffHunk: string | undefined): string | undefined {
+  if (!diffHunk || isSensitiveFile(path)) {
+    return undefined;
+  }
+  return redactSecrets(diffHunk).text || undefined;
+}
+
 /** Read and normalize the triggering comment event from `GITHUB_EVENT_PATH`. */
 export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): CommentEvent | null {
   const path = env.GITHUB_EVENT_PATH;
@@ -87,6 +94,7 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
         path?: string;
         line?: number | null;
         original_line?: number | null;
+        in_reply_to_id?: number | null;
         diff_hunk?: string;
       };
       issue?: { number?: number; pull_request?: unknown };
@@ -121,7 +129,7 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
         ? {
             path: comment.path,
             line: comment.line ?? comment.original_line ?? undefined,
-            diffHunk: isSensitiveFile(comment.path) ? undefined : redactSecrets(comment.diff_hunk ?? "").text || undefined
+            diffHunk: safeInlineDiffHunk(comment.path, comment.diff_hunk)
           }
         : undefined;
 
@@ -130,7 +138,7 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
       association: comment.author_association,
       login: comment.user?.login ?? undefined,
       pullNumber,
-      commentId: comment.id,
+      commentId: isReviewComment ? (comment.in_reply_to_id ?? comment.id) : comment.id,
       isReviewComment,
       thread
     };

@@ -149,6 +149,24 @@ describe("resolveCommentEvent (#26)", () => {
     });
   });
 
+  it("targets the top-level review comment when the trigger is an inline reply", () => {
+    const env = writeEvent({
+      comment: {
+        id: 1002,
+        in_reply_to_id: 999,
+        body: "@prowl-review why is this unsafe?",
+        author_association: "MEMBER",
+        user: { login: "dev" },
+        path: "src/a.ts",
+        line: 42,
+        diff_hunk: "@@ -1 +1 @@\n+const x = 1;"
+      },
+      pull_request: { number: 12 }
+    });
+
+    expect(resolveCommentEvent(env)?.commentId).toBe(999);
+  });
+
   it("redacts inline-thread diff hunks before they reach the chat prompt", () => {
     const env = writeEvent({
       comment: {

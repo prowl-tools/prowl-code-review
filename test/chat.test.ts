@@ -56,6 +56,29 @@ describe("buildChatPrompt (#27)", () => {
   it("handles a missing PR body", () => {
     expect(buildChatPrompt(input({ prBody: null }))).toContain("(none)");
   });
+
+  it("redacts secrets from untrusted prompt metadata", () => {
+    const prompt = buildChatPrompt(
+      input({
+        question: `Does this expose sk-${"A".repeat(24)}?`,
+        prTitle: `Handle ghp_${"b".repeat(36)}`,
+        prBody: "DATABASE_URL=postgres://user:pass@host/db",
+        diff: `+const key = "AKIA1234567890ABCD99";`,
+        thread: {
+          path: "src/a.ts",
+          line: 42,
+          diffHunk: `@@ -1 +1 @@\n+token=github_pat_${"c".repeat(24)}`
+        }
+      })
+    );
+
+    expect(prompt).not.toContain(`sk-${"A".repeat(24)}`);
+    expect(prompt).not.toContain(`ghp_${"b".repeat(36)}`);
+    expect(prompt).not.toContain("postgres://user:pass@host/db");
+    expect(prompt).not.toContain("AKIA1234567890ABCD99");
+    expect(prompt).not.toContain(`github_pat_${"c".repeat(24)}`);
+    expect(prompt).toContain("[REDACTED:");
+  });
 });
 
 describe("generateChatReply (#27)", () => {
