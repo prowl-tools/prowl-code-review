@@ -4,7 +4,8 @@ import {
   planPublish,
   hasActiveRequestChanges,
   setPausedState,
-  replyToReviewComment
+  replyToReviewComment,
+  fetchReviewCommentBody
 } from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
@@ -53,10 +54,11 @@ function mockOctokit(
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
   const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
+  const getReviewComment = vi.fn(async () => ({ data: { body: "root finding" } }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, createReplyForReviewComment, listReviewComments, listReviews },
+      pulls: { createReview, createReplyForReviewComment, getReviewComment, listReviewComments, listReviews },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
@@ -70,6 +72,7 @@ function mockOctokit(
     updateComment,
     createReview,
     createReplyForReviewComment,
+    getReviewComment,
     getAuthenticated
   };
 }
@@ -289,6 +292,27 @@ describe("hasActiveRequestChanges", () => {
 
     await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: false, truncated: true });
     expect(listReviews).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe("fetchReviewCommentBody", () => {
+  it("fetches and trims an inline review comment body", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockResolvedValueOnce({ data: { body: "  root finding  " } });
+
+    await expect(fetchReviewCommentBody(octokit, ref, 321)).resolves.toBe("root finding");
+    expect(getReviewComment).toHaveBeenCalledWith({
+      owner: ref.owner,
+      repo: ref.repo,
+      comment_id: 321
+    });
+  });
+
+  it("returns undefined when the review comment cannot be read", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockRejectedValueOnce(new Error("missing"));
+
+    await expect(fetchReviewCommentBody(octokit, ref, 321)).resolves.toBeUndefined();
   });
 });
 

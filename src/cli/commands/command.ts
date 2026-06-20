@@ -6,7 +6,12 @@ import {
   type FetchedPullRequest,
   type PullRequestRef
 } from "../../github/diff.js";
-import { setPausedState, postPullRequestComment, replyToReviewComment } from "../../github/review.js";
+import {
+  fetchReviewCommentBody as defaultFetchReviewCommentBody,
+  setPausedState,
+  postPullRequestComment,
+  replyToReviewComment
+} from "../../github/review.js";
 import {
   parseCommand,
   commandHelpText,
@@ -67,6 +72,8 @@ export interface CommentEvent {
   pullNumber: number;
   /** The comment's REST id (for in-thread chat replies, #27). */
   commentId?: number;
+  /** Root inline review-comment id when this event is itself an inline reply. */
+  parentCommentId?: number;
   /** True when the event is an inline review-comment (vs a top-level PR comment). */
   isReviewComment: boolean;
   /** Inline-thread context, present on review-comment events (#27). */
@@ -151,6 +158,7 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
       login: comment.user?.login ?? undefined,
       pullNumber,
       commentId: isReviewComment ? (comment.in_reply_to_id ?? comment.id) : comment.id,
+      parentCommentId: isReviewComment ? (comment.in_reply_to_id ?? undefined) : undefined,
       isReviewComment,
       thread
     };
@@ -254,6 +262,7 @@ export interface ChatHandlerDeps {
   ) => Promise<{ reply: string; usage: TokenUsage }>;
   postIssueComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
   postReviewReply?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number, body: string) => Promise<void>;
+  fetchReviewCommentBody?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number) => Promise<string | undefined>;
 }
 
 /**
@@ -276,6 +285,7 @@ export async function respondToComment(params: {
   const generateReply = params.deps?.generateReply ?? defaultGenerateChatReply;
   const postIssueComment = params.deps?.postIssueComment ?? postPullRequestComment;
   const postReviewReply = params.deps?.postReviewReply ?? replyToReviewComment;
+  const fetchReviewCommentBody = params.deps?.fetchReviewCommentBody ?? defaultFetchReviewCommentBody;
 
   const { meta, diff } = await fetchPr(params.octokit, params.ref);
   const parsed = parseDiff(diff);
@@ -286,6 +296,14 @@ export async function respondToComment(params: {
   const rendered = renderGuardedDiff(guarded.files);
   const redactedDiff = redactSecrets(rendered).text;
   const diffNote = guarded.truncated ? "\n\n(diff truncated to fit the chat context)" : "";
+  const parentCommentBody =
+    params.event.parentCommentId !== undefined
+      ? await fetchReviewCommentBody(params.octokit, params.ref, params.event.parentCommentId)
+      : undefined;
+  const thread =
+    params.event.thread && parentCommentBody
+      ? { ...params.event.thread, parentCommentBody }
+      : params.event.thread;
 
   const input: ChatReplyInput = {
     question: params.question,
@@ -293,7 +311,7 @@ export async function respondToComment(params: {
     prBody: meta.body,
     diff: `${redactedDiff}${diffNote}`,
     guidelines: params.guidelines,
-    thread: safeThreadContext(params.event.thread, parsed.files)
+    thread: safeThreadContext(thread, parsed.files)
   };
   const { reply } = await generateReply(input, {
     config: params.config,

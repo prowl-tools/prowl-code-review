@@ -122,6 +122,7 @@ describe("resolveCommentEvent (#26)", () => {
       login: "maintainer",
       pullNumber: 7,
       commentId: 555,
+      parentCommentId: undefined,
       isReviewComment: false,
       thread: undefined
     });
@@ -146,6 +147,7 @@ describe("resolveCommentEvent (#26)", () => {
       login: "dev",
       pullNumber: 12,
       commentId: 999,
+      parentCommentId: undefined,
       isReviewComment: true,
       thread: { path: "src/a.ts", line: 42, diffHunk: "@@ -1 +1 @@\n+const x = 1;" }
     });
@@ -166,7 +168,7 @@ describe("resolveCommentEvent (#26)", () => {
       pull_request: { number: 12 }
     });
 
-    expect(resolveCommentEvent(env)?.commentId).toBe(999);
+    expect(resolveCommentEvent(env)).toMatchObject({ commentId: 999, parentCommentId: 999 });
   });
 
   it("redacts inline-thread diff hunks before they reach the chat prompt", () => {
@@ -283,6 +285,7 @@ describe("respondToComment (#27)", () => {
         meta: { title: "T", body: "desc", headSha: "h", baseSha: "b" },
         diff
       })),
+      fetchReviewCommentBody: vi.fn(async () => "Parent finding body"),
       generateReply: vi.fn(async () => ({
         reply: "It loops twice.",
         usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
@@ -442,6 +445,33 @@ describe("respondToComment (#27)", () => {
     expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 321, expect.stringContaining("It loops twice."));
     expect(deps.postIssueComment).not.toHaveBeenCalled();
     expect(deps.generateReply.mock.calls[0][0].thread).toEqual({ path: "src/a.ts", line: 5 });
+    expect(deps.fetchReviewCommentBody).not.toHaveBeenCalled();
+  });
+
+  it("includes the parent review comment body for inline reply questions", async () => {
+    const deps = chatDeps();
+    await respondToComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 321,
+        parentCommentId: 321,
+        thread: { path: "src/a.ts", line: 5, diffHunk: "@@ -1 +1 @@\n+const x = 1;" }
+      },
+      question: "why?",
+      config,
+      deps
+    });
+
+    expect(deps.fetchReviewCommentBody).toHaveBeenCalledWith(octokit, ref, 321);
+    expect(deps.generateReply.mock.calls[0][0].thread).toEqual({
+      path: "src/a.ts",
+      line: 5,
+      parentCommentBody: "Parent finding body",
+      diffHunk: "@@ -1 +1 @@\n+const x = 1;"
+    });
   });
 
   it("sanitizes generated replies before posting them to GitHub", async () => {

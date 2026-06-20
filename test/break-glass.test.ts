@@ -17,7 +17,7 @@ interface Comment {
   created_at?: string;
 }
 
-function mockOctokit(comments: Comment[]) {
+function mockOctokit(comments: Comment[], reviewComments: Comment[] = []) {
   const listComments = vi.fn(async (params: { per_page?: number; page?: number; since?: string }) => {
     const since = params.since ? Date.parse(params.since) : undefined;
     const visible =
@@ -32,8 +32,14 @@ function mockOctokit(comments: Comment[]) {
     const start = (page - 1) * perPage;
     return { data: visible.slice(start, start + perPage) };
   });
-  const octokit = { rest: { issues: { listComments } } } as unknown as OctokitLike;
-  return { octokit, listComments };
+  const listReviewComments = vi.fn(async (params: { per_page?: number; page?: number }) => {
+    const perPage = params.per_page ?? 30;
+    const page = params.page ?? 1;
+    const start = (page - 1) * perPage;
+    return { data: reviewComments.slice(start, start + perPage) };
+  });
+  const octokit = { rest: { issues: { listComments }, pulls: { listReviewComments } } } as unknown as OctokitLike;
+  return { octokit, listComments, listReviewComments };
 }
 
 describe("matchesBreakGlass (#52)", () => {
@@ -208,6 +214,52 @@ describe("detectBreakGlass (#52)", () => {
 
     const signal = await detectBreakGlass(octokit, ref, { createdAfter: "2026-06-17T13:00:00Z" });
     expect(signal).toEqual({ active: true, actor: "maintainer", association: "OWNER" });
+  });
+
+  it("honors trusted inline review-comment overrides", async () => {
+    const { octokit, listReviewComments } = mockOctokit([], [
+      {
+        id: 1,
+        body: "@prowl-review break glass head-sha",
+        user: { login: "reviewer" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "head-sha" });
+
+    expect(signal).toEqual({ active: true, actor: "reviewer", association: "MEMBER" });
+    expect(listReviewComments).toHaveBeenCalledWith(expect.objectContaining({ pull_number: ref.pull_number }));
+  });
+
+  it("chooses the newest override across top-level and inline comments", async () => {
+    const { octokit } = mockOctokit(
+      [
+        {
+          id: 1,
+          body: "@prowl-review break glass",
+          user: { login: "maintainer" },
+          author_association: "OWNER",
+          created_at: "2026-06-17T14:00:00Z"
+        }
+      ],
+      [
+        {
+          id: 2,
+          body: "@prowl-review break glass",
+          user: { login: "reviewer" },
+          author_association: "COLLABORATOR",
+          created_at: "2026-06-17T15:00:00Z"
+        }
+      ]
+    );
+
+    expect(await detectBreakGlass(octokit, ref)).toEqual({
+      active: true,
+      actor: "reviewer",
+      association: "COLLABORATOR"
+    });
   });
 
   it("requires the current head SHA when one is supplied", async () => {
