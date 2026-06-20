@@ -181,6 +181,31 @@ export {
   type ReviewState
 } from "./review/state.js";
 
+// Local pre-push review mode (#35): diff git refs + render findings to the terminal.
+export {
+  resolveLocalDiff,
+  defaultGitExec,
+  LocalDiffError,
+  type GitExec,
+  type ResolveLocalDiffOptions
+} from "./review/local-diff.js";
+export {
+  formatLocalReport,
+  formatLocalReportJson,
+  formatSummaryLine,
+  severityBreakdown,
+  findingLocation,
+  type TerminalFormatOptions
+} from "./review/format-terminal.js";
+export {
+  runLocalReview,
+  resolveColor,
+  meetsFailThreshold,
+  type LocalReviewCommandOptions,
+  type LocalReviewDeps,
+  type LocalReviewResult
+} from "./cli/commands/review-local.js";
+
 // Inline comments + committable suggestions (the published review).
 export {
   buildInlineComments,
