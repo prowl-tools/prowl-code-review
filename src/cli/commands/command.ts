@@ -92,7 +92,7 @@ function safeThreadContext(thread: ChatThreadContext | undefined, files: DiffFil
     return thread;
   }
   const file = files.find((candidate) => candidate.path === thread.path);
-  if (file && isSensitiveDiffFile(file)) {
+  if (!file || isSensitiveDiffFile(file)) {
     return { ...thread, diffHunk: undefined };
   }
   return thread;
