@@ -43,8 +43,12 @@ export interface ChatReplyInput {
   thread?: ChatThreadContext;
 }
 
-/** Default output ceiling for a chat reply — answers should be concise. */
-export const DEFAULT_CHAT_MAX_TOKENS = 1024;
+/**
+ * Chat replies use each provider's output-token default unless the caller
+ * explicitly passes a limit. This keeps Gemini 2.5's thinking budget from
+ * consuming a smaller chat-specific cap before it can return answer text.
+ */
+export const DEFAULT_CHAT_MAX_TOKENS: number | undefined = undefined;
 
 /** Build the stable, trusted system prompt for a chat reply. */
 export function buildChatSystem(guidelines?: string): string {
@@ -119,7 +123,7 @@ export async function generateChatReply(
     {
       system: buildChatSystem(input.guidelines),
       prompt: buildChatPrompt(input),
-      maxTokens: options.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS,
+      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
       temperature: 0.2
     },
     options.config

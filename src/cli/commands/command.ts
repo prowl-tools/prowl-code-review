@@ -15,7 +15,6 @@ import {
 } from "../../review/commands.js";
 import {
   generateChatReply as defaultGenerateChatReply,
-  DEFAULT_CHAT_MAX_TOKENS,
   type ChatReplyInput,
   type ChatThreadContext
 } from "../../review/chat.js";
@@ -281,7 +280,7 @@ export async function respondToComment(params: {
   };
   const { reply } = await generateReply(input, {
     config: params.config,
-    maxTokens: params.maxTokens ?? DEFAULT_CHAT_MAX_TOKENS
+    maxTokens: params.maxTokens
   });
   // The reply is our bot's own output; redact defensively in case the model
   // echoed a secret from the diff.
