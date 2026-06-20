@@ -87,13 +87,21 @@ function safeInlineDiffHunk(path: string, diffHunk: string | undefined): string 
   return redactSecrets(diffHunk).text || undefined;
 }
 
+function withoutSensitiveThreadText(thread: ChatThreadContext): ChatThreadContext {
+  const safeThread: ChatThreadContext = { path: thread.path };
+  if (thread.line !== undefined) {
+    safeThread.line = thread.line;
+  }
+  return { ...safeThread, diffHunk: undefined };
+}
+
 function safeThreadContext(thread: ChatThreadContext | undefined, files: DiffFile[]): ChatThreadContext | undefined {
-  if (!thread?.diffHunk) {
-    return thread;
+  if (!thread) {
+    return undefined;
   }
   const file = files.find((candidate) => candidate.path === thread.path);
   if (!file || isSensitiveDiffFile(file)) {
-    return { ...thread, diffHunk: undefined };
+    return withoutSensitiveThreadText(thread);
   }
   return thread;
 }

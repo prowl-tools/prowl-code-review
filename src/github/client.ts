@@ -51,6 +51,9 @@ export interface OctokitLike {
         pull_number: number;
         per_page?: number;
         page?: number;
+        sort?: "created" | "updated";
+        direction?: "asc" | "desc";
+        since?: string;
       }): Promise<{
         data: Array<{
           body?: string;
