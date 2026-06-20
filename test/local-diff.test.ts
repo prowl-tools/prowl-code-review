@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { resolveLocalDiff, LocalDiffError } from "../src/review/local-diff.js";
+import { assertLocalHeadMatchesCheckout, resolveLocalDiff, LocalDiffError } from "../src/review/local-diff.js";
 
 describe("resolveLocalDiff", () => {
   it("diffs base against head using --merge-base when head is given", async () => {
@@ -36,5 +36,28 @@ describe("resolveLocalDiff", () => {
   it("propagates a git failure as a LocalDiffError", async () => {
     const exec = vi.fn().mockRejectedValue(new LocalDiffError("git diff failed: bad revision"));
     await expect(resolveLocalDiff({ base: "main", cwd: "/repo", exec })).rejects.toThrow(/bad revision/);
+  });
+});
+
+describe("assertLocalHeadMatchesCheckout", () => {
+  it("does nothing when head is omitted or blank", async () => {
+    const exec = vi.fn();
+    await assertLocalHeadMatchesCheckout({ cwd: "/repo", exec });
+    await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "   ", exec });
+    expect(exec).not.toHaveBeenCalled();
+  });
+
+  it("allows an explicit head that resolves to the checked-out HEAD", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n");
+    await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
+    expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
+    expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "feature^{commit}"]);
+  });
+
+  it("rejects an explicit head that differs from the checkout", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("def456\n");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
+      /does not match the checked-out HEAD/
+    );
   });
 });
