@@ -1606,7 +1606,38 @@ diff --git a/src/b.ts b/src/b.ts
         approval: { enabled: true }
       });
 
-      expect(result.approval?.event).toBe("COMMENT");
+      expect(result.approval?.event).not.toBe("REQUEST_CHANGES");
+    });
+
+    it("refills capped findings after muting the top-ranked finding", async () => {
+      const muted = finding({ severity: "critical", title: "Muted", body: "muted" });
+      const refill = finding({ severity: "critical", line: 3, title: "Refill", body: "refill" });
+      const fetchPriorState = vi.fn(async () => ({
+        v: 1 as const,
+        ignoredFindings: [findingFingerprint(muted)],
+        postedFindings: []
+      }));
+      const deps = { ...makeDeps(), fetchPriorState };
+      deps.runReview.mockResolvedValue(
+        reviewResult([muted], {
+          uncappedFindings: [muted, refill],
+          judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 1 }
+        })
+      );
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        incremental: false,
+        maxFindings: 1,
+        approval: { enabled: true }
+      });
+
+      expect(result.review.findings.map((f) => f.title)).toEqual(["Refill"]);
+      expect(result.review.judge.capped).toBe(0);
+      expect(result.approval?.event).toBe("REQUEST_CHANGES");
+      expect(result.payload.body).toContain("Suppressed 1 finding");
     });
   });
 

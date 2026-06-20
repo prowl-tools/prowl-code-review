@@ -682,6 +682,14 @@ describe("handleIgnore (#30)", () => {
     expect(result.ignored).toBe(1);
   });
 
+  it("reports only newly added mutes", async () => {
+    const deps = { ...ignoreDeps(), setIgnored: vi.fn(async () => ({ added: 0, total: 1 })) };
+    const result = await handleIgnore({ octokit, ref, event: inlineEvent, deps });
+
+    expect(deps.setIgnored).toHaveBeenCalledWith(octokit, ref, ["fp-1"]);
+    expect(result.ignored).toBe(0);
+  });
+
   it("gives guidance when the thread has no prowl-review finding", async () => {
     const deps = { ...ignoreDeps(), fetchFingerprints: vi.fn(async () => []) };
     const result = await handleIgnore({ octokit, ref, event: inlineEvent, deps });
