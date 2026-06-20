@@ -30,7 +30,7 @@ export interface ParsedCommand {
 }
 
 /** The bot mention that prefixes every command. */
-const MENTION_RE = /@prowl-review\b[ \t]*([^\n\r]*)/i;
+const MENTION_RE = /@prowl-review\b/i;
 
 /** True when `association` is allowed to drive the bot. */
 export function isTrustedCommandAuthor(association: string | null | undefined): boolean {
@@ -52,9 +52,12 @@ export function parseCommand(body: string | null | undefined): ParsedCommand | n
     return null;
   }
 
-  const tokens = match[1].trim().split(/\s+/).filter(Boolean);
+  const afterMention = body.slice(match.index + match[0].length);
+  const mentionLine = afterMention.split(/\r?\n|\r/, 1)[0] ?? "";
+  const tokens = mentionLine.trim().split(/\s+/).filter(Boolean);
+  const freeformArgument = afterMention.trim();
   if (tokens.length === 0) {
-    return { verb: "help", argument: "" };
+    return freeformArgument ? { verb: "unknown", argument: freeformArgument } : { verb: "help", argument: "" };
   }
 
   const first = tokens[0].toLowerCase();
@@ -77,7 +80,7 @@ export function parseCommand(body: string | null | undefined): ParsedCommand | n
     return { verb: first as CommandVerb, argument: tokens.slice(1).join(" ") };
   }
 
-  return { verb: "unknown", argument: tokens.join(" ") };
+  return { verb: "unknown", argument: freeformArgument };
 }
 
 /** The help reply listing the supported commands. */
