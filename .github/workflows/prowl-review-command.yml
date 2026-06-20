@@ -44,9 +44,9 @@ jobs:
         shell: bash
         run: |
           pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
-          base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.base.sha')"
-          head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
-          head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
+          IFS=$'\t' read -r base_sha head_sha head_repo < <(
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name] | @tsv'
+          )
           echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
           if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
