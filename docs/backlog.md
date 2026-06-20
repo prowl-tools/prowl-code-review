@@ -43,7 +43,8 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 26. **Bot command set** *(core verbs done — see resolved.md)*
     As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
     - **Done:** `@prowl-review` command parsing + verb allowlist (#14), trust-gated to owner/member/collaborator, dispatched from an `issue_comment` workflow + a `command` CLI subcommand (Action `mode: command`). Verbs: `review` (re-review latest), `full review` (full re-scan), `pause`/`resume` (auto-review toggle persisted in the summary state marker), `help`.
-    - Acceptance (remaining): `ignore` and `resolve` verbs — these act on a **specific finding/thread** from the reply context (`pull_request_review_comment`), so they need comment→thread/fingerprint mapping; `ignore` is the #30 learnings write-back (suppress a finding going forward), `resolve` overlaps #22's thread resolution. Rides with the #27/#30 reply infra.
+    - **Done:** `ignore` verb (see resolved.md, #30) — replying `@prowl-review ignore` on a finding mutes it for the PR (fingerprint recovered from the thread → per-PR ignore list in the #12 state marker).
+    - Acceptance (remaining): `resolve` verb — mark a finding's thread resolved from a reply; needs comment→thread (GraphQL node) mapping and overlaps #22's auto-resolution.
     - Acceptance (remaining): `configure` verb — adjust review settings from a comment (scope/semantics TBD; likely a thin wrapper over `.prowl-review.yml` keys).
 
 28. **Draft-PR & auto-review controls**
@@ -53,7 +54,8 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
     - **Done (core, see resolved.md):** the reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` **and** a `LEARNED_PATTERNS.md` and injects them into the prompt (learned patterns as a distinct "do not re-raise" section); an optional org-wide guidelines **file** (`org-guidelines-path` / `PROWL_ORG_GUIDELINES_PATH`) is injected into every repo's prompts alongside per-repo files.
-    - Acceptance (remaining): a documented feedback path (👎 reaction or `@prowl-review ignore`) appends to `LEARNED_PATTERNS.md` (persisted per #12) — rides with the bot-command set (#26), which owns the `ignore` verb + write-back/event infra.
+    - **Done:** the `@prowl-review ignore` feedback path (see resolved.md) — muting a finding persists its fingerprint to the #12 state marker and future reviews suppress it (per-PR). The 👎-reaction trigger is impractical via Actions (no usable reaction event).
+    - Acceptance (remaining): **repo-wide** learnings — persist muted patterns across PRs (write back to `LEARNED_PATTERNS.md` or a repo-level store), so an ignore on one PR teaches future PRs. Needs a commit/persistent-store decision (today the mute is per-PR via #12).
     - Acceptance (remaining): support the org-wide guidelines template via **URL** (not just a file), so orgs can host one shared standard.
 
 32. **Issue/ticket validation**

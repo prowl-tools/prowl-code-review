@@ -7,7 +7,9 @@ import {
   loadChatGuidelines,
   resolveCommentEvent,
   respondToComment,
-  type CommandDispatchDeps
+  handleIgnore,
+  type CommandDispatchDeps,
+  type CommentEvent
 } from "../src/cli/commands/command.js";
 import type { OctokitLike } from "../src/github/client.js";
 
@@ -75,6 +77,21 @@ describe("dispatchCommand (#26)", () => {
     await dispatchCommand({ verb: "help", argument: "" }, { octokit, ref, deps: d });
     expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
     expect(d.runReview).not.toHaveBeenCalled();
+  });
+
+  it("mutes a finding for the ignore verb via the ignore handler (#30)", async () => {
+    const ignore = vi.fn(async () => ({ ignored: 1 }));
+    const d = deps({ ignore });
+    const outcome = await dispatchCommand({ verb: "ignore", argument: "" }, { octokit, ref, deps: d });
+    expect(ignore).toHaveBeenCalledTimes(1);
+    expect(outcome.ignored).toBe(1);
+    expect(d.postComment).not.toHaveBeenCalled();
+  });
+
+  it("falls back to help for ignore when no ignore handler is wired", async () => {
+    const d = deps(); // no ignore
+    await dispatchCommand({ verb: "ignore", argument: "" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
   });
 
   it("answers a free-form question (unknown verb) via the chat responder (#27)", async () => {
@@ -632,6 +649,61 @@ describe("respondToComment (#27)", () => {
     });
     expect(JSON.stringify(chatInput.thread)).not.toContain("plainsecretvalue");
     expect(JSON.stringify(chatInput.thread)).not.toContain("Parent finding body");
+  });
+});
+
+describe("handleIgnore (#30)", () => {
+  const inlineEvent: CommentEvent = {
+    body: "@prowl-review ignore",
+    association: "OWNER",
+    login: "dev",
+    pullNumber: 7,
+    isReviewComment: true,
+    commentId: 100,
+    parentCommentId: 100 // the bot's root finding comment
+  };
+
+  function ignoreDeps() {
+    return {
+      fetchFingerprints: vi.fn(async () => ["fp-1"]),
+      setIgnored: vi.fn(async () => ({ added: 1, total: 1 })),
+      postReviewReply: vi.fn(async () => {}),
+      postIssueComment: vi.fn(async () => {})
+    };
+  }
+
+  it("mutes the targeted finding and acks in-thread", async () => {
+    const deps = ignoreDeps();
+    const result = await handleIgnore({ octokit, ref, event: inlineEvent, deps });
+
+    expect(deps.fetchFingerprints).toHaveBeenCalledWith(octokit, ref, 100);
+    expect(deps.setIgnored).toHaveBeenCalledWith(octokit, ref, ["fp-1"]);
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 100, expect.stringContaining("Ignored"));
+    expect(result.ignored).toBe(1);
+  });
+
+  it("gives guidance when the thread has no prowl-review finding", async () => {
+    const deps = { ...ignoreDeps(), fetchFingerprints: vi.fn(async () => []) };
+    const result = await handleIgnore({ octokit, ref, event: inlineEvent, deps });
+    expect(deps.setIgnored).not.toHaveBeenCalled();
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 100, expect.stringContaining("couldn't identify"));
+    expect(result.ignored).toBe(0);
+  });
+
+  it("gives guidance for a top-level ignore with no finding thread", async () => {
+    const deps = ignoreDeps();
+    const topLevel: CommentEvent = {
+      body: "@prowl-review ignore",
+      association: "OWNER",
+      login: "dev",
+      pullNumber: 7,
+      isReviewComment: false,
+      commentId: 9
+    };
+    const result = await handleIgnore({ octokit, ref, event: topLevel, deps });
+    expect(deps.fetchFingerprints).not.toHaveBeenCalled();
+    expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("directly on a finding"));
+    expect(result.ignored).toBe(0);
   });
 });
 

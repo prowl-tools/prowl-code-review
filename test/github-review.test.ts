@@ -4,6 +4,8 @@ import {
   planPublish,
   hasActiveRequestChanges,
   setPausedState,
+  setIgnoredFindings,
+  fetchReviewCommentFingerprints,
   replyToReviewComment,
   fetchReviewCommentBody
 } from "../src/github/review.js";
@@ -179,6 +181,21 @@ describe("planPublish", () => {
 
     expect(plan.state).toEqual({ v: 1, lastReviewedSha: "sha2", paused: true, postedFindings: ["fp-a"] });
     expect(parseState(plan.summaryBody)?.paused).toBe(true);
+  });
+
+  it("preserves the ignore list across a review publish (#30)", () => {
+    const prior = {
+      id: 99,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, ignoredFindings: ["fp-muted"], postedFindings: ["fp-a"] })}`
+    };
+    const plan = planPublish({
+      payload: payload({ comments: [comment({ fingerprint: "fp-a" })] }),
+      priorComment: prior,
+      headSha: "sha2"
+    });
+    // A normal review must not wipe the muted-finding list.
+    expect(plan.state.ignoredFindings).toEqual(["fp-muted"]);
+    expect(parseState(plan.summaryBody)?.ignoredFindings).toEqual(["fp-muted"]);
   });
 
   it("allows reposting fingerprints whose old thread was resolved as fixed", () => {
@@ -762,5 +779,52 @@ describe("replyToReviewComment (#27)", () => {
       comment_id: 444,
       body: "Answer body"
     });
+  });
+});
+
+describe("setIgnoredFindings (#30)", () => {
+  it("merges fingerprints into the existing summary state marker", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
+      v: 1,
+      lastReviewedSha: "abc",
+      ignoredFindings: ["fp-old"],
+      postedFindings: ["fp-a"]
+    })}`;
+    const { octokit, updateComment, createComment } = mockOctokit([
+      { id: 5, body: prior, user: { login: "github-actions[bot]" } }
+    ]);
+    const result = await setIgnoredFindings(octokit, ref, ["fp-new", "fp-old"]);
+    expect(result.added).toBe(1); // fp-new is new; fp-old already present
+    expect(createComment).not.toHaveBeenCalled();
+    const state = parseState((updateComment.mock.calls[0][0] as { body: string }).body);
+    expect(state?.ignoredFindings?.sort()).toEqual(["fp-new", "fp-old"]);
+    expect(state?.lastReviewedSha).toBe("abc"); // preserved
+    expect(state?.postedFindings).toEqual(["fp-a"]); // preserved
+  });
+
+  it("creates a marked comment when no summary exists yet", async () => {
+    const { octokit, createComment, updateComment } = mockOctokit([]);
+    const result = await setIgnoredFindings(octokit, ref, ["fp-1"]);
+    expect(result.total).toBe(1);
+    expect(updateComment).not.toHaveBeenCalled();
+    const body = (createComment.mock.calls[0][0] as { body: string }).body;
+    expect(body).toContain(REVIEW_MARKER);
+    expect(parseState(body)?.ignoredFindings).toEqual(["fp-1"]);
+  });
+});
+
+describe("fetchReviewCommentFingerprints (#30)", () => {
+  it("recovers the finding fingerprint embedded in the comment body", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockResolvedValueOnce({
+      data: { body: "Finding text\n<!-- prowl-review:finding fp-xyz -->" }
+    });
+    expect(await fetchReviewCommentFingerprints(octokit, ref, 100)).toEqual(["fp-xyz"]);
+  });
+
+  it("returns [] when the comment carries no marker", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockResolvedValueOnce({ data: { body: "just a human reply" } });
+    expect(await fetchReviewCommentFingerprints(octokit, ref, 100)).toEqual([]);
   });
 });

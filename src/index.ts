@@ -113,6 +113,8 @@ export {
   fetchPriorReviewState,
   hasActiveRequestChanges,
   setPausedState,
+  setIgnoredFindings,
+  fetchReviewCommentFingerprints,
   postPullRequestComment,
   type SubmitReviewOptions,
   type SubmitReviewResult,
