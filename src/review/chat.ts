@@ -123,8 +123,7 @@ export async function generateChatReply(
     {
       system: buildChatSystem(input.guidelines),
       prompt: buildChatPrompt(input),
-      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {}),
-      temperature: 0.2
+      ...(options.maxTokens !== undefined ? { maxTokens: options.maxTokens } : {})
     },
     options.config
   );
