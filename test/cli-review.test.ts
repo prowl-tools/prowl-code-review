@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
+  buildReviewCommand,
   loadGuidelines,
   loadLearnedPatterns,
   composeGuidelines,
@@ -164,6 +165,16 @@ describe("review command helpers", () => {
     expect(parseMinSeverity(" major ")).toBe("major");
     expect(() => parseMinSeverity("urgent")).toThrow(/Invalid --min-severity/);
   });
+
+  it.each([["--json"], ["--no-color"], ["--fail-on", "major"]])(
+    "rejects local-only %s without --base or --head",
+    async (...args) => {
+      const command = buildReviewCommand();
+      await expect(command.parseAsync(["node", "review", ...args])).rejects.toThrow(
+        /require `--base` or `--head`/
+      );
+    }
+  );
 
   it("prefers the explicit action workspace over the GitHub default", () => {
     process.env.GITHUB_WORKSPACE = "/base";

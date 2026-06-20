@@ -146,6 +146,23 @@ describe("runLocalReview (#35)", () => {
     expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ base: "main" }));
   });
 
+  it("uses injected env for workspace resolution", async () => {
+    const processRoot = isolatedWorkspace();
+    const injectedRoot = mkdtempSync(join(tmpdir(), "prowl-local-injected-"));
+    tempDirs.push(injectedRoot);
+    process.env.PROWL_WORKSPACE = processRoot;
+    const resolveDiff = vi.fn().mockResolvedValue(DIFF);
+    const { deps: d } = deps({
+      env: { PROWL_AI_KEY: "test-key", PROWL_WORKSPACE: injectedRoot },
+      resolveDiff
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ cwd: injectedRoot }));
+    expect(d.gatherContext).toHaveBeenCalledWith(expect.objectContaining({ toolkit: { root: injectedRoot } }));
+  });
+
   it("feeds grounding findings into the review and surfaces grounding notes", async () => {
     isolatedWorkspace();
     const gatherGrounding = vi.fn().mockResolvedValue({
@@ -169,6 +186,48 @@ describe("runLocalReview (#35)", () => {
     await runLocalReview({ base: "main", config: false, context: false, grounding: false }, d);
     expect(d.gatherContext).not.toHaveBeenCalled();
     expect(d.gatherGrounding).not.toHaveBeenCalled();
+  });
+
+  it("runs secret grounding when only sensitive files remain after filters", async () => {
+    isolatedWorkspace();
+    const secretDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+`;
+    const secretFinding = finding({
+      file: ".env",
+      line: 1,
+      severity: "critical",
+      category: "security",
+      title: "generic-api-key",
+      body: "Detected a Generic API Key."
+    });
+    const gatherGrounding = vi.fn().mockResolvedValue({
+      findings: [secretFinding],
+      notes: ["Gitleaks: 1 potential secret(s) on changed lines."]
+    });
+    const { deps: d, out } = deps({
+      resolveDiff: vi.fn().mockResolvedValue(secretDiff),
+      gatherGrounding
+    });
+
+    const result = await runLocalReview({ base: "main", config: false, failOn: "major" }, d);
+
+    expect(gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: [],
+        secretScanPaths: [".env"],
+        changedLines: { ".env": [1] }
+      })
+    );
+    expect(d.gatherContext).not.toHaveBeenCalled();
+    expect(d.runReview).not.toHaveBeenCalled();
+    expect(result.findings).toEqual([secretFinding]);
+    expect(result.failed).toBe(true);
+    expect(out.join("\n")).toContain("generic-api-key");
   });
 
   it("surfaces a degraded specialist pass as a note (never silent)", async () => {
@@ -206,7 +265,7 @@ describe("runLocalReview (#35)", () => {
     const resolveDiff = vi.fn().mockRejectedValue(new LocalDiffError("git diff failed: bad revision 'nope'"));
     const { deps: d, err } = deps({ resolveDiff });
     const result = await runLocalReview({ base: "nope", config: false }, d);
-    expect(result.failed).toBe(false);
+    expect(result.failed).toBe(true);
     expect(result.findings).toHaveLength(0);
     expect(err.join("\n")).toContain("bad revision");
   });

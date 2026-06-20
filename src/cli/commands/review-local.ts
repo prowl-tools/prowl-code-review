@@ -23,8 +23,7 @@ import {
   loadLearnedPatterns,
   parseMinSeverity,
   resolveConfigLoadOptions,
-  resolveReviewOptions,
-  resolveWorkspace
+  resolveReviewOptions
 } from "./review.js";
 
 /**
@@ -85,6 +84,7 @@ export interface LocalReviewResult {
   failed: boolean;
 }
 
+/** Sum token usage from context retrieval and the review engine. */
 function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
   return {
@@ -112,6 +112,11 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
     }
   }
   return changed;
+}
+
+/** True when a sensitive rename/copy includes added lines already covered by the changed-line map. */
+function hasAddedNewLines(file: DiffFile): boolean {
+  return file.hunks.some((hunk) => hunk.lines.some((line) => line.type === "add" && line.newLine));
 }
 
 /** A subset of {@link RetrievalLimits} fields, as carried by config + tier plans. */
@@ -165,7 +170,7 @@ export async function runLocalReview(
   const ground = deps.gatherGrounding ?? gatherGrounding;
   const review = deps.runReview ?? runReview;
 
-  const root = resolveWorkspace();
+  const root = env.PROWL_WORKSPACE || env.GITHUB_WORKSPACE || process.cwd();
   const { config } = loadConfig(resolveConfigLoadOptions(options, root, env));
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
   const failOn = parseMinSeverity(options.failOn);
@@ -194,7 +199,7 @@ export async function runLocalReview(
   } catch (error) {
     if (error instanceof LocalDiffError) {
       err(`prowl-review: ${error.message}`);
-      return { findings: [], notes: [error.message], failed: false };
+      return { findings: [], notes: [error.message], failed: true };
     }
     throw error;
   }
@@ -215,6 +220,14 @@ export async function runLocalReview(
   const guarded = applyDiffLimits({ files: ignored.files }, resolved.diffLimits);
   const reviewFiles = guarded.files;
   const skipped: SkippedFile[] = [...sensitive.skipped, ...ignored.skipped, ...guarded.skipped];
+  const reviewPathSet = new Set(reviewFiles.map((file) => file.path));
+  const sensitiveSkippedPaths = new Set(skipped.filter((file) => file.reason === "sensitive").map((file) => file.path));
+  const secretScanFiles = parsed.files.filter((file) => sensitiveSkippedPaths.has(file.path) && !reviewPathSet.has(file.path));
+  const groundingLineFiles = [...reviewFiles, ...secretScanFiles];
+  const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
+  const secretScanWholeFilePaths = secretScanFiles
+    .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
+    .map((file) => file.path);
 
   const notes: string[] = [];
   const skippedNote = describeSkipped(skipped);
@@ -222,11 +235,47 @@ export async function runLocalReview(
     notes.push(`Skipped files — ${skippedNote}`);
   }
 
+  let grounding: ReviewInput["grounding"];
+  let directGroundingFindings: Finding[] = [];
+  if (!resolved.skipGrounding && groundingLineFiles.length > 0) {
+    try {
+      const result = await ground({
+        root,
+        changedPaths: reviewFiles.map((file) => file.path),
+        secretScanPaths: secretScanFiles.map((file) => file.path),
+        secretScanWholeFilePaths,
+        changedLines: changedLinesByPath(groundingLineFiles),
+        trustWorkspace
+      });
+      for (const note of result.notes) {
+        notes.push(`Linter grounding: ${note}`);
+      }
+      directGroundingFindings = result.findings.filter((finding) => secretScanPathSet.has(finding.file));
+      const promptGroundingFindings = result.findings.filter((finding) => !secretScanPathSet.has(finding.file));
+      if (directGroundingFindings.length > 0 && reviewFiles.length > 0) {
+        notes.push(
+          `Linter grounding: kept ${directGroundingFindings.length} sensitive-file secret finding(s) outside provider verification.`
+        );
+      }
+      if (promptGroundingFindings.length > 0) {
+        grounding = { findings: promptGroundingFindings, summary: buildGroundingSummary(promptGroundingFindings) };
+      }
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      notes.push(`Linter grounding failed; continuing without it: ${message}`);
+    }
+  }
+
   if (reviewFiles.length === 0) {
     const message = `No reviewable files remained after filters (${target}).`;
     notes.push(message);
-    out(options.json ? formatLocalReportJson([], notes) : formatLocalReport([], notes, { color: false }));
-    return { findings: [], notes, failed: false };
+    out(
+      options.json
+        ? formatLocalReportJson(directGroundingFindings, notes)
+        : formatLocalReport(directGroundingFindings, notes, { color: false })
+    );
+    const failed = failOn ? meetsFailThreshold(directGroundingFindings, failOn) : false;
+    return { findings: directGroundingFindings, notes, failed };
   }
 
   // Risk-tiered orchestration (#31): scale passes + context to diff complexity.
@@ -288,27 +337,6 @@ export async function runLocalReview(
     }
   }
 
-  let grounding: ReviewInput["grounding"];
-  if (!resolved.skipGrounding && reviewFiles.length > 0) {
-    try {
-      const result = await ground({
-        root,
-        changedPaths: reviewFiles.map((file) => file.path),
-        changedLines: changedLinesByPath(reviewFiles),
-        trustWorkspace
-      });
-      for (const note of result.notes) {
-        notes.push(`Linter grounding: ${note}`);
-      }
-      if (result.findings.length > 0) {
-        grounding = { findings: result.findings, summary: buildGroundingSummary(result.findings) };
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      notes.push(`Linter grounding failed; continuing without it: ${message}`);
-    }
-  }
-
   const reviewBudgetTokens =
     budgetTokens === undefined ? undefined : Math.max(0, budgetTokens - totalTokens(usage));
   const reviewResult = await review(
@@ -343,7 +371,7 @@ export async function runLocalReview(
     notes.push(`Verification degraded: ${reviewResult.verification.error ?? "unknown error"}.`);
   }
 
-  const findings = reviewResult.findings;
+  const findings = [...directGroundingFindings, ...reviewResult.findings];
   out(
     options.json
       ? formatLocalReportJson(findings, notes)
