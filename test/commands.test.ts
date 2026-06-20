@@ -15,6 +15,7 @@ describe("parseCommand (#26)", () => {
 
   it("parses each known verb", () => {
     expect(parseCommand("@prowl-review review")).toEqual({ verb: "review", argument: "" });
+    expect(parseCommand("@prowl-review ignore")).toEqual({ verb: "ignore", argument: "" });
     expect(parseCommand("@prowl-review pause")).toEqual({ verb: "pause", argument: "" });
     expect(parseCommand("@prowl-review resume")).toEqual({ verb: "resume", argument: "" });
     expect(parseCommand("@prowl-review help")).toEqual({ verb: "help", argument: "" });

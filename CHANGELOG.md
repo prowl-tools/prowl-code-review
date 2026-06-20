@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- `@prowl-review ignore` → per-PR learned mute (backlog #30 remainder, finishing the
+  deferred #26 `ignore` verb): reply `@prowl-review ignore` on a finding's comment and prowl-review stops
+  raising it on that PR. The handler recovers the finding's fingerprint from the bot's root comment marker
+  and merges it into an `ignoredFindings` list persisted in the summary comment's state marker (#12); future
+  reviews suppress those findings **before** the approval gate, so a muted finding never drives
+  request-changes or re-posts. Trust-gated to owner/member/collaborator like the other commands; muting is
+  acknowledged in-thread, and a top-level `ignore` (no finding thread) replies with guidance. Prior state
+  is now loaded on every run (it carries the ignore list as well as the incremental SHA). Exports
+  `setIgnoredFindings`/`fetchReviewCommentFingerprints`. **Deferred (still #30):** repo-wide learnings
+  (writing back to `LEARNED_PATTERNS.md` across PRs) — needs a persistent store/commit; today the mute is
+  per-PR (which is what "persisted per #12" describes). A 👎-reaction trigger is impractical via Actions.
 - `@prowl-review` chat replies (backlog #27): mention the bot with a free-form
   question and get a contextual, in-thread answer grounded in the PR. Any `@prowl-review` comment that
   isn't a known command verb is treated as a question (`@prowl-review why is this O(n²)?`): the new

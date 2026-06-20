@@ -72,6 +72,16 @@ describe("serializeState / parseState round-trip", () => {
     expect(parseState('<!-- prowl-review:state {"v":1,"postedFindings":[]} -->')?.paused).toBeUndefined();
   });
 
+  it("round-trips the ignore list (#30)", () => {
+    const ignored: ReviewState = {
+      v: REVIEW_STATE_VERSION,
+      ignoredFindings: ["fp-1", "fp-2"],
+      postedFindings: []
+    };
+    expect(parseState(serializeState(ignored))).toEqual(ignored);
+    expect(parseState('<!-- prowl-review:state {"v":1,"postedFindings":[]} -->')?.ignoredFindings).toBeUndefined();
+  });
+
   it("returns null for missing/empty/markerless bodies", () => {
     expect(parseState(null)).toBeNull();
     expect(parseState("")).toBeNull();
