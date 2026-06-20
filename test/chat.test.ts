@@ -111,4 +111,50 @@ describe("generateChatReply (#27)", () => {
 
     expect(complete.mock.calls[0][0]).toEqual(expect.objectContaining({ maxTokens: 512 }));
   });
+
+  it("retries transient failures from the default provider dispatcher", async () => {
+    vi.resetModules();
+    const complete = vi
+      .fn()
+      .mockRejectedValueOnce(new Error("Anthropic API error (429): slow down"))
+      .mockResolvedValueOnce({
+        text: " recovered ",
+        usage: { inputTokens: 2, outputTokens: 3, cachedInputTokens: 0 },
+        provider: "anthropic" as const,
+        model: "m"
+      });
+
+    vi.doMock("../src/providers/index.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/providers/index.js")>("../src/providers/index.js");
+      return { ...actual, complete };
+    });
+
+    try {
+      const { generateChatReply: generateWithMockedProvider } = await import("../src/review/chat.js");
+      const result = await generateWithMockedProvider(input(), {
+        config,
+        retry: { sleep: async () => {}, baseDelayMs: 1, random: () => 0 }
+      });
+
+      expect(result.reply).toBe("recovered");
+      expect(complete).toHaveBeenCalledTimes(2);
+    } finally {
+      vi.doUnmock("../src/providers/index.js");
+      vi.resetModules();
+    }
+  });
+
+  it("uses injected completion dependencies without applying retry", async () => {
+    const complete = vi.fn().mockRejectedValue(new Error("Anthropic API error (429): slow down"));
+
+    await expect(
+      generateChatReply(input(), {
+        config,
+        retry: { sleep: async () => {}, baseDelayMs: 1, random: () => 0 },
+        deps: { complete }
+      })
+    ).rejects.toThrow(/429/);
+
+    expect(complete).toHaveBeenCalledTimes(1);
+  });
 });

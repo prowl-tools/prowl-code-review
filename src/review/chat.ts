@@ -1,5 +1,5 @@
-import { complete as defaultComplete } from "../providers/index.js";
-import type { CompletionRequest, CompletionResult, ProviderConfig, TokenUsage } from "../providers/index.js";
+import { complete as defaultComplete, retrying } from "../providers/index.js";
+import type { CompletionRequest, CompletionResult, ProviderConfig, RetryOptions, TokenUsage } from "../providers/index.js";
 import { redactSecrets } from "./redact.js";
 
 /**
@@ -116,9 +116,9 @@ export interface GenerateChatReplyDeps {
  */
 export async function generateChatReply(
   input: ChatReplyInput,
-  options: { config: ProviderConfig; maxTokens?: number; deps?: GenerateChatReplyDeps }
+  options: { config: ProviderConfig; maxTokens?: number; retry?: RetryOptions; deps?: GenerateChatReplyDeps }
 ): Promise<{ reply: string; usage: TokenUsage }> {
-  const run = options.deps?.complete ?? defaultComplete;
+  const run = options.deps?.complete ?? retrying(defaultComplete, options.retry);
   const result = await run(
     {
       system: buildChatSystem(input.guidelines),
