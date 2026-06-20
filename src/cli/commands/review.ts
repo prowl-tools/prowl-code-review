@@ -526,9 +526,17 @@ export function buildReviewCommand(): Command {
     .option("--no-color", "local mode: disable ANSI color in the terminal report")
     .option("--fail-on <severity>", `local mode: exit non-zero on a finding at/above this severity (${SEVERITIES.join("|")})`)
     .action(async (options: ReviewCommandOptions & LocalReviewFlags) => {
+      const localMode = options.base !== undefined || options.head !== undefined;
+      const usedLocalOnlyFlags =
+        options.json === true || options.color === false || options.failOn !== undefined;
+
+      if (!localMode && usedLocalOnlyFlags) {
+        throw new Error("`--json`, `--no-color`, and `--fail-on` require `--base` or `--head`.");
+      }
+
       // Local pre-push mode (#35): `--base`/`--head` switches off the GitHub path
       // entirely — diff comes from git, findings print to the terminal.
-      if (options.base !== undefined || options.head !== undefined) {
+      if (localMode) {
         const result = await runLocalReview({
           base: options.base,
           head: options.head,
