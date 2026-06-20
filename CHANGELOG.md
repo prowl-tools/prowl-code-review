@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Local pre-push review mode (backlog #35): `prowl-review review --base <ref> [--head <ref>]` runs the
+  full review engine against a **local git diff** and prints findings to the terminal — no GitHub token,
+  no posting. The diff is taken relative to the merge base of `--base`/`--head` (PR semantics, via
+  `git diff --merge-base`); omitting `--head` reviews the working tree. Passing `--base` or `--head`
+  switches the `review` command into local mode. It reuses the same agentic cross-file context (#4),
+  linter/SAST grounding (#16) over the local checkout, multi-pass review + verification + judge, risk
+  tiering (#31), per-PR budget (#18), secret redaction (#15), and the "no silent truncation" skip
+  reporting (#5). New flags: `--json` (machine-readable output), `--no-color` (also honors `NO_COLOR`),
+  and `--fail-on <severity>` (non-zero exit for a pre-push gate). Local checkouts are trusted by default
+  so repo-local linters run. New modules `src/review/local-diff.ts` (injectable git exec),
+  `src/review/format-terminal.ts` (pure findings/notes/JSON renderer), and
+  `src/cli/commands/review-local.ts` (`runLocalReview`); all exported from the library surface.
 - `@prowl-review ignore` → per-PR learned mute (backlog #30 remainder, finishing the
   deferred #26 `ignore` verb): reply `@prowl-review ignore` on a finding's comment and prowl-review stops
   raising it on that PR. The handler recovers the finding's fingerprint from the bot's root comment marker
