@@ -28,6 +28,15 @@ export interface ResolveLocalDiffOptions {
   exec?: GitExec;
 }
 
+export interface AssertLocalHeadOptions {
+  /** Head ref; omitted or blank means the working tree is the review target. */
+  head?: string;
+  /** Repository checkout the git commands run inside. */
+  cwd: string;
+  /** Injectable git runner (defaults to a confined `git` execFile). */
+  exec?: GitExec;
+}
+
 /** Raised when the git diff cannot be produced (bad ref, not a repo, git missing). */
 export class LocalDiffError extends Error {
   constructor(message: string) {
@@ -59,6 +68,28 @@ export function defaultGitExec(cwd: string): GitExec {
         }
       );
     });
+}
+
+/**
+ * Local review reads context, guidelines, and grounding inputs from the checkout
+ * itself. If a caller supplies `--head`, require it to be that checkout's HEAD
+ * so those filesystem reads match the diff target.
+ */
+export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOptions): Promise<void> {
+  const head = options.head?.trim();
+  if (!head) {
+    return;
+  }
+
+  const exec = options.exec ?? defaultGitExec(options.cwd);
+  const checkoutSha = (await exec(["rev-parse", "--verify", "HEAD"])).trim();
+  const requestedSha = (await exec(["rev-parse", "--verify", `${head}^{commit}`])).trim();
+
+  if (checkoutSha !== requestedSha) {
+    throw new LocalDiffError(
+      `--head ${head} does not match the checked-out HEAD; switch to that ref or omit --head to review the working tree.`
+    );
+  }
 }
 
 /**

@@ -87,6 +87,7 @@ function deps(over: Partial<LocalReviewDeps> = {}): {
       env: { PROWL_AI_KEY: "test-key" },
       out: (text) => out.push(text),
       err: (text) => err.push(text),
+      resolveHead: vi.fn().mockResolvedValue(undefined),
       resolveDiff: vi.fn().mockResolvedValue(DIFF),
       gatherContext: vi.fn().mockResolvedValue({ files: [], notes: [], usage: emptyUsage() }),
       gatherGrounding: vi.fn().mockResolvedValue({ findings: [], notes: [] }),
@@ -132,9 +133,11 @@ describe("runLocalReview (#35)", () => {
 
   it("passes the merge-base diff through git ref resolution", async () => {
     isolatedWorkspace();
+    const resolveHead = vi.fn().mockResolvedValue(undefined);
     const resolveDiff = vi.fn().mockResolvedValue(DIFF);
-    const { deps: d } = deps({ resolveDiff });
+    const { deps: d } = deps({ resolveHead, resolveDiff });
     await runLocalReview({ base: "develop", head: "feature", config: false }, d);
+    expect(resolveHead).toHaveBeenCalledWith(expect.objectContaining({ head: "feature" }));
     expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ base: "develop", head: "feature" }));
   });
 
@@ -268,6 +271,27 @@ new file mode 100644
     expect(result.failed).toBe(true);
     expect(result.findings).toHaveLength(0);
     expect(err.join("\n")).toContain("bad revision");
+  });
+
+  it("fails before review when --head does not match the checked-out workspace", async () => {
+    isolatedWorkspace();
+    const { LocalDiffError } = await import("../src/review/local-diff.js");
+    const resolveHead = vi
+      .fn()
+      .mockRejectedValue(
+        new LocalDiffError("--head feature does not match the checked-out HEAD; switch to that ref.")
+      );
+    const { deps: d, err } = deps({ resolveHead });
+
+    const result = await runLocalReview({ base: "main", head: "feature", config: false }, d);
+
+    expect(result.failed).toBe(true);
+    expect(result.findings).toHaveLength(0);
+    expect(d.resolveDiff).not.toHaveBeenCalled();
+    expect(d.gatherContext).not.toHaveBeenCalled();
+    expect(d.gatherGrounding).not.toHaveBeenCalled();
+    expect(d.runReview).not.toHaveBeenCalled();
+    expect(err.join("\n")).toContain("does not match the checked-out HEAD");
   });
 });
 

@@ -17,7 +17,7 @@ import { emptyUsage, type TokenUsage } from "../../providers/index.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
 import { SEVERITY_ORDER, type Finding, type Severity } from "../../review/findings.js";
 import { formatLocalReport, formatLocalReportJson } from "../../review/format-terminal.js";
-import { resolveLocalDiff, LocalDiffError } from "../../review/local-diff.js";
+import { assertLocalHeadMatchesCheckout, resolveLocalDiff, LocalDiffError } from "../../review/local-diff.js";
 import {
   loadGuidelines,
   loadLearnedPatterns,
@@ -64,6 +64,7 @@ export interface LocalReviewCommandOptions {
 
 /** Dependencies injected for testability (git + the heavy review stages). */
 export interface LocalReviewDeps {
+  resolveHead?: typeof assertLocalHeadMatchesCheckout;
   resolveDiff?: typeof resolveLocalDiff;
   gatherContext?: typeof gatherContext;
   gatherGrounding?: typeof gatherGrounding;
@@ -165,6 +166,7 @@ export async function runLocalReview(
   const env = deps.env ?? process.env;
   const out = deps.out ?? ((text: string) => console.log(text));
   const err = deps.err ?? ((text: string) => console.error(text));
+  const resolveHead = deps.resolveHead ?? assertLocalHeadMatchesCheckout;
   const resolveDiff = deps.resolveDiff ?? resolveLocalDiff;
   const gather = deps.gatherContext ?? gatherContext;
   const ground = deps.gatherGrounding ?? gatherGrounding;
@@ -195,6 +197,7 @@ export async function runLocalReview(
   const head = options.head?.trim() || undefined;
   let rawDiff: string;
   try {
+    await resolveHead({ head, cwd: root });
     rawDiff = await resolveDiff({ base, head, cwd: root });
   } catch (error) {
     if (error instanceof LocalDiffError) {
