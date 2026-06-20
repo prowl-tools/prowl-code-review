@@ -33,6 +33,7 @@ import type { BreakGlassSignal } from "../review/approval.js";
 
 /** Matches `@prowl-review break glass` / `break-glass` / `breakglass` (case-insensitive). */
 export const BREAK_GLASS_RE = /@prowl-review\s+break[\s-]?glass\b/i;
+const INLINE_BREAK_GLASS_COMMAND_RE = /^\s*@prowl-review\s+break[\s-]?glass\b[^\r\n]*\s*$/i;
 
 /** GitHub author associations trusted to trigger a break-glass override. */
 export const BREAK_GLASS_TRUSTED_ASSOCIATIONS = new Set(["OWNER", "MEMBER", "COLLABORATOR"]);
@@ -60,6 +61,10 @@ interface BreakGlassCandidate {
 /** Return true when a comment body asks prowl-review to break glass. */
 export function matchesBreakGlass(body: string | null | undefined): boolean {
   return typeof body === "string" && BREAK_GLASS_RE.test(body);
+}
+
+function matchesInlineBreakGlassCommand(body: string | null | undefined): boolean {
+  return typeof body === "string" && INLINE_BREAK_GLASS_COMMAND_RE.test(body);
 }
 
 function mentionsHeadSha(body: string | null | undefined, headSha: string | undefined): boolean {
@@ -97,7 +102,7 @@ function newestBreakGlassCandidate(candidates: BreakGlassCandidate[]): BreakGlas
 
 function breakGlassCandidateForComment(
   comment: BreakGlassComment,
-  options: { botLogin?: string; createdAfter?: string; headSha?: string },
+  options: { botLogin?: string; createdAfter?: string; headSha?: string; requireStandaloneCommand?: boolean },
   createdAfter: number | undefined,
   order: number
 ): BreakGlassCandidate | undefined {
@@ -111,7 +116,11 @@ function breakGlassCandidateForComment(
   if (options.botLogin && login === options.botLogin) {
     return undefined;
   }
-  if (!matchesBreakGlass(comment.body)) {
+  if (
+    !(options.requireStandaloneCommand
+      ? matchesInlineBreakGlassCommand(comment.body)
+      : matchesBreakGlass(comment.body))
+  ) {
     return undefined;
   }
   if (!mentionsHeadSha(comment.body, options.headSha)) {
@@ -193,7 +202,12 @@ export async function detectBreakGlass(
 
         for (const comment of response.data) {
           order += 1;
-          const candidate = breakGlassCandidateForComment(comment, options, createdAfter, order);
+          const candidate = breakGlassCandidateForComment(
+            comment,
+            { ...options, requireStandaloneCommand: true },
+            createdAfter,
+            order
+          );
           if (candidate) {
             candidates.push(candidate);
           }

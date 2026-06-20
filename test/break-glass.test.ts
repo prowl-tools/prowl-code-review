@@ -304,6 +304,22 @@ describe("detectBreakGlass (#52)", () => {
     expect(listReviewComments).toHaveBeenCalledWith(expect.objectContaining({ pull_number: ref.pull_number }));
   });
 
+  it("ignores inline review-comment prose that only quotes a break-glass command", async () => {
+    const { octokit } = mockOctokit([], [
+      {
+        id: 1,
+        body: "Please remove `@prowl-review break glass head-sha` from this fixture.",
+        user: { login: "reviewer" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "head-sha" });
+
+    expect(signal.active).toBe(false);
+  });
+
   it("chooses the newest override across top-level and inline comments", async () => {
     const { octokit } = mockOctokit(
       [
