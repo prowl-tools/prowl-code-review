@@ -138,6 +138,35 @@ function mergeContextLimits(
     : merged;
 }
 
+/** Redact untrusted linter finding text before it reaches prompts or reports. */
+function redactGroundingFindings(findings: Finding[]): { findings: Finding[]; count: number } {
+  let count = 0;
+  const redacted = findings.map((finding) => {
+    const title = redactSecrets(finding.title);
+    const body = redactSecrets(finding.body);
+    const suggestion = finding.suggestion ? redactSecrets(finding.suggestion) : undefined;
+    count += title.count + body.count + (suggestion?.count ?? 0);
+    return {
+      ...finding,
+      title: title.text,
+      body: body.text,
+      ...(suggestion ? { suggestion: suggestion.text } : {})
+    };
+  });
+  return { findings: redacted, count };
+}
+
+/** Redact linter operational notes before rendering them locally. */
+function redactGroundingNotes(notes: string[]): { notes: string[]; count: number } {
+  let count = 0;
+  const redacted = notes.map((note) => {
+    const result = redactSecrets(note);
+    count += result.count;
+    return result.text;
+  });
+  return { notes: redacted, count };
+}
+
 /** Resolve whether to colorize: explicit `--no-color` wins; else honor TTY + NO_COLOR. */
 export function resolveColor(cli: LocalReviewCommandOptions, env: NodeJS.ProcessEnv): boolean {
   if (cli.color === false) {
@@ -250,11 +279,18 @@ export async function runLocalReview(
         changedLines: changedLinesByPath(groundingLineFiles),
         trustWorkspace
       });
-      for (const note of result.notes) {
+      const redactedNotes = redactGroundingNotes(result.notes);
+      for (const note of redactedNotes.notes) {
         notes.push(`Linter grounding: ${note}`);
       }
-      directGroundingFindings = result.findings.filter((finding) => secretScanPathSet.has(finding.file));
-      const promptGroundingFindings = result.findings.filter((finding) => !secretScanPathSet.has(finding.file));
+      const redacted = redactGroundingFindings(result.findings);
+      const groundingFindings = redacted.findings;
+      directGroundingFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
+      const promptGroundingFindings = groundingFindings.filter((finding) => !secretScanPathSet.has(finding.file));
+      const redactionCount = redacted.count + redactedNotes.count;
+      if (redactionCount > 0) {
+        notes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
+      }
       if (directGroundingFindings.length > 0 && reviewFiles.length > 0) {
         notes.push(
           `Linter grounding: kept ${directGroundingFindings.length} sensitive-file secret finding(s) outside provider verification.`
@@ -265,7 +301,11 @@ export async function runLocalReview(
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      notes.push(`Linter grounding failed; continuing without it: ${message}`);
+      const redacted = redactSecrets(message);
+      if (redacted.count > 0) {
+        notes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
+      }
+      notes.push(`Linter grounding failed; continuing without it: ${redacted.text}`);
     }
   }
 

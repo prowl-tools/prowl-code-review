@@ -154,10 +154,10 @@ PROWL_AI_KEY=sk-… prowl-review review --base main --head my-feature
 The diff is taken relative to the **merge base** of `--base` and `--head` (PR
 semantics — only the changes your branch introduces). Omit `--head` to review
 the working tree. When `--head` is supplied, it must resolve to the currently
-checked-out `HEAD`; the later context, guidelines, grounding, and secret scans
-read from that local checkout. Passing `--base` (or `--head`) switches the
-`review` command into local mode; the GitHub flags (`--pr`, `--repo`,
-`--dry-run`) are ignored.
+checked-out `HEAD` and the worktree must be clean; the later context,
+guidelines, grounding, and secret scans read from that local checkout. Passing
+`--base` (or `--head`) switches the `review` command into local mode; the GitHub
+flags (`--pr`, `--repo`, `--dry-run`) are ignored.
 
 | Flag | Effect |
 |------|--------|

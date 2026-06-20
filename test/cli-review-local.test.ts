@@ -183,6 +183,46 @@ describe("runLocalReview (#35)", () => {
     expect(out.join("\n")).toContain("Linter grounding: ran eslint");
   });
 
+  it("redacts grounding findings and notes before prompts and reports", async () => {
+    isolatedWorkspace();
+    const gatherGrounding = vi.fn().mockResolvedValue({
+      findings: [
+        finding({
+          category: "lint",
+          title: "custom-rule",
+          body: "SECRET_KEY=django-insecure-super-secret-value"
+        })
+      ],
+      notes: ["ESLint failed: SECRET_KEY=django-insecure-super-secret-value"]
+    });
+    const runReview = vi.fn().mockResolvedValue(reviewResult({ findings: [] }));
+    const { deps: d, out } = deps({ gatherGrounding, runReview });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const input = runReview.mock.calls[0][0];
+    expect(input.grounding?.findings[0].body).toContain("[REDACTED:assignment]");
+    expect(input.grounding?.summary).toContain("[REDACTED:assignment]");
+    expect(input.grounding?.summary).not.toContain("django-insecure");
+    const report = out.join("\n");
+    expect(report).toContain("Linter grounding: ESLint failed: SECRET_KEY=[REDACTED:assignment]");
+    expect(report).toContain("Redacted 2 secret(s) from linter grounding output.");
+    expect(report).not.toContain("django-insecure");
+  });
+
+  it("redacts secrets in grounding failure notes", async () => {
+    isolatedWorkspace();
+    const gatherGrounding = vi.fn().mockRejectedValue(new Error("gitleaks failed: API_KEY=AKIAIOSFODNN7EXAMPLE"));
+    const { deps: d, out } = deps({ gatherGrounding });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const report = out.join("\n");
+    expect(report).toContain("Linter grounding failed");
+    expect(report).toContain("[REDACTED");
+    expect(report).not.toContain("AKIAIOSFODNN7EXAMPLE");
+  });
+
   it("skips context and grounding when disabled", async () => {
     isolatedWorkspace();
     const { deps: d } = deps();

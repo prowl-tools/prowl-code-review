@@ -48,16 +48,29 @@ describe("assertLocalHeadMatchesCheckout", () => {
   });
 
   it("allows an explicit head that resolves to the checked-out HEAD", async () => {
-    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n");
+    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("");
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
     expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
     expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "feature^{commit}"]);
+    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain"]);
   });
 
   it("rejects an explicit head that differs from the checkout", async () => {
     const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("def456\n");
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
       /does not match the checked-out HEAD/
+    );
+    expect(exec).not.toHaveBeenCalledWith(["status", "--porcelain"]);
+  });
+
+  it("rejects an explicit head when the worktree is dirty", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce(" M src/a.ts\n?? tmp.txt\n");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
+      /requires a clean worktree/
     );
   });
 });

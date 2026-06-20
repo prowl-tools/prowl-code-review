@@ -9,7 +9,7 @@ All notable changes to Prowl Review will be documented in this file.
   full review engine against a **local git diff** and prints findings to the terminal — no GitHub token,
   no posting. The diff is taken relative to the merge base of `--base`/`--head` (PR semantics, via
   `git diff --merge-base`); omitting `--head` reviews the working tree, while an explicit `--head`
-  must match the checked-out `HEAD` because local context and grounding read from the checkout.
+  must match the checked-out `HEAD` with a clean worktree because local context and grounding read from the checkout.
   Passing `--base` or `--head` switches the `review` command into local mode. It reuses the same agentic cross-file context (#4),
   linter/SAST grounding (#16) over the local checkout, multi-pass review + verification + judge, risk
   tiering (#31), per-PR budget (#18), secret redaction (#15), and the "no silent truncation" skip
