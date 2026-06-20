@@ -39,6 +39,20 @@ describe("parseCommand (#26)", () => {
     expect(parseCommand("@prowl-review frobnicate")).toEqual({ verb: "unknown", argument: "frobnicate" });
   });
 
+  it("preserves multiline free-form chat questions after the mention", () => {
+    expect(parseCommand("@prowl-review why did this change?\n\n```ts\nfoo();\n```")).toEqual({
+      verb: "unknown",
+      argument: "why did this change?\n\n```ts\nfoo();\n```"
+    });
+  });
+
+  it("treats a mention followed by later text as a free-form chat question", () => {
+    expect(parseCommand("@prowl-review\nwhy did this change?")).toEqual({
+      verb: "unknown",
+      argument: "why did this change?"
+    });
+  });
+
   it("is case-insensitive on the mention and verb", () => {
     expect(parseCommand("@Prowl-Review REVIEW")?.verb).toBe("review");
   });

@@ -91,6 +91,6 @@ runs:
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
-        PROWL_REVIEWED_HEAD_SHA: ${{ github.event.pull_request.head.sha || env.PROWL_REVIEWED_HEAD_SHA }}
+        PROWL_REVIEWED_HEAD_SHA: ${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}
       # 'review' reviews the PR; 'command' handles an @prowl-review comment (#26).
       run: node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"

@@ -46,10 +46,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance (remaining): `ignore` and `resolve` verbs — these act on a **specific finding/thread** from the reply context (`pull_request_review_comment`), so they need comment→thread/fingerprint mapping; `ignore` is the #30 learnings write-back (suppress a finding going forward), `resolve` overlaps #22's thread resolution. Rides with the #27/#30 reply infra.
     - Acceptance (remaining): `configure` verb — adjust review settings from a comment (scope/semantics TBD; likely a thin wrapper over `.prowl-review.yml` keys).
 
-27. **`@prowl-review` chat replies**
-    As a developer, I want to mention the bot in a PR comment and get a contextual, in-thread reply, so that I can ask follow-ups.
-    - Acceptance: `respond` command + Action triggers on `issue_comment` / `pull_request_review_comment` containing `@prowl-review`; reply threads correctly with PR/diff context.
-
 28. **Draft-PR & auto-review controls**
     As a developer, I want control over when reviews fire, so that drafts are my buffer.
     - Acceptance: skip drafts until "ready for review" by default; config toggle for auto-review vs. on-demand (`@prowl-review review`) only.

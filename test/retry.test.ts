@@ -33,7 +33,10 @@ describe("isRetryableError", () => {
 
   it("retries network/transport errors", () => {
     expect(isRetryableError({ code: "ECONNRESET" })).toBe(true);
+    expect(isRetryableError({ code: "UND_ERR_CONNECT_TIMEOUT" })).toBe(true);
     expect(isRetryableError(Object.assign(new Error("x"), { name: "AbortError" }))).toBe(true);
+    expect(isRetryableError(new Error("Connect Timeout Error"))).toBe(true);
+    expect(isRetryableError(new Error("connect timeout while dialing"))).toBe(true);
     expect(isRetryableError(new Error("fetch failed"))).toBe(true);
     expect(isRetryableError(new Error("socket hang up"))).toBe(true);
   });

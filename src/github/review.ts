@@ -514,3 +514,37 @@ export async function postPullRequestComment(
     body
   });
 }
+
+/** Reply in-thread to an existing review comment — used for inline chat replies (#27). */
+export async function replyToReviewComment(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number,
+  body: string
+): Promise<void> {
+  await octokit.rest.pulls.createReplyForReviewComment({
+    owner: ref.owner,
+    repo: ref.repo,
+    pull_number: ref.pull_number,
+    comment_id: commentId,
+    body
+  });
+}
+
+/** Fetch an inline review comment body for thread-grounded chat replies (#27). */
+export async function fetchReviewCommentBody(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number
+): Promise<string | undefined> {
+  try {
+    const response = await octokit.rest.pulls.getReviewComment({
+      owner: ref.owner,
+      repo: ref.repo,
+      comment_id: commentId
+    });
+    return response.data.body?.trim() || undefined;
+  } catch {
+    return undefined;
+  }
+}

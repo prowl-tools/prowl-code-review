@@ -17,23 +17,53 @@ interface Comment {
   created_at?: string;
 }
 
-function mockOctokit(comments: Comment[]) {
-  const listComments = vi.fn(async (params: { per_page?: number; page?: number; since?: string }) => {
-    const since = params.since ? Date.parse(params.since) : undefined;
-    const visible =
-      since === undefined
-        ? comments
-        : comments.filter((comment) => {
-            const updatedAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
-            return Number.isFinite(updatedAt) && updatedAt > since;
-          });
-    const perPage = params.per_page ?? 30;
-    const page = params.page ?? 1;
-    const start = (page - 1) * perPage;
-    return { data: visible.slice(start, start + perPage) };
+function createdAtMillis(comment: Comment): number {
+  const createdAt = comment.created_at ? Date.parse(comment.created_at) : Number.NaN;
+  return Number.isFinite(createdAt) ? createdAt : Number.NEGATIVE_INFINITY;
+}
+
+function applyCommentOrdering(
+  comments: Comment[],
+  params: { sort?: string; direction?: string; since?: string }
+): Comment[] {
+  const since = params.since ? Date.parse(params.since) : undefined;
+  const visible =
+    since === undefined
+      ? comments
+      : comments.filter((comment) => {
+          const updatedAt = createdAtMillis(comment);
+          return Number.isFinite(updatedAt) && updatedAt > since;
+        });
+  if (params.sort !== "created") {
+    return visible;
+  }
+  return [...visible].sort((left, right) => {
+    const delta = createdAtMillis(left) - createdAtMillis(right);
+    return params.direction === "desc" ? -delta : delta;
   });
-  const octokit = { rest: { issues: { listComments } } } as unknown as OctokitLike;
-  return { octokit, listComments };
+}
+
+function mockOctokit(comments: Comment[], reviewComments: Comment[] = []) {
+  const listComments = vi.fn(
+    async (params: { per_page?: number; page?: number; sort?: string; direction?: string; since?: string }) => {
+      const visible = applyCommentOrdering(comments, params);
+      const perPage = params.per_page ?? 30;
+      const page = params.page ?? 1;
+      const start = (page - 1) * perPage;
+      return { data: visible.slice(start, start + perPage) };
+    }
+  );
+  const listReviewComments = vi.fn(
+    async (params: { per_page?: number; page?: number; sort?: string; direction?: string; since?: string }) => {
+      const visible = applyCommentOrdering(reviewComments, params);
+      const perPage = params.per_page ?? 30;
+      const page = params.page ?? 1;
+      const start = (page - 1) * perPage;
+      return { data: visible.slice(start, start + perPage) };
+    }
+  );
+  const octokit = { rest: { issues: { listComments }, pulls: { listReviewComments } } } as unknown as OctokitLike;
+  return { octokit, listComments, listReviewComments };
 }
 
 describe("matchesBreakGlass (#52)", () => {
@@ -95,6 +125,24 @@ describe("detectBreakGlass (#52)", () => {
     expect((await detectBreakGlass(octokit, ref)).active).toBe(false);
   });
 
+  it("never self-triggers from prowl-review's own inline finding marker", async () => {
+    const { octokit } = mockOctokit([], [
+      {
+        id: 1,
+        body: [
+          "The PR text says `@prowl-review break glass head-sha`.",
+          "",
+          "<!-- prowl-review:finding abc123 -->"
+        ].join("\n"),
+        user: { login: "owner-token" },
+        author_association: "OWNER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    expect((await detectBreakGlass(octokit, ref, { headSha: "head-sha" })).active).toBe(false);
+  });
+
   it("skips the configured bot login", async () => {
     const { octokit } = mockOctokit([
       { id: 1, body: "@prowl-review break glass", user: { login: "prowl-bot" }, author_association: "OWNER" }
@@ -123,11 +171,11 @@ describe("detectBreakGlass (#52)", () => {
     const signal = await detectBreakGlass(octokit, ref);
     expect(signal.actor).toBe("second");
     expect(listComments).toHaveBeenCalledWith(
-      expect.not.objectContaining({ sort: expect.anything(), direction: expect.anything() })
+      expect.objectContaining({ sort: "created", direction: "desc" })
     );
   });
 
-  it("paginates in API order and still chooses a newer override", async () => {
+  it("paginates newest-first and still chooses a newer override", async () => {
     const filler = Array.from({ length: 99 }, (_, index) => ({
       id: index + 2,
       body: "discussion",
@@ -159,9 +207,38 @@ describe("detectBreakGlass (#52)", () => {
     expect(listComments).toHaveBeenCalledTimes(2);
     expect(listComments).toHaveBeenNthCalledWith(
       1,
-      expect.objectContaining({ page: 1, since: "2026-06-17T13:00:00Z" })
+      expect.objectContaining({ page: 1, sort: "created", direction: "desc", since: "2026-06-17T13:00:00Z" })
     );
     expect(listComments).toHaveBeenNthCalledWith(2, expect.objectContaining({ page: 2 }));
+  });
+
+  it("fetches newest issue-comment pages first when pagination is capped", async () => {
+    const older = Array.from({ length: 2_100 }, (_, index) => ({
+      id: index + 1,
+      body: "discussion",
+      user: { login: "reviewer" },
+      author_association: "MEMBER",
+      created_at: new Date(Date.parse("2026-06-17T14:00:00Z") + index * 1_000).toISOString()
+    }));
+    const { octokit, listComments } = mockOctokit([
+      ...older,
+      {
+        id: 2_101,
+        body: "@prowl-review break glass",
+        user: { login: "latest" },
+        author_association: "OWNER",
+        created_at: "2026-06-18T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref);
+
+    expect(signal).toEqual({ active: true, actor: "latest", association: "OWNER" });
+    expect(listComments).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ page: 1, sort: "created", direction: "desc" })
+    );
+    expect(listComments).toHaveBeenCalledTimes(20);
   });
 
   it("ignores override comments from before the current head commit", async () => {
@@ -208,6 +285,93 @@ describe("detectBreakGlass (#52)", () => {
 
     const signal = await detectBreakGlass(octokit, ref, { createdAfter: "2026-06-17T13:00:00Z" });
     expect(signal).toEqual({ active: true, actor: "maintainer", association: "OWNER" });
+  });
+
+  it("honors trusted inline review-comment overrides", async () => {
+    const { octokit, listReviewComments } = mockOctokit([], [
+      {
+        id: 1,
+        body: "@prowl-review break glass head-sha",
+        user: { login: "reviewer" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "head-sha" });
+
+    expect(signal).toEqual({ active: true, actor: "reviewer", association: "MEMBER" });
+    expect(listReviewComments).toHaveBeenCalledWith(expect.objectContaining({ pull_number: ref.pull_number }));
+  });
+
+  it("ignores inline review-comment prose that only quotes a break-glass command", async () => {
+    const { octokit } = mockOctokit([], [
+      {
+        id: 1,
+        body: "Please remove `@prowl-review break glass head-sha` from this fixture.",
+        user: { login: "reviewer" },
+        author_association: "MEMBER",
+        created_at: "2026-06-17T14:00:00Z"
+      }
+    ]);
+
+    const signal = await detectBreakGlass(octokit, ref, { headSha: "head-sha" });
+
+    expect(signal.active).toBe(false);
+  });
+
+  it("chooses the newest override across top-level and inline comments", async () => {
+    const { octokit } = mockOctokit(
+      [
+        {
+          id: 1,
+          body: "@prowl-review break glass",
+          user: { login: "maintainer" },
+          author_association: "OWNER",
+          created_at: "2026-06-17T14:00:00Z"
+        }
+      ],
+      [
+        {
+          id: 2,
+          body: "@prowl-review break glass",
+          user: { login: "reviewer" },
+          author_association: "COLLABORATOR",
+          created_at: "2026-06-17T15:00:00Z"
+        }
+      ]
+    );
+
+    expect(await detectBreakGlass(octokit, ref)).toEqual({
+      active: true,
+      actor: "reviewer",
+      association: "COLLABORATOR"
+    });
+  });
+
+  it("preserves a trusted issue-comment override when inline review comments fail to load", async () => {
+    const listComments = vi.fn(async () => ({
+      data: [
+        {
+          id: 1,
+          body: "@prowl-review break glass",
+          user: { login: "maintainer" },
+          author_association: "OWNER",
+          created_at: "2026-06-17T14:00:00Z"
+        }
+      ]
+    }));
+    const listReviewComments = vi.fn(async () => {
+      throw new Error("review comments unavailable");
+    });
+    const octokit = { rest: { issues: { listComments }, pulls: { listReviewComments } } } as unknown as OctokitLike;
+
+    await expect(detectBreakGlass(octokit, ref)).resolves.toEqual({
+      active: true,
+      actor: "maintainer",
+      association: "OWNER"
+    });
+    expect(listReviewComments).toHaveBeenCalledWith(expect.objectContaining({ pull_number: ref.pull_number }));
   });
 
   it("requires the current head SHA when one is supplied", async () => {

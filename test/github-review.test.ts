@@ -1,5 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
-import { submitReview, planPublish, hasActiveRequestChanges, setPausedState } from "../src/github/review.js";
+import {
+  submitReview,
+  planPublish,
+  hasActiveRequestChanges,
+  setPausedState,
+  replyToReviewComment,
+  fetchReviewCommentBody
+} from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
@@ -46,15 +53,28 @@ function mockOctokit(
   const createComment = vi.fn(async () => ({ data: {} }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
+  const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
+  const getReviewComment = vi.fn(async () => ({ data: { body: "root finding" } }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, listReviewComments, listReviews },
+      pulls: { createReview, createReplyForReviewComment, getReviewComment, listReviewComments, listReviews },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
   } as unknown as OctokitLike;
-  return { octokit, listComments, listReviewComments, listReviews, createComment, updateComment, createReview, getAuthenticated };
+  return {
+    octokit,
+    listComments,
+    listReviewComments,
+    listReviews,
+    createComment,
+    updateComment,
+    createReview,
+    createReplyForReviewComment,
+    getReviewComment,
+    getAuthenticated
+  };
 }
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
@@ -272,6 +292,27 @@ describe("hasActiveRequestChanges", () => {
 
     await expect(hasActiveRequestChanges(octokit, ref)).resolves.toEqual({ active: false, truncated: true });
     expect(listReviews).toHaveBeenCalledTimes(10);
+  });
+});
+
+describe("fetchReviewCommentBody", () => {
+  it("fetches and trims an inline review comment body", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockResolvedValueOnce({ data: { body: "  root finding  " } });
+
+    await expect(fetchReviewCommentBody(octokit, ref, 321)).resolves.toBe("root finding");
+    expect(getReviewComment).toHaveBeenCalledWith({
+      owner: ref.owner,
+      repo: ref.repo,
+      comment_id: 321
+    });
+  });
+
+  it("returns undefined when the review comment cannot be read", async () => {
+    const { octokit, getReviewComment } = mockOctokit();
+    getReviewComment.mockRejectedValueOnce(new Error("missing"));
+
+    await expect(fetchReviewCommentBody(octokit, ref, 321)).resolves.toBeUndefined();
   });
 });
 
@@ -705,5 +746,21 @@ describe("setPausedState (#26)", () => {
     const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
     await setPausedState(octokit, ref, false);
     expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.paused).toBe(false);
+  });
+});
+
+describe("replyToReviewComment (#27)", () => {
+  it("posts an inline review-thread reply with the expected GitHub parameters", async () => {
+    const { octokit, createReplyForReviewComment } = mockOctokit([]);
+
+    await replyToReviewComment(octokit, ref, 444, "Answer body");
+
+    expect(createReplyForReviewComment).toHaveBeenCalledWith({
+      owner: "prowl-tools",
+      repo: "prowl-code-review",
+      pull_number: 12,
+      comment_id: 444,
+      body: "Answer body"
+    });
   });
 });
