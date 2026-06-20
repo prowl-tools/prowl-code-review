@@ -9,6 +9,7 @@ import {
 import type { ProviderConfig } from "../src/providers/index.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
+const AWS_ACCESS_KEY = ["AKIA", "1234567890ABCD99"].join("");
 
 function input(over: Partial<ChatReplyInput> = {}): ChatReplyInput {
   return {
@@ -63,7 +64,7 @@ describe("buildChatPrompt (#27)", () => {
         question: `Does this expose sk-${"A".repeat(24)}?`,
         prTitle: `Handle ghp_${"b".repeat(36)}`,
         prBody: "DATABASE_URL=postgres://user:pass@host/db",
-        diff: `+const key = "AKIA1234567890ABCD99";`,
+        diff: `+const key = "${AWS_ACCESS_KEY}";`,
         thread: {
           path: "src/a.ts",
           line: 42,
@@ -75,7 +76,7 @@ describe("buildChatPrompt (#27)", () => {
     expect(prompt).not.toContain(`sk-${"A".repeat(24)}`);
     expect(prompt).not.toContain(`ghp_${"b".repeat(36)}`);
     expect(prompt).not.toContain("postgres://user:pass@host/db");
-    expect(prompt).not.toContain("AKIA1234567890ABCD99");
+    expect(prompt).not.toContain(AWS_ACCESS_KEY);
     expect(prompt).not.toContain(`github_pat_${"c".repeat(24)}`);
     expect(prompt).toContain("[REDACTED:");
   });

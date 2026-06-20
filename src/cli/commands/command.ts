@@ -107,10 +107,9 @@ export function resolveCommentEvent(env: NodeJS.ProcessEnv = process.env): Comme
     if (comment.user?.type === "Bot") {
       return null;
     }
-    // An inline review-comment event carries a top-level `pull_request`; an
-    // issue_comment carries `issue` and is only a PR comment when `pull_request`
-    // is present on the issue.
-    const isReviewComment = Boolean(event.pull_request) && !event.issue;
+    // An inline review-comment event carries a top-level `pull_request` plus a
+    // file path. Pathless PR comment events fall back to a top-level PR reply.
+    const isReviewComment = Boolean(event.pull_request) && !event.issue && Boolean(comment.path);
     let pullNumber: number | undefined;
     if (event.issue) {
       if (!event.issue.pull_request) {
