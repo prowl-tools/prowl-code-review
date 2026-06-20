@@ -8,7 +8,9 @@ import {
 } from "../../github/diff.js";
 import {
   fetchReviewCommentBody as defaultFetchReviewCommentBody,
+  fetchReviewCommentFingerprints as defaultFetchReviewCommentFingerprints,
   setPausedState,
+  setIgnoredFindings,
   postPullRequestComment,
   replyToReviewComment
 } from "../../github/review.js";
@@ -195,6 +197,8 @@ export interface CommandDispatchDeps {
   postComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
   /** Answer a free-form `@prowl-review` question (#27). When absent, dispatch falls back to help. */
   respond?: (question: string) => Promise<void>;
+  /** Mute the finding the `@prowl-review ignore` reply targets (#30). When absent, dispatch replies with guidance. */
+  ignore?: () => Promise<{ ignored: number }>;
 }
 
 /** Result of dispatching a parsed command (for logging/tests). */
@@ -204,6 +208,8 @@ export interface CommandOutcome {
   reviewed: boolean;
   /** True when a free-form question was answered with a chat reply (#27). */
   responded?: boolean;
+  /** Number of finding fingerprints muted by an `ignore` command (#30). */
+  ignored?: number;
 }
 
 /**
@@ -218,6 +224,7 @@ export async function dispatchCommand(
   const setPaused = ctx.deps?.setPaused ?? setPausedState;
   const postComment = ctx.deps?.postComment ?? postPullRequestComment;
   const respond = ctx.deps?.respond;
+  const ignore = ctx.deps?.ignore;
   const repo = `${ctx.ref.owner}/${ctx.ref.repo}`;
   const pr = String(ctx.ref.pull_number);
 
@@ -250,6 +257,15 @@ export async function dispatchCommand(
       );
       return { verb: parsed.verb, reviewed: false };
     }
+    case "ignore":
+      // Mute the targeted finding (#30). Without the wired handler (e.g. a
+      // top-level `ignore` with no thread), fall back to guidance via help.
+      if (ignore) {
+        const result = await ignore();
+        return { verb: parsed.verb, reviewed: false, ignored: result.ignored };
+      }
+      await postComment(ctx.octokit, ctx.ref, commandHelpText());
+      return { verb: parsed.verb, reviewed: false };
     case "help":
       await postComment(ctx.octokit, ctx.ref, commandHelpText());
       return { verb: parsed.verb, reviewed: false };
@@ -363,6 +379,62 @@ export function loadChatGuidelines(): string | undefined {
   return composeGuidelines(orgGuidelines, repoGuidelines);
 }
 
+/** Injectable side effects for the `ignore` orchestration (#30). */
+export interface IgnoreHandlerDeps {
+  fetchFingerprints?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number) => Promise<string[]>;
+  setIgnored?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    fingerprints: string[]
+  ) => Promise<{ added: number; total: number }>;
+  postReviewReply?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number, body: string) => Promise<void>;
+  postIssueComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
+}
+
+/**
+ * Mute the finding an `@prowl-review ignore` reply targets (#30): recover the
+ * finding fingerprint from the bot's root comment in the thread, persist it to
+ * the per-PR ignore list (#12 state marker), and acknowledge in-thread. Only
+ * meaningful as a reply on a finding's comment; otherwise it replies with
+ * guidance. Returns how many fingerprints were muted.
+ */
+export async function handleIgnore(params: {
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  event: CommentEvent;
+  deps?: IgnoreHandlerDeps;
+}): Promise<{ ignored: number }> {
+  const fetchFingerprints = params.deps?.fetchFingerprints ?? defaultFetchReviewCommentFingerprints;
+  const setIgnored = params.deps?.setIgnored ?? setIgnoredFindings;
+  const postReviewReply = params.deps?.postReviewReply ?? replyToReviewComment;
+  const postIssueComment = params.deps?.postIssueComment ?? postPullRequestComment;
+
+  const ack = async (body: string): Promise<void> => {
+    if (params.event.isReviewComment && params.event.commentId !== undefined) {
+      await postReviewReply(params.octokit, params.ref, params.event.commentId, body);
+    } else {
+      await postIssueComment(params.octokit, params.ref, body);
+    }
+  };
+
+  const rootId =
+    params.event.parentCommentId ?? (params.event.isReviewComment ? params.event.commentId : undefined);
+  if (rootId === undefined) {
+    await ack("ℹ️ Reply `@prowl-review ignore` directly on a finding's comment to mute it on this PR.");
+    return { ignored: 0 };
+  }
+
+  const fingerprints = await fetchFingerprints(params.octokit, params.ref, rootId);
+  if (fingerprints.length === 0) {
+    await ack("ℹ️ I couldn't identify a prowl-review finding on that thread to ignore.");
+    return { ignored: 0 };
+  }
+
+  await setIgnored(params.octokit, params.ref, fingerprints);
+  await ack("👍 Ignored — I won't raise this finding again on this PR. Comment `@prowl-review review` to refresh.");
+  return { ignored: fingerprints.length };
+}
+
 /** Build the `command` CLI subcommand wired to the comment-event dispatch. */
 export function buildCommandCommand(): Command {
   const command = new Command("command");
@@ -419,10 +491,18 @@ export function buildCommandCommand(): Command {
         });
       };
 
-      const outcome = await dispatchCommand(parsed, { octokit, ref, deps: { respond } });
+      const ignore = (): Promise<{ ignored: number }> => handleIgnore({ octokit, ref, event });
+
+      const outcome = await dispatchCommand(parsed, { octokit, ref, deps: { respond, ignore } });
+      const suffix = outcome.reviewed
+        ? " (review run)"
+        : outcome.responded
+          ? " (chat reply)"
+          : outcome.ignored
+            ? ` (muted ${outcome.ignored} finding(s))`
+            : "";
       console.log(
-        `prowl-review: handled \`@prowl-review ${parsed.verb}\` on ${owner}/${repo}#${event.pullNumber}` +
-          (outcome.reviewed ? " (review run)" : outcome.responded ? " (chat reply)" : "")
+        `prowl-review: handled \`@prowl-review ${parsed.verb}\` on ${owner}/${repo}#${event.pullNumber}${suffix}`
       );
     });
 

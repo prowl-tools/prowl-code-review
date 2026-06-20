@@ -120,6 +120,9 @@ export function planPublish(input: {
     v: REVIEW_STATE_VERSION,
     ...(input.headSha ? { lastReviewedSha: input.headSha } : {}),
     ...(priorState?.paused !== undefined ? { paused: priorState.paused } : {}),
+    ...(priorState?.ignoredFindings && priorState.ignoredFindings.length > 0
+      ? { ignoredFindings: priorState.ignoredFindings }
+      : {}),
     postedFindings
   };
   const { body: summaryBody, state } = embedStateWithFittedState(
@@ -472,6 +475,9 @@ export async function setPausedState(
       v: REVIEW_STATE_VERSION,
       ...(priorState?.lastReviewedSha ? { lastReviewedSha: priorState.lastReviewedSha } : {}),
       paused,
+      ...(priorState?.ignoredFindings && priorState.ignoredFindings.length > 0
+        ? { ignoredFindings: priorState.ignoredFindings }
+        : {}),
       postedFindings: priorState?.postedFindings ?? []
     };
     const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
@@ -547,4 +553,63 @@ export async function fetchReviewCommentBody(
   } catch {
     return undefined;
   }
+}
+
+/**
+ * Recover the prowl-review finding fingerprint(s) embedded in a review comment,
+ * used to resolve which finding an `@prowl-review ignore` reply targets (#30).
+ * Returns [] when the comment is gone or carries no marker.
+ */
+export async function fetchReviewCommentFingerprints(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number
+): Promise<string[]> {
+  const body = await fetchReviewCommentBody(octokit, ref, commentId);
+  return parseInlineFingerprintMarkers(body);
+}
+
+/**
+ * Mute finding fingerprints for a PR via `@prowl-review ignore` (#30): merge them
+ * into `ignoredFindings` in the summary comment's state marker (#12), so future
+ * reviews of this PR suppress them. Edits the summary in place when present, or
+ * creates a minimal marked comment otherwise. Returns how many were newly added.
+ */
+export async function setIgnoredFindings(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  fingerprints: string[],
+  botLogin?: string
+): Promise<{ added: number; total: number }> {
+  const login = await getAuthenticatedLogin(octokit, botLogin);
+  const prior = await findPriorSummary(octokit, ref, login);
+  const priorState = prior ? parseState(prior.body) : null;
+  const existing = new Set(priorState?.ignoredFindings ?? []);
+  const before = existing.size;
+  for (const fingerprint of fingerprints) {
+    existing.add(fingerprint);
+  }
+  const merged = [...existing];
+  const added = merged.length - before;
+
+  if (prior) {
+    const nextState: ReviewState = {
+      v: REVIEW_STATE_VERSION,
+      ...(priorState?.lastReviewedSha ? { lastReviewedSha: priorState.lastReviewedSha } : {}),
+      ...(priorState?.paused !== undefined ? { paused: priorState.paused } : {}),
+      ...(merged.length > 0 ? { ignoredFindings: merged } : {}),
+      postedFindings: priorState?.postedFindings ?? []
+    };
+    const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
+    await octokit.rest.issues.updateComment({ owner: ref.owner, repo: ref.repo, comment_id: prior.id, body });
+    return { added, total: merged.length };
+  }
+
+  const { body } = embedStateWithFittedState(
+    `${REVIEW_MARKER}\n\nprowl-review is muting ${merged.length} finding(s) on this PR per \`@prowl-review ignore\`.`,
+    { v: REVIEW_STATE_VERSION, ignoredFindings: merged, postedFindings: [] },
+    GITHUB_COMMENT_BODY_LIMIT
+  );
+  await octokit.rest.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.pull_number, body });
+  return { added, total: merged.length };
 }

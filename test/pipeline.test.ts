@@ -530,7 +530,7 @@ ${DELTA_DIFF}`;
     expect(result.payload.body).toContain("Could not safely use the incremental delta");
   });
 
-  it("skips incremental entirely when disabled (#23)", async () => {
+  it("skips the incremental delta compare when disabled (#23)", async () => {
     const fetchPriorState = vi.fn(async () => null);
     const fetchComparisonDiff = vi.fn(async () => DELTA_DIFF);
     const deps = { ...makeDeps(), fetchPriorState, fetchComparisonDiff };
@@ -542,7 +542,8 @@ ${DELTA_DIFF}`;
       incremental: false
     });
 
-    expect(fetchPriorState).not.toHaveBeenCalled();
+    // Prior state is still loaded (it also carries the #30 ignore list), but the
+    // delta compare is skipped and the full PR is reviewed.
     expect(fetchComparisonDiff).not.toHaveBeenCalled();
     expect(result.incremental).toBe(false);
   });
@@ -1560,6 +1561,52 @@ diff --git a/src/b.ts b/src/b.ts
 
       expect(fetchHeadSha).not.toHaveBeenCalled();
       expect(result.posted).toBe(true);
+    });
+  });
+
+  describe("ignore suppression (#30)", () => {
+    it("withholds findings the user muted via @prowl-review ignore", async () => {
+      const muted = finding({ severity: "critical" });
+      const fetchPriorState = vi.fn(async () => ({
+        v: 1 as const,
+        ignoredFindings: [findingFingerprint(muted)],
+        postedFindings: []
+      }));
+      const deps = { ...makeDeps(), fetchPriorState };
+      deps.runReview.mockResolvedValue(reviewResult([muted, finding({ severity: "major", line: 3, title: "Other" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        incremental: false // full review so the muted critical would otherwise surface
+      });
+
+      const titles = result.review.findings.map((f) => f.title);
+      expect(titles).not.toContain("Bug"); // the muted critical is gone
+      expect(titles).toContain("Other"); // unrelated finding remains
+      expect(result.payload.body).toContain("muted");
+    });
+
+    it("a muted finding does not drive the approval gate to request changes", async () => {
+      const muted = finding({ severity: "critical" });
+      const fetchPriorState = vi.fn(async () => ({
+        v: 1 as const,
+        ignoredFindings: [findingFingerprint(muted)],
+        postedFindings: []
+      }));
+      const deps = { ...makeDeps(), fetchPriorState };
+      deps.runReview.mockResolvedValue(reviewResult([muted]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        incremental: false,
+        approval: { enabled: true }
+      });
+
+      expect(result.approval?.event).toBe("COMMENT");
     });
   });
 

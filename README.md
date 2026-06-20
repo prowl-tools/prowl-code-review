@@ -64,6 +64,7 @@ repo owner/member/collaborator is honored):
 |---|---|
 | `@prowl-review review` | Re-review the latest changes (incremental). |
 | `@prowl-review full review` | Re-scan the entire PR from scratch. |
+| `@prowl-review ignore` | Reply on a finding to mute it — it won't be raised again on this PR (#30). |
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
 | `@prowl-review resume` | Re-enable auto-review. |
 | `@prowl-review help` | List the available commands. |
