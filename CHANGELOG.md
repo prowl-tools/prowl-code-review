@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Draft-PR & auto-review controls (backlog #28): prowl-review now **skips draft pull requests by default**,
+  reviewing automatically once the PR is marked ready for review (the `ready_for_review` event) — or
+  immediately if you comment `@prowl-review review` (an explicit request always runs, even on a draft). Two
+  new `.prowl-review.yml` keys under `review`: `auto` (default `true`; set `false` for **on-demand only** —
+  the bot reviews just when asked) and `reviewDrafts` (default `false`; set `true` to auto-review drafts).
+  The auto path reads draft status from the GitHub event payload (`resolveIsDraftEvent`) and, for each skip
+  reason (paused / `auto: false` / draft), posts a neutral merge-gate check run when the check is enabled so
+  a Required "prowl-review" check isn't left pending. The paused check-run helper was generalized into
+  `maybeSubmitSkipCheckRun`.
 - Local pre-push review mode (backlog #35): `prowl-review review --base <ref> [--head <ref>]` runs the
   full review engine against a **local git diff** and prints findings to the terminal — no GitHub token,
   no posting. The diff is taken relative to the merge base of `--base`/`--head` (PR semantics, via
