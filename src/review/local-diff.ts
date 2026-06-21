@@ -167,6 +167,8 @@ export async function resolveLocalDiff(options: ResolveLocalDiffOptions): Promis
     "--no-ext-diff",
     "--no-color",
     "--find-renames",
+    "--find-copies",
+    "--find-copies-harder",
     "--merge-base",
     "--end-of-options",
     base,
