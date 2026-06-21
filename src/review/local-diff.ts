@@ -9,7 +9,9 @@ import { DEFAULT_IGNORE as CONTEXT_DEFAULT_IGNORE } from "../context/tools.js";
  * relative to the merge base of `base` and `head` (PR semantics: only the changes
  * `head` introduces on top of `base`, not unrelated commits that landed on
  * `base` since they diverged). When `head` is omitted the working tree is
- * compared against that merge base, so uncommitted edits are reviewed too.
+ * compared against that merge base, so tracked uncommitted edits are reviewed
+ * too; untracked files are rejected with a clear prompt because Git does not
+ * include them in commit/worktree diffs.
  *
  * The git invocation is injectable so the resolver is unit-testable without a
  * real repository.
@@ -89,6 +91,10 @@ function parseStatusPaths(output: string, statusCode: string): string[] {
     .filter(Boolean);
 }
 
+function parsePathList(output: string): string[] {
+  return output.split("\0").filter(Boolean);
+}
+
 function isSkippedByContextTools(path: string): boolean {
   const normalized = path.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
   if (!normalized) {
@@ -161,6 +167,16 @@ export async function resolveLocalDiff(options: ResolveLocalDiffOptions): Promis
   }
   const head = options.head?.trim();
   const exec = options.exec ?? defaultGitExec(options.cwd);
+  if (!head) {
+    const untracked = parsePathList(await exec(["ls-files", "--others", "--exclude-standard", "-z"]));
+    if (untracked.length > 0) {
+      const preview = untracked.slice(0, 3).join(", ");
+      const suffix = untracked.length > 3 ? `, and ${untracked.length - 3} more` : "";
+      throw new LocalDiffError(
+        `Working-tree review does not include untracked files (${preview}${suffix}); stage or commit them before reviewing, or remove them.`
+      );
+    }
+  }
   // `git diff --merge-base A [B]` == `git diff $(git merge-base A B|HEAD) B|<worktree>`.
   const args = [
     "diff",
