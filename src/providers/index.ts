@@ -15,6 +15,15 @@ import {
 
 export * from "./types.js";
 export {
+  resolveEnsembleConfigs,
+  isEnsembleActive,
+  providerKeyEnvVar,
+  ALL_PROVIDER_NAMES,
+  type EnsembleProviderSpec,
+  type ResolveEnsembleParams,
+  type ResolveEnsembleResult
+} from "./ensemble.js";
+export {
   withRetry,
   retrying,
   isRetryableError,

@@ -35,7 +35,13 @@ export const FindingSchema = z.object({
   /** Optional committable fix. */
   suggestion: z.string().optional(),
   /** Model confidence 0–1; defaults to 0.5 when the model omits it. */
-  confidence: z.number().min(0).max(1).default(0.5)
+  confidence: z.number().min(0).max(1).default(0.5),
+  /**
+   * Provider names that raised this finding (#53 ensemble). Set by the ensemble
+   * orchestrator after pooling, not emitted by the model; length ≥ 2 means
+   * cross-provider consensus. Absent on single-provider reviews.
+   */
+  sources: z.array(z.string().min(1)).optional()
 });
 
 export type Finding = z.infer<typeof FindingSchema>;
