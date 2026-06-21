@@ -75,13 +75,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store/proxy keys.
     - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see the Codex-subscription backend item) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
 
-53. **Multi-provider ensemble review + cross-provider consensus**
-    As a developer with more than one provider key, I want the same changes reviewed by multiple providers at once with their findings consolidated, so that I get cross-model consensus and more granular, higher-confidence insight — a BYOK-only edge that resale-based reviewers (CodeRabbit/Greptile) can't offer.
-    - Acceptance: **opt-in, default off.** Per-provider keys (e.g. `PROWL_AI_KEY_ANTHROPIC`/`_OPENAI`/`_GEMINI`) + a configured provider list; an ensemble orchestrator runs `runReview` (the #6 pipeline) per available provider **in parallel** and pools the raw findings.
-    - Acceptance: the judge consolidates duplicates **across providers**, recording provenance (`sources: [...]`) and treating agreement as a confidence boost; single-provider findings are kept but marked.
-    - Acceptance: presentation surfaces a **consensus badge** (e.g. "🤝 agreed by N/M providers") in the walkthrough + inline comments — the granular insight.
-    - Acceptance: **cost-guarded** — costs ~N× a single-provider review (caching helps within each provider, not across); respects the per-PR budget cap (#18) and risk-tiering (#31); docs state the multiplier. Complements false-positive verification (#8): cross-provider agreement is itself a verification signal.
-
 39. **Suggested-fix validation**
     As a developer, I want auto-fix suggestions verified before they're posted, so that one-click commits don't break the build.
     - Acceptance: only generate `suggestion` blocks for high-confidence findings; optionally apply-and-typecheck/lint the fix in a sandbox before including it.

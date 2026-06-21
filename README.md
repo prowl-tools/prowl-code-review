@@ -211,6 +211,48 @@ git repository top-level. Repo-local linter code executes only with
 `--trust-workspace` or `PROWL_TRUST_WORKSPACE=true`; per-run cost prints to
 stderr so `--json` stdout stays clean.
 
+## Multi-provider ensemble (#53)
+
+A BYOK-only edge: review the same changes with **more than one provider at once**
+and consolidate their findings, so you get cross-model consensus and
+higher-confidence, more granular insight — something resale-based reviewers
+(CodeRabbit/Greptile) can't offer. Opt-in, default off.
+
+Provide a key per provider (the one matching your primary also falls back to
+`PROWL_AI_KEY`):
+
+```bash
+PROWL_AI_KEY_ANTHROPIC=sk-ant-…
+PROWL_AI_KEY_OPENAI=sk-…
+PROWL_AI_KEY_GEMINI=…
+```
+
+…and list the providers in `.prowl-review.yml`:
+
+```yaml
+ensemble:
+  enabled: true
+  providers:
+    - provider: anthropic
+    - provider: openai
+      # model: gpt-5.2   # optional per-provider model override
+```
+
+Each provider runs the full multi-pass review **in parallel**; the cross-file
+context (#4) and linters (#16) run **once** and are shared. A judge then
+consolidates findings across providers, recording provenance and **boosting
+confidence on agreement** — agreement can even rescue a finding each provider
+scored just under the threshold (it complements the false-positive pass, #8).
+Consolidated findings carry a **🤝 N/M consensus badge** in the summary and an
+inline note naming the agreeing providers; single-provider findings are kept and
+marked.
+
+**Cost:** roughly **N× a single-provider review** (caching helps within each
+provider, not across). The per-PR budget cap (#18) is **split evenly** across
+providers, and risk-tiering (#31) still applies. A provider with no key is
+skipped with a note; with fewer than two usable keys it runs as a normal
+single-provider review.
+
 ## Development
 
 ```bash
