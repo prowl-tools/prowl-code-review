@@ -1,5 +1,14 @@
 import { describe, expect, it } from "vitest";
-import { resolveModelPrice, estimateCost, formatUsd, formatCostLine, sanitizeDisplayText, resolveTokenBudget, totalTokens } from "../src/cost/pricing.js";
+import {
+  resolveModelPrice,
+  estimateCost,
+  formatUsd,
+  formatCostLine,
+  sanitizeDisplayText,
+  resolveTokenBudget,
+  resolveTokenBudgetForTargets,
+  totalTokens
+} from "../src/cost/pricing.js";
 import type { TokenUsage } from "../src/providers/index.js";
 
 const usage: TokenUsage = { inputTokens: 1_000_000, outputTokens: 1_000_000, cachedInputTokens: 1_000_000 };
@@ -205,5 +214,31 @@ describe("resolveTokenBudget (#18)", () => {
     const result = resolveTokenBudget({ maxTokens: 10_000, maxUsd: 1 }, "anthropic", "mystery-model");
     expect(result.tokens).toBe(10_000);
     expect(result.notes[0]).toMatch(/maxUsd ignored/);
+  });
+
+  it("uses the tightest maxUsd ceiling across ensemble provider targets", () => {
+    const result = resolveTokenBudgetForTargets(
+      { maxUsd: 1 },
+      [
+        { provider: "gemini", model: "gemini-2.5-flash" },
+        { provider: "anthropic", model: "claude-opus-4-1" }
+      ]
+    );
+
+    expect(result.tokens).toBe(66_666); // $1 ÷ $15 input/M * 1M, stricter than Gemini.
+    expect(result.notes).toEqual([]);
+  });
+
+  it("keeps maxUsd warnings for unpriced ensemble targets", () => {
+    const result = resolveTokenBudgetForTargets(
+      { maxUsd: 1 },
+      [
+        { provider: "openai", model: "gpt-5.2" },
+        { provider: "anthropic", model: "mystery-model" }
+      ]
+    );
+
+    expect(result.tokens).toBe(800_000);
+    expect(result.notes[0]).toMatch(/mystery-model/);
   });
 });

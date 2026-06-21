@@ -231,6 +231,7 @@ export {
   estimateCost,
   resolveModelPrice,
   resolveTokenBudget,
+  resolveTokenBudgetForTargets,
   totalTokens,
   formatUsd,
   formatCostLine,
@@ -238,7 +239,8 @@ export {
   type ModelPrice,
   type PriceOverrides,
   type CostEstimate,
-  type Budget
+  type Budget,
+  type BudgetTarget
 } from "./cost/pricing.js";
 export {
   appendUsageRecord,

@@ -29,7 +29,7 @@ import {
   estimateCost,
   formatCostLine,
   formatUsd,
-  resolveTokenBudget,
+  resolveTokenBudgetForTargets,
   totalTokens,
   type CostEstimate,
   type PriceOverrides
@@ -849,10 +849,9 @@ export async function runReviewWithOptions(
   }
 
   // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
-  const budget = resolveTokenBudget(
+  const budget = resolveTokenBudgetForTargets(
     config.budget,
-    providerConfig.provider,
-    providerConfig.model,
+    ensemble?.configs ?? [providerConfig],
     config.pricing ?? {}
   );
   for (const note of budget.notes) {
