@@ -1,5 +1,5 @@
 import { resolveProviderConfig } from "../../providers/index.js";
-import { loadConfig } from "../../config/loader.js";
+import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import { parseDiff } from "../../review/parse-diff.js";
 import { applyDiffLimits, describeSkipped } from "../../review/size-guards.js";
 import { renderGuardedDiff } from "../../review/render-diff.js";
@@ -203,6 +203,19 @@ function resolveLocalGuidance(root: string, env: NodeJS.ProcessEnv): {
   };
 }
 
+/** Resolve local-mode config without trusting auto-discovered fork checkout files. */
+function resolveLocalConfigLoadOptions(
+  options: LocalReviewCommandOptions,
+  root: string,
+  env: NodeJS.ProcessEnv
+): LoadConfigOptions {
+  const configOptions = resolveConfigLoadOptions(options, root, env);
+  if (!isForkPullRequestEvent(env) || configOptions.disabled || configOptions.configPath) {
+    return configOptions;
+  }
+  return { cwd: root, disabled: true };
+}
+
 /** Resolve whether to colorize: explicit `--no-color` wins; else honor TTY + NO_COLOR. */
 export function resolveColor(cli: LocalReviewCommandOptions, env: NodeJS.ProcessEnv): boolean {
   if (cli.color === false) {
@@ -261,7 +274,7 @@ export async function runLocalReview(
     throw error;
   }
 
-  const { config } = loadConfig(resolveConfigLoadOptions(options, root, env));
+  const { config } = loadConfig(resolveLocalConfigLoadOptions(options, root, env));
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
   const failOn = parseMinSeverity(options.failOn);
 

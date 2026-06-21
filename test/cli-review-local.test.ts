@@ -258,6 +258,57 @@ describe("runLocalReview (#35)", () => {
     expect(d.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: false }));
   });
 
+  it("does not load fork checkout config for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), 'ignore: ["**"]\ncontext:\n  enabled: false\n');
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      }
+    });
+
+    await runLocalReview({ base: "main" }, d);
+
+    expect(d.gatherContext).toHaveBeenCalled();
+    expect(d.runReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("loads an explicit trusted config path for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), "");
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const trustedRoot = mkdtempSync(join(tmpdir(), "prowl-config-"));
+    tempDirs.push(trustedRoot);
+    const trustedConfigPath = join(trustedRoot, ".prowl-review.yml");
+    writeFileSync(trustedConfigPath, "context:\n  enabled: false\n");
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
+        PROWL_CONFIG_PATH: trustedConfigPath
+      }
+    });
+
+    await runLocalReview({ base: "main" }, d);
+
+    expect(d.gatherContext).not.toHaveBeenCalled();
+    expect(d.runReview).toHaveBeenCalledTimes(1);
+  });
+
   it("loads local guidance outside fork pull request events", async () => {
     const workspace = isolatedWorkspace();
     writeFileSync(join(workspace, "REVIEW_GUIDELINES.md"), "local review rules");
