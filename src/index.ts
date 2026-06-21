@@ -293,6 +293,8 @@ export {
 } from "./review/findings.js";
 export {
   judgeFindings,
+  judgeEnsembleFindings,
+  consensusConfidence,
   dedupeFindings,
   rankFindings,
   filterBySeverity,
@@ -303,6 +305,12 @@ export {
   type JudgeOptions,
   type JudgeResult
 } from "./review/judge.js";
+export {
+  runEnsembleReview,
+  type EnsembleReviewResult,
+  type EnsembleProviderReport,
+  type RunEnsembleOptions
+} from "./review/ensemble.js";
 export {
   DEFAULT_SPECIALISTS,
   BUILTIN_SPECIALIST_KEYS,
