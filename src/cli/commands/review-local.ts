@@ -1,3 +1,5 @@
+import { isAbsolute, relative, resolve } from "node:path";
+
 import { resolveProviderConfig } from "../../providers/index.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import { parseDiff } from "../../review/parse-diff.js";
@@ -203,6 +205,19 @@ function resolveLocalGuidance(root: string, env: NodeJS.ProcessEnv): {
   };
 }
 
+/** True when a path resolves within the reviewed checkout. */
+function isWorkspacePath(path: string, root: string): boolean {
+  const workspace = resolve(root);
+  const candidate = resolve(path);
+  const rel = relative(workspace, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+/** Resolve explicit config paths as local review users expect: relative to the reviewed checkout. */
+function resolveLocalConfigPath(configPath: string, root: string): string {
+  return isAbsolute(configPath) ? resolve(configPath) : resolve(root, configPath);
+}
+
 /** Resolve local-mode config without trusting auto-discovered fork checkout files. */
 function resolveLocalConfigLoadOptions(
   options: LocalReviewCommandOptions,
@@ -210,8 +225,12 @@ function resolveLocalConfigLoadOptions(
   env: NodeJS.ProcessEnv
 ): LoadConfigOptions {
   const configOptions = resolveConfigLoadOptions(options, root, env);
-  if (!isForkPullRequestEvent(env) || configOptions.disabled || configOptions.configPath) {
+  if (!isForkPullRequestEvent(env) || configOptions.disabled) {
     return configOptions;
+  }
+  if (configOptions.configPath) {
+    const configPath = resolveLocalConfigPath(configOptions.configPath, root);
+    return isWorkspacePath(configPath, root) ? { cwd: root, disabled: true } : { ...configOptions, configPath };
   }
   return { cwd: root, disabled: true };
 }
@@ -487,6 +506,9 @@ export async function runLocalReview(
     if (!pass.ok) {
       notes.push(`Specialist "${pass.specialist}" degraded: ${pass.error ?? "unparseable output"}.`);
     }
+  }
+  if (reviewResult.verification.skippedForBudget) {
+    notes.push("Skipped false-positive verification to stay within the token budget (#18); raise the budget for the extra precision pass.");
   }
   if (!reviewResult.verification.ok) {
     notes.push(`Verification degraded: ${reviewResult.verification.error ?? "unknown error"}.`);
