@@ -127,15 +127,10 @@ describe("assertLocalHeadMatchesCheckout", () => {
     expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain"]);
     expect(exec).toHaveBeenNthCalledWith(4, [
       "status",
-      "--porcelain",
+      "--porcelain=v1",
+      "-z",
       "--ignored=matching",
-      "--untracked-files=all",
-      "--",
-      "REVIEW_GUIDELINES.md",
-      "CLAUDE.md",
-      "LEARNED_PATTERNS.md",
-      ".prowl-review.yml",
-      ".prowl-review.yaml"
+      "--untracked-files=normal"
     ]);
   });
 
@@ -170,15 +165,25 @@ describe("assertLocalHeadMatchesCheckout", () => {
     expect(exec).toHaveBeenCalledTimes(3);
   });
 
-  it("rejects ignored local review inputs for an explicit head", async () => {
+  it("rejects ignored review-readable files for an explicit head", async () => {
     const exec = vi
       .fn()
       .mockResolvedValueOnce("abc123\n")
       .mockResolvedValueOnce("abc123\n")
       .mockResolvedValueOnce("")
-      .mockResolvedValueOnce("!! REVIEW_GUIDELINES.md\n");
+      .mockResolvedValueOnce("!! src/generated/schema.ts\0");
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
-      /local review input files/
+      /ignored local files/
     );
+  });
+
+  it("allows ignored files under directories skipped by context tools", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("!! node_modules/\0!! dist/app.js\0");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).resolves.toBeUndefined();
   });
 });
