@@ -41,6 +41,13 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ pricing: { m: { input: -1, output: 2 } } })).toThrow(); // negative
   });
 
+  it("accepts the auto / reviewDrafts toggles and rejects non-booleans (#28)", () => {
+    expect(configSchema.parse({ review: { auto: false } })).toEqual({ review: { auto: false } });
+    expect(configSchema.parse({ review: { reviewDrafts: true } })).toEqual({ review: { reviewDrafts: true } });
+    expect(() => configSchema.parse({ review: { auto: "no" } })).toThrow();
+    expect(() => configSchema.parse({ review: { reviewDrafts: 1 } })).toThrow();
+  });
+
   it("accepts maxInlineComments incl. 0 and rejects negative/non-int (#25)", () => {
     expect(configSchema.parse({ review: { maxInlineComments: 0 } })).toEqual({ review: { maxInlineComments: 0 } });
     expect(() => configSchema.parse({ review: { maxInlineComments: -1 } })).toThrow();

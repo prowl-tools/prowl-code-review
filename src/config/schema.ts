@@ -42,7 +42,17 @@ const reviewSchema = z
     /** On a re-run, review only the delta since the last reviewed SHA. Default true (#23). */
     incremental: z.boolean().optional(),
     /** On a re-run, resolve fixed/settled threads and honor human replies. Default true (#22). */
-    resolveThreads: z.boolean().optional()
+    resolveThreads: z.boolean().optional(),
+    /**
+     * Auto-review pull-request events. Default true. Set false for on-demand
+     * only: the bot reviews only when asked with `@prowl-review review` (#28).
+     */
+    auto: z.boolean().optional(),
+    /**
+     * Auto-review draft pull requests too. Default false — drafts are skipped
+     * until marked "ready for review" (or an explicit `@prowl-review review`) (#28).
+     */
+    reviewDrafts: z.boolean().optional()
   })
   .strict();
 

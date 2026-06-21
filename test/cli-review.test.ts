@@ -17,6 +17,7 @@ import {
   resolvePullNumber,
   resolveRepo,
   resolveReviewedHeadSha,
+  resolveIsDraftEvent,
   resolveReviewOptions,
   resolveTrustWorkspace,
   resolveUsageLogPath,
@@ -286,6 +287,24 @@ describe("review command helpers", () => {
     writeFileSync(eventPath, JSON.stringify({ pull_request: { head: { sha: "event-head" } } }));
     expect(resolveReviewedHeadSha({ GITHUB_EVENT_PATH: eventPath } as NodeJS.ProcessEnv)).toBe("event-head");
     expect(resolveReviewedHeadSha({ GITHUB_EVENT_PATH: join(dir, "missing.json") } as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
+  it("resolves draft status from the pull request event payload (#28)", () => {
+    const dir = tempDir();
+    const draftPath = join(dir, "draft.json");
+    writeFileSync(draftPath, JSON.stringify({ pull_request: { draft: true } }));
+    expect(resolveIsDraftEvent({ GITHUB_EVENT_PATH: draftPath } as NodeJS.ProcessEnv)).toBe(true);
+
+    const readyPath = join(dir, "ready.json");
+    writeFileSync(readyPath, JSON.stringify({ pull_request: { draft: false } }));
+    expect(resolveIsDraftEvent({ GITHUB_EVENT_PATH: readyPath } as NodeJS.ProcessEnv)).toBe(false);
+
+    // No event / no pull_request / unreadable → undefined (treated as not-a-draft).
+    expect(resolveIsDraftEvent({} as NodeJS.ProcessEnv)).toBeUndefined();
+    const noPrPath = join(dir, "no-pr.json");
+    writeFileSync(noPrPath, JSON.stringify({ number: 7 }));
+    expect(resolveIsDraftEvent({ GITHUB_EVENT_PATH: noPrPath } as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveIsDraftEvent({ GITHUB_EVENT_PATH: join(dir, "missing.json") } as NodeJS.ProcessEnv)).toBeUndefined();
   });
 });
 

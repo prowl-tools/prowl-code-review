@@ -194,6 +194,26 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
   return undefined;
 }
 
+/**
+ * Resolve whether the PR under review is a draft, from the GitHub event payload
+ * (#28). Returns undefined when there's no event (manual/local runs) so the
+ * caller treats "unknown" as not-a-draft and reviews normally.
+ */
+export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const eventPath = env.GITHUB_EVENT_PATH;
+  if (!eventPath || !existsSync(eventPath)) {
+    return undefined;
+  }
+  try {
+    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
+      pull_request?: { draft?: boolean };
+    };
+    return event.pull_request?.draft;
+  } catch {
+    return undefined;
+  }
+}
+
 interface ReviewCommandOptions {
   pr?: string;
   repo?: string;
@@ -281,13 +301,21 @@ export function resolveDryRun(
   return Boolean(cli.dryRun) || truthyEnv(env.PROWL_DRY_RUN);
 }
 
-async function maybeSubmitPausedCheckRun(
+/**
+ * Post a neutral merge-gate check run for an auto-review that was deliberately
+ * skipped (paused / on-demand-only / draft), so a Required "prowl-review" check
+ * isn't left pending forever. No-op on dry runs, when the check is disabled, or
+ * when the head SHA is unknown. Tolerant: a failure never sinks the skip.
+ */
+async function maybeSubmitSkipCheckRun(
   octokit: OctokitLike,
   ref: PullRequestRef,
   input: {
     checkRun?: ProwlReviewConfig["checkRun"];
     dryRun: boolean;
     headSha?: string;
+    title: string;
+    summary: string;
   }
 ): Promise<CheckConclusion | undefined> {
   if (input.dryRun || !input.checkRun?.enabled || !input.headSha) {
@@ -296,10 +324,8 @@ async function maybeSubmitPausedCheckRun(
 
   const plan: CheckRunPlan = {
     conclusion: "neutral",
-    title: "Auto-review paused",
-    summary:
-      "prowl-review is paused for this pull request. Comment `@prowl-review resume` to re-enable automatic reviews.\n\n" +
-      "No review was run for this commit.",
+    title: input.title,
+    summary: input.summary,
     annotations: []
   };
 
@@ -587,20 +613,70 @@ export async function runReviewWithOptions(
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
 
+  // The auto path (pull_request trigger) honors the per-PR pause (#26) and the
+  // repo-level draft / on-demand controls (#28). An explicit `@prowl-review
+  // review` clears respectPause, so it always runs — even on a draft.
   if (runtime.respectPause) {
     const prior = await fetchPriorReviewState(octokit, ref);
     if (prior?.paused) {
-      const pausedCheckRunConclusion = await maybeSubmitPausedCheckRun(octokit, ref, {
+      const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
         checkRun: config.checkRun,
         dryRun,
-        headSha: reviewedHeadSha
+        headSha: reviewedHeadSha,
+        title: "Auto-review paused",
+        summary:
+          "prowl-review is paused for this pull request. Comment `@prowl-review resume` to re-enable automatic reviews.\n\n" +
+          "No review was run for this commit."
       });
       console.log(
         `prowl-review: auto-review paused for ${owner}/${repo}#${pullNumber} ` +
           "— comment `@prowl-review resume` to re-enable."
       );
-      if (pausedCheckRunConclusion) {
-        console.log(`prowl-review: merge-gate check run → ${pausedCheckRunConclusion}`);
+      if (conclusion) {
+        console.log(`prowl-review: merge-gate check run → ${conclusion}`);
+      }
+      return;
+    }
+
+    // On-demand only (#28): auto-review disabled by config.
+    if (config.review?.auto === false) {
+      const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
+        checkRun: config.checkRun,
+        dryRun,
+        headSha: reviewedHeadSha,
+        title: "Auto-review disabled",
+        summary:
+          "prowl-review auto-review is disabled for this repository (`review.auto: false`). " +
+          "Comment `@prowl-review review` to review on demand.\n\nNo review was run for this commit."
+      });
+      console.log(
+        `prowl-review: auto-review disabled for ${owner}/${repo}#${pullNumber} ` +
+          "— comment `@prowl-review review` to run on demand."
+      );
+      if (conclusion) {
+        console.log(`prowl-review: merge-gate check run → ${conclusion}`);
+      }
+      return;
+    }
+
+    // Skip drafts (#28): default behavior until the PR is marked ready for review.
+    if (config.review?.reviewDrafts !== true && resolveIsDraftEvent() === true) {
+      const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
+        checkRun: config.checkRun,
+        dryRun,
+        headSha: reviewedHeadSha,
+        title: "Draft pull request — review skipped",
+        summary:
+          "prowl-review skips draft pull requests by default. It will review automatically when the PR is " +
+          "marked ready for review, or now if you comment `@prowl-review review`.\n\n" +
+          "Set `review.reviewDrafts: true` to auto-review drafts."
+      });
+      console.log(
+        `prowl-review: skipped draft pull request ${owner}/${repo}#${pullNumber} ` +
+          "— marks ready for review (or `@prowl-review review`) to run."
+      );
+      if (conclusion) {
+        console.log(`prowl-review: merge-gate check run → ${conclusion}`);
       }
       return;
     }
