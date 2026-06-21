@@ -115,15 +115,37 @@ describe("assertLocalHeadMatchesCheckout", () => {
   });
 
   it("allows an explicit head that resolves to the checked-out HEAD", async () => {
-    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("");
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("");
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
     expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
     expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "feature^{commit}"]);
     expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain"]);
+    expect(exec).toHaveBeenNthCalledWith(4, [
+      "status",
+      "--porcelain",
+      "--ignored=matching",
+      "--untracked-files=all",
+      "--",
+      "REVIEW_GUIDELINES.md",
+      "CLAUDE.md",
+      "LEARNED_PATTERNS.md",
+      ".prowl-review.yml",
+      ".prowl-review.yaml"
+    ]);
   });
 
   it("passes the requested head after --end-of-options", async () => {
-    const exec = vi.fn().mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("abc123\n").mockResolvedValueOnce("");
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("");
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "--help", exec });
     expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "--help^{commit}"]);
   });
@@ -144,6 +166,19 @@ describe("assertLocalHeadMatchesCheckout", () => {
       .mockResolvedValueOnce(" M src/a.ts\n?? tmp.txt\n");
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
       /requires a clean worktree/
+    );
+    expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects ignored local review inputs for an explicit head", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("!! REVIEW_GUIDELINES.md\n");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
+      /local review input files/
     );
   });
 });

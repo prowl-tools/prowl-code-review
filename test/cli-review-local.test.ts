@@ -150,6 +150,21 @@ describe("runLocalReview (#35)", () => {
     expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ base: "develop", head: "feature" }));
   });
 
+  it("checks explicit heads before loading local config", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), "review: [unclosed\n");
+    const { LocalDiffError } = await import("../src/review/local-diff.js");
+    const resolveHead = vi.fn().mockRejectedValue(new LocalDiffError("ignored local review input"));
+    const { deps: d, err } = deps({ resolveHead });
+
+    const result = await runLocalReview({ base: "main", head: "feature" }, d);
+
+    expect(result.failed).toBe(true);
+    expect(err.join("\n")).toContain("ignored local review input");
+    expect(d.resolveDiff).not.toHaveBeenCalled();
+    expect(d.runReview).not.toHaveBeenCalled();
+  });
+
   it("defaults the base to main when none is given", async () => {
     isolatedWorkspace();
     const resolveDiff = vi.fn().mockResolvedValue(DIFF);
