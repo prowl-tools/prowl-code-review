@@ -171,6 +171,25 @@ describe("formatFindingComment", () => {
     expect(body).toContain("openai reasoning");
   });
 
+  it("truncates large perspective bodies before publishing inline comments (#53)", () => {
+    const body = formatFindingComment(
+      f({
+        sources: ["anthropic", "openai"],
+        perspectives: [
+          { provider: "anthropic", severity: "major", confidence: 0.6, title: "t", body: "anthropic ".repeat(7000) },
+          { provider: "openai", severity: "critical", confidence: 0.9, title: "t", body: "openai ".repeat(7000) }
+        ]
+      }),
+      { agentPrompt: false, providerCount: 2 }
+    );
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("<summary>🔀 2 model perspectives</summary>");
+    expect(body).toContain("Perspective details truncated");
+    expect(body).toContain("**anthropic** · major · 60% confidence");
+    expect(body).toContain("**openai** · critical · 90% confidence");
+  });
+
   it("attributes a single-provider ensemble finding without a perspectives block (#53)", () => {
     const body = formatFindingComment(
       f({
@@ -362,6 +381,30 @@ describe("agent-fix prompt (#57)", () => {
     expect(payload.body).toContain("[truncated to keep the GitHub comment within the body size limit]");
     expect(payload.body).toContain("src/a\\.ts:99");
     expect(payload.body).toContain("src/a\\.ts:100");
+  });
+
+  it("budgets perspective blocks across large unmapped findings in the summary body", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({
+          line: 99,
+          sources: ["anthropic", "openai"],
+          perspectives: [
+            { provider: "anthropic", severity: "major", confidence: 0.6, title: "t", body: "anthropic ".repeat(7000) },
+            { provider: "openai", severity: "critical", confidence: 0.9, title: "t", body: "openai ".repeat(7000) }
+          ]
+        })
+      ],
+      diff,
+      summaryBody: "## walkthrough",
+      agentPrompt: false,
+      providerCount: 2
+    });
+
+    expect(payload.body.length).toBeLessThanOrEqual(65_536);
+    expect(payload.body).toContain("src/a\\.ts:99");
+    expect(payload.body).toContain("Perspective details truncated");
+    expect(payload.body).toContain("<summary>🔀 2 model perspectives</summary>");
   });
 
   it("budgets unmapped finding prompts after inline-cap overflow is added", () => {
