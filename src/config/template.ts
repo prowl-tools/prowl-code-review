@@ -8,11 +8,11 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # Uncomment and edit only what you want to change.
 # Precedence: CLI flag > this file > built-in default.
 #
-# Secrets never go here. The provider API key always comes from the
-# PROWL_AI_KEY environment variable, never this file.
+# Secrets never go here. Provider API keys always come from PROWL_AI_KEY or
+# PROWL_AI_KEY_<PROVIDER> environment variables, never this file.
 
 # --- Provider -----------------------------------------------------------------
-# Which LLM to use. The API key still comes from PROWL_AI_KEY; the matching
+# Which LLM to use. The API key still comes from the environment.
 # Non-empty PROWL_AI_PROVIDER / PROWL_AI_MODEL env vars override these when set.
 # In GitHub Actions, use a trusted config-path input if you want Action config;
 # the Action ignores repo config by default for untrusted PR checkouts.
@@ -54,8 +54,9 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # Review the same changes with more than one provider at once and pool the
 # findings (#53). Opt-in, default off. Each provider's key comes from its own env
 # var: PROWL_AI_KEY_ANTHROPIC / PROWL_AI_KEY_OPENAI / PROWL_AI_KEY_GEMINI (the
-# provider matching your primary also falls back to PROWL_AI_KEY). A provider
-# with no key is skipped; with fewer than two keys it runs as a normal review.
+# provider matching your primary also falls back to PROWL_AI_KEY; scoped keys
+# win when both are set). A provider with no key is skipped; with fewer than two
+# keys it runs as a normal review.
 # Findings agreed on by multiple providers get a confidence boost + a 🤝 badge.
 # Cost is ~N× a single-provider review (the per-PR budget above is split across
 # providers); cross-file context + linters run once and are shared.

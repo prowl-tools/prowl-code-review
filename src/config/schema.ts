@@ -13,10 +13,10 @@ import { PROVIDER_NAMES } from "../providers/index.js";
  * the review command). Workspace execution trust is intentionally not accepted
  * from repo config; use the CLI/env/action input for trusted checkouts.
  *
- * Secrets never live here: the provider API key always comes from `PROWL_AI_KEY`
- * in the environment, never the repo. Only the non-secret provider/model
- * *selection* is configurable. A config `model` must be paired with `provider`
- * so provider-specific model names are never guessed.
+ * Secrets never live here: provider API keys always come from `PROWL_AI_KEY` or
+ * `PROWL_AI_KEY_<PROVIDER>` in the environment, never the repo. Only the
+ * non-secret provider/model *selection* is configurable. A config `model` must
+ * be paired with `provider` so provider-specific model names are never guessed.
  *
  * The schema is `.strict()` at every level so a typo (e.g. `minSeverty`) is a
  * loud validation error rather than a silently-ignored key.
@@ -210,8 +210,9 @@ const ensembleProviderSchema = z
 /**
  * Multi-provider ensemble review (#53). Opt-in, default off. Each provider's key
  * is read from `PROWL_AI_KEY_<PROVIDER>` (the primary also falls back to
- * `PROWL_AI_KEY`); a provider with no key is skipped with a note. With fewer than
- * two usable providers the review runs as a normal single-provider review.
+ * `PROWL_AI_KEY`; scoped keys win when both are set); a provider with no key is
+ * skipped with a note. With fewer than two usable providers the review runs as a
+ * normal single-provider review.
  */
 const ensembleSchema = z
   .object({
@@ -224,7 +225,7 @@ const ensembleSchema = z
 
 export const configSchema = z
   .object({
-    /** Provider selection (the API key always comes from `PROWL_AI_KEY`). */
+    /** Provider selection (API keys always come from environment variables). */
     provider: z.enum(PROVIDER_NAMES as [string, ...string[]]).optional(),
     /** Model override for the configured provider; the provider's default model is used when omitted. */
     model: z.string().min(1).optional(),

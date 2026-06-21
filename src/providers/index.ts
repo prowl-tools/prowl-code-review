@@ -65,8 +65,8 @@ export interface ProviderDefaults {
  * also ignores model-only defaults defensively for direct callers.
  * The API key is always read from the environment and never from config:
  * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
- * - `PROWL_AI_KEY`      — the provider API key
- * - `PROWL_AI_KEY_<PROVIDER>` — provider-scoped fallback key
+ * - `PROWL_AI_KEY`      — generic provider API key fallback
+ * - `PROWL_AI_KEY_<PROVIDER>` — provider-scoped key, preferred when set
  * - `PROWL_AI_MODEL`    — optional model override (per-provider default otherwise)
  *
  * `defaults` carries the `.prowl-review.yml` provider/model; `env` is injectable
@@ -86,7 +86,7 @@ export function resolveProviderConfig(
   }
 
   const providerKeyEnvVar = `PROWL_AI_KEY_${raw.toUpperCase()}`;
-  const apiKey = env.PROWL_AI_KEY?.trim() || env[providerKeyEnvVar]?.trim();
+  const apiKey = env[providerKeyEnvVar]?.trim() || env.PROWL_AI_KEY?.trim();
   if (!apiKey) {
     throw new Error(
       `PROWL_AI_KEY or ${providerKeyEnvVar} environment variable is required. Set it to your provider API key.`

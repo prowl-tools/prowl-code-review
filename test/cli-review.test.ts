@@ -710,6 +710,30 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     });
   });
 
+  it("uses the scoped key for a bootstrapped ensemble primary before a generic key", () => {
+    const env = {
+      PROWL_AI_KEY: "legacy-anthropic-key",
+      PROWL_AI_KEY_OPENAI: "openai-key",
+      PROWL_AI_KEY_GEMINI: "gemini-key"
+    } as NodeJS.ProcessEnv;
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai", model: "gpt-x" }, { provider: "gemini" }]
+        }
+      },
+      env
+    );
+
+    expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
+    expect(resolveProviderConfig(env, defaults)).toEqual({
+      provider: "openai",
+      model: "gpt-x",
+      apiKey: "openai-key"
+    });
+  });
+
   it("treats the blank Action provider input as absent for ensemble bootstrap", () => {
     const env = {
       GITHUB_ACTIONS: "true",

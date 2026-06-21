@@ -103,6 +103,12 @@ function excludeGroundingFindings(findings: Finding[], groundingSignatures: Set<
   return findings.filter((finding) => !groundingSignatures.has(findingSignature(finding)));
 }
 
+function withoutSources(finding: Finding): Finding {
+  const copy = { ...finding };
+  delete copy.sources;
+  return copy;
+}
+
 /** Run the ensemble: fan out per provider, pool, and cross-judge with provenance. */
 export async function runEnsembleReview(
   input: ReviewInput,
@@ -141,6 +147,7 @@ export async function runEnsembleReview(
   const providers: EnsembleProviderReport[] = [];
   const groundingFindings = input.grounding?.findings ?? [];
   const groundingSignatures = new Set(groundingFindings.map((finding) => findingSignature(finding)));
+  const survivingGrounding = new Map<string, Finding>();
   let usage = emptyUsage();
   let verified = 0;
   let droppedFalsePositive = 0;
@@ -160,6 +167,16 @@ export async function runEnsembleReview(
         error: error ?? "Provider review failed."
       });
       continue;
+    }
+    for (const finding of result.findings) {
+      const signature = findingSignature(finding);
+      if (!groundingSignatures.has(signature)) {
+        continue;
+      }
+      const existing = survivingGrounding.get(signature);
+      if (!existing || finding.confidence > existing.confidence) {
+        survivingGrounding.set(signature, withoutSources(finding));
+      }
     }
     const providerFindings = excludeGroundingFindings(result.findings, groundingSignatures);
     const providerRaw = excludeGroundingFindings(result.raw, groundingSignatures);
@@ -186,7 +203,10 @@ export async function runEnsembleReview(
       usage: result.usage
     });
   }
-  pooled.push(...groundingFindings);
+  const verifiedGroundingFindings = groundingFindings
+    .map((finding) => survivingGrounding.get(findingSignature(finding)))
+    .filter((finding): finding is Finding => Boolean(finding));
+  pooled.push(...verifiedGroundingFindings);
   pooledRaw.push(...groundingFindings);
 
   const judged = judgeEnsembleFindings(pooled, {

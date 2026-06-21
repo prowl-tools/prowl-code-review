@@ -110,9 +110,34 @@ describe("runEnsembleReview (#53)", () => {
     );
 
     expect(res.findings).toHaveLength(1);
-    expect(res.findings[0]).toMatchObject({ title: "no-debugger", confidence: 0.9 });
+    expect(res.findings[0]).toMatchObject({ title: "no-debugger", confidence: 0.6 });
     expect(res.findings[0].sources).toBeUndefined();
     expect(res.providers.map((provider) => provider.findings)).toEqual([0, 0]);
+    expect(res.raw).toEqual([grounding]);
+  });
+
+  it("does not re-add grounding findings every provider verifier dropped", async () => {
+    const grounding = finding({
+      category: "lint",
+      title: "no-debugger",
+      body: "Unexpected debugger statement",
+      confidence: 0.9
+    });
+    const runReview = vi.fn().mockResolvedValue(
+      result([], {
+        raw: [grounding],
+        verification: { verified: 1, droppedFalsePositive: 1, demoted: 0, unverified: 0, ok: true }
+      })
+    );
+
+    const res = await runEnsembleReview(
+      { ...INPUT, grounding: { findings: [grounding], summary: "no-debugger" } },
+      { configs: CONFIGS, runReview }
+    );
+
+    expect(res.findings).toHaveLength(0);
+    expect(res.providers.map((provider) => provider.findings)).toEqual([0, 0]);
+    expect(res.verification.droppedFalsePositive).toBe(2);
     expect(res.raw).toEqual([grounding]);
   });
 
