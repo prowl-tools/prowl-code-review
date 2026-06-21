@@ -153,6 +153,37 @@ describe("formatFindingComment", () => {
     expect(formatFindingComment(f({ sources: ["anthropic", "openai"] }))).not.toContain("🤝");
   });
 
+  it("renders each model's perspective in a collapsible block for a consolidated finding (#53)", () => {
+    const body = formatFindingComment(
+      f({
+        sources: ["anthropic", "openai"],
+        perspectives: [
+          { provider: "anthropic", severity: "major", confidence: 0.6, title: "t", body: "anthropic reasoning" },
+          { provider: "openai", severity: "critical", confidence: 0.9, title: "t", body: "openai reasoning" }
+        ]
+      }),
+      { agentPrompt: false, providerCount: 2 }
+    );
+    expect(body).toContain("<summary>🔀 2 model perspectives</summary>");
+    expect(body).toContain("**anthropic** · major · 60% confidence");
+    expect(body).toContain("anthropic reasoning");
+    expect(body).toContain("**openai** · critical · 90% confidence");
+    expect(body).toContain("openai reasoning");
+  });
+
+  it("attributes a single-provider ensemble finding without a perspectives block (#53)", () => {
+    const body = formatFindingComment(
+      f({
+        sources: ["openai"],
+        perspectives: [{ provider: "openai", severity: "major", confidence: 0.8, title: "t", body: "b" }]
+      }),
+      { agentPrompt: false, providerCount: 2 }
+    );
+    expect(body).toContain("🔎");
+    expect(body).toContain("Raised by openai (1 of 2 providers)");
+    expect(body).not.toContain("model perspectives");
+  });
+
   it("escapes markdown and neutralizes mentions in finding text", () => {
     // agentPrompt off so this isolates the rendered comment (the agent block keeps
     // raw text literal inside a code fence, where GitHub suppresses mentions/markdown).

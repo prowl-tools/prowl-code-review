@@ -283,6 +283,7 @@ export {
 } from "./review/language.js";
 export {
   FindingSchema,
+  ProviderPerspectiveSchema,
   parseFindings,
   parseFindingsResult,
   findingKey,
@@ -290,6 +291,7 @@ export {
   SEVERITIES,
   SEVERITY_ORDER,
   type Finding,
+  type ProviderPerspective,
   type ParsedFindings,
   type Severity
 } from "./review/findings.js";
