@@ -234,6 +234,43 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
   return notes;
 }
 
+/**
+ * Surface a coverage-affecting tier choice locally so tiny diffs do not look
+ * like full review coverage when minimal tier trimmed passes or context.
+ */
+function riskTierNotes(
+  selection: ReturnType<typeof selectRiskTier>,
+  applied: {
+    specialistKeys?: string[];
+    contextLimited: boolean;
+  }
+): string[] {
+  if (selection.tier !== "minimal") {
+    return [];
+  }
+
+  const reductions: string[] = [];
+  if (applied.specialistKeys) {
+    reductions.push(`ran a reduced specialist set (${applied.specialistKeys.join(", ")})`);
+  }
+  if (applied.contextLimited) {
+    reductions.push("limited cross-file context");
+  }
+  if (reductions.length === 0) {
+    return [];
+  }
+
+  const appliedText =
+    reductions.length === 1
+      ? reductions[0]
+      : `${reductions.slice(0, -1).join(", ")} and ${reductions[reductions.length - 1]}`;
+  return [
+    `Risk tier: minimal (${selection.changedLines} changed line(s), ${selection.fileCount} file(s)) — ` +
+      `${appliedText} to scale cost with risk (#31). ` +
+      "Set riskTiering.enabled: false to always run the full review."
+  ];
+}
+
 /** Resolve local-mode config without trusting auto-discovered fork checkout files. */
 function resolveLocalConfigLoadOptions(
   options: LocalReviewCommandOptions,
@@ -447,6 +484,12 @@ export async function runLocalReview(
       ? DEFAULT_SPECIALISTS.filter((s) => tierPlan.builtinSpecialistKeys!.includes(s.key))
       : undefined);
   const effectiveContextLimits = mergeContextLimits(resolved.contextLimits, tierPlan.contextLimits);
+  const tierSpecialistKeys = resolved.specialists === undefined ? tierPlan.builtinSpecialistKeys : undefined;
+  const tierLimitedContext =
+    !resolved.skipContext &&
+    ((resolved.contextLimits?.maxRounds === undefined && tierPlan.contextLimits?.maxRounds !== undefined) ||
+      (resolved.contextLimits?.maxFiles === undefined && tierPlan.contextLimits?.maxFiles !== undefined));
+  notes.push(...riskTierNotes(tierSelection, { specialistKeys: tierSpecialistKeys, contextLimited: tierLimitedContext }));
 
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
 

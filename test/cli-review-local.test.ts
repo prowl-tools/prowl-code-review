@@ -557,6 +557,18 @@ new file mode 100644
     expect(report).toContain("treated as data and ignored");
   });
 
+  it("surfaces minimal-tier coverage reduction as a local note", async () => {
+    isolatedWorkspace();
+    const { deps: d, out } = deps();
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const report = out.join("\n");
+    expect(report).toContain("Risk tier: minimal");
+    expect(report).toContain("correctness, security");
+    expect(report).toContain("limited cross-file context");
+  });
+
   it("redacts grounding findings and notes before prompts and reports", async () => {
     isolatedWorkspace();
     const gatherGrounding = vi.fn().mockResolvedValue({
