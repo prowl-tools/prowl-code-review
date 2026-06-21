@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { DEFAULT_IGNORE as CONTEXT_DEFAULT_IGNORE } from "../context/tools.js";
 
 /**
  * Local diff resolution for the pre-push CLI mode (backlog #35).
@@ -54,14 +55,6 @@ export class LocalDiffError extends Error {
   }
 }
 
-const LOCAL_REVIEW_INPUT_PATHS = [
-  "REVIEW_GUIDELINES.md",
-  "CLAUDE.md",
-  "LEARNED_PATTERNS.md",
-  ".prowl-review.yml",
-  ".prowl-review.yaml"
-];
-
 /** Default git runner: `execFile("git", …)` confined to `cwd`, bounded output. */
 export function defaultGitExec(cwd: string): GitExec {
   return (args: string[]) =>
@@ -85,6 +78,23 @@ export function defaultGitExec(cwd: string): GitExec {
         }
       );
     });
+}
+
+function parseStatusPaths(output: string, statusCode: string): string[] {
+  return output
+    .split(/\0|\r?\n/)
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.startsWith(`${statusCode} `))
+    .map((entry) => entry.slice(3))
+    .filter(Boolean);
+}
+
+function isSkippedByContextTools(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
+  if (!normalized) {
+    return false;
+  }
+  return normalized.split("/").some((segment) => CONTEXT_DEFAULT_IGNORE.includes(segment));
 }
 
 /** Resolve the local review workspace, defaulting to the repository top-level. */
@@ -126,19 +136,15 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
     );
   }
 
-  const ignoredInputs = (
-    await exec([
-      "status",
-      "--porcelain",
-      "--ignored=matching",
-      "--untracked-files=all",
-      "--",
-      ...LOCAL_REVIEW_INPUT_PATHS
-    ])
-  ).trim();
-  if (ignoredInputs) {
+  const ignoredInputs = await exec(["status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=normal"]);
+  const reviewVisibleIgnoredInputs = parseStatusPaths(ignoredInputs, "!!").filter(
+    (path) => !isSkippedByContextTools(path)
+  );
+  if (reviewVisibleIgnoredInputs.length > 0) {
+    const preview = reviewVisibleIgnoredInputs.slice(0, 3).join(", ");
+    const suffix = reviewVisibleIgnoredInputs.length > 3 ? `, and ${reviewVisibleIgnoredInputs.length - 3} more` : "";
     throw new LocalDiffError(
-      `--head ${head} requires local review input files to match the checked-out HEAD; remove ignored local review inputs or omit --head to review the working tree.`
+      `--head ${head} requires ignored local files to be absent from review-readable paths (${preview}${suffix}); remove them or omit --head to review the working tree.`
     );
   }
 }
