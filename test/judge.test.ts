@@ -361,3 +361,52 @@ describe("judgeEnsembleFindings (#53)", () => {
     expect(result.findings[0].confidence).toBe(0.9);
   });
 });
+
+describe("dedupeFindings perspectives (#53)", () => {
+  it("merges per-provider perspectives, one entry per provider", () => {
+    const result = dedupeFindings(
+      [
+        finding({
+          title: "a",
+          severity: "major",
+          confidence: 0.6,
+          sources: ["anthropic"],
+          perspectives: [{ provider: "anthropic", severity: "major", confidence: 0.6, title: "a", body: "anthropic body" }]
+        }),
+        finding({
+          title: "b",
+          severity: "critical",
+          confidence: 0.7,
+          sources: ["openai"],
+          perspectives: [{ provider: "openai", severity: "critical", confidence: 0.7, title: "b", body: "openai body" }]
+        })
+      ],
+      { mergeProvenance: true }
+    );
+    expect(result).toHaveLength(1);
+    const providers = (result[0].perspectives ?? []).map((p) => p.provider).sort();
+    expect(providers).toEqual(["anthropic", "openai"]);
+    expect(result[0].perspectives?.find((p) => p.provider === "openai")?.body).toBe("openai body");
+  });
+
+  it("keeps a provider's strongest take when it appears twice", () => {
+    const result = dedupeFindings(
+      [
+        finding({
+          title: "x",
+          sources: ["anthropic"],
+          perspectives: [{ provider: "anthropic", severity: "minor", confidence: 0.5, title: "x", body: "weak" }]
+        }),
+        finding({
+          title: "y",
+          severity: "critical",
+          sources: ["anthropic"],
+          perspectives: [{ provider: "anthropic", severity: "critical", confidence: 0.9, title: "y", body: "strong" }]
+        })
+      ],
+      { mergeProvenance: true }
+    );
+    expect(result[0].perspectives).toHaveLength(1);
+    expect(result[0].perspectives?.[0].body).toBe("strong");
+  });
+});

@@ -20,6 +20,19 @@ export const SEVERITY_ORDER: Record<Severity, number> = {
   info: 4
 };
 
+/**
+ * One provider's distinct take on a consolidated ensemble finding (#53): the
+ * model's own severity/confidence/title/body for the same issue, so the PR can
+ * show each model's perspective rather than only the chosen representative.
+ */
+export const ProviderPerspectiveSchema = z.object({
+  provider: z.string().min(1),
+  severity: z.enum(SEVERITIES),
+  confidence: z.number().min(0).max(1),
+  title: z.string().min(1),
+  body: z.string().min(1)
+});
+
 export const FindingSchema = z.object({
   /** Repo-relative file path the finding applies to. */
   file: z.string().min(1),
@@ -41,12 +54,24 @@ export const FindingSchema = z.object({
    * orchestrator after pooling, not emitted by the model; length ≥ 2 means
    * cross-provider consensus. Absent on single-provider reviews.
    */
-  sources: z.array(z.string().min(1)).optional()
+  sources: z.array(z.string().min(1)).optional(),
+  /**
+   * Each provider's own take on a consolidated finding (ensemble perspectives):
+   * how that model phrased and rated the same issue. Set by the orchestrator so
+   * the PR can surface both perspectives, not just the chosen representative.
+   * Absent on single-provider reviews.
+   */
+  perspectives: z.array(ProviderPerspectiveSchema).optional()
 });
 
 export type Finding = z.infer<typeof FindingSchema>;
 
-const ModelFindingSchema = FindingSchema.omit({ sources: true });
+/** One provider's distinct take on a consolidated ensemble finding (#53 perspectives). */
+export type ProviderPerspective = z.infer<typeof ProviderPerspectiveSchema>;
+
+// Perspectives + sources are orchestrator-set, never model-emitted, so model
+// output parsing ignores them.
+const ModelFindingSchema = FindingSchema.omit({ sources: true, perspectives: true });
 
 /** Return true when a parsed candidate array has at least one valid finding. */
 function hasValidFindingEntry(value: unknown[]): boolean {

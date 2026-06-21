@@ -249,7 +249,14 @@ confidence on agreement** — agreement can even rescue a finding each provider
 scored just under the threshold (it complements the false-positive pass, #8).
 Consolidated findings carry a **🤝 N/M consensus badge** in the summary and an
 inline note naming the agreeing providers; single-provider findings are kept and
-marked.
+attributed to the model that raised them.
+
+**Two perspectives, one comment.** When more than one model flags the same issue,
+the inline comment keeps *each model's own take* in a collapsible **🔀 N model
+perspectives** block — every provider's severity, confidence, and reasoning side
+by side — so you get cross-model insight in the PR without running multiple tools.
+The top-line comment stays the strongest representative; expand the block to
+compare how each model saw it.
 
 **Cost:** roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap (#18) is **split evenly** across
