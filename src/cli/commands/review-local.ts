@@ -6,6 +6,7 @@ import { renderGuardedDiff } from "../../review/render-diff.js";
 import { redactSecrets } from "../../review/redact.js";
 import { filterSensitiveDiffFiles } from "../../review/sensitive-diff.js";
 import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../../review/ignore.js";
+import { injectionNotes } from "../../review/injection.js";
 import type { DiffFile, SkippedFile } from "../../review/diff-types.js";
 import { summarizeLanguages } from "../../review/language.js";
 import { DEFAULT_SPECIALISTS } from "../../review/specialists.js";
@@ -298,6 +299,7 @@ export async function runLocalReview(
   if (skippedNote) {
     notes.push(`Skipped files — ${skippedNote}`);
   }
+  notes.push(...injectionNotes(reviewFiles));
 
   let grounding: ReviewInput["grounding"];
   let directGroundingFindings: Finding[] = [];
