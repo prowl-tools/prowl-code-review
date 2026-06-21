@@ -196,6 +196,10 @@ describe("review command helpers", () => {
 
     process.env.PROWL_GUIDELINES_WORKSPACE = "   ";
     expect(resolveGuidelinesWorkspace()).toBeUndefined();
+
+    expect(resolveGuidelinesWorkspace({ PROWL_GUIDELINES_WORKSPACE: "/injected-guidelines" } as NodeJS.ProcessEnv)).toBe(
+      "/injected-guidelines"
+    );
   });
 
   it("resolves workspace execution trust from explicit truthy env values", () => {

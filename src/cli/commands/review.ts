@@ -71,7 +71,7 @@ export function resolvePullNumber(flag?: string): number {
 }
 
 /** Read a UTF-8 file, returning undefined when it is absent or unreadable. */
-function readOptionalFile(path: string): string | undefined {
+export function readOptionalFile(path: string): string | undefined {
   if (!existsSync(path)) {
     return undefined;
   }
@@ -139,8 +139,8 @@ export function resolveWorkspace(): string {
 }
 
 /** Resolve the explicit trusted checkout used to load review guidelines. */
-export function resolveGuidelinesWorkspace(): string | undefined {
-  return process.env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
+export function resolveGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
 }
 
 /** Resolve whether repo-local tooling may execute in the review workspace. */
