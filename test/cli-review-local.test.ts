@@ -311,6 +311,35 @@ new file mode 100644
     expect(d.runReview).toHaveBeenCalledTimes(1);
   });
 
+  it("does not load explicit fork checkout config paths for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), 'ignore: ["**"]\ncontext:\n  enabled: false\n');
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
+        PROWL_CONFIG_PATH: ".prowl-review.yml"
+      }
+    });
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(workspace);
+      await runLocalReview({ base: "main" }, d);
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    expect(d.gatherContext).toHaveBeenCalled();
+    expect(d.runReview).toHaveBeenCalledTimes(1);
+  });
+
   it("loads an explicit trusted config path for fork pull request events", async () => {
     const workspace = isolatedWorkspace();
     writeFileSync(join(workspace, ".prowl-review.yml"), "");
@@ -611,6 +640,26 @@ new file mode 100644
     const { deps: d, out } = deps({ runReview });
     await runLocalReview({ base: "main", config: false }, d);
     expect(out.join("\n")).toContain('Specialist "security" degraded');
+  });
+
+  it("surfaces budget-skipped verification as a local note", async () => {
+    isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(
+      reviewResult({
+        findings: [finding()],
+        verification: {
+          verified: 0,
+          droppedFalsePositive: 0,
+          demoted: 0,
+          unverified: 1,
+          ok: true,
+          skippedForBudget: true
+        }
+      })
+    );
+    const { deps: d, out } = deps({ runReview });
+    await runLocalReview({ base: "main", config: false }, d);
+    expect(out.join("\n")).toContain("Skipped false-positive verification to stay within the token budget");
   });
 
   it("flags failure when a finding meets the --fail-on threshold", async () => {
