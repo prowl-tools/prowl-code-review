@@ -749,6 +749,43 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     expect(defaults).toEqual({ provider: "gemini", model: "gemini-x" });
   });
 
+  it("does not treat the generic key as evidence that every ensemble provider is keyed", () => {
+    const env = { PROWL_AI_KEY: "legacy-anthropic-key" } as NodeJS.ProcessEnv;
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai" }, { provider: "anthropic" }]
+        }
+      },
+      env
+    );
+
+    expect(defaults).toEqual({});
+    expect(resolveProviderConfig(env, defaults)).toMatchObject({
+      provider: "anthropic",
+      apiKey: "legacy-anthropic-key"
+    });
+  });
+
+  it("keeps explicit env provider selection ahead of ensemble bootstrap choices", () => {
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai" }, { provider: "gemini" }]
+        }
+      },
+      {
+        PROWL_AI_PROVIDER: "gemini",
+        PROWL_AI_KEY_OPENAI: "openai-key",
+        PROWL_AI_KEY_GEMINI: "gemini-key"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(defaults).toEqual({});
+  });
+
   it("keeps explicit provider defaults ahead of ensemble bootstrap choices", () => {
     const defaults = resolveProviderDefaults(
       {

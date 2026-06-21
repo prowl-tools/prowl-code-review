@@ -166,15 +166,16 @@ export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boo
   return value === "true" || value === "1" || value === "yes";
 }
 
-function hasProviderKey(provider: ProviderName, env: NodeJS.ProcessEnv): boolean {
-  return Boolean(env.PROWL_AI_KEY?.trim() || env[providerKeyEnvVar(provider)]?.trim());
+function hasProviderScopedKey(provider: ProviderName, env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env[providerKeyEnvVar(provider)]?.trim());
 }
 
 /**
  * Resolve non-secret provider/model defaults before key validation.
  *
  * For ensemble-only configs, use the first listed provider that already has a
- * usable key so provider-specific-key setups can start without a generic key.
+ * provider-scoped key. The generic PROWL_AI_KEY applies only after a primary
+ * provider is selected, so it must not make every provider look keyed.
  */
 export function resolveProviderDefaults(
   config: ProwlReviewConfig,
@@ -189,7 +190,8 @@ export function resolveProviderDefaults(
 
   const providers = config.ensemble?.enabled ? (config.ensemble.providers ?? []) : [];
   const selected =
-    providers.find((provider) => hasProviderKey(provider.provider as ProviderName, env)) ?? providers[0];
+    providers.find((provider) => hasProviderScopedKey(provider.provider as ProviderName, env)) ??
+    (env.PROWL_AI_KEY?.trim() ? undefined : providers[0]);
   if (!selected) {
     return {};
   }
