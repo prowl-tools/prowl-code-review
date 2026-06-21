@@ -14,6 +14,7 @@ import {
   resolveGuidelinesWorkspace,
   resolveConfigLoadOptions,
   resolveDryRun,
+  resolveProviderDefaults,
   resolvePullNumber,
   resolveRepo,
   resolveReviewedHeadSha,
@@ -684,6 +685,62 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     );
 
     expect(cfg).toEqual({ provider: "openai", model: "gpt-x", apiKey: "openai-key" });
+  });
+
+  it("bootstraps the primary provider from a keyed ensemble provider", () => {
+    const env = {
+      PROWL_AI_KEY_OPENAI: "openai-key",
+      PROWL_AI_KEY_GEMINI: "gemini-key"
+    } as NodeJS.ProcessEnv;
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai", model: "gpt-x" }, { provider: "gemini" }]
+        }
+      },
+      env
+    );
+
+    expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
+    expect(resolveProviderConfig(env, defaults)).toEqual({
+      provider: "openai",
+      model: "gpt-x",
+      apiKey: "openai-key"
+    });
+  });
+
+  it("skips keyless ensemble defaults when choosing a bootstrap provider", () => {
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai" }, { provider: "gemini", model: "gemini-x" }]
+        }
+      },
+      { PROWL_AI_KEY_GEMINI: "gemini-key" } as NodeJS.ProcessEnv
+    );
+
+    expect(defaults).toEqual({ provider: "gemini", model: "gemini-x" });
+  });
+
+  it("keeps explicit provider defaults ahead of ensemble bootstrap choices", () => {
+    const defaults = resolveProviderDefaults(
+      {
+        provider: "anthropic",
+        model: "claude-x",
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai" }, { provider: "gemini" }]
+        }
+      },
+      {
+        PROWL_AI_KEY_OPENAI: "openai-key",
+        PROWL_AI_KEY_GEMINI: "gemini-key"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(defaults).toEqual({ provider: "anthropic", model: "claude-x" });
   });
 });
 
