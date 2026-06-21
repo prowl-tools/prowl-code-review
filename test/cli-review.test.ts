@@ -541,6 +541,77 @@ describe("review command action env helpers", () => {
     });
   });
 
+  it("prices ensemble runs with each provider's own model and usage", () => {
+    const root = tempDir();
+    const summaryPath = join(root, "summary.md");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    reportReviewCommandResult(
+      reviewCommandResult({
+        review: {
+          findings: [],
+          raw: [],
+          passes: [],
+          verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+          judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+          usage: { inputTokens: 300, outputTokens: 0, cachedInputTokens: 0 }
+        },
+        usage: { inputTokens: 350, outputTokens: 0, cachedInputTokens: 0 },
+        ensemble: {
+          providers: [
+            {
+              provider: "anthropic",
+              model: "claude-x",
+              ok: true,
+              findings: 0,
+              usage: { inputTokens: 100, outputTokens: 0, cachedInputTokens: 0 }
+            },
+            {
+              provider: "openai",
+              model: "gpt-x",
+              ok: true,
+              findings: 0,
+              usage: { inputTokens: 200, outputTokens: 0, cachedInputTokens: 0 }
+            }
+          ]
+        }
+      }),
+      {
+        owner: "o",
+        repo: "r",
+        pullNumber: 7,
+        root,
+        providerConfig: { provider: "anthropic", model: "claude-x", apiKey: "k" },
+        pricing: {
+          "claude-x": { input: 10, output: 0 },
+          "gpt-x": { input: 1, output: 0 }
+        },
+        env: {
+          GITHUB_STEP_SUMMARY: summaryPath,
+          PROWL_USAGE_LOG: "usage.jsonl"
+        } as NodeJS.ProcessEnv,
+        now: () => new Date("2026-06-14T00:00:00.000Z")
+      }
+    );
+
+    const costLine = logSpy.mock.calls.map(([line]) => String(line)).find((line) => line.startsWith("prowl-review cost:"));
+    expect(costLine).toContain("ensemble 3 cost segment(s)");
+    expect(costLine).toContain("in 350");
+    const summary = readFileSync(summaryPath, "utf8");
+    expect(summary).toContain("anthropic/claude-x");
+    expect(summary).toContain("openai/gpt-x");
+    const records = readFileSync(join(root, "usage.jsonl"), "utf8")
+      .trim()
+      .split("\n")
+      .map((line) => JSON.parse(line));
+    expect(records.map((record) => `${record.provider}/${record.model}`)).toEqual([
+      "anthropic/claude-x",
+      "anthropic/claude-x",
+      "openai/gpt-x"
+    ]);
+    expect(records.map((record) => record.inputTokens)).toEqual([50, 100, 200]);
+  });
+
   it("includes the risk tier in cost output only when present", () => {
     const root = tempDir();
     const summaryPath = join(root, "summary.md");
@@ -604,6 +675,15 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv, { provider: "anthropic" });
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.model).toBeTruthy();
+  });
+
+  it("accepts a provider-specific key when the plain key is absent", () => {
+    const cfg = resolveProviderConfig(
+      { PROWL_AI_KEY_OPENAI: "openai-key" } as NodeJS.ProcessEnv,
+      { provider: "openai", model: "gpt-x" }
+    );
+
+    expect(cfg).toEqual({ provider: "openai", model: "gpt-x", apiKey: "openai-key" });
   });
 });
 

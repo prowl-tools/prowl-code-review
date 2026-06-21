@@ -38,6 +38,8 @@ export interface EnsembleProviderReport {
   ok: boolean;
   /** Findings this provider contributed to the pool (pre cross-judge). */
   findings: number;
+  /** Token usage for this provider's review pass, preserved for mixed-provider cost estimates. */
+  usage?: TokenUsage;
   error?: string;
 }
 
@@ -150,7 +152,13 @@ export async function runEnsembleReview(
     for (const pass of result.passes) {
       passes.push({ ...pass, specialist: `${config.provider}:${pass.specialist}` });
     }
-    providers.push({ provider: config.provider, model: config.model, ok: true, findings: tagged.length });
+    providers.push({
+      provider: config.provider,
+      model: config.model,
+      ok: true,
+      findings: tagged.length,
+      usage: result.usage
+    });
   }
 
   const judged = judgeEnsembleFindings(pooled, {

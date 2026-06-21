@@ -388,7 +388,12 @@ function ensembleNotes(providers: EnsembleProviderReport[] | undefined): string[
     );
   }
   for (const failed of providers.filter((p) => !p.ok)) {
-    notes.push(`Ensemble: provider "${failed.provider}" did not complete${failed.error ? ` (${failed.error})` : ""}.`);
+    const safeError = failed.error ? redactSecrets(failed.error).text : undefined;
+    notes.push(
+      truncateNote(
+        `Ensemble: provider "${failed.provider}" did not complete${safeError ? ` (${safeError})` : ""}.`
+      )
+    );
   }
   return notes;
 }

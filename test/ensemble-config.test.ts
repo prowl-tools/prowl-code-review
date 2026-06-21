@@ -17,6 +17,24 @@ describe("providerKeyEnvVar", () => {
 });
 
 describe("resolveEnsembleConfigs (#53)", () => {
+  it("defaults omitted providers to the primary provider", () => {
+    const { configs, notes } = resolveEnsembleConfigs({ primary, env: {} as NodeJS.ProcessEnv });
+
+    expect(configs).toEqual([primary]);
+    expect(notes).toEqual([]);
+  });
+
+  it("defaults an empty provider list to the primary provider", () => {
+    const { configs, notes } = resolveEnsembleConfigs({
+      primary,
+      providers: [],
+      env: {} as NodeJS.ProcessEnv
+    });
+
+    expect(configs).toEqual([primary]);
+    expect(notes).toEqual([]);
+  });
+
   it("resolves each provider's key from its env var", () => {
     const { configs, notes } = resolveEnsembleConfigs({
       primary,
