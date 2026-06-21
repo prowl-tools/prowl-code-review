@@ -81,6 +81,27 @@ function tagSources(findings: Finding[], provider: ProviderName): Finding[] {
   return findings.map((finding) => ({ ...finding, sources: [provider] }));
 }
 
+function findingSignature(finding: Finding): string {
+  return JSON.stringify({
+    file: finding.file,
+    line: finding.line,
+    endLine: finding.endLine,
+    severity: finding.severity,
+    category: finding.category,
+    title: finding.title,
+    body: finding.body,
+    suggestion: finding.suggestion,
+    confidence: finding.confidence
+  });
+}
+
+function excludeGroundingFindings(findings: Finding[], groundingSignatures: Set<string>): Finding[] {
+  if (groundingSignatures.size === 0) {
+    return findings;
+  }
+  return findings.filter((finding) => !groundingSignatures.has(findingSignature(finding)));
+}
+
 /** Run the ensemble: fan out per provider, pool, and cross-judge with provenance. */
 export async function runEnsembleReview(
   input: ReviewInput,
@@ -117,6 +138,8 @@ export async function runEnsembleReview(
   const pooledRaw: Finding[] = [];
   const passes: SpecialistPassReport[] = [];
   const providers: EnsembleProviderReport[] = [];
+  const groundingFindings = input.grounding?.findings ?? [];
+  const groundingSignatures = new Set(groundingFindings.map((finding) => findingSignature(finding)));
   let usage = emptyUsage();
   let verified = 0;
   let droppedFalsePositive = 0;
@@ -137,9 +160,11 @@ export async function runEnsembleReview(
       });
       continue;
     }
-    const tagged = tagSources(result.findings, config.provider);
+    const providerFindings = excludeGroundingFindings(result.findings, groundingSignatures);
+    const providerRaw = excludeGroundingFindings(result.raw, groundingSignatures);
+    const tagged = tagSources(providerFindings, config.provider);
     pooled.push(...tagged);
-    pooledRaw.push(...tagSources(result.raw, config.provider));
+    pooledRaw.push(...tagSources(providerRaw, config.provider));
     usage = addUsage(usage, result.usage);
     verified += result.verification.verified;
     droppedFalsePositive += result.verification.droppedFalsePositive;
@@ -160,6 +185,8 @@ export async function runEnsembleReview(
       usage: result.usage
     });
   }
+  pooled.push(...groundingFindings);
+  pooledRaw.push(...groundingFindings);
 
   const judged = judgeEnsembleFindings(pooled, {
     minSeverity: options.minSeverity,

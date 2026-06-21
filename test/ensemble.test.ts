@@ -72,6 +72,28 @@ describe("runEnsembleReview (#53)", () => {
     expect(res.judge.duplicatesRemoved).toBe(1);
   });
 
+  it("keeps deterministic grounding findings single-counted and without provider provenance", async () => {
+    const grounding = finding({
+      category: "lint",
+      title: "no-debugger",
+      body: "Unexpected debugger statement",
+      confidence: 0.9
+    });
+    const runReview = vi.fn().mockResolvedValue(result([grounding], { raw: [grounding] }));
+
+    const res = await runEnsembleReview(
+      { ...INPUT, grounding: { findings: [grounding], summary: "no-debugger" } },
+      { configs: CONFIGS, runReview }
+    );
+
+    expect(res.findings).toHaveLength(1);
+    expect(res.findings[0]).toMatchObject({ title: "no-debugger", confidence: 0.9 });
+    expect(res.findings[0].sources).toBeUndefined();
+    expect(res.judge.duplicatesRemoved).toBe(0);
+    expect(res.providers.map((provider) => provider.findings)).toEqual([0, 0]);
+    expect(res.raw).toHaveLength(1);
+  });
+
   it("disables per-provider floors so each provider returns everything", async () => {
     const runReview = vi.fn().mockResolvedValue(result([finding()]));
     await runEnsembleReview(INPUT, { configs: CONFIGS, runReview, minSeverity: "major", minConfidence: 0.7 });

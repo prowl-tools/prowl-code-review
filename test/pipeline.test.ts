@@ -2531,6 +2531,22 @@ describe("reviewPullRequest ensemble (#53)", () => {
     expect(result.payload.body).toContain("anthropic, openai");
   });
 
+  it("passes the injected single-provider review into the default ensemble runner", async () => {
+    const deps = makeDeps();
+    deps.runReview.mockResolvedValue(reviewResult([finding({ confidence: 0.9 })]));
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      ensemble: { configs },
+      deps
+    });
+
+    expect(deps.runReview).toHaveBeenCalledTimes(2);
+    expect(deps.runReview.mock.calls.map((call) => call[1].config.provider)).toEqual(["anthropic", "openai"]);
+    expect(result.ensemble?.providers.map((provider) => provider.provider)).toEqual(["anthropic", "openai"]);
+  });
+
   it("stays on the single-provider path with only one config", async () => {
     const deps = makeDeps();
     const runEnsembleReview = vi.fn();

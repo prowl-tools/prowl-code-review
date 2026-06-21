@@ -1419,6 +1419,7 @@ export async function reviewPullRequest(
   // cross-provider judge consolidates with provenance. Otherwise a normal review.
   const ensembleConfigs = options.ensemble?.configs ?? [];
   const ensembleActive = ensembleConfigs.length >= 2;
+  const ensembleRunReview = deps.runEnsembleReview ? undefined : review;
   const reviewResult: ReviewResult = ensembleActive
     ? await ensembleReview(reviewInput, {
         configs: ensembleConfigs,
@@ -1427,7 +1428,8 @@ export async function reviewPullRequest(
         maxFindings: options.maxFindings,
         verify: options.verify,
         verifyConfidence: options.verifyConfidence,
-        maxTokens: reviewBudgetTokens
+        maxTokens: reviewBudgetTokens,
+        ...(ensembleRunReview ? { runReview: ensembleRunReview } : {})
       })
     : await review(reviewInput, {
         config,
