@@ -659,6 +659,40 @@ new file mode 100644
     expect(out.join("\n")).toContain("generic-api-key");
   });
 
+  it("scans sensitive renames as whole files even when they add lines", async () => {
+    isolatedWorkspace();
+    const renamedSecretDiff = `diff --git a/.env b/config/example.txt
+similarity index 80%
+rename from .env
+rename to config/example.txt
+index abc1234..def5678 100644
+--- a/.env
++++ b/config/example.txt
+@@ -1,2 +1,3 @@
+ API_KEY=AKIAIOSFODNN7EXAMPLE
+ ENV=prod
++# Documented example config
+`;
+    const gatherGrounding = vi.fn().mockResolvedValue({ findings: [], notes: [] });
+    const { deps: d } = deps({
+      resolveDiff: vi.fn().mockResolvedValue(renamedSecretDiff),
+      gatherGrounding
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: [],
+        secretScanPaths: ["config/example.txt"],
+        secretScanWholeFilePaths: ["config/example.txt"],
+        changedLines: { "config/example.txt": [3] }
+      })
+    );
+    expect(d.gatherContext).not.toHaveBeenCalled();
+    expect(d.runReview).not.toHaveBeenCalled();
+  });
+
   it("surfaces a degraded specialist pass as a note (never silent)", async () => {
     isolatedWorkspace();
     const runReview = vi.fn().mockResolvedValue(
