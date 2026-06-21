@@ -2492,3 +2492,77 @@ new file mode 100644
     expect(result.payload.body).toContain("verifier down");
   });
 });
+
+describe("reviewPullRequest ensemble (#53)", () => {
+  const configs: ProviderConfig[] = [
+    { provider: "anthropic", model: "m", apiKey: "a" },
+    { provider: "openai", model: "n", apiKey: "o" }
+  ];
+
+  it("uses the ensemble path with shared context when ≥2 configs are given", async () => {
+    const deps = makeDeps();
+    const runEnsembleReview = vi.fn(async () => ({
+      ...reviewResult([finding({ sources: ["anthropic", "openai"], confidence: 0.9 })]),
+      uncappedFindings: [finding({ sources: ["anthropic", "openai"], confidence: 0.9 })],
+      providers: [
+        { provider: "anthropic" as const, model: "m", ok: true, findings: 1 },
+        { provider: "openai" as const, model: "n", ok: true, findings: 1 }
+      ]
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      ensemble: { configs },
+      deps: { ...deps, runEnsembleReview }
+    });
+
+    // Single-provider runReview is bypassed; context/grounding still run once.
+    expect(runEnsembleReview).toHaveBeenCalledTimes(1);
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(deps.gatherContext).toHaveBeenCalledTimes(1);
+    expect(runEnsembleReview.mock.calls[0][1].configs).toHaveLength(2);
+
+    // Provenance surfaces: result carries provider reports + consensus badge published.
+    expect(result.ensemble?.providers.map((p) => p.provider)).toEqual(["anthropic", "openai"]);
+    expect(result.payload.body).toContain("🤝 2/2");
+    // The ensemble note text is markdown-escaped in the review-notes alert.
+    expect(result.payload.body).toContain("consolidated findings from 2 providers");
+    expect(result.payload.body).toContain("anthropic, openai");
+  });
+
+  it("stays on the single-provider path with only one config", async () => {
+    const deps = makeDeps();
+    const runEnsembleReview = vi.fn();
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      ensemble: { configs: [configs[0]] },
+      deps: { ...deps, runEnsembleReview }
+    });
+    expect(runEnsembleReview).not.toHaveBeenCalled();
+    expect(deps.runReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("notes a provider that failed (degraded, never silent)", async () => {
+    const deps = makeDeps();
+    const runEnsembleReview = vi.fn(async () => ({
+      ...reviewResult([finding({ sources: ["anthropic"] })]),
+      uncappedFindings: [finding({ sources: ["anthropic"] })],
+      providers: [
+        { provider: "anthropic" as const, model: "m", ok: true, findings: 1 },
+        { provider: "openai" as const, model: "n", ok: false, findings: 0, error: "openai 500" }
+      ]
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      ensemble: { configs },
+      deps: { ...deps, runEnsembleReview }
+    });
+
+    expect(result.payload.body).toContain('provider "openai" did not complete');
+    expect(result.ensemble?.providers.find((p) => p.provider === "openai")?.ok).toBe(false);
+  });
+});

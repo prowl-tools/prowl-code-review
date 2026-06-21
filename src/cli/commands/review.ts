@@ -11,7 +11,13 @@ import {
   type ReviewPullRequestOptions,
   type ReviewPullRequestResult
 } from "../../pipeline.js";
-import { resolveProviderConfig, type ProviderConfig } from "../../providers/index.js";
+import {
+  resolveProviderConfig,
+  resolveEnsembleConfigs,
+  isEnsembleActive,
+  type ProviderConfig,
+  type ProviderName
+} from "../../providers/index.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
@@ -451,6 +457,12 @@ export function reportReviewCommandResult(
   if (result.checkRunConclusion) {
     console.log(`prowl-review: merge-gate check run → ${result.checkRunConclusion}`);
   }
+  if (result.ensemble) {
+    const summary = result.ensemble.providers
+      .map((p) => `${p.provider}${p.ok ? "" : " (failed)"}`)
+      .join(", ");
+    console.log(`prowl-review: ensemble → ${summary}`);
+  }
   if (result.approval?.enabled) {
     const verdict = result.approval.event.toLowerCase().replace("_", " ");
     const override = result.approval.overridden
@@ -696,6 +708,30 @@ export async function runReviewWithOptions(
   });
   const resolved = resolveReviewOptions(options, config);
 
+  // Multi-provider ensemble (#53): opt-in. Resolve per-provider keys from the env
+  // and run the review across every provider that has one; <2 → normal review.
+  let ensemble: { configs: ProviderConfig[] } | undefined;
+  if (config.ensemble?.enabled) {
+    const resolvedEnsemble = resolveEnsembleConfigs({
+      primary: providerConfig,
+      providers: config.ensemble.providers?.map((entry) => ({
+        provider: entry.provider as ProviderName,
+        model: entry.model
+      })),
+      env: process.env
+    });
+    for (const note of resolvedEnsemble.notes) {
+      console.warn(`prowl-review: ${note}`);
+    }
+    if (isEnsembleActive(resolvedEnsemble.configs)) {
+      ensemble = { configs: resolvedEnsemble.configs };
+    } else {
+      console.warn(
+        "prowl-review: ensemble enabled but fewer than two providers have keys; running a single-provider review."
+      );
+    }
+  }
+
   // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
   const budget = resolveTokenBudget(
     config.budget,
@@ -710,6 +746,7 @@ export async function runReviewWithOptions(
   const reviewOptions = {
     ...resolved,
     config: providerConfig,
+    ...(ensemble ? { ensemble } : {}),
     toolkitRoot: root,
     guidelines,
     learnedPatterns,
