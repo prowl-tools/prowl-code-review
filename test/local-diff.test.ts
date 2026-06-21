@@ -124,7 +124,7 @@ describe("assertLocalHeadMatchesCheckout", () => {
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
     expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
     expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "feature^{commit}"]);
-    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain"]);
+    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=normal"]);
     expect(exec).toHaveBeenNthCalledWith(4, [
       "status",
       "--porcelain=v1",
@@ -150,7 +150,7 @@ describe("assertLocalHeadMatchesCheckout", () => {
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
       /does not match the checked-out HEAD/
     );
-    expect(exec).not.toHaveBeenCalledWith(["status", "--porcelain"]);
+    expect(exec).not.toHaveBeenCalledWith(["status", "--porcelain", "--untracked-files=normal"]);
   });
 
   it("rejects an explicit head when the worktree is dirty", async () => {
@@ -163,6 +163,18 @@ describe("assertLocalHeadMatchesCheckout", () => {
       /requires a clean worktree/
     );
     expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("rejects untracked review-readable files for an explicit head", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("?? REVIEW_GUIDELINES.md\n");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
+      /requires a clean worktree/
+    );
+    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=normal"]);
   });
 
   it("rejects ignored review-readable files for an explicit head", async () => {

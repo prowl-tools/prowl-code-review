@@ -129,7 +129,7 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
     );
   }
 
-  const status = (await exec(["status", "--porcelain"])).trim();
+  const status = (await exec(["status", "--porcelain", "--untracked-files=normal"])).trim();
   if (status) {
     throw new LocalDiffError(
       `--head ${head} requires a clean worktree; commit or stash local changes, or omit --head to review the working tree.`
