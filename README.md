@@ -43,10 +43,16 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Optional: load Action config from the trusted base branch, not from PR code.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: prowl-review-config
+          persist-credentials: false
       - uses: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
-          # config-path: .prowl-review.yml # trusted repo config for Action runs
+          # config-path: prowl-review-config/.prowl-review.yml
           # ai-provider: anthropic   # anthropic | openai | gemini (default anthropic)
           # ai-model: claude-...     # optional per-provider model override
 ```
@@ -71,10 +77,12 @@ review:
 ```
 
 The Action ignores repo config unless a trusted `config-path` input is set. To
-use these keys in CI, create `.prowl-review.yml` and pass `config-path:
-.prowl-review.yml` in the Action step. Keep draft handling out of the job-level
-`if`; a `draft == false` guard prevents the Action from seeing drafts, so
-`review.reviewDrafts: true` cannot take effect.
+use these keys in CI, create `.prowl-review.yml` on the base branch, check out
+that base branch to a separate path, and pass that path as `config-path` (for
+example `prowl-review-config/.prowl-review.yml`). Do not point `config-path` at
+the PR checkout; same-repo PR authors could alter review policy in their branch.
+Keep draft handling out of the job-level `if`; a `draft == false` guard prevents
+the Action from seeing drafts, so `review.reviewDrafts: true` cannot take effect.
 
 When an auto review is skipped (paused, drafts, or `auto: false`) and the
 merge-gate check is enabled, prowl-review posts a neutral check run so a Required
