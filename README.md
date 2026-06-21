@@ -168,6 +168,7 @@ jobs:
         with:
           mode: command
           ai-key: ${{ secrets.PROWL_AI_KEY }}
+          config-path: .prowl-review.yml
           workspace-path: ${{ github.workspace }}/pr-head
 ```
 
