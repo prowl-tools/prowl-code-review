@@ -144,7 +144,7 @@ Run the **same** review engine against a local git diff before you open a PR —
 no GitHub token, no posting (#35). Findings print to the terminal:
 
 ```bash
-# Review your branch's changes against main (uncommitted edits included)
+# Review your branch's changes against main (tracked uncommitted edits included)
 PROWL_AI_KEY=sk-… prowl-review review --base main
 
 # Review the checked-out branch as an explicit head ref
@@ -153,11 +153,13 @@ PROWL_AI_KEY=sk-… prowl-review review --base main --head my-feature
 
 The diff is taken relative to the **merge base** of `--base` and `--head` (PR
 semantics — only the changes your branch introduces). Omit `--head` to review
-the working tree. When `--head` is supplied, it must resolve to the currently
-checked-out `HEAD` and the worktree must be clean; the later context,
-guidelines, grounding, and secret scans read from that local checkout. Passing
-`--base` (or `--head`) switches the `review` command into local mode; the GitHub
-flags (`--pr`, `--repo`, `--dry-run`) are ignored.
+the working tree. Untracked files are not part of Git's working-tree diff, so
+local mode fails with a clear prompt to stage or commit them before review. When
+`--head` is supplied, it must resolve to the currently checked-out `HEAD` and the
+worktree must be clean; the later context, guidelines, grounding, and secret
+scans read from that local checkout. Passing `--base` (or `--head`) switches the
+`review` command into local mode; the GitHub flags (`--pr`, `--repo`,
+`--dry-run`) are ignored.
 
 | Flag | Effect |
 |------|--------|

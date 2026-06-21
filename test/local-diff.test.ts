@@ -26,9 +26,11 @@ describe("resolveLocalDiff", () => {
   });
 
   it("diffs base against the working tree when head is omitted", async () => {
-    const exec = vi.fn().mockResolvedValue("WT");
-    await resolveLocalDiff({ base: "main", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith([
+    const exec = vi.fn().mockResolvedValueOnce("").mockResolvedValueOnce("WT");
+    const diff = await resolveLocalDiff({ base: "main", cwd: "/repo", exec });
+    expect(diff).toBe("WT");
+    expect(exec).toHaveBeenNthCalledWith(1, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    expect(exec).toHaveBeenNthCalledWith(2, [
       "diff",
       "--no-ext-diff",
       "--no-color",
@@ -61,7 +63,8 @@ describe("resolveLocalDiff", () => {
   it("treats a blank head as the working tree", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "main", head: "   ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith([
+    expect(exec).toHaveBeenNthCalledWith(1, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    expect(exec).toHaveBeenNthCalledWith(2, [
       "diff",
       "--no-ext-diff",
       "--no-color",
@@ -72,6 +75,15 @@ describe("resolveLocalDiff", () => {
       "--end-of-options",
       "main"
     ]);
+  });
+
+  it("rejects untracked files when reviewing the working tree", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("new.ts\0config/example.txt\0");
+    await expect(resolveLocalDiff({ base: "main", cwd: "/repo", exec })).rejects.toThrow(
+      /does not include untracked files \(new.ts, config\/example.txt\)/
+    );
+    expect(exec).toHaveBeenCalledTimes(1);
+    expect(exec).toHaveBeenCalledWith(["ls-files", "--others", "--exclude-standard", "-z"]);
   });
 
   it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
