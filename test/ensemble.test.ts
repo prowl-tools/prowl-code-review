@@ -1,6 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
 import { runEnsembleReview } from "../src/review/ensemble.js";
-import { emptyUsage } from "../src/providers/index.js";
 import type { ProviderConfig } from "../src/providers/types.js";
 import type { Finding } from "../src/review/findings.js";
 import type { ReviewInput, ReviewResult } from "../src/review/run-review.js";
