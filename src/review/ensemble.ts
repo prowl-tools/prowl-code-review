@@ -122,7 +122,7 @@ export async function runEnsembleReview(
   let unverified = 0;
   let verificationOk = true;
   let verificationError: string | undefined;
-  let skippedForBudget: true | undefined;
+  let skippedForBudget: boolean | undefined;
 
   for (const { config, result, error } of outcomes) {
     if (!result) {
