@@ -61,6 +61,8 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   incremental: true        # on a re-push, review only the delta since the last reviewed commit (#23)
 #   resolveThreads: true     # on a re-push, resolve no-longer-current/settled finding threads and honor replies (#22)
 #                            # (reply to a finding "won't fix" / "acknowledged" to resolve it; "disagree" keeps it open)
+#   auto: true               # auto-review PR events; set false for on-demand only (@prowl-review review) (#28)
+#   reviewDrafts: false      # also auto-review draft PRs; default skips drafts until "ready for review" (#28)
 
 # --- Specialist reviewers -----------------------------------------------------
 # The multi-pass review runs built-in lenses (correctness, security, performance,
