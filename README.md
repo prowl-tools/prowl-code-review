@@ -223,7 +223,7 @@ higher-confidence, more granular insight — something resale-based reviewers
 (CodeRabbit/Greptile) can't offer. Opt-in, default off.
 
 Provide a key per provider (the one matching your primary also falls back to
-`PROWL_AI_KEY`):
+`PROWL_AI_KEY`; if both are set, the scoped key wins for that provider):
 
 ```bash
 PROWL_AI_KEY_ANTHROPIC=sk-ant-…

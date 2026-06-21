@@ -7,9 +7,9 @@ import { DEFAULT_MODELS, PROVIDER_NAMES, type ProviderConfig, type ProviderName 
  * repo config. Each ensemble provider reads `PROWL_AI_KEY_<PROVIDER>` (e.g.
  * `PROWL_AI_KEY_OPENAI`); the provider that matches the already-resolved primary
  * also falls back to the plain `PROWL_AI_KEY`, so a single-key setup keeps
- * working. A provider with no key is skipped with a note (never silently
- * dropped, #5). With fewer than two usable providers the caller runs a normal
- * single-provider review.
+ * working. Scoped keys win when both are set. A provider with no key is skipped
+ * with a note (never silently dropped, #5). With fewer than two usable providers
+ * the caller runs a normal single-provider review.
  */
 
 /** One provider entry from `.prowl-review.yml`'s `ensemble.providers`. */
@@ -20,7 +20,7 @@ export interface EnsembleProviderSpec {
 
 /** Inputs for resolving the ensemble's per-provider configs. */
 export interface ResolveEnsembleParams {
-  /** The primary provider config (already resolved with `PROWL_AI_KEY`). */
+  /** The primary provider config (already resolved with provider-scoped/generic env keys). */
   primary: ProviderConfig;
   /** Configured providers; when empty/omitted the ensemble is just the primary. */
   providers?: EnsembleProviderSpec[];
