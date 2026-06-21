@@ -18,6 +18,7 @@ import { SEVERITIES, type Severity } from "../../review/findings.js";
 import { resolveSpecialists } from "../../review/specialists.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, type PriceOverrides } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
+import { runLocalReview } from "./review-local.js";
 
 /**
  * `prowl-review review` — review a pull request and publish findings.
@@ -70,7 +71,7 @@ export function resolvePullNumber(flag?: string): number {
 }
 
 /** Read a UTF-8 file, returning undefined when it is absent or unreadable. */
-function readOptionalFile(path: string): string | undefined {
+export function readOptionalFile(path: string): string | undefined {
   if (!existsSync(path)) {
     return undefined;
   }
@@ -138,8 +139,8 @@ export function resolveWorkspace(): string {
 }
 
 /** Resolve the explicit trusted checkout used to load review guidelines. */
-export function resolveGuidelinesWorkspace(): string | undefined {
-  return process.env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
+export function resolveGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  return env.PROWL_GUIDELINES_WORKSPACE?.trim() || undefined;
 }
 
 /** Resolve whether repo-local tooling may execute in the review workspace. */
@@ -491,14 +492,25 @@ export function reportReviewCommandResult(
   }
 }
 
+/** CLI options for the local pre-push path (#35), set when `--base`/`--head` is passed. */
+interface LocalReviewFlags {
+  base?: string;
+  head?: string;
+  json?: boolean;
+  color?: boolean;
+  failOn?: string;
+}
+
 /** Build the `review` CLI command wired to the end-to-end GitHub review pipeline. */
 export function buildReviewCommand(): Command {
   const command = new Command("review");
 
   command
-    .description("Review a pull request and publish findings")
+    .description("Review a pull request (GitHub), or a local git diff with --base/--head")
     .option("--pr <number>", "pull request number (defaults to the GitHub event)")
     .option("--repo <owner/repo>", "repository (defaults to GITHUB_REPOSITORY)")
+    .option("--base <ref>", "local mode: base git ref to diff against (no GitHub posting)")
+    .option("--head <ref>", "local mode: checked-out clean head ref (defaults to the working tree)")
     .option("--min-severity <severity>", `drop findings below this severity (${SEVERITIES.join("|")})`)
     .option("--no-context", "skip agentic cross-file context retrieval")
     .option("--no-grounding", "skip linter/SAST grounding")
@@ -510,7 +522,39 @@ export function buildReviewCommand(): Command {
     .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
     .option("--dry-run", "build the review but do not publish it")
-    .action(async (options: ReviewCommandOptions) => {
+    .option("--json", "local mode: print findings as JSON instead of the human report")
+    .option("--no-color", "local mode: disable ANSI color in the terminal report")
+    .option("--fail-on <severity>", `local mode: exit non-zero on a finding at/above this severity (${SEVERITIES.join("|")})`)
+    .action(async (options: ReviewCommandOptions & LocalReviewFlags) => {
+      const localMode = options.base !== undefined || options.head !== undefined;
+      const usedLocalOnlyFlags =
+        options.json === true || options.color === false || options.failOn !== undefined;
+
+      if (!localMode && usedLocalOnlyFlags) {
+        throw new Error("`--json`, `--no-color`, and `--fail-on` require `--base` or `--head`.");
+      }
+
+      // Local pre-push mode (#35): `--base`/`--head` switches off the GitHub path
+      // entirely — diff comes from git, findings print to the terminal.
+      if (localMode) {
+        const result = await runLocalReview({
+          base: options.base,
+          head: options.head,
+          minSeverity: options.minSeverity,
+          context: options.context,
+          grounding: options.grounding,
+          verify: options.verify,
+          trustWorkspace: options.trustWorkspace,
+          config: options.config,
+          json: options.json,
+          color: options.color,
+          failOn: options.failOn
+        });
+        if (result.failed) {
+          process.exitCode = 1;
+        }
+        return;
+      }
       // The auto path (pull_request trigger) respects `@prowl-review pause` (#26).
       await runReviewWithOptions(options, { respectPause: true });
     });

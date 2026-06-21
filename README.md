@@ -138,6 +138,45 @@ jobs:
           workspace-path: ${{ github.workspace }}/pr-head
 ```
 
+## Local pre-push review (CLI)
+
+Run the **same** review engine against a local git diff before you open a PR —
+no GitHub token, no posting (#35). Findings print to the terminal:
+
+```bash
+# Review your branch's changes against main (tracked uncommitted edits included)
+PROWL_AI_KEY=sk-… prowl-review review --base main
+
+# Review the checked-out branch as an explicit head ref
+PROWL_AI_KEY=sk-… prowl-review review --base main --head my-feature
+```
+
+The diff is taken relative to the **merge base** of `--base` and `--head` (PR
+semantics — only the changes your branch introduces). Omit `--head` to review
+the working tree. Untracked files are not part of Git's working-tree diff, so
+local mode fails with a clear prompt to stage or commit them before review. When
+`--head` is supplied, it must resolve to the currently checked-out `HEAD` and the
+worktree must be clean; the later context, guidelines, grounding, and secret
+scans read from that local checkout. Passing `--base` (or `--head`) switches the
+`review` command into local mode; the GitHub flags (`--pr`, `--repo`,
+`--dry-run`) are ignored.
+
+| Flag | Effect |
+|------|--------|
+| `--base <ref>` | Base ref to diff against (default `main`). |
+| `--head <ref>` | Checked-out head ref (default: the working tree). |
+| `--min-severity <sev>` | Drop findings below this severity. |
+| `--no-context` / `--no-grounding` / `--no-verify` | Skip cross-file context (#4), linter/SAST grounding (#16), or the false-positive pass (#8). |
+| `--trust-workspace` | Allow repo-local linter/SAST code to execute. Without this or `PROWL_TRUST_WORKSPACE=true`, repo-local execution stays disabled. |
+| `--json` | Print findings as JSON (for tooling) instead of the human report. |
+| `--no-color` | Disable ANSI color (also honors `NO_COLOR`). |
+| `--fail-on <sev>` | Exit non-zero when a finding at/above this severity is found — wire it into a pre-push hook as a gate. |
+
+The same agentic cross-file context and safe linter/SAST grounding run over the
+git repository top-level. Repo-local linter code executes only with
+`--trust-workspace` or `PROWL_TRUST_WORKSPACE=true`; per-run cost prints to
+stderr so `--json` stdout stays clean.
+
 ## Development
 
 ```bash

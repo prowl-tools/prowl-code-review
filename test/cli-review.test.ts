@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
+  buildReviewCommand,
   loadGuidelines,
   loadLearnedPatterns,
   composeGuidelines,
@@ -165,6 +166,16 @@ describe("review command helpers", () => {
     expect(() => parseMinSeverity("urgent")).toThrow(/Invalid --min-severity/);
   });
 
+  it.each([["--json"], ["--no-color"], ["--fail-on", "major"]])(
+    "rejects local-only %s without --base or --head",
+    async (...args) => {
+      const command = buildReviewCommand();
+      await expect(command.parseAsync(["node", "review", ...args])).rejects.toThrow(
+        /require `--base` or `--head`/
+      );
+    }
+  );
+
   it("prefers the explicit action workspace over the GitHub default", () => {
     process.env.GITHUB_WORKSPACE = "/base";
     process.env.PROWL_WORKSPACE = "/head";
@@ -185,6 +196,10 @@ describe("review command helpers", () => {
 
     process.env.PROWL_GUIDELINES_WORKSPACE = "   ";
     expect(resolveGuidelinesWorkspace()).toBeUndefined();
+
+    expect(resolveGuidelinesWorkspace({ PROWL_GUIDELINES_WORKSPACE: "/injected-guidelines" } as NodeJS.ProcessEnv)).toBe(
+      "/injected-guidelines"
+    );
   });
 
   it("resolves workspace execution trust from explicit truthy env values", () => {
