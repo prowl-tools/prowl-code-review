@@ -258,6 +258,83 @@ describe("runLocalReview (#35)", () => {
     expect(d.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: false }));
   });
 
+  it("loads local guidance outside fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, "REVIEW_GUIDELINES.md"), "local review rules");
+    writeFileSync(join(workspace, "LEARNED_PATTERNS.md"), "local false positives");
+    const runReview = vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] }));
+    const { deps: d } = deps({ runReview });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const input = runReview.mock.calls[0][0];
+    expect(input.guidelines).toBe("local review rules");
+    expect(input.learnedPatterns).toBe("local false positives");
+  });
+
+  it("does not load fork checkout guidance for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, "REVIEW_GUIDELINES.md"), "fork review rules");
+    writeFileSync(join(workspace, "LEARNED_PATTERNS.md"), "fork false positives");
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const runReview = vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] }));
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      },
+      runReview
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const input = runReview.mock.calls[0][0];
+    expect(input.guidelines).toBeUndefined();
+    expect(input.learnedPatterns).toBeUndefined();
+  });
+
+  it("uses trusted guidance inputs for fork pull request events", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, "REVIEW_GUIDELINES.md"), "fork review rules");
+    const eventPath = join(workspace, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+      })
+    );
+    const trustedRoot = mkdtempSync(join(tmpdir(), "prowl-guidelines-"));
+    tempDirs.push(trustedRoot);
+    writeFileSync(join(trustedRoot, "REVIEW_GUIDELINES.md"), "trusted review rules");
+    writeFileSync(join(trustedRoot, "LEARNED_PATTERNS.md"), "trusted false positives");
+    const orgGuidelinesPath = join(trustedRoot, "ORG.md");
+    writeFileSync(orgGuidelinesPath, "org review rules");
+    const runReview = vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] }));
+    const { deps: d } = deps({
+      env: {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
+        PROWL_GUIDELINES_WORKSPACE: trustedRoot,
+        PROWL_ORG_GUIDELINES_PATH: orgGuidelinesPath
+      },
+      runReview
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const input = runReview.mock.calls[0][0];
+    expect(input.guidelines).toBe(
+      "## Organization standards\norg review rules\n\n## Repository standards\ntrusted review rules"
+    );
+    expect(input.learnedPatterns).toBe("trusted false positives");
+  });
+
   it("records local usage for cost aggregation", async () => {
     const workspace = isolatedWorkspace();
     const runReview = vi.fn().mockResolvedValue(

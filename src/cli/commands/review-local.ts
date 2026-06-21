@@ -26,10 +26,15 @@ import {
   LocalDiffError
 } from "../../review/local-diff.js";
 import {
+  composeGuidelines,
+  isForkPullRequestEvent,
   loadGuidelines,
   loadLearnedPatterns,
   parseMinSeverity,
+  readOptionalFile,
   resolveConfigLoadOptions,
+  resolveGuidelinesWorkspace,
+  resolveOrgGuidelinesPath,
   resolveReviewOptions,
   resolveTrustWorkspace,
   resolveUsageLogPath
@@ -177,6 +182,25 @@ function redactGroundingNotes(notes: string[]): { notes: string[]; count: number
     return result.text;
   });
   return { notes: redacted, count };
+}
+
+/** Resolve trusted review guidance for local mode without trusting fork checkouts. */
+function resolveLocalGuidance(root: string, env: NodeJS.ProcessEnv): {
+  guidelines?: string;
+  learnedPatterns?: string;
+} {
+  if (!isForkPullRequestEvent(env)) {
+    return { guidelines: loadGuidelines(root), learnedPatterns: loadLearnedPatterns(root) };
+  }
+
+  const guidelinesRoot = resolveGuidelinesWorkspace(env);
+  const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
+  const orgGuidelinesPath = resolveOrgGuidelinesPath(env);
+  const orgGuidelines = orgGuidelinesPath ? readOptionalFile(orgGuidelinesPath) : undefined;
+  return {
+    guidelines: composeGuidelines(orgGuidelines, repoGuidelines),
+    learnedPatterns: guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined
+  };
 }
 
 /** Resolve whether to colorize: explicit `--no-color` wins; else honor TTY + NO_COLOR. */
@@ -378,9 +402,7 @@ export async function runLocalReview(
     notes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
   }
 
-  // Trusted guidelines load from the local checkout itself (#30).
-  const guidelines = loadGuidelines(root);
-  const learnedPatterns = loadLearnedPatterns(root);
+  const { guidelines, learnedPatterns } = resolveLocalGuidance(root, env);
 
   let usage = emptyUsage();
   let context: string | undefined;
