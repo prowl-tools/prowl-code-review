@@ -15,6 +15,7 @@ describe("resolveLocalDiff", () => {
       "diff",
       "--no-ext-diff",
       "--no-color",
+      "--find-renames",
       "--merge-base",
       "--end-of-options",
       "main",
@@ -25,7 +26,15 @@ describe("resolveLocalDiff", () => {
   it("diffs base against the working tree when head is omitted", async () => {
     const exec = vi.fn().mockResolvedValue("WT");
     await resolveLocalDiff({ base: "main", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "--end-of-options", "main"]);
+    expect(exec).toHaveBeenCalledWith([
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--find-renames",
+      "--merge-base",
+      "--end-of-options",
+      "main"
+    ]);
   });
 
   it("trims surrounding whitespace from the refs", async () => {
@@ -35,6 +44,7 @@ describe("resolveLocalDiff", () => {
       "diff",
       "--no-ext-diff",
       "--no-color",
+      "--find-renames",
       "--merge-base",
       "--end-of-options",
       "develop",
@@ -45,7 +55,15 @@ describe("resolveLocalDiff", () => {
   it("treats a blank head as the working tree", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "main", head: "   ", cwd: "/repo", exec });
-    expect(exec).toHaveBeenCalledWith(["diff", "--no-ext-diff", "--no-color", "--merge-base", "--end-of-options", "main"]);
+    expect(exec).toHaveBeenCalledWith([
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--find-renames",
+      "--merge-base",
+      "--end-of-options",
+      "main"
+    ]);
   });
 
   it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
@@ -55,6 +73,7 @@ describe("resolveLocalDiff", () => {
       "diff",
       "--no-ext-diff",
       "--no-color",
+      "--find-renames",
       "--merge-base",
       "--end-of-options",
       "--help",
