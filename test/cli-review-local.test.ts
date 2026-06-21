@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -308,6 +308,24 @@ new file mode 100644
     await runLocalReview({ base: "main" }, d);
 
     expect(d.gatherContext).toHaveBeenCalled();
+    expect(d.runReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("resolves explicit local config paths against the review workspace", async () => {
+    const workspace = isolatedWorkspace();
+    const subdir = join(workspace, "packages", "app");
+    mkdirSync(subdir, { recursive: true });
+    writeFileSync(join(workspace, ".prowl-review.yml"), "context:\n  enabled: false\n");
+    const { deps: d } = deps({ env: { PROWL_CONFIG_PATH: ".prowl-review.yml" } });
+    const previousCwd = process.cwd();
+    try {
+      process.chdir(subdir);
+      await runLocalReview({ base: "main" }, d);
+    } finally {
+      process.chdir(previousCwd);
+    }
+
+    expect(d.gatherContext).not.toHaveBeenCalled();
     expect(d.runReview).toHaveBeenCalledTimes(1);
   });
 
@@ -660,6 +678,22 @@ new file mode 100644
     const { deps: d, out } = deps({ runReview });
     await runLocalReview({ base: "main", config: false }, d);
     expect(out.join("\n")).toContain("Skipped false-positive verification to stay within the token budget");
+  });
+
+  it("surfaces judge-filtered findings as local notes", async () => {
+    isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(
+      reviewResult({
+        findings: [],
+        judge: { duplicatesRemoved: 0, belowThreshold: 2, belowConfidence: 1, capped: 3 }
+      })
+    );
+    const { deps: d, out } = deps({ runReview });
+    await runLocalReview({ base: "main", config: false }, d);
+    const report = out.join("\n");
+    expect(report).toContain("Hid 2 finding(s) below the severity floor.");
+    expect(report).toContain("Hid 1 low-confidence finding(s) below the confidence floor.");
+    expect(report).toContain("3 additional lower-ranked finding(s) not shown");
   });
 
   it("flags failure when a finding meets the --fail-on threshold", async () => {

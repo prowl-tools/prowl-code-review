@@ -15,7 +15,7 @@ import { DEFAULT_SPECIALISTS } from "../../review/specialists.js";
 import { diffComplexity, planOrchestration, selectRiskTier } from "../../review/risk-tier.js";
 import { gatherContext, ContextRetrievalError, type RetrievalLimits } from "../../context/retrieval.js";
 import { buildGroundingSummary, gatherGrounding } from "../../grounding/index.js";
-import { runReview, type ReviewInput } from "../../review/run-review.js";
+import { runReview, type ReviewInput, type ReviewResult } from "../../review/run-review.js";
 import { emptyUsage, type TokenUsage } from "../../providers/index.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord } from "../../cost/usage-log.js";
@@ -218,6 +218,22 @@ function resolveLocalConfigPath(configPath: string, root: string): string {
   return isAbsolute(configPath) ? resolve(configPath) : resolve(root, configPath);
 }
 
+/** Surface what the deterministic judge hid, so local output is not silently partial. */
+function judgeNotes(reviewResult: ReviewResult): string[] {
+  const notes: string[] = [];
+  const { belowThreshold, belowConfidence, capped } = reviewResult.judge;
+  if (belowThreshold > 0) {
+    notes.push(`Hid ${belowThreshold} finding(s) below the severity floor.`);
+  }
+  if (belowConfidence > 0) {
+    notes.push(`Hid ${belowConfidence} low-confidence finding(s) below the confidence floor.`);
+  }
+  if (capped > 0) {
+    notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
+  }
+  return notes;
+}
+
 /** Resolve local-mode config without trusting auto-discovered fork checkout files. */
 function resolveLocalConfigLoadOptions(
   options: LocalReviewCommandOptions,
@@ -225,12 +241,16 @@ function resolveLocalConfigLoadOptions(
   env: NodeJS.ProcessEnv
 ): LoadConfigOptions {
   const configOptions = resolveConfigLoadOptions(options, root, env);
-  if (!isForkPullRequestEvent(env) || configOptions.disabled) {
-    return configOptions;
+  const localConfigOptions = configOptions.configPath
+    ? { ...configOptions, configPath: resolveLocalConfigPath(configOptions.configPath, root) }
+    : configOptions;
+  if (!isForkPullRequestEvent(env) || localConfigOptions.disabled) {
+    return localConfigOptions;
   }
-  if (configOptions.configPath) {
-    const configPath = resolveLocalConfigPath(configOptions.configPath, root);
-    return isWorkspacePath(configPath, root) ? { cwd: root, disabled: true } : { ...configOptions, configPath };
+  if (localConfigOptions.configPath) {
+    return isWorkspacePath(localConfigOptions.configPath, root)
+      ? { cwd: root, disabled: true }
+      : localConfigOptions;
   }
   return { cwd: root, disabled: true };
 }
@@ -513,6 +533,7 @@ export async function runLocalReview(
   if (!reviewResult.verification.ok) {
     notes.push(`Verification degraded: ${reviewResult.verification.error ?? "unknown error"}.`);
   }
+  notes.push(...judgeNotes(reviewResult));
 
   const findings = [...directGroundingFindings, ...reviewResult.findings];
   out(
