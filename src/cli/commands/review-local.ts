@@ -134,11 +134,6 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   return changed;
 }
 
-/** True when a sensitive rename/copy includes added lines already covered by the changed-line map. */
-function hasAddedNewLines(file: DiffFile): boolean {
-  return file.hunks.some((hunk) => hunk.lines.some((line) => line.type === "add" && line.newLine));
-}
-
 /** A subset of {@link RetrievalLimits} fields, as carried by config + tier plans. */
 type ContextLimitFields = { maxRounds?: number; maxFiles?: number; maxTokens?: number };
 
@@ -411,7 +406,7 @@ export async function runLocalReview(
   const groundingLineFiles = [...reviewFiles, ...secretScanFiles];
   const secretScanPathSet = new Set(secretScanFiles.map((file) => file.path));
   const secretScanWholeFilePaths = secretScanFiles
-    .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
+    .filter((file) => file.status === "renamed" || file.status === "copied")
     .map((file) => file.path);
 
   const notes: string[] = [];
