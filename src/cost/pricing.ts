@@ -220,6 +220,12 @@ export interface Budget {
   maxUsd?: number;
 }
 
+/** Provider/model pair used to resolve a conservative budget ceiling. */
+export interface BudgetTarget {
+  provider: ProviderName;
+  model: string;
+}
+
 /**
  * Resolve a {@link Budget} into an effective max-token ceiling for mid-run
  * enforcement. `maxUsd` is converted to tokens via the model's **input** rate
@@ -252,6 +258,27 @@ export function resolveTokenBudget(
     }
   }
   return { tokens: ceilings.length > 0 ? Math.min(...ceilings) : null, notes };
+}
+
+/**
+ * Resolve one shared token ceiling for multiple provider/model targets.
+ *
+ * Ensemble reviews split the shared ceiling across providers, so the safe
+ * cross-provider value is the tightest per-target ceiling. This keeps `maxUsd`
+ * conservative for the most expensive priced provider in a mixed ensemble.
+ */
+export function resolveTokenBudgetForTargets(
+  budget: Budget | undefined,
+  targets: BudgetTarget[],
+  overrides: PriceOverrides = {}
+): { tokens: number | null; notes: string[] } {
+  if (targets.length === 0) {
+    return { tokens: null, notes: [] };
+  }
+  const resolved = targets.map((target) => resolveTokenBudget(budget, target.provider, target.model, overrides));
+  const tokens = resolved.flatMap((result) => (result.tokens === null ? [] : [result.tokens]));
+  const notes = [...new Set(resolved.flatMap((result) => result.notes))];
+  return { tokens: tokens.length > 0 ? Math.min(...tokens) : null, notes };
 }
 
 /** Format a USD amount for display (more precision for sub-dollar amounts). */
