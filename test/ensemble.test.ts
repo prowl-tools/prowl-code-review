@@ -55,6 +55,7 @@ describe("runEnsembleReview (#53)", () => {
       ["anthropic", true, 1],
       ["openai", true, 1]
     ]);
+    expect(res.providers.map((p) => p.usage?.inputTokens)).toEqual([10, 10]);
   });
 
   it("consolidates a finding both providers raise, unioning sources and boosting confidence", async () => {

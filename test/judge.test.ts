@@ -306,6 +306,21 @@ describe("dedupeFindings with provenance (#53)", () => {
     expect(result[0].confidence).toBeCloseTo(0.75); // 0.6 + 0.15
   });
 
+  it("boosts confidence from the winning original score across more than two providers", () => {
+    const result = dedupeFindings(
+      [
+        finding({ title: "anthropic", confidence: 0.45, sources: ["anthropic"] }),
+        finding({ title: "openai", confidence: 0.45, sources: ["openai"] }),
+        finding({ title: "gemini", confidence: 0.45, sources: ["gemini"] })
+      ],
+      { mergeProvenance: true }
+    );
+
+    expect(result).toHaveLength(1);
+    expect(new Set(result[0].sources)).toEqual(new Set(["anthropic", "openai", "gemini"]));
+    expect(result[0].confidence).toBeCloseTo(0.75); // 0.45 + (0.15 * 2), not compounded from 0.6
+  });
+
   it("does not merge provenance by default (single-provider path unchanged)", () => {
     const result = dedupeFindings([
       finding({ title: "a", confidence: 0.5, sources: ["anthropic"] }),

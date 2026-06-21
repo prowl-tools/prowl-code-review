@@ -43,7 +43,10 @@ export function providerKeyEnvVar(provider: ProviderName): string {
 /** Resolve a usable {@link ProviderConfig} per configured provider (#53). */
 export function resolveEnsembleConfigs(params: ResolveEnsembleParams): ResolveEnsembleResult {
   const env = params.env ?? process.env;
-  const specs = params.providers ?? [];
+  const specs =
+    params.providers && params.providers.length > 0
+      ? params.providers
+      : [{ provider: params.primary.provider, model: params.primary.model }];
   const notes: string[] = [];
   const configs: ProviderConfig[] = [];
   const seen = new Set<ProviderName>();

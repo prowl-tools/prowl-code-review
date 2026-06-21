@@ -16,13 +16,22 @@ import {
   resolveEnsembleConfigs,
   isEnsembleActive,
   type ProviderConfig,
-  type ProviderName
+  type ProviderName,
+  type TokenUsage
 } from "../../providers/index.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
 import { resolveSpecialists } from "../../review/specialists.js";
-import { estimateCost, formatCostLine, resolveTokenBudget, type PriceOverrides } from "../../cost/pricing.js";
+import {
+  estimateCost,
+  formatCostLine,
+  formatUsd,
+  resolveTokenBudget,
+  totalTokens,
+  type CostEstimate,
+  type PriceOverrides
+} from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 import { runLocalReview } from "./review-local.js";
 
@@ -435,6 +444,86 @@ interface ReportReviewCommandResultOptions {
   publishFailed?: boolean;
 }
 
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
+  };
+}
+
+function subtractUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = Math.max(0, (a.cacheWriteInputTokens ?? 0) - (b.cacheWriteInputTokens ?? 0));
+  return {
+    inputTokens: Math.max(0, a.inputTokens - b.inputTokens),
+    outputTokens: Math.max(0, a.outputTokens - b.outputTokens),
+    cachedInputTokens: Math.max(0, a.cachedInputTokens - b.cachedInputTokens),
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
+  };
+}
+
+function costEstimatesForResult(
+  result: ReviewPullRequestResult,
+  options: ReportReviewCommandResultOptions
+): CostEstimate[] {
+  const pricing = options.pricing ?? {};
+  const providerUsages = result.ensemble?.providers.filter((provider) => provider.ok && provider.usage);
+  if (!providerUsages || providerUsages.length === 0) {
+    return [estimateCost(result.usage, options.providerConfig.provider, options.providerConfig.model, pricing)];
+  }
+
+  const estimates = providerUsages.map((provider) =>
+    estimateCost(provider.usage!, provider.provider, provider.model, pricing)
+  );
+  const providerUsage = providerUsages.reduce(
+    (usage, provider) => addUsage(usage, provider.usage!),
+    { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 } satisfies TokenUsage
+  );
+  const nonProviderUsage = subtractUsage(result.usage, providerUsage);
+  if (totalTokens(nonProviderUsage) > 0) {
+    estimates.unshift(
+      estimateCost(nonProviderUsage, options.providerConfig.provider, options.providerConfig.model, pricing)
+    );
+  }
+  return estimates;
+}
+
+function formatAggregateCostLine(estimates: CostEstimate[]): string {
+  if (estimates.length === 1) {
+    return formatCostLine(estimates[0]);
+  }
+  const usage = estimates.reduce(
+    (sum, estimate) => ({
+      inputTokens: sum.inputTokens + estimate.inputTokens,
+      outputTokens: sum.outputTokens + estimate.outputTokens,
+      cachedInputTokens: sum.cachedInputTokens + estimate.cachedInputTokens,
+      cacheWriteInputTokens: sum.cacheWriteInputTokens + estimate.cacheWriteInputTokens
+    }),
+    { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0 }
+  );
+  const usd = estimates.every((estimate) => estimate.usd !== null)
+    ? estimates.reduce((sum, estimate) => sum + estimate.usd!, 0)
+    : null;
+  const cost = usd === null ? "n/a (set pricing in config for one or more models)" : `~${formatUsd(usd)}`;
+  const cacheWrite =
+    usage.cacheWriteInputTokens > 0 ? ` / cache write ${usage.cacheWriteInputTokens.toLocaleString()}` : "";
+  const tokens =
+    `in ${usage.inputTokens.toLocaleString()} / out ${usage.outputTokens.toLocaleString()} / ` +
+    `cached ${usage.cachedInputTokens.toLocaleString()}${cacheWrite} tok`;
+  return `${cost} · ensemble ${estimates.length} cost segment(s) · ${tokens} [estimated]`;
+}
+
+function formatSummaryCostLines(estimates: CostEstimate[], tierSuffix: string): string {
+  if (estimates.length === 1) {
+    return `- ${formatCostLine(estimates[0])}${tierSuffix}\n`;
+  }
+  const lines = [`- ${formatAggregateCostLine(estimates)}${tierSuffix}`];
+  lines.push(...estimates.map((estimate) => `  - ${formatCostLine(estimate)}`));
+  return `${lines.join("\n")}\n`;
+}
+
 export function reportReviewCommandResult(
   result: ReviewPullRequestResult,
   options: ReportReviewCommandResultOptions
@@ -492,21 +581,16 @@ export function reportReviewCommandResult(
 
   // Per-review cost transparency (#36): emit to logs + the Action job summary
   // (never the PR comment), and append to the local usage log for `costs`.
-  const cost = estimateCost(
-    result.usage,
-    options.providerConfig.provider,
-    options.providerConfig.model,
-    options.pricing ?? {}
-  );
+  const costs = costEstimatesForResult(result, options);
   // The chosen risk tier (#31) is logged alongside the cost so a run's spend is
   // attributable to its orchestration tier.
   const tierSuffix = result.riskTier ? ` · risk tier: ${result.riskTier}` : "";
-  console.log(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
+  console.log(`prowl-review cost: ${formatAggregateCostLine(costs)}${tierSuffix}`);
 
   const summaryPath = env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
     try {
-      appendFileSync(summaryPath, `### prowl-review cost\n\n- ${formatCostLine(cost)}${tierSuffix}\n`);
+      appendFileSync(summaryPath, `### prowl-review cost\n\n${formatSummaryCostLines(costs, tierSuffix)}`);
     } catch {
       // non-fatal: job summary unavailable
     }
@@ -515,15 +599,18 @@ export function reportReviewCommandResult(
   const usageLogPath = resolveUsageLogPath(options.root, env);
   if (usageLogPath) {
     try {
-      appendUsageRecord(
-        usageLogPath,
-        toUsageRecord(cost, {
-          ts: (options.now?.() ?? new Date()).toISOString(),
-          repo: `${options.owner}/${options.repo}`,
-          pr: options.pullNumber
-        }),
-        { workspace: options.root }
-      );
+      const ts = (options.now?.() ?? new Date()).toISOString();
+      for (const cost of costs) {
+        appendUsageRecord(
+          usageLogPath,
+          toUsageRecord(cost, {
+            ts,
+            repo: `${options.owner}/${options.repo}`,
+            pr: options.pullNumber
+          }),
+          { workspace: options.root }
+        );
+      }
     } catch {
       // non-fatal: usage log unavailable
     }

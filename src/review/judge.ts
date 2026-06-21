@@ -135,23 +135,32 @@ export function dedupeFindings(findings: Finding[], options: { mergeProvenance?:
     lintEntries.set(loc, entries);
   }
   const byKey = new Map<string, Finding>();
+  const baseConfidenceByKey = new Map<string, number>();
   for (const finding of findings) {
     const key = dedupeBucket(finding, lintEntries);
     const existing = byKey.get(key);
     if (!existing) {
       byKey.set(key, finding);
+      baseConfidenceByKey.set(key, finding.confidence);
       continue;
     }
-    const winner = preferred(existing, finding);
     // Cross-provider consolidation (#53): keep the strongest representative but
     // union the provenance and boost confidence by how many providers agreed.
     if (options.mergeProvenance) {
+      const existingBaseConfidence = baseConfidenceByKey.get(key) ?? existing.confidence;
+      const existingForPreference = { ...existing, confidence: existingBaseConfidence };
+      const winner = preferred(existingForPreference, finding);
+      const winnerBaseConfidence = winner === finding ? finding.confidence : existingBaseConfidence;
       const sources = mergeSources(existing.sources, finding.sources);
+      baseConfidenceByKey.set(key, winnerBaseConfidence);
       byKey.set(key, {
         ...winner,
-        ...(sources ? { sources, confidence: consensusConfidence(winner.confidence, sources.length) } : {})
+        confidence: sources ? consensusConfidence(winnerBaseConfidence, sources.length) : winnerBaseConfidence,
+        ...(sources ? { sources } : {})
       });
     } else {
+      const winner = preferred(existing, finding);
+      baseConfidenceByKey.set(key, winner.confidence);
       byKey.set(key, winner);
     }
   }
