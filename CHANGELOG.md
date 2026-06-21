@@ -5,6 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Per-model perspectives on ensemble findings (backlog #53 follow-up): when the ensemble consolidates an
+  issue more than one model flagged, the inline PR comment now preserves **each model's own take** in a
+  collapsible "🔀 N model perspectives" block (per-provider severity, confidence, and reasoning), instead of
+  showing only the chosen representative — two perspectives in the same PR without multiple tools.
+  Single-provider findings get a "🔎 Raised by X (1 of M providers)" attribution line. New
+  `Finding.perspectives` (`ProviderPerspectiveSchema`), orchestrator-set and omitted from model-output
+  parsing; the ensemble seeds one perspective per finding and the cross-provider judge merges them (one
+  entry per provider, strongest take) while consolidating.
 - Multi-provider ensemble review (backlog #53): opt-in (`ensemble.enabled`, default off) review of the same
   changes across multiple providers at once, with findings consolidated cross-provider — a BYOK-only edge.
   Each provider's key is read from its own env var (`PROWL_AI_KEY_ANTHROPIC` / `_OPENAI` / `_GEMINI`; the

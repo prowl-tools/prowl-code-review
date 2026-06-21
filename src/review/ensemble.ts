@@ -76,9 +76,25 @@ function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
   };
 }
 
-/** Tag every finding with the provider that raised it (#53 provenance). */
+/**
+ * Tag every finding with the provider that raised it (#53 provenance) and seed
+ * its single-provider perspective, so the cross-judge can preserve each model's
+ * own take when it consolidates duplicates.
+ */
 function tagSources(findings: Finding[], provider: ProviderName): Finding[] {
-  return findings.map((finding) => ({ ...finding, sources: [provider] }));
+  return findings.map((finding) => ({
+    ...finding,
+    sources: [provider],
+    perspectives: [
+      {
+        provider,
+        severity: finding.severity,
+        confidence: finding.confidence,
+        title: finding.title,
+        body: finding.body
+      }
+    ]
+  }));
 }
 
 function findingSignature(finding: Finding): string {

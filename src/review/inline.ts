@@ -78,6 +78,8 @@ const SUMMARY_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - SUMMARY_STATE_MA
 const MIN_AGENT_PROMPT_BLOCK_CHARS = 512;
 const AGENT_PROMPT_TRUNCATION_NOTICE =
   "[truncated to keep the GitHub comment within the body size limit]";
+const PERSPECTIVE_TRUNCATION_NOTICE =
+  "_Perspective details truncated to keep this comment within GitHub's body size limit._";
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -333,17 +335,107 @@ export interface FindingCommentOptions {
 }
 
 /**
- * A cross-provider consensus note for an ensemble finding (#53), or "" when the
- * finding wasn't agreed on by ≥2 of the ≥2 ensemble providers. Names the
- * providers so the reader can weigh the agreement.
+ * A one-line attribution for an ensemble finding (#53): the cross-provider
+ * consensus note when ≥2 providers agreed, or which single provider raised it
+ * otherwise. "" outside an ensemble run (no providerCount / no provenance).
  */
-function consensusNote(finding: Finding, providerCount?: number): string {
+function attributionLine(finding: Finding, providerCount?: number): string {
   const sources = finding.sources ?? [];
-  if (!providerCount || providerCount < 2 || sources.length < 2) {
+  if (!providerCount || providerCount < 2 || sources.length === 0) {
     return "";
   }
   const names = sources.map((name) => escapeMarkdownText(name)).join(", ");
-  return `🤝 _Cross-provider consensus: flagged by ${sources.length} of ${providerCount} providers (${names})._`;
+  if (sources.length >= 2) {
+    return `🤝 _Cross-provider consensus: flagged by ${sources.length} of ${providerCount} providers (${names})._`;
+  }
+  return `🔎 _Raised by ${names} (1 of ${providerCount} providers)._`;
+}
+
+/**
+ * Render each model's distinct take on a consolidated finding (#53) inside a
+ * collapsed disclosure, so the PR shows both perspectives without cluttering the
+ * top-line comment. "" unless ≥2 providers weighed in on this finding.
+ */
+interface RenderedPerspective {
+  provider: string;
+  severity: Severity;
+  confidence: number;
+  body: string;
+}
+
+function perspectiveEntry(perspective: RenderedPerspective, body: string): string {
+  const header = `**${escapeMarkdownText(perspective.provider)}** · ${perspective.severity} · ${Math.round(
+    perspective.confidence * 100
+  )}% confidence`;
+  return body ? `${header}\n\n${body}` : header;
+}
+
+function composePerspectivesBlock(entries: string[], truncated: boolean): string {
+  return [
+    "<details>",
+    `<summary>🔀 ${entries.length} model perspectives</summary>`,
+    "",
+    entries.join("\n\n"),
+    ...(truncated ? ["", PERSPECTIVE_TRUNCATION_NOTICE] : []),
+    "",
+    "</details>"
+  ].join("\n");
+}
+
+function truncatePerspectiveBody(body: string, maxChars: number): string {
+  if (body.length <= maxChars) {
+    return body;
+  }
+  if (maxChars <= 3) {
+    return "";
+  }
+  return `${body.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function perspectivesBlock(finding: Finding, maxChars?: number): string {
+  const perspectives = finding.perspectives ?? [];
+  if (perspectives.length < 2) {
+    return "";
+  }
+  const rendered = perspectives.map((perspective) => {
+    return {
+      provider: perspective.provider,
+      severity: perspective.severity,
+      confidence: perspective.confidence,
+      body: escapeMarkdownParagraphBlock(perspective.body)
+    };
+  });
+  const full = composePerspectivesBlock(
+    rendered.map((perspective) => perspectiveEntry(perspective, perspective.body)),
+    false
+  );
+  if (maxChars === undefined || full.length <= maxChars) {
+    return full;
+  }
+
+  const headersOnly = composePerspectivesBlock(
+    rendered.map((perspective) => perspectiveEntry(perspective, "")),
+    true
+  );
+  if (headersOnly.length > maxChars) {
+    return "";
+  }
+
+  let perBodyBudget = Math.floor((maxChars - headersOnly.length) / rendered.length);
+  while (perBodyBudget > 0) {
+    const fitted = composePerspectivesBlock(
+      rendered.map((perspective) =>
+        perspectiveEntry(perspective, truncatePerspectiveBody(perspective.body, perBodyBudget))
+      ),
+      true
+    );
+    if (fitted.length <= maxChars) {
+      return fitted;
+    }
+    perBodyBudget -= Math.max(1, Math.ceil((fitted.length - maxChars) / rendered.length));
+  }
+
+  return headersOnly;
 }
 
 interface FindingCommentRenderOptions extends FindingCommentOptions {
@@ -352,18 +444,27 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
 }
 
 /** Format the visible finding body without the optional agent prompt. */
-function formatFindingCommentBody(finding: Finding, providerCount?: number): string {
-  const consensus = consensusNote(finding, providerCount);
-  const parts = [
+function formatFindingCommentBody(finding: Finding, providerCount?: number, maxBodyChars?: number): string {
+  const attribution = attributionLine(finding, providerCount);
+  const prefixParts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
-    ...(consensus ? ["", consensus] : []),
+    ...(attribution ? ["", attribution] : []),
     "",
     escapeMarkdownParagraphBlock(finding.body)
   ];
-  if (hasSuggestion(finding)) {
-    parts.push("", suggestionBlock(finding.suggestion ?? ""));
+  const prefix = prefixParts.join("\n");
+  const suffix = hasSuggestion(finding) ? `\n\n${suggestionBlock(finding.suggestion ?? "")}` : "";
+  const maxPerspectiveChars =
+    maxBodyChars === undefined ? undefined : maxBodyChars - prefix.length - suffix.length - 2;
+  const perspectives =
+    maxPerspectiveChars === undefined || maxPerspectiveChars > 0
+      ? perspectivesBlock(finding, maxPerspectiveChars)
+      : "";
+
+  if (perspectives) {
+    return `${prefix}\n\n${perspectives}${suffix}`;
   }
-  return parts.join("\n");
+  return `${prefix}${suffix}`;
 }
 
 /** Append a budgeted agent prompt to an already-rendered finding body. */
@@ -387,7 +488,11 @@ function appendAgentPrompt(
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
 function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
-  return appendAgentPrompt(formatFindingCommentBody(finding, options.providerCount), finding, options);
+  return appendAgentPrompt(
+    formatFindingCommentBody(finding, options.providerCount, options.maxBodyChars),
+    finding,
+    options
+  );
 }
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
@@ -444,7 +549,12 @@ function formatUnmappedFindings(
     const commentPrefixLength = visibleEntry.heading.length + 2;
     const existingLength = initialLength + section.length + separator.length;
     const remainingForEntry = SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLength;
-    const comment = appendAgentPrompt(visibleEntry.comment, finding, {
+    const visibleComment = formatFindingCommentBody(
+      finding,
+      options.providerCount,
+      remainingForEntry - commentPrefixLength
+    );
+    const comment = appendAgentPrompt(visibleComment, finding, {
       ...options,
       maxBodyChars: remainingForEntry - commentPrefixLength
     });
