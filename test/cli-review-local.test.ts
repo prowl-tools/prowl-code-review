@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -138,6 +138,36 @@ describe("runLocalReview (#35)", () => {
     expect(result.findings).toHaveLength(0);
     expect(out.join("\n")).toContain("No changes to review");
     expect(d.runReview).not.toHaveBeenCalled();
+  });
+
+  it("does not require provider credentials when no provider review is needed", async () => {
+    isolatedWorkspace();
+    const emptyDiff = deps({
+      env: { PROWL_AI_KEY: undefined },
+      resolveDiff: vi.fn().mockResolvedValue("")
+    });
+    await expect(runLocalReview({ base: "main", config: false }, emptyDiff.deps)).resolves.toMatchObject({
+      findings: [],
+      failed: false
+    });
+    expect(emptyDiff.out.join("\n")).toContain("No changes to review");
+
+    const sensitiveDiff = `diff --git a/.env b/.env
+new file mode 100644
+--- /dev/null
++++ b/.env
+@@ -0,0 +1 @@
++API_KEY=AKIAIOSFODNN7EXAMPLE
+`;
+    const filteredDiff = deps({
+      env: { PROWL_AI_KEY: undefined },
+      resolveDiff: vi.fn().mockResolvedValue(sensitiveDiff)
+    });
+    await expect(runLocalReview({ base: "main", config: false, grounding: false }, filteredDiff.deps)).resolves.toMatchObject({
+      findings: [],
+      failed: false
+    });
+    expect(filteredDiff.out.join("\n")).toContain("No reviewable files remained after filters");
   });
 
   it("emits JSON when --json is set", async () => {
@@ -409,6 +439,45 @@ describe("runLocalReview (#35)", () => {
       inputTokens: 12,
       outputTokens: 3,
       cachedInputTokens: 4
+    });
+  });
+
+  it("does not create the default usage log for explicit head reviews", async () => {
+    const workspace = isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(
+      reviewResult({
+        findings: [finding()],
+        usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+    const { deps: d } = deps({ runReview });
+
+    await runLocalReview({ base: "main", head: "feature", config: false }, d);
+
+    expect(existsSync(join(workspace, ".prowl-review", "usage.jsonl"))).toBe(false);
+  });
+
+  it("honors an explicit usage log for explicit head reviews", async () => {
+    const workspace = isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(
+      reviewResult({
+        findings: [finding()],
+        usage: { inputTokens: 12, outputTokens: 3, cachedInputTokens: 4 }
+      })
+    );
+    const { deps: d } = deps({
+      env: { PROWL_USAGE_LOG: "explicit-usage.jsonl" },
+      runReview,
+      now: () => new Date("2026-06-20T12:00:00.000Z")
+    });
+
+    await runLocalReview({ base: "main", head: "feature", config: false }, d);
+
+    const log = readFileSync(join(workspace, "explicit-usage.jsonl"), "utf8").trim();
+    expect(JSON.parse(log)).toMatchObject({
+      ts: "2026-06-20T12:00:00.000Z",
+      inputTokens: 12,
+      outputTokens: 3
     });
   });
 
