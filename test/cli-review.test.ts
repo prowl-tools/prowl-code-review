@@ -710,6 +710,31 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     });
   });
 
+  it("treats the blank Action provider input as absent for ensemble bootstrap", () => {
+    const env = {
+      GITHUB_ACTIONS: "true",
+      PROWL_AI_PROVIDER: "",
+      PROWL_AI_KEY_OPENAI: "openai-key",
+      PROWL_AI_KEY_GEMINI: "gemini-key"
+    } as NodeJS.ProcessEnv;
+    const defaults = resolveProviderDefaults(
+      {
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "openai", model: "gpt-x" }, { provider: "gemini" }]
+        }
+      },
+      env
+    );
+
+    expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
+    expect(resolveProviderConfig(env, defaults)).toEqual({
+      provider: "openai",
+      model: "gpt-x",
+      apiKey: "openai-key"
+    });
+  });
+
   it("skips keyless ensemble defaults when choosing a bootstrap provider", () => {
     const defaults = resolveProviderDefaults(
       {
@@ -747,12 +772,14 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
 describe("GitHub Action provider metadata", () => {
   it("keeps provider and config policy in out-of-band action inputs", () => {
     const action = parseYaml(readFileSync(join(process.cwd(), "action.yml"), "utf8")) as {
-      inputs?: Record<string, { default?: unknown; description?: string }>;
+      inputs?: Record<string, { default?: unknown; description?: string; required?: unknown }>;
       runs?: { steps?: Array<{ id?: string; env?: Record<string, string>; run?: string }> };
     };
     const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
 
-    expect(action.inputs?.["ai-provider"]?.default).toBe("anthropic");
+    expect(action.inputs?.["ai-key"]?.required).toBe(false);
+    expect(action.inputs?.["ai-provider"]?.default).toBe("");
+    expect(action.inputs?.["ai-provider"]?.description).toContain("Leave blank");
     expect(action.inputs?.["config-path"]?.default).toBe("");
     expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");

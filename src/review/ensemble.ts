@@ -82,6 +82,8 @@ function tagSources(findings: Finding[], provider: ProviderName): Finding[] {
 }
 
 function findingSignature(finding: Finding): string {
+  // Verification may rewrite confidence; grounding identity should only use
+  // stable finding fields so deterministic findings stay out of provenance.
   return JSON.stringify({
     file: finding.file,
     line: finding.line,
@@ -90,8 +92,7 @@ function findingSignature(finding: Finding): string {
     category: finding.category,
     title: finding.title,
     body: finding.body,
-    suggestion: finding.suggestion,
-    confidence: finding.confidence
+    suggestion: finding.suggestion
   });
 }
 

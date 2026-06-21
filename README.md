@@ -10,8 +10,8 @@ It's delivered as a **GitHub Action + local CLI** (zero hosting), and is built t
 
 ## Usage (GitHub Action)
 
-Add a workflow that runs the review on pull requests. Store your provider key as
-the `PROWL_AI_KEY` repository secret.
+Add a workflow that runs the review on pull requests. For single-provider
+reviews, store your provider key as the `PROWL_AI_KEY` repository secret.
 
 ```yaml
 # .github/workflows/prowl-review.yml
@@ -53,9 +53,13 @@ jobs:
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           # config-path: prowl-review-config/.prowl-review.yml
-          # ai-provider: anthropic   # anthropic | openai | gemini (default anthropic)
+          # ai-provider: anthropic   # optional anthropic | openai | gemini override
           # ai-model: claude-...     # optional per-provider model override
 ```
+
+For ensemble reviews with provider-specific keys, omit `ai-key` and pass
+`PROWL_AI_KEY_ANTHROPIC`, `PROWL_AI_KEY_OPENAI`, or `PROWL_AI_KEY_GEMINI` as
+step env vars instead.
 
 The `concurrency` block is the recommended pattern: keying the group to the PR
 number serializes auto reviews with bot commands. `queue: max` and
