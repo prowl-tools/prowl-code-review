@@ -77,6 +77,11 @@ export interface WalkthroughInput {
    * state so a failed review is never disguised as a clean pass (#56).
    */
   degraded?: boolean;
+  /**
+   * Number of providers in a multi-provider ensemble run (#53). When ≥ 2,
+   * findings agreed on by multiple providers get a 🤝 consensus badge.
+   */
+  providerCount?: number;
 }
 
 const SKIP_LABELS: Record<SkipReason, string> = {
@@ -357,14 +362,34 @@ function findingLocation(finding: Finding): string {
   return inlineCode(finding.line ? `${finding.file}:${finding.line}` : finding.file);
 }
 
+/**
+ * Cross-provider consensus badge for an ensemble run (#53): "🤝 N/M" when at
+ * least two providers independently raised the finding, else "". `providerCount`
+ * is the ensemble size (M); omitted/`<2` disables the badge entirely.
+ */
+export function consensusBadge(finding: Finding, providerCount?: number): string {
+  const agreed = finding.sources?.length ?? 0;
+  if (!providerCount || providerCount < 2 || agreed < 2) {
+    return "";
+  }
+  return `🤝 ${agreed}/${providerCount}`;
+}
+
+/** Append the consensus badge to a rendered fragment when present. */
+function withConsensus(fragment: string, finding: Finding, providerCount?: number): string {
+  const badge = consensusBadge(finding, providerCount);
+  return badge ? `${fragment} ${badge}` : fragment;
+}
+
 /** One finding rendered as a summary bullet (badge · title · location). */
-function findingBullet(finding: Finding): string {
-  return `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`;
+function findingBullet(finding: Finding, providerCount?: number): string {
+  const bullet = `- ${SEVERITY_BADGE[finding.severity]} **${escapeMarkdownParagraphFlat(finding.title)}** — ${findingLocation(finding)}`;
+  return withConsensus(bullet, finding, providerCount);
 }
 
 /** One nitpick rendered with enough detail to fix it without an inline comment. */
-function nitpickDetail(finding: Finding): string {
-  const parts = [findingBullet(finding), "", escapeMarkdownParagraphBlock(finding.body)];
+function nitpickDetail(finding: Finding, providerCount?: number): string {
+  const parts = [findingBullet(finding, providerCount), "", escapeMarkdownParagraphBlock(finding.body)];
   const suggestion = finding.suggestion;
   if (suggestion?.trim()) {
     parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion, { preserveWhitespace: true }));
@@ -382,17 +407,19 @@ function tableCellSafe(value: string): string {
  * scannable rather than a flat bullet wall (#54). Nitpicks go in their own
  * collapsed section.
  */
-function findingsSection(findings: Finding[]): string {
+function findingsSection(findings: Finding[], providerCount?: number): string {
   const blockers = findings.filter(isBlockingFinding);
   if (blockers.length === 0) {
     return "### Findings\n_No blocking issues found._";
   }
-  const rows = blockers.map(
-    (finding) =>
-      `| ${SEVERITY_BADGE[finding.severity]} ${finding.severity} | ${tableCellSafe(
-        findingLocation(finding)
-      )} | **${escapeMarkdownParagraphFlat(finding.title)}** |`
-  );
+  const rows = blockers.map((finding) => {
+    // The title is already paragraph-escaped (pipes included) and the badge has
+    // no pipes/newlines, so the cell is table-safe without re-escaping.
+    const title = withConsensus(`**${escapeMarkdownParagraphFlat(finding.title)}**`, finding, providerCount);
+    return `| ${SEVERITY_BADGE[finding.severity]} ${finding.severity} | ${tableCellSafe(
+      findingLocation(finding)
+    )} | ${title} |`;
+  });
   return ["### Findings", "", "| Severity | Location | Finding |", "| :-- | :-- | :-- |", ...rows].join("\n");
 }
 
@@ -401,7 +428,7 @@ function findingsSection(findings: Finding[]): string {
  * disclosure so polish doesn't clutter the review or the diff (#58). Empty when
  * there are no nitpicks.
  */
-function nitpickSection(findings: Finding[]): string {
+function nitpickSection(findings: Finding[], providerCount?: number): string {
   const nits = findings.filter((finding) => !isBlockingFinding(finding));
   if (nits.length === 0) {
     return "";
@@ -410,7 +437,7 @@ function nitpickSection(findings: Finding[]): string {
     "<details>",
     `<summary>🧹 Nitpicks (${nits.length})</summary>`,
     "",
-    nits.map(nitpickDetail).join("\n\n"),
+    nits.map((finding) => nitpickDetail(finding, providerCount)).join("\n\n"),
     "",
     "</details>"
   ].join("\n");
@@ -534,9 +561,9 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       summarySection(input.summary),
       impactAlert(impact, effort, counts),
       // Findings lead; the file inventory is secondary and stays collapsed below.
-      findingsSection(input.findings),
+      findingsSection(input.findings, input.providerCount),
       changedFilesSection(input.files, lineDeltas),
-      nitpickSection(input.findings),
+      nitpickSection(input.findings, input.providerCount),
       notesSection(input.notes)
     );
   }

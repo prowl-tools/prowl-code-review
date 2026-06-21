@@ -35,14 +35,22 @@ export const FindingSchema = z.object({
   /** Optional committable fix. */
   suggestion: z.string().optional(),
   /** Model confidence 0–1; defaults to 0.5 when the model omits it. */
-  confidence: z.number().min(0).max(1).default(0.5)
+  confidence: z.number().min(0).max(1).default(0.5),
+  /**
+   * Provider names that raised this finding (#53 ensemble). Set by the ensemble
+   * orchestrator after pooling, not emitted by the model; length ≥ 2 means
+   * cross-provider consensus. Absent on single-provider reviews.
+   */
+  sources: z.array(z.string().min(1)).optional()
 });
 
 export type Finding = z.infer<typeof FindingSchema>;
 
+const ModelFindingSchema = FindingSchema.omit({ sources: true });
+
 /** Return true when a parsed candidate array has at least one valid finding. */
 function hasValidFindingEntry(value: unknown[]): boolean {
-  return value.some((entry) => FindingSchema.safeParse(entry).success);
+  return value.some((entry) => ModelFindingSchema.safeParse(entry).success);
 }
 
 /** Cheaply reject bracketed prose before paying JSON.parse/schema-validation cost. */
@@ -104,7 +112,7 @@ export function parseFindingsResult(text: string): ParsedFindings {
   const findings: Finding[] = [];
   let invalid = 0;
   for (const entry of candidate.value) {
-    const result = FindingSchema.safeParse(entry);
+    const result = ModelFindingSchema.safeParse(entry);
     if (result.success) {
       findings.push(result.data);
     } else {

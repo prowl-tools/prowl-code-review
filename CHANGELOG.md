@@ -5,6 +5,21 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Multi-provider ensemble review (backlog #53): opt-in (`ensemble.enabled`, default off) review of the same
+  changes across multiple providers at once, with findings consolidated cross-provider — a BYOK-only edge.
+  Each provider's key is read from its own env var (`PROWL_AI_KEY_ANTHROPIC` / `_OPENAI` / `_GEMINI`; the
+  primary also falls back to `PROWL_AI_KEY`), listed under `ensemble.providers` in `.prowl-review.yml`. The
+  cross-file context (#4) and linter/SAST grounding (#16) run once and are shared; each provider then runs
+  the full multi-pass review (#6/#8) in parallel (`runEnsembleReview`), error-isolated so one provider
+  failing degrades gracefully (reported, never silent). A cross-provider judge (`judgeEnsembleFindings`)
+  dedupes with **provenance** (`Finding.sources`) and **boosts confidence on agreement** — applied before
+  the confidence floor, so consensus can rescue a finding each provider scored just under threshold
+  (complements the false-positive pass, #8). Consolidated findings carry a **🤝 N/M consensus badge** in the
+  walkthrough table/nitpicks and a "flagged by N of M providers (…)" note on inline comments; single-provider
+  findings are kept and marked. Cost is ~N× a single review — the per-PR budget (#18) is split evenly across
+  providers, risk-tiering (#31) still applies, and the multiplier is documented. New modules
+  `src/providers/ensemble.ts` (`resolveEnsembleConfigs`) and `src/review/ensemble.ts`; exported from the
+  library surface.
 - Draft-PR & auto-review controls (backlog #28): prowl-review now **skips draft pull requests by default**,
   reviewing automatically once the PR is marked ready for review (the `ready_for_review` event) — or
   immediately if you comment `@prowl-review review` (an explicit request always runs, even on a draft). Two

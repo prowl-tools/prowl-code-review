@@ -7,12 +7,12 @@ branding:
 
 inputs:
   ai-key:
-    description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret."
-    required: true
-  ai-provider:
-    description: "LLM provider for the Action: anthropic | openai | gemini. Defaults to anthropic; set this input to change providers."
+    description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret unless using provider-specific PROWL_AI_KEY_<PROVIDER> env vars."
     required: false
-    default: "anthropic"
+  ai-provider:
+    description: "Optional LLM provider override: anthropic | openai | gemini. Leave blank for the CLI default or ensemble bootstrap."
+    required: false
+    default: ""
   ai-model:
     description: "Optional model override (per-provider default otherwise)."
     required: false

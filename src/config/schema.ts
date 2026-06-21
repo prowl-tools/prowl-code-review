@@ -13,10 +13,10 @@ import { PROVIDER_NAMES } from "../providers/index.js";
  * the review command). Workspace execution trust is intentionally not accepted
  * from repo config; use the CLI/env/action input for trusted checkouts.
  *
- * Secrets never live here: the provider API key always comes from `PROWL_AI_KEY`
- * in the environment, never the repo. Only the non-secret provider/model
- * *selection* is configurable. A config `model` must be paired with `provider`
- * so provider-specific model names are never guessed.
+ * Secrets never live here: provider API keys always come from `PROWL_AI_KEY` or
+ * `PROWL_AI_KEY_<PROVIDER>` in the environment, never the repo. Only the
+ * non-secret provider/model *selection* is configurable. A config `model` must
+ * be paired with `provider` so provider-specific model names are never guessed.
  *
  * The schema is `.strict()` at every level so a typo (e.g. `minSeverty`) is a
  * loud validation error rather than a silently-ignored key.
@@ -197,9 +197,35 @@ const modelPriceSchema = z
   .strict();
 
 /** Full `.prowl-review.yml` schema. */
+/** One provider in the ensemble (#53); its key comes from the env, never config. */
+const ensembleProviderSchema = z
+  .object({
+    /** Provider to run in the ensemble. */
+    provider: z.enum(PROVIDER_NAMES as [string, ...string[]]),
+    /** Model override for this provider; the provider's default is used when omitted. */
+    model: z.string().min(1).optional()
+  })
+  .strict();
+
+/**
+ * Multi-provider ensemble review (#53). Opt-in, default off. Each provider's key
+ * is read from `PROWL_AI_KEY_<PROVIDER>` (the primary also falls back to
+ * `PROWL_AI_KEY`; scoped keys win when both are set); a provider with no key is
+ * skipped with a note. With fewer than two usable providers the review runs as a
+ * normal single-provider review.
+ */
+const ensembleSchema = z
+  .object({
+    /** Run the same changes through multiple providers and pool findings. Default false. */
+    enabled: z.boolean().optional(),
+    /** Providers to run; order is cosmetic. At least one entry when enabled. */
+    providers: z.array(ensembleProviderSchema).optional()
+  })
+  .strict();
+
 export const configSchema = z
   .object({
-    /** Provider selection (the API key always comes from `PROWL_AI_KEY`). */
+    /** Provider selection (API keys always come from environment variables). */
     provider: z.enum(PROVIDER_NAMES as [string, ...string[]]).optional(),
     /** Model override for the configured provider; the provider's default model is used when omitted. */
     model: z.string().min(1).optional(),
@@ -225,6 +251,8 @@ export const configSchema = z
     checkRun: checkRunSchema.optional(),
     /** Approval rubric + break-glass override (#52); opt-in. */
     approval: approvalSchema.optional(),
+    /** Multi-provider ensemble review (#53); opt-in, default off. */
+    ensemble: ensembleSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

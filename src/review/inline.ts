@@ -328,6 +328,22 @@ function hasMultiLineSuggestion(finding: Finding): boolean {
 export interface FindingCommentOptions {
   /** Append the "Resolve with an AI agent" prompt block (#57). Default true. */
   agentPrompt?: boolean;
+  /** Ensemble size (#53); ≥2 enables the cross-provider consensus note. */
+  providerCount?: number;
+}
+
+/**
+ * A cross-provider consensus note for an ensemble finding (#53), or "" when the
+ * finding wasn't agreed on by ≥2 of the ≥2 ensemble providers. Names the
+ * providers so the reader can weigh the agreement.
+ */
+function consensusNote(finding: Finding, providerCount?: number): string {
+  const sources = finding.sources ?? [];
+  if (!providerCount || providerCount < 2 || sources.length < 2) {
+    return "";
+  }
+  const names = sources.map((name) => escapeMarkdownText(name)).join(", ");
+  return `🤝 _Cross-provider consensus: flagged by ${sources.length} of ${providerCount} providers (${names})._`;
 }
 
 interface FindingCommentRenderOptions extends FindingCommentOptions {
@@ -336,9 +352,11 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
 }
 
 /** Format the visible finding body without the optional agent prompt. */
-function formatFindingCommentBody(finding: Finding): string {
+function formatFindingCommentBody(finding: Finding, providerCount?: number): string {
+  const consensus = consensusNote(finding, providerCount);
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
+    ...(consensus ? ["", consensus] : []),
     "",
     escapeMarkdownParagraphBlock(finding.body)
   ];
@@ -369,7 +387,7 @@ function appendAgentPrompt(
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
 function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
-  return appendAgentPrompt(formatFindingCommentBody(finding), finding, options);
+  return appendAgentPrompt(formatFindingCommentBody(finding, options.providerCount), finding, options);
 }
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
@@ -406,7 +424,7 @@ function formatUnmappedFindings(
   let section = parts.join("\n");
   const visibleEntries = findings.map((finding) => {
     const heading = `### ${escapeMarkdownText(findingLocation(finding))}`;
-    const comment = formatFindingCommentBody(finding);
+    const comment = formatFindingCommentBody(finding, options.providerCount);
     return {
       heading,
       comment,
@@ -588,8 +606,13 @@ export function buildReviewPayload(input: {
   event?: ReviewEvent;
   agentPrompt?: boolean;
   maxInlineComments?: number;
+  /** Ensemble size (#53); ≥2 enables the cross-provider consensus note on inline comments. */
+  providerCount?: number;
 }): ReviewPayload {
-  const commentOptions: FindingCommentOptions = { agentPrompt: input.agentPrompt };
+  const commentOptions: FindingCommentOptions = {
+    agentPrompt: input.agentPrompt,
+    providerCount: input.providerCount
+  };
   const cap = input.maxInlineComments ?? DEFAULT_MAX_INLINE_COMMENTS;
   const blocking = input.findings.filter(isBlockingFinding);
   const { comments, unmapped, overflow } = buildInlineComments(blocking, input.diff, {

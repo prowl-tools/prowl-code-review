@@ -62,6 +62,13 @@ describe("parseFindings", () => {
     expect(findings).toHaveLength(1);
   });
 
+  it("strips model-supplied ensemble provenance metadata", () => {
+    const findings = parseFindings(JSON.stringify([{ ...VALID, sources: ["anthropic", "openai"] }]));
+
+    expect(findings).toHaveLength(1);
+    expect(findings[0].sources).toBeUndefined();
+  });
+
   it("returns [] for non-array or unparseable output", () => {
     expect(parseFindings("no json here")).toEqual([]);
     expect(parseFindings('{"file":"a"}')).toEqual([]);

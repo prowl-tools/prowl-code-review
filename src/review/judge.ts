@@ -22,6 +22,9 @@ export const DEFAULT_MIN_CONFIDENCE = 0.5;
 /** Default cap on the number of findings surfaced. */
 export const DEFAULT_MAX_FINDINGS = 25;
 
+/** Per-provider confidence bump for a cross-provider agreement (capped at 1). */
+const CONSENSUS_CONFIDENCE_STEP = 0.15;
+
 /** Pick the stronger of two duplicate findings (higher severity, then confidence). */
 function preferred(a: Finding, b: Finding): Finding {
   const severityDelta = SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity];
@@ -29,6 +32,26 @@ function preferred(a: Finding, b: Finding): Finding {
     return severityDelta < 0 ? a : b;
   }
   return b.confidence > a.confidence ? b : a;
+}
+
+/** Union two findings' provider provenance lists (#53), or undefined when neither has any. */
+function mergeSources(a: string[] | undefined, b: string[] | undefined): string[] | undefined {
+  if (!a && !b) {
+    return undefined;
+  }
+  return [...new Set([...(a ?? []), ...(b ?? [])])];
+}
+
+/**
+ * Boost a finding's confidence when multiple providers independently raised it
+ * (#53): cross-provider agreement is itself a verification signal (#8). A single
+ * provider (or none) leaves confidence unchanged.
+ */
+export function consensusConfidence(base: number, providerCount: number): number {
+  if (providerCount <= 1) {
+    return base;
+  }
+  return Math.min(1, base + CONSENSUS_CONFIDENCE_STEP * (providerCount - 1));
 }
 
 function lineKey(finding: Finding): string | null {
@@ -96,7 +119,7 @@ function dedupeBucket(finding: Finding, lintEntries: Map<string, LintDedupeEntry
  * special: if a specialist re-reports the same linter-backed line with another
  * category, collapse those together too.
  */
-export function dedupeFindings(findings: Finding[]): Finding[] {
+export function dedupeFindings(findings: Finding[], options: { mergeProvenance?: boolean } = {}): Finding[] {
   const lintEntries = new Map<string, LintDedupeEntry[]>();
   // Build lint matchers first so specialist findings dedupe regardless of order.
   for (const finding of findings) {
@@ -112,10 +135,34 @@ export function dedupeFindings(findings: Finding[]): Finding[] {
     lintEntries.set(loc, entries);
   }
   const byKey = new Map<string, Finding>();
+  const baseConfidenceByKey = new Map<string, number>();
   for (const finding of findings) {
     const key = dedupeBucket(finding, lintEntries);
     const existing = byKey.get(key);
-    byKey.set(key, existing ? preferred(existing, finding) : finding);
+    if (!existing) {
+      byKey.set(key, finding);
+      baseConfidenceByKey.set(key, finding.confidence);
+      continue;
+    }
+    // Cross-provider consolidation (#53): keep the strongest representative but
+    // union the provenance and boost confidence by how many providers agreed.
+    if (options.mergeProvenance) {
+      const existingBaseConfidence = baseConfidenceByKey.get(key) ?? existing.confidence;
+      const existingForPreference = { ...existing, confidence: existingBaseConfidence };
+      const winner = preferred(existingForPreference, finding);
+      const winnerBaseConfidence = winner === finding ? finding.confidence : existingBaseConfidence;
+      const sources = mergeSources(existing.sources, finding.sources);
+      baseConfidenceByKey.set(key, winnerBaseConfidence);
+      byKey.set(key, {
+        ...winner,
+        confidence: sources ? consensusConfidence(winnerBaseConfidence, sources.length) : winnerBaseConfidence,
+        ...(sources ? { sources } : {})
+      });
+    } else {
+      const winner = preferred(existing, finding);
+      baseConfidenceByKey.set(key, winner.confidence);
+      byKey.set(key, winner);
+    }
   }
   return [...byKey.values()];
 }
@@ -197,6 +244,38 @@ export function judgeFindings(findings: Finding[], options: JudgeOptions = {}): 
   const duplicatesRemoved = afterConfidence.length - deduped.length;
 
   const ranked = rankFindings(deduped);
+  const maxFindings = normalizeMaxFindings(options.maxFindings, ranked.length);
+  const capped = Math.max(0, ranked.length - maxFindings);
+
+  return {
+    findings: ranked.slice(0, maxFindings),
+    duplicatesRemoved,
+    belowThreshold,
+    belowConfidence,
+    capped
+  };
+}
+
+/**
+ * Cross-provider judge for the ensemble (#53). Pools findings already tagged with
+ * their source provider and consolidates them. Unlike {@link judgeFindings},
+ * dedupe-with-provenance runs **first** so a finding several providers agree on
+ * gets its consensus confidence boost *before* the confidence floor — agreement
+ * can rescue a finding each provider reported just under the threshold.
+ */
+export function judgeEnsembleFindings(findings: Finding[], options: JudgeOptions = {}): JudgeResult {
+  const deduped = dedupeFindings(findings, { mergeProvenance: true });
+  const duplicatesRemoved = findings.length - deduped.length;
+
+  const minSeverity = options.minSeverity ?? DEFAULT_MIN_SEVERITY;
+  const afterSeverity = filterBySeverity(deduped, minSeverity);
+  const belowThreshold = deduped.length - afterSeverity.length;
+
+  const minConfidence = options.minConfidence ?? DEFAULT_MIN_CONFIDENCE;
+  const afterConfidence = filterByConfidence(afterSeverity, minConfidence);
+  const belowConfidence = afterSeverity.length - afterConfidence.length;
+
+  const ranked = rankFindings(afterConfidence);
   const maxFindings = normalizeMaxFindings(options.maxFindings, ranked.length);
   const capped = Math.max(0, ranked.length - maxFindings);
 
