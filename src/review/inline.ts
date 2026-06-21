@@ -78,6 +78,8 @@ const SUMMARY_COMMENT_BODY_BUDGET = GITHUB_COMMENT_BODY_LIMIT - SUMMARY_STATE_MA
 const MIN_AGENT_PROMPT_BLOCK_CHARS = 512;
 const AGENT_PROMPT_TRUNCATION_NOTICE =
   "[truncated to keep the GitHub comment within the body size limit]";
+const PERSPECTIVE_TRUNCATION_NOTICE =
+  "_Perspective details truncated to keep this comment within GitHub's body size limit._";
 
 /**
  * Build commentable new-side line numbers per file, preserving the hunk each
@@ -354,20 +356,86 @@ function attributionLine(finding: Finding, providerCount?: number): string {
  * collapsed disclosure, so the PR shows both perspectives without cluttering the
  * top-line comment. "" unless ≥2 providers weighed in on this finding.
  */
-function perspectivesBlock(finding: Finding): string {
+interface RenderedPerspective {
+  provider: string;
+  severity: Severity;
+  confidence: number;
+  body: string;
+}
+
+function perspectiveEntry(perspective: RenderedPerspective, body: string): string {
+  const header = `**${escapeMarkdownText(perspective.provider)}** · ${perspective.severity} · ${Math.round(
+    perspective.confidence * 100
+  )}% confidence`;
+  return body ? `${header}\n\n${body}` : header;
+}
+
+function composePerspectivesBlock(entries: string[], truncated: boolean): string {
+  return [
+    "<details>",
+    `<summary>🔀 ${entries.length} model perspectives</summary>`,
+    "",
+    entries.join("\n\n"),
+    ...(truncated ? ["", PERSPECTIVE_TRUNCATION_NOTICE] : []),
+    "",
+    "</details>"
+  ].join("\n");
+}
+
+function truncatePerspectiveBody(body: string, maxChars: number): string {
+  if (body.length <= maxChars) {
+    return body;
+  }
+  if (maxChars <= 3) {
+    return "";
+  }
+  return `${body.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function perspectivesBlock(finding: Finding, maxChars?: number): string {
   const perspectives = finding.perspectives ?? [];
   if (perspectives.length < 2) {
     return "";
   }
-  const entries = perspectives.map((perspective) => {
-    const header = `**${escapeMarkdownText(perspective.provider)}** · ${perspective.severity} · ${Math.round(
-      perspective.confidence * 100
-    )}% confidence`;
-    return `${header}\n\n${escapeMarkdownParagraphBlock(perspective.body)}`;
+  const rendered = perspectives.map((perspective) => {
+    return {
+      provider: perspective.provider,
+      severity: perspective.severity,
+      confidence: perspective.confidence,
+      body: escapeMarkdownParagraphBlock(perspective.body)
+    };
   });
-  return ["<details>", `<summary>🔀 ${perspectives.length} model perspectives</summary>`, "", entries.join("\n\n"), "", "</details>"].join(
-    "\n"
+  const full = composePerspectivesBlock(
+    rendered.map((perspective) => perspectiveEntry(perspective, perspective.body)),
+    false
   );
+  if (maxChars === undefined || full.length <= maxChars) {
+    return full;
+  }
+
+  const headersOnly = composePerspectivesBlock(
+    rendered.map((perspective) => perspectiveEntry(perspective, "")),
+    true
+  );
+  if (headersOnly.length > maxChars) {
+    return "";
+  }
+
+  let perBodyBudget = Math.floor((maxChars - headersOnly.length) / rendered.length);
+  while (perBodyBudget > 0) {
+    const fitted = composePerspectivesBlock(
+      rendered.map((perspective) =>
+        perspectiveEntry(perspective, truncatePerspectiveBody(perspective.body, perBodyBudget))
+      ),
+      true
+    );
+    if (fitted.length <= maxChars) {
+      return fitted;
+    }
+    perBodyBudget -= Math.max(1, Math.ceil((fitted.length - maxChars) / rendered.length));
+  }
+
+  return headersOnly;
 }
 
 interface FindingCommentRenderOptions extends FindingCommentOptions {
@@ -376,22 +444,27 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
 }
 
 /** Format the visible finding body without the optional agent prompt. */
-function formatFindingCommentBody(finding: Finding, providerCount?: number): string {
+function formatFindingCommentBody(finding: Finding, providerCount?: number, maxBodyChars?: number): string {
   const attribution = attributionLine(finding, providerCount);
-  const perspectives = perspectivesBlock(finding);
-  const parts = [
+  const prefixParts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
     ...(attribution ? ["", attribution] : []),
     "",
     escapeMarkdownParagraphBlock(finding.body)
   ];
+  const prefix = prefixParts.join("\n");
+  const suffix = hasSuggestion(finding) ? `\n\n${suggestionBlock(finding.suggestion ?? "")}` : "";
+  const maxPerspectiveChars =
+    maxBodyChars === undefined ? undefined : maxBodyChars - prefix.length - suffix.length - 2;
+  const perspectives =
+    maxPerspectiveChars === undefined || maxPerspectiveChars > 0
+      ? perspectivesBlock(finding, maxPerspectiveChars)
+      : "";
+
   if (perspectives) {
-    parts.push("", perspectives);
+    return `${prefix}\n\n${perspectives}${suffix}`;
   }
-  if (hasSuggestion(finding)) {
-    parts.push("", suggestionBlock(finding.suggestion ?? ""));
-  }
-  return parts.join("\n");
+  return `${prefix}${suffix}`;
 }
 
 /** Append a budgeted agent prompt to an already-rendered finding body. */
@@ -415,7 +488,11 @@ function appendAgentPrompt(
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
 function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
-  return appendAgentPrompt(formatFindingCommentBody(finding, options.providerCount), finding, options);
+  return appendAgentPrompt(
+    formatFindingCommentBody(finding, options.providerCount, options.maxBodyChars),
+    finding,
+    options
+  );
 }
 
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
@@ -472,7 +549,12 @@ function formatUnmappedFindings(
     const commentPrefixLength = visibleEntry.heading.length + 2;
     const existingLength = initialLength + section.length + separator.length;
     const remainingForEntry = SUMMARY_COMMENT_BODY_BUDGET - existingLength - remainingVisibleLength;
-    const comment = appendAgentPrompt(visibleEntry.comment, finding, {
+    const visibleComment = formatFindingCommentBody(
+      finding,
+      options.providerCount,
+      remainingForEntry - commentPrefixLength
+    );
+    const comment = appendAgentPrompt(visibleComment, finding, {
       ...options,
       maxBodyChars: remainingForEntry - commentPrefixLength
     });
