@@ -54,6 +54,14 @@ export class LocalDiffError extends Error {
   }
 }
 
+const LOCAL_REVIEW_INPUT_PATHS = [
+  "REVIEW_GUIDELINES.md",
+  "CLAUDE.md",
+  "LEARNED_PATTERNS.md",
+  ".prowl-review.yml",
+  ".prowl-review.yaml"
+];
+
 /** Default git runner: `execFile("git", …)` confined to `cwd`, bounded output. */
 export function defaultGitExec(cwd: string): GitExec {
   return (args: string[]) =>
@@ -115,6 +123,22 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
   if (status) {
     throw new LocalDiffError(
       `--head ${head} requires a clean worktree; commit or stash local changes, or omit --head to review the working tree.`
+    );
+  }
+
+  const ignoredInputs = (
+    await exec([
+      "status",
+      "--porcelain",
+      "--ignored=matching",
+      "--untracked-files=all",
+      "--",
+      ...LOCAL_REVIEW_INPUT_PATHS
+    ])
+  ).trim();
+  if (ignoredInputs) {
+    throw new LocalDiffError(
+      `--head ${head} requires local review input files to match the checked-out HEAD; remove ignored local review inputs or omit --head to review the working tree.`
     );
   }
 }

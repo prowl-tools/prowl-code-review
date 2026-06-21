@@ -224,6 +224,18 @@ export async function runLocalReview(
     throw error;
   }
 
+  const base = options.base?.trim() || "main";
+  const head = options.head?.trim() || undefined;
+  try {
+    await resolveHead({ head, cwd: root });
+  } catch (error) {
+    if (error instanceof LocalDiffError) {
+      err(`prowl-review: ${error.message}`);
+      return { findings: [], notes: [error.message], failed: true };
+    }
+    throw error;
+  }
+
   const { config } = loadConfig(resolveConfigLoadOptions(options, root, env));
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
   const failOn = parseMinSeverity(options.failOn);
@@ -245,11 +257,8 @@ export async function runLocalReview(
   );
   const trustWorkspace = resolved.trustWorkspace === true;
 
-  const base = options.base?.trim() || "main";
-  const head = options.head?.trim() || undefined;
   let rawDiff: string;
   try {
-    await resolveHead({ head, cwd: root });
     rawDiff = await resolveDiff({ base, head, cwd: root });
   } catch (error) {
     if (error instanceof LocalDiffError) {
