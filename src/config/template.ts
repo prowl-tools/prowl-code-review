@@ -50,6 +50,22 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   - "*.snap"
 #   - "src/generated/**"
 
+# --- Multi-provider ensemble --------------------------------------------------
+# Review the same changes with more than one provider at once and pool the
+# findings (#53). Opt-in, default off. Each provider's key comes from its own env
+# var: PROWL_AI_KEY_ANTHROPIC / PROWL_AI_KEY_OPENAI / PROWL_AI_KEY_GEMINI (the
+# provider matching your primary also falls back to PROWL_AI_KEY). A provider
+# with no key is skipped; with fewer than two keys it runs as a normal review.
+# Findings agreed on by multiple providers get a confidence boost + a 🤝 badge.
+# Cost is ~N× a single-provider review (the per-PR budget above is split across
+# providers); cross-file context + linters run once and are shared.
+# ensemble:
+#   enabled: true
+#   providers:
+#     - provider: anthropic
+#     - provider: openai
+#       # model: gpt-5.2
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info
