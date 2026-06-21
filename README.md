@@ -37,14 +37,16 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts and fork PRs (forks don't receive provider secrets).
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    # Forks don't receive provider secrets. Draft handling happens inside
+    # prowl-review so review.reviewDrafts can opt into draft auto-reviews.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: prowl-tools/prowl-code-review@v1
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
+          # config-path: .prowl-review.yml # trusted repo config for Action runs
           # ai-provider: anthropic   # anthropic | openai | gemini (default anthropic)
           # ai-model: claude-...     # optional per-provider model override
 ```
@@ -67,6 +69,12 @@ review:
   reviewDrafts: true   # also auto-review drafts (default false)
   auto: false          # on-demand only: review just when asked with @prowl-review review (default true)
 ```
+
+The Action ignores repo config unless a trusted `config-path` input is set. To
+use these keys in CI, create `.prowl-review.yml` and pass `config-path:
+.prowl-review.yml` in the Action step. Keep draft handling out of the job-level
+`if`; a `draft == false` guard prevents the Action from seeing drafts, so
+`review.reviewDrafts: true` cannot take effect.
 
 When an auto review is skipped (paused, drafts, or `auto: false`) and the
 merge-gate check is enabled, prowl-review posts a neutral check run so a Required

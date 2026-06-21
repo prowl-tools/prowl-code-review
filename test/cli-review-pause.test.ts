@@ -160,6 +160,27 @@ describe("runReviewWithOptions pause gate", () => {
       rmSync(tempDir, { recursive: true, force: true });
     }
   });
+
+  it("does not fail the skip when neutral check-run submission fails", async () => {
+    isolateWorkspace();
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    mocks.submitCheckRun.mockRejectedValue(new Error("checks API unavailable"));
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+    const config = writeConfig("checkRun:\n  enabled: true\n");
+
+    await expect(
+      runReviewWithOptions(
+        { pr: "7", repo: "prowl-tools/prowl-code-review", config },
+        { respectPause: true }
+      )
+    ).resolves.toBeUndefined();
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).toHaveBeenCalledTimes(1);
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("auto-review paused"));
+    expect(logSpy).not.toHaveBeenCalledWith(expect.stringContaining("merge-gate check run"));
+  });
 });
 
 describe("runReviewWithOptions draft + auto controls (#28)", () => {
