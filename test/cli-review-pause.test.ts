@@ -201,9 +201,10 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
     writeEvent({ pull_request: { number: 7, draft: true } });
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
-    const config = writeConfig("review:\n  reviewDrafts: true\n");
+    const config = writeConfig("review:\n  reviewDrafts: true\ncheckRun:\n  enabled: true\n");
 
     await runReviewWithOptions(
       { pr: "7", repo: "prowl-tools/prowl-code-review", config },
@@ -211,6 +212,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     );
 
     expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.submitCheckRun).not.toHaveBeenCalled();
   });
 
   it("reviews a ready (non-draft) PR on the auto path", async () => {
@@ -218,25 +220,37 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
     writeEvent({ pull_request: { number: 7, draft: false } });
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-ready";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
+    const config = writeConfig("checkRun:\n  enabled: true\n");
 
-    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+    await runReviewWithOptions(
+      { pr: "7", repo: "prowl-tools/prowl-code-review", config },
+      { respectPause: true }
+    );
 
     expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.submitCheckRun).not.toHaveBeenCalled();
   });
 
   it("reviews a draft when invoked on demand (respectPause cleared)", async () => {
     isolateWorkspace();
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
     writeEvent({ pull_request: { number: 7, draft: true } });
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-demand";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
+    const config = writeConfig("checkRun:\n  enabled: true\n");
 
-    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: false });
+    await runReviewWithOptions(
+      { pr: "7", repo: "prowl-tools/prowl-code-review", config },
+      { respectPause: false }
+    );
 
     expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
     expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
+    expect(mocks.submitCheckRun).not.toHaveBeenCalled();
   });
 
   it("skips on the auto path when review.auto is false (on-demand only)", async () => {
