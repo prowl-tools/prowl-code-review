@@ -41,6 +41,14 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ pricing: { m: { input: -1, output: 2 } } })).toThrow(); // negative
   });
 
+  it("accepts an ensemble block and rejects malformed entries (#53)", () => {
+    const ensemble = { enabled: true, providers: [{ provider: "anthropic" }, { provider: "openai", model: "gpt-x" }] };
+    expect(configSchema.parse({ ensemble })).toEqual({ ensemble });
+    expect(() => configSchema.parse({ ensemble: { providers: [{ provider: "grok" }] } })).toThrow(); // bad provider
+    expect(() => configSchema.parse({ ensemble: { providers: [{ model: "x" }] } })).toThrow(); // provider required
+    expect(() => configSchema.parse({ ensemble: { nope: true } })).toThrow(); // strict
+  });
+
   it("accepts the auto / reviewDrafts toggles and rejects non-booleans (#28)", () => {
     expect(configSchema.parse({ review: { auto: false } })).toEqual({ review: { auto: false } });
     expect(configSchema.parse({ review: { reviewDrafts: true } })).toEqual({ review: { reviewDrafts: true } });
