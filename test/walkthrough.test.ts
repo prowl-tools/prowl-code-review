@@ -5,6 +5,7 @@ import {
   severityCounts,
   deriveImpact,
   deriveEffort,
+  consensusBadge,
   REVIEW_MARKER
 } from "../src/review/walkthrough.js";
 import type { DiffFile } from "../src/review/diff-types.js";
@@ -404,5 +405,35 @@ describe("buildWalkthrough", () => {
       expect(reviewCommentState({ findings: [], files, skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }] })).toBe("clean");
       expect(reviewCommentState({ findings: [], files })).toBe("clean");
     });
+  });
+});
+
+describe("consensusBadge (#53)", () => {
+  it("renders 🤝 N/M only when ≥2 of ≥2 providers agree", () => {
+    expect(consensusBadge(makeFinding("major", { sources: ["anthropic", "openai"] }), 2)).toBe("🤝 2/2");
+    expect(consensusBadge(makeFinding("major", { sources: ["anthropic"] }), 2)).toBe(""); // lone source
+    expect(consensusBadge(makeFinding("major", { sources: ["anthropic", "openai"] }), 1)).toBe(""); // not an ensemble
+    expect(consensusBadge(makeFinding("major"), 3)).toBe(""); // no provenance
+  });
+});
+
+describe("buildWalkthrough consensus badges (#53)", () => {
+  const files = [makeFile("src/a.ts", 10, 0)];
+
+  it("adds a consensus badge to an agreed blocking finding in the findings table", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("major", { title: "Race condition", sources: ["anthropic", "openai", "gemini"] })],
+      files,
+      providerCount: 3
+    });
+    expect(md).toContain("🤝 3/3");
+  });
+
+  it("omits the badge without an ensemble providerCount", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("major", { sources: ["anthropic", "openai"] })],
+      files
+    });
+    expect(md).not.toContain("🤝");
   });
 });

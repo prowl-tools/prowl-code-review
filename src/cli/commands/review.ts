@@ -11,12 +11,29 @@ import {
   type ReviewPullRequestOptions,
   type ReviewPullRequestResult
 } from "../../pipeline.js";
-import { resolveProviderConfig, type ProviderConfig } from "../../providers/index.js";
+import {
+  resolveProviderConfig,
+  resolveEnsembleConfigs,
+  isEnsembleActive,
+  providerKeyEnvVar,
+  type ProviderConfig,
+  type ProviderDefaults,
+  type ProviderName,
+  type TokenUsage
+} from "../../providers/index.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
 import { resolveSpecialists } from "../../review/specialists.js";
-import { estimateCost, formatCostLine, resolveTokenBudget, type PriceOverrides } from "../../cost/pricing.js";
+import {
+  estimateCost,
+  formatCostLine,
+  formatUsd,
+  resolveTokenBudgetForTargets,
+  totalTokens,
+  type CostEstimate,
+  type PriceOverrides
+} from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 import { runLocalReview } from "./review-local.js";
 
@@ -147,6 +164,38 @@ export function resolveGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env)
 export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.PROWL_TRUST_WORKSPACE?.trim().toLowerCase();
   return value === "true" || value === "1" || value === "yes";
+}
+
+function hasProviderScopedKey(provider: ProviderName, env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env[providerKeyEnvVar(provider)]?.trim());
+}
+
+/**
+ * Resolve non-secret provider/model defaults before key validation.
+ *
+ * For ensemble-only configs, use the first listed provider that already has a
+ * provider-scoped key. The generic PROWL_AI_KEY applies only after a primary
+ * provider is selected, so it must not make every provider look keyed.
+ */
+export function resolveProviderDefaults(
+  config: ProwlReviewConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ProviderDefaults {
+  if (config.provider) {
+    return { provider: config.provider, model: config.model };
+  }
+  if (env.PROWL_AI_PROVIDER?.trim()) {
+    return {};
+  }
+
+  const providers = config.ensemble?.enabled ? (config.ensemble.providers ?? []) : [];
+  const selected =
+    providers.find((provider) => hasProviderScopedKey(provider.provider as ProviderName, env)) ??
+    (env.PROWL_AI_KEY?.trim() ? undefined : providers[0]);
+  if (!selected) {
+    return {};
+  }
+  return { provider: selected.provider, model: selected.model };
 }
 
 /** Detect fork PR events where repo-local tooling must not be trusted. */
@@ -429,6 +478,86 @@ interface ReportReviewCommandResultOptions {
   publishFailed?: boolean;
 }
 
+function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = (a.cacheWriteInputTokens ?? 0) + (b.cacheWriteInputTokens ?? 0);
+  return {
+    inputTokens: a.inputTokens + b.inputTokens,
+    outputTokens: a.outputTokens + b.outputTokens,
+    cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
+  };
+}
+
+function subtractUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
+  const cacheWriteInputTokens = Math.max(0, (a.cacheWriteInputTokens ?? 0) - (b.cacheWriteInputTokens ?? 0));
+  return {
+    inputTokens: Math.max(0, a.inputTokens - b.inputTokens),
+    outputTokens: Math.max(0, a.outputTokens - b.outputTokens),
+    cachedInputTokens: Math.max(0, a.cachedInputTokens - b.cachedInputTokens),
+    ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
+  };
+}
+
+function costEstimatesForResult(
+  result: ReviewPullRequestResult,
+  options: ReportReviewCommandResultOptions
+): CostEstimate[] {
+  const pricing = options.pricing ?? {};
+  const providerUsages = result.ensemble?.providers.filter((provider) => provider.ok && provider.usage);
+  if (!providerUsages || providerUsages.length === 0) {
+    return [estimateCost(result.usage, options.providerConfig.provider, options.providerConfig.model, pricing)];
+  }
+
+  const estimates = providerUsages.map((provider) =>
+    estimateCost(provider.usage!, provider.provider, provider.model, pricing)
+  );
+  const providerUsage = providerUsages.reduce(
+    (usage, provider) => addUsage(usage, provider.usage!),
+    { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 } satisfies TokenUsage
+  );
+  const nonProviderUsage = subtractUsage(result.usage, providerUsage);
+  if (totalTokens(nonProviderUsage) > 0) {
+    estimates.unshift(
+      estimateCost(nonProviderUsage, options.providerConfig.provider, options.providerConfig.model, pricing)
+    );
+  }
+  return estimates;
+}
+
+function formatAggregateCostLine(estimates: CostEstimate[]): string {
+  if (estimates.length === 1) {
+    return formatCostLine(estimates[0]);
+  }
+  const usage = estimates.reduce(
+    (sum, estimate) => ({
+      inputTokens: sum.inputTokens + estimate.inputTokens,
+      outputTokens: sum.outputTokens + estimate.outputTokens,
+      cachedInputTokens: sum.cachedInputTokens + estimate.cachedInputTokens,
+      cacheWriteInputTokens: sum.cacheWriteInputTokens + estimate.cacheWriteInputTokens
+    }),
+    { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0 }
+  );
+  const usd = estimates.every((estimate) => estimate.usd !== null)
+    ? estimates.reduce((sum, estimate) => sum + estimate.usd!, 0)
+    : null;
+  const cost = usd === null ? "n/a (set pricing in config for one or more models)" : `~${formatUsd(usd)}`;
+  const cacheWrite =
+    usage.cacheWriteInputTokens > 0 ? ` / cache write ${usage.cacheWriteInputTokens.toLocaleString()}` : "";
+  const tokens =
+    `in ${usage.inputTokens.toLocaleString()} / out ${usage.outputTokens.toLocaleString()} / ` +
+    `cached ${usage.cachedInputTokens.toLocaleString()}${cacheWrite} tok`;
+  return `${cost} · ensemble ${estimates.length} cost segment(s) · ${tokens} [estimated]`;
+}
+
+function formatSummaryCostLines(estimates: CostEstimate[], tierSuffix: string): string {
+  if (estimates.length === 1) {
+    return `- ${formatCostLine(estimates[0])}${tierSuffix}\n`;
+  }
+  const lines = [`- ${formatAggregateCostLine(estimates)}${tierSuffix}`];
+  lines.push(...estimates.map((estimate) => `  - ${formatCostLine(estimate)}`));
+  return `${lines.join("\n")}\n`;
+}
+
 export function reportReviewCommandResult(
   result: ReviewPullRequestResult,
   options: ReportReviewCommandResultOptions
@@ -450,6 +579,12 @@ export function reportReviewCommandResult(
   );
   if (result.checkRunConclusion) {
     console.log(`prowl-review: merge-gate check run → ${result.checkRunConclusion}`);
+  }
+  if (result.ensemble) {
+    const summary = result.ensemble.providers
+      .map((p) => `${p.provider}${p.ok ? "" : " (failed)"}`)
+      .join(", ");
+    console.log(`prowl-review: ensemble → ${summary}`);
   }
   if (result.approval?.enabled) {
     const verdict = result.approval.event.toLowerCase().replace("_", " ");
@@ -480,21 +615,16 @@ export function reportReviewCommandResult(
 
   // Per-review cost transparency (#36): emit to logs + the Action job summary
   // (never the PR comment), and append to the local usage log for `costs`.
-  const cost = estimateCost(
-    result.usage,
-    options.providerConfig.provider,
-    options.providerConfig.model,
-    options.pricing ?? {}
-  );
+  const costs = costEstimatesForResult(result, options);
   // The chosen risk tier (#31) is logged alongside the cost so a run's spend is
   // attributable to its orchestration tier.
   const tierSuffix = result.riskTier ? ` · risk tier: ${result.riskTier}` : "";
-  console.log(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
+  console.log(`prowl-review cost: ${formatAggregateCostLine(costs)}${tierSuffix}`);
 
   const summaryPath = env.GITHUB_STEP_SUMMARY;
   if (summaryPath) {
     try {
-      appendFileSync(summaryPath, `### prowl-review cost\n\n- ${formatCostLine(cost)}${tierSuffix}\n`);
+      appendFileSync(summaryPath, `### prowl-review cost\n\n${formatSummaryCostLines(costs, tierSuffix)}`);
     } catch {
       // non-fatal: job summary unavailable
     }
@@ -503,15 +633,18 @@ export function reportReviewCommandResult(
   const usageLogPath = resolveUsageLogPath(options.root, env);
   if (usageLogPath) {
     try {
-      appendUsageRecord(
-        usageLogPath,
-        toUsageRecord(cost, {
-          ts: (options.now?.() ?? new Date()).toISOString(),
-          repo: `${options.owner}/${options.repo}`,
-          pr: options.pullNumber
-        }),
-        { workspace: options.root }
-      );
+      const ts = (options.now?.() ?? new Date()).toISOString();
+      for (const cost of costs) {
+        appendUsageRecord(
+          usageLogPath,
+          toUsageRecord(cost, {
+            ts,
+            repo: `${options.owner}/${options.repo}`,
+            pr: options.pullNumber
+          }),
+          { workspace: options.root }
+        );
+      }
     } catch {
       // non-fatal: usage log unavailable
     }
@@ -690,17 +823,37 @@ export async function runReviewWithOptions(
   // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
-  const providerConfig = resolveProviderConfig(process.env, {
-    provider: config.provider,
-    model: config.model
-  });
+  const providerConfig = resolveProviderConfig(process.env, resolveProviderDefaults(config, process.env));
   const resolved = resolveReviewOptions(options, config);
 
+  // Multi-provider ensemble (#53): opt-in. Resolve per-provider keys from the env
+  // and run the review across every provider that has one; <2 → normal review.
+  let ensemble: { configs: ProviderConfig[] } | undefined;
+  if (config.ensemble?.enabled) {
+    const resolvedEnsemble = resolveEnsembleConfigs({
+      primary: providerConfig,
+      providers: config.ensemble.providers?.map((entry) => ({
+        provider: entry.provider as ProviderName,
+        model: entry.model
+      })),
+      env: process.env
+    });
+    for (const note of resolvedEnsemble.notes) {
+      console.warn(`prowl-review: ${note}`);
+    }
+    if (isEnsembleActive(resolvedEnsemble.configs)) {
+      ensemble = { configs: resolvedEnsemble.configs };
+    } else {
+      console.warn(
+        "prowl-review: ensemble enabled but fewer than two providers have keys; running a single-provider review."
+      );
+    }
+  }
+
   // Resolve the per-PR budget (#18) into a token ceiling, pricing-aware for maxUsd.
-  const budget = resolveTokenBudget(
+  const budget = resolveTokenBudgetForTargets(
     config.budget,
-    providerConfig.provider,
-    providerConfig.model,
+    ensemble?.configs ?? [providerConfig],
     config.pricing ?? {}
   );
   for (const note of budget.notes) {
@@ -710,6 +863,7 @@ export async function runReviewWithOptions(
   const reviewOptions = {
     ...resolved,
     config: providerConfig,
+    ...(ensemble ? { ensemble } : {}),
     toolkitRoot: root,
     guidelines,
     learnedPatterns,

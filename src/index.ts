@@ -231,6 +231,7 @@ export {
   estimateCost,
   resolveModelPrice,
   resolveTokenBudget,
+  resolveTokenBudgetForTargets,
   totalTokens,
   formatUsd,
   formatCostLine,
@@ -238,7 +239,8 @@ export {
   type ModelPrice,
   type PriceOverrides,
   type CostEstimate,
-  type Budget
+  type Budget,
+  type BudgetTarget
 } from "./cost/pricing.js";
 export {
   appendUsageRecord,
@@ -293,6 +295,8 @@ export {
 } from "./review/findings.js";
 export {
   judgeFindings,
+  judgeEnsembleFindings,
+  consensusConfidence,
   dedupeFindings,
   rankFindings,
   filterBySeverity,
@@ -303,6 +307,12 @@ export {
   type JudgeOptions,
   type JudgeResult
 } from "./review/judge.js";
+export {
+  runEnsembleReview,
+  type EnsembleReviewResult,
+  type EnsembleProviderReport,
+  type RunEnsembleOptions
+} from "./review/ensemble.js";
 export {
   DEFAULT_SPECIALISTS,
   BUILTIN_SPECIALIST_KEYS,

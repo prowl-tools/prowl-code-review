@@ -5,6 +5,8 @@ import {
   filterBySeverity,
   filterByConfidence,
   judgeFindings,
+  judgeEnsembleFindings,
+  consensusConfidence,
   DEFAULT_MAX_FINDINGS
 } from "../src/review/judge.js";
 import type { Finding } from "../src/review/findings.js";
@@ -273,5 +275,89 @@ describe("judgeFindings high-signal defaults (#55)", () => {
     expect(second.findings.map((f) => f.title)).toEqual(["earlier"]);
     expect(first.capped).toBe(1);
     expect(second.capped).toBe(1);
+  });
+});
+
+describe("consensusConfidence (#53)", () => {
+  it("leaves a single provider's confidence unchanged", () => {
+    expect(consensusConfidence(0.5, 1)).toBe(0.5);
+    expect(consensusConfidence(0.5, 0)).toBe(0.5);
+  });
+
+  it("boosts confidence per additional agreeing provider, capped at 1", () => {
+    expect(consensusConfidence(0.5, 2)).toBeCloseTo(0.65);
+    expect(consensusConfidence(0.5, 3)).toBeCloseTo(0.8);
+    expect(consensusConfidence(0.95, 3)).toBe(1);
+  });
+});
+
+describe("dedupeFindings with provenance (#53)", () => {
+  it("unions sources and boosts confidence when providers agree", () => {
+    const result = dedupeFindings(
+      [
+        finding({ title: "weak", confidence: 0.5, sources: ["anthropic"] }),
+        finding({ title: "strong", severity: "major", confidence: 0.6, sources: ["openai"] })
+      ],
+      { mergeProvenance: true }
+    );
+    expect(result).toHaveLength(1);
+    expect(result[0].title).toBe("strong"); // stronger representative kept
+    expect(new Set(result[0].sources)).toEqual(new Set(["anthropic", "openai"]));
+    expect(result[0].confidence).toBeCloseTo(0.75); // 0.6 + 0.15
+  });
+
+  it("boosts confidence from the winning original score across more than two providers", () => {
+    const result = dedupeFindings(
+      [
+        finding({ title: "anthropic", confidence: 0.45, sources: ["anthropic"] }),
+        finding({ title: "openai", confidence: 0.45, sources: ["openai"] }),
+        finding({ title: "gemini", confidence: 0.45, sources: ["gemini"] })
+      ],
+      { mergeProvenance: true }
+    );
+
+    expect(result).toHaveLength(1);
+    expect(new Set(result[0].sources)).toEqual(new Set(["anthropic", "openai", "gemini"]));
+    expect(result[0].confidence).toBeCloseTo(0.75); // 0.45 + (0.15 * 2), not compounded from 0.6
+  });
+
+  it("does not merge provenance by default (single-provider path unchanged)", () => {
+    const result = dedupeFindings([
+      finding({ title: "a", confidence: 0.5, sources: ["anthropic"] }),
+      finding({ title: "b", severity: "major", confidence: 0.6, sources: ["openai"] })
+    ]);
+    expect(result).toHaveLength(1);
+    expect(result[0].confidence).toBe(0.6); // no boost
+  });
+});
+
+describe("judgeEnsembleFindings (#53)", () => {
+  it("rescues an agreed finding that each provider scored just under the floor", () => {
+    // Two providers each at 0.45 (below the 0.5 default floor); consensus lifts it.
+    const result = judgeEnsembleFindings([
+      finding({ severity: "major", confidence: 0.45, sources: ["anthropic"] }),
+      finding({ severity: "major", confidence: 0.45, sources: ["openai"] })
+    ]);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].confidence).toBeCloseTo(0.6);
+    expect(new Set(result.findings[0].sources)).toEqual(new Set(["anthropic", "openai"]));
+    expect(result.duplicatesRemoved).toBe(1);
+  });
+
+  it("still drops a lone low-confidence finding no one else raised", () => {
+    const result = judgeEnsembleFindings([
+      finding({ severity: "major", confidence: 0.3, sources: ["anthropic"] })
+    ]);
+    expect(result.findings).toHaveLength(0);
+    expect(result.belowConfidence).toBe(1);
+  });
+
+  it("keeps single-provider findings but marks their provenance", () => {
+    const result = judgeEnsembleFindings([
+      finding({ severity: "major", confidence: 0.9, sources: ["anthropic"] })
+    ]);
+    expect(result.findings).toHaveLength(1);
+    expect(result.findings[0].sources).toEqual(["anthropic"]);
+    expect(result.findings[0].confidence).toBe(0.9);
   });
 });

@@ -15,6 +15,15 @@ import {
 
 export * from "./types.js";
 export {
+  resolveEnsembleConfigs,
+  isEnsembleActive,
+  providerKeyEnvVar,
+  ALL_PROVIDER_NAMES,
+  type EnsembleProviderSpec,
+  type ResolveEnsembleParams,
+  type ResolveEnsembleResult
+} from "./ensemble.js";
+export {
   withRetry,
   retrying,
   isRetryableError,
@@ -56,7 +65,8 @@ export interface ProviderDefaults {
  * also ignores model-only defaults defensively for direct callers.
  * The API key is always read from the environment and never from config:
  * - `PROWL_AI_PROVIDER` — optional `anthropic` | `openai` | `gemini`
- * - `PROWL_AI_KEY`      — the provider API key (required)
+ * - `PROWL_AI_KEY`      — generic provider API key fallback
+ * - `PROWL_AI_KEY_<PROVIDER>` — provider-scoped key, preferred when set
  * - `PROWL_AI_MODEL`    — optional model override (per-provider default otherwise)
  *
  * `defaults` carries the `.prowl-review.yml` provider/model; `env` is injectable
@@ -75,10 +85,11 @@ export function resolveProviderConfig(
     );
   }
 
-  const apiKey = env.PROWL_AI_KEY;
+  const providerKeyEnvVar = `PROWL_AI_KEY_${raw.toUpperCase()}`;
+  const apiKey = env[providerKeyEnvVar]?.trim() || env.PROWL_AI_KEY?.trim();
   if (!apiKey) {
     throw new Error(
-      "PROWL_AI_KEY environment variable is required. Set it to your provider API key."
+      `PROWL_AI_KEY or ${providerKeyEnvVar} environment variable is required. Set it to your provider API key.`
     );
   }
 

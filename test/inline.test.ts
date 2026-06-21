@@ -139,6 +139,20 @@ describe("formatFindingComment", () => {
     expect(body).toContain("Body");
   });
 
+  it("adds a cross-provider consensus note for an agreed ensemble finding (#53)", () => {
+    const body = formatFindingComment(f({ sources: ["anthropic", "openai"] }), {
+      agentPrompt: false,
+      providerCount: 3
+    });
+    expect(body).toContain("🤝");
+    expect(body).toContain("flagged by 2 of 3 providers (anthropic, openai)");
+  });
+
+  it("omits the consensus note for a lone-provider or non-ensemble finding (#53)", () => {
+    expect(formatFindingComment(f({ sources: ["anthropic"] }), { providerCount: 2 })).not.toContain("🤝");
+    expect(formatFindingComment(f({ sources: ["anthropic", "openai"] }))).not.toContain("🤝");
+  });
+
   it("escapes markdown and neutralizes mentions in finding text", () => {
     // agentPrompt off so this isolates the rendered comment (the agent block keeps
     // raw text literal inside a code fence, where GitHub suppresses mentions/markdown).

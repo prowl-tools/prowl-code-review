@@ -50,6 +50,12 @@ import {
   type RetrievalLimits
 } from "./context/retrieval.js";
 import { runReview as defaultRunReview, type ReviewResult, type ReviewInput, type RunReviewOptions } from "./review/run-review.js";
+import {
+  runEnsembleReview as defaultRunEnsembleReview,
+  type EnsembleReviewResult,
+  type EnsembleProviderReport,
+  type RunEnsembleOptions
+} from "./review/ensemble.js";
 import { DEFAULT_SPECIALISTS, type Specialist } from "./review/specialists.js";
 import { summarizeLanguages } from "./review/language.js";
 import {
@@ -99,6 +105,8 @@ export interface PipelineDeps {
   ) => Promise<string>;
   gatherContext?: (params: GatherContextParams) => Promise<GatheredContext>;
   runReview?: (input: ReviewInput, options?: RunReviewOptions) => Promise<ReviewResult>;
+  /** Multi-provider ensemble review (#53); used when ≥2 provider configs are resolved. */
+  runEnsembleReview?: (input: ReviewInput, options: RunEnsembleOptions) => Promise<EnsembleReviewResult>;
   gatherGrounding?: (params: GatherGroundingParams) => Promise<GroundingResult>;
   submitReview?: (
     octokit: OctokitLike,
@@ -130,6 +138,13 @@ export interface PipelineDeps {
 
 export interface ReviewPullRequestOptions {
   config?: ProviderConfig;
+  /**
+   * Multi-provider ensemble review (#53). When `configs` has ≥2 entries the
+   * review step fans out across them (shared context + grounding, run once) and
+   * consolidates findings with cross-provider provenance. Resolved by the CLI
+   * from `ensemble` config + per-provider env keys. Omitted/single → normal review.
+   */
+  ensemble?: { configs: ProviderConfig[] };
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -251,6 +266,8 @@ export interface ReviewPullRequestResult {
   threads?: ThreadTidyResult;
   /** True when publishing was skipped because the PR head advanced past the reviewed SHA (#21). */
   headAdvanced?: boolean;
+  /** Multi-provider ensemble outcome (#53); undefined for a normal single-provider review. */
+  ensemble?: { providers: EnsembleProviderReport[] };
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -353,6 +370,30 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
   }
   if (capped > 0) {
     notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
+  }
+  return notes;
+}
+
+/** Notes describing the multi-provider ensemble run + any provider that failed (#53). */
+function ensembleNotes(providers: EnsembleProviderReport[] | undefined): string[] {
+  if (!providers || providers.length === 0) {
+    return [];
+  }
+  const ok = providers.filter((p) => p.ok);
+  const notes: string[] = [];
+  if (ok.length >= 2) {
+    notes.push(
+      `Ensemble review (#53): consolidated findings from ${ok.length} providers ` +
+        `(${ok.map((p) => p.provider).join(", ")}). 🤝 marks findings ≥2 providers independently raised.`
+    );
+  }
+  for (const failed of providers.filter((p) => !p.ok)) {
+    const safeError = failed.error ? redactSecrets(failed.error).text : undefined;
+    notes.push(
+      truncateNote(
+        `Ensemble: provider "${failed.provider}" did not complete${safeError ? ` (${safeError})` : ""}.`
+      )
+    );
   }
   return notes;
 }
@@ -982,6 +1023,7 @@ export async function reviewPullRequest(
   const gather = deps.gatherContext ?? defaultGatherContext;
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
+  const ensembleReview = deps.runEnsembleReview ?? defaultRunEnsembleReview;
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
@@ -1363,26 +1405,45 @@ export async function reviewPullRequest(
       : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
-  const reviewResult = await review(
-    {
-      diff: diffText,
-      context: reviewContext,
-      guidelines: options.guidelines,
-      learnedPatterns: options.learnedPatterns,
-      languages: summarizeLanguages(reviewFiles.map((file) => file.path)).map((language) => language.label),
-      grounding,
-      specialists: effectiveSpecialists
-    },
-    {
-      config,
-      minSeverity: options.minSeverity,
-      minConfidence: options.minConfidence,
-      maxFindings: options.maxFindings,
-      verify: options.verify,
-      verifyConfidence: options.verifyConfidence,
-      maxTokens: reviewBudgetTokens
-    }
-  );
+  // Shared input: context (#4) + grounding (#16) run once and feed every provider.
+  const reviewInput: ReviewInput = {
+    diff: diffText,
+    context: reviewContext,
+    guidelines: options.guidelines,
+    learnedPatterns: options.learnedPatterns,
+    languages: summarizeLanguages(reviewFiles.map((file) => file.path)).map((language) => language.label),
+    grounding,
+    specialists: effectiveSpecialists
+  };
+  // Ensemble (#53): fan out across providers when ≥2 configs were resolved; the
+  // cross-provider judge consolidates with provenance. Otherwise a normal review.
+  const ensembleConfigs = options.ensemble?.configs ?? [];
+  const ensembleActive = ensembleConfigs.length >= 2;
+  const ensembleRunReview = deps.runEnsembleReview ? undefined : review;
+  const reviewResult: ReviewResult = ensembleActive
+    ? await ensembleReview(reviewInput, {
+        configs: ensembleConfigs,
+        minSeverity: options.minSeverity,
+        minConfidence: options.minConfidence,
+        maxFindings: options.maxFindings,
+        verify: options.verify,
+        verifyConfidence: options.verifyConfidence,
+        maxTokens: reviewBudgetTokens,
+        ...(ensembleRunReview ? { runReview: ensembleRunReview } : {})
+      })
+    : await review(reviewInput, {
+        config,
+        minSeverity: options.minSeverity,
+        minConfidence: options.minConfidence,
+        maxFindings: options.maxFindings,
+        verify: options.verify,
+        verifyConfidence: options.verifyConfidence,
+        maxTokens: reviewBudgetTokens
+      });
+  const ensembleProviders = ensembleActive
+    ? (reviewResult as EnsembleReviewResult).providers
+    : undefined;
+  const providerCount = ensembleProviders?.filter((p) => p.ok).length;
   if (directGroundingFindings.length > 0) {
     const uncappedFindings = reviewResult.uncappedFindings ?? reviewResult.findings;
     reviewResult.raw = [...reviewResult.raw, ...directGroundingFindings];
@@ -1465,9 +1526,11 @@ export async function reviewPullRequest(
     skipped,
     coverage,
     degraded,
+    providerCount,
     notes: [
       ...incrementalNotesList,
       ...approvalNotes(approval),
+      ...ensembleNotes(ensembleProviders),
       ...ignoredSuppression.notes,
       ...tidied.notes,
       ...tierNotes,
@@ -1491,7 +1554,8 @@ export async function reviewPullRequest(
     summaryBody,
     event: options.event ?? approval.event,
     agentPrompt: options.agentPrompt,
-    maxInlineComments: options.maxInlineComments
+    maxInlineComments: options.maxInlineComments,
+    providerCount
   });
 
   const result: ReviewPullRequestResult = {
@@ -1505,6 +1569,7 @@ export async function reviewPullRequest(
     incremental: incrementalBaseSha !== undefined,
     ...(approval.enabled ? { approval } : {}),
     ...(tidied.tidy ? { threads: tidied.tidy } : {}),
+    ...(ensembleProviders ? { ensemble: { providers: ensembleProviders } } : {}),
     posted: false
   };
   // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
