@@ -195,3 +195,34 @@ describe("runEnsembleReview (#53)", () => {
     expect(res.passes.map((p) => p.specialist).sort()).toEqual(["anthropic:correctness", "openai:correctness"]);
   });
 });
+
+describe("runEnsembleReview perspectives (#53)", () => {
+  it("preserves each model's distinct take on a consolidated finding", async () => {
+    const runReview = vi
+      .fn()
+      .mockResolvedValueOnce(result([finding({ severity: "major", confidence: 0.6, body: "anthropic reasoning" })]))
+      .mockResolvedValueOnce(result([finding({ severity: "critical", confidence: 0.7, body: "openai reasoning" })]));
+
+    const res = await runEnsembleReview(INPUT, { configs: CONFIGS, runReview });
+
+    expect(res.findings).toHaveLength(1);
+    const perspectives = res.findings[0].perspectives ?? [];
+    expect(perspectives.map((p) => p.provider).sort()).toEqual(["anthropic", "openai"]);
+    expect(perspectives.find((p) => p.provider === "anthropic")?.body).toBe("anthropic reasoning");
+    expect(perspectives.find((p) => p.provider === "openai")?.body).toBe("openai reasoning");
+    // The differing per-model severities are retained in the perspectives.
+    expect(perspectives.find((p) => p.provider === "openai")?.severity).toBe("critical");
+  });
+
+  it("attributes a single-provider finding to its one perspective", async () => {
+    const runReview = vi
+      .fn()
+      .mockResolvedValueOnce(result([finding({ file: "a.ts", title: "only-anthropic" })]))
+      .mockResolvedValueOnce(result([finding({ file: "b.ts", title: "only-openai" })]));
+
+    const res = await runEnsembleReview(INPUT, { configs: CONFIGS, runReview });
+    for (const f of res.findings) {
+      expect(f.perspectives).toHaveLength(1);
+    }
+  });
+});

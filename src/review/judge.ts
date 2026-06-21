@@ -1,5 +1,6 @@
 import {
   type Finding,
+  type ProviderPerspective,
   type Severity,
   SEVERITY_ORDER,
   findingKey
@@ -40,6 +41,33 @@ function mergeSources(a: string[] | undefined, b: string[] | undefined): string[
     return undefined;
   }
   return [...new Set([...(a ?? []), ...(b ?? [])])];
+}
+
+/**
+ * Merge two findings' per-provider perspectives (#53), one entry per provider
+ * (keeping that provider's strongest take), so a consolidated finding carries
+ * every model's distinct view. Undefined when neither side has perspectives.
+ */
+function mergePerspectives(
+  a: ProviderPerspective[] | undefined,
+  b: ProviderPerspective[] | undefined
+): ProviderPerspective[] | undefined {
+  const all = [...(a ?? []), ...(b ?? [])];
+  if (all.length === 0) {
+    return undefined;
+  }
+  const byProvider = new Map<string, ProviderPerspective>();
+  for (const perspective of all) {
+    const existing = byProvider.get(perspective.provider);
+    const stronger =
+      !existing ||
+      SEVERITY_ORDER[perspective.severity] < SEVERITY_ORDER[existing.severity] ||
+      (perspective.severity === existing.severity && perspective.confidence > existing.confidence);
+    if (stronger) {
+      byProvider.set(perspective.provider, perspective);
+    }
+  }
+  return [...byProvider.values()];
 }
 
 /**
@@ -152,11 +180,13 @@ export function dedupeFindings(findings: Finding[], options: { mergeProvenance?:
       const winner = preferred(existingForPreference, finding);
       const winnerBaseConfidence = winner === finding ? finding.confidence : existingBaseConfidence;
       const sources = mergeSources(existing.sources, finding.sources);
+      const perspectives = mergePerspectives(existing.perspectives, finding.perspectives);
       baseConfidenceByKey.set(key, winnerBaseConfidence);
       byKey.set(key, {
         ...winner,
         confidence: sources ? consensusConfidence(winnerBaseConfidence, sources.length) : winnerBaseConfidence,
-        ...(sources ? { sources } : {})
+        ...(sources ? { sources } : {}),
+        ...(perspectives ? { perspectives } : {})
       });
     } else {
       const winner = preferred(existing, finding);

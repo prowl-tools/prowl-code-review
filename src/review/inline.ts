@@ -333,17 +333,41 @@ export interface FindingCommentOptions {
 }
 
 /**
- * A cross-provider consensus note for an ensemble finding (#53), or "" when the
- * finding wasn't agreed on by ≥2 of the ≥2 ensemble providers. Names the
- * providers so the reader can weigh the agreement.
+ * A one-line attribution for an ensemble finding (#53): the cross-provider
+ * consensus note when ≥2 providers agreed, or which single provider raised it
+ * otherwise. "" outside an ensemble run (no providerCount / no provenance).
  */
-function consensusNote(finding: Finding, providerCount?: number): string {
+function attributionLine(finding: Finding, providerCount?: number): string {
   const sources = finding.sources ?? [];
-  if (!providerCount || providerCount < 2 || sources.length < 2) {
+  if (!providerCount || providerCount < 2 || sources.length === 0) {
     return "";
   }
   const names = sources.map((name) => escapeMarkdownText(name)).join(", ");
-  return `🤝 _Cross-provider consensus: flagged by ${sources.length} of ${providerCount} providers (${names})._`;
+  if (sources.length >= 2) {
+    return `🤝 _Cross-provider consensus: flagged by ${sources.length} of ${providerCount} providers (${names})._`;
+  }
+  return `🔎 _Raised by ${names} (1 of ${providerCount} providers)._`;
+}
+
+/**
+ * Render each model's distinct take on a consolidated finding (#53) inside a
+ * collapsed disclosure, so the PR shows both perspectives without cluttering the
+ * top-line comment. "" unless ≥2 providers weighed in on this finding.
+ */
+function perspectivesBlock(finding: Finding): string {
+  const perspectives = finding.perspectives ?? [];
+  if (perspectives.length < 2) {
+    return "";
+  }
+  const entries = perspectives.map((perspective) => {
+    const header = `**${escapeMarkdownText(perspective.provider)}** · ${perspective.severity} · ${Math.round(
+      perspective.confidence * 100
+    )}% confidence`;
+    return `${header}\n\n${escapeMarkdownParagraphBlock(perspective.body)}`;
+  });
+  return ["<details>", `<summary>🔀 ${perspectives.length} model perspectives</summary>`, "", entries.join("\n\n"), "", "</details>"].join(
+    "\n"
+  );
 }
 
 interface FindingCommentRenderOptions extends FindingCommentOptions {
@@ -353,13 +377,17 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
 
 /** Format the visible finding body without the optional agent prompt. */
 function formatFindingCommentBody(finding: Finding, providerCount?: number): string {
-  const consensus = consensusNote(finding, providerCount);
+  const attribution = attributionLine(finding, providerCount);
+  const perspectives = perspectivesBlock(finding);
   const parts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
-    ...(consensus ? ["", consensus] : []),
+    ...(attribution ? ["", attribution] : []),
     "",
     escapeMarkdownParagraphBlock(finding.body)
   ];
+  if (perspectives) {
+    parts.push("", perspectives);
+  }
   if (hasSuggestion(finding)) {
     parts.push("", suggestionBlock(finding.suggestion ?? ""));
   }
