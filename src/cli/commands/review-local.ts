@@ -216,6 +216,14 @@ function resolveLocalConfigLoadOptions(
   return { cwd: root, disabled: true };
 }
 
+/** Avoid making explicit-head reviews dirty just to record default local cost history. */
+function resolveLocalUsageLogPath(root: string, env: NodeJS.ProcessEnv, head: string | undefined): string | null {
+  if (head && !env.PROWL_USAGE_LOG?.trim()) {
+    return null;
+  }
+  return resolveUsageLogPath(root, env);
+}
+
 /** Resolve whether to colorize: explicit `--no-color` wins; else honor TTY + NO_COLOR. */
 export function resolveColor(cli: LocalReviewCommandOptions, env: NodeJS.ProcessEnv): boolean {
   if (cli.color === false) {
@@ -275,7 +283,6 @@ export async function runLocalReview(
   }
 
   const { config } = loadConfig(resolveLocalConfigLoadOptions(options, root, env));
-  const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
   const failOn = parseMinSeverity(options.failOn);
 
   // Reuse the GitHub command's flag→option resolution. Workspace execution is
@@ -402,6 +409,8 @@ export async function runLocalReview(
       : undefined);
   const effectiveContextLimits = mergeContextLimits(resolved.contextLimits, tierPlan.contextLimits);
 
+  const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
+
   // Per-PR budget (#18): cap context retrieval + verification token spend.
   const budget = resolveTokenBudget(config.budget, providerConfig.provider, providerConfig.model, config.pricing ?? {});
   for (const note of budget.notes) {
@@ -495,7 +504,7 @@ export async function runLocalReview(
   const tierSuffix = ` · risk tier: ${tierSelection.tier}`;
   err(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
 
-  const usageLogPath = resolveUsageLogPath(root, env);
+  const usageLogPath = resolveLocalUsageLogPath(root, env, head);
   if (usageLogPath) {
     try {
       appendUsageRecord(
