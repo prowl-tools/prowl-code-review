@@ -15,7 +15,9 @@ import {
   resolveProviderConfig,
   resolveEnsembleConfigs,
   isEnsembleActive,
+  providerKeyEnvVar,
   type ProviderConfig,
+  type ProviderDefaults,
   type ProviderName,
   type TokenUsage
 } from "../../providers/index.js";
@@ -162,6 +164,36 @@ export function resolveGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env)
 export function resolveTrustWorkspace(env: NodeJS.ProcessEnv = process.env): boolean {
   const value = env.PROWL_TRUST_WORKSPACE?.trim().toLowerCase();
   return value === "true" || value === "1" || value === "yes";
+}
+
+function hasProviderKey(provider: ProviderName, env: NodeJS.ProcessEnv): boolean {
+  return Boolean(env.PROWL_AI_KEY?.trim() || env[providerKeyEnvVar(provider)]?.trim());
+}
+
+/**
+ * Resolve non-secret provider/model defaults before key validation.
+ *
+ * For ensemble-only configs, use the first listed provider that already has a
+ * usable key so provider-specific-key setups can start without a generic key.
+ */
+export function resolveProviderDefaults(
+  config: ProwlReviewConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ProviderDefaults {
+  if (config.provider) {
+    return { provider: config.provider, model: config.model };
+  }
+  if (env.PROWL_AI_PROVIDER?.trim()) {
+    return {};
+  }
+
+  const providers = config.ensemble?.enabled ? (config.ensemble.providers ?? []) : [];
+  const selected =
+    providers.find((provider) => hasProviderKey(provider.provider as ProviderName, env)) ?? providers[0];
+  if (!selected) {
+    return {};
+  }
+  return { provider: selected.provider, model: selected.model };
 }
 
 /** Detect fork PR events where repo-local tooling must not be trusted. */
@@ -789,10 +821,7 @@ export async function runReviewWithOptions(
   // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
-  const providerConfig = resolveProviderConfig(process.env, {
-    provider: config.provider,
-    model: config.model
-  });
+  const providerConfig = resolveProviderConfig(process.env, resolveProviderDefaults(config, process.env));
   const resolved = resolveReviewOptions(options, config);
 
   // Multi-provider ensemble (#53): opt-in. Resolve per-provider keys from the env
