@@ -47,10 +47,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance (remaining): `resolve` verb — mark a finding's thread resolved from a reply; needs comment→thread (GraphQL node) mapping and overlaps #22's auto-resolution.
     - Acceptance (remaining): `configure` verb — adjust review settings from a comment (scope/semantics TBD; likely a thin wrapper over `.prowl-review.yml` keys).
 
-28. **Draft-PR & auto-review controls**
-    As a developer, I want control over when reviews fire, so that drafts are my buffer.
-    - Acceptance: skip drafts until "ready for review" by default; config toggle for auto-review vs. on-demand (`@prowl-review review`) only.
-
 30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
     As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
     - **Done (core, see resolved.md):** the reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` **and** a `LEARNED_PATTERNS.md` and injects them into the prompt (learned patterns as a distinct "do not re-raise" section); an optional org-wide guidelines **file** (`org-guidelines-path` / `PROWL_ORG_GUIDELINES_PATH`) is injected into every repo's prompts alongside per-repo files.

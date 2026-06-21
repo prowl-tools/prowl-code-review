@@ -55,6 +55,23 @@ number serializes auto reviews with bot commands. `queue: max` and
 `pause`, `resume`, and `break glass`; stale queued auto reviews skip publishing
 when the PR head has advanced.
 
+### Draft PRs & on-demand review (#28)
+
+By default prowl-review **skips draft PRs** and reviews automatically once a PR
+is marked *ready for review* (keep `ready_for_review` in the workflow's
+`on.pull_request.types`). An explicit `@prowl-review review` reviews a draft
+on demand. Two `.prowl-review.yml` keys tune this:
+
+```yaml
+review:
+  reviewDrafts: true   # also auto-review drafts (default false)
+  auto: false          # on-demand only: review just when asked with @prowl-review review (default true)
+```
+
+When an auto review is skipped (paused, drafts, or `auto: false`) and the
+merge-gate check is enabled, prowl-review posts a neutral check run so a Required
+"prowl-review" check isn't left pending.
+
 ### Bot commands
 
 Drive the reviewer from the PR by commenting `@prowl-review <command>` (only a
