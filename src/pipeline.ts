@@ -3,10 +3,16 @@ import {
   fetchPullRequest as defaultFetchPullRequest,
   fetchComparisonDiff as defaultFetchComparisonDiff,
   fetchPullRequestHeadSha as defaultFetchPullRequestHeadSha,
+  updatePullRequestBody as defaultUpdatePullRequestBody,
   type FetchedPullRequest,
   type PullRequestMeta,
   type PullRequestRef
 } from "./github/diff.js";
+import {
+  generatePrDescription as defaultGeneratePrDescription,
+  shouldDescribePr,
+  embedPrDescription
+} from "./review/pr-description.js";
 import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
@@ -134,6 +140,10 @@ export interface PipelineDeps {
   resolveReviewThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
   /** Re-fetch the PR's current head SHA for the stale-publish guard (#21). */
   fetchHeadSha?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<string | undefined>;
+  /** Generate a PR description from the diff (#33). */
+  generatePrDescription?: typeof defaultGeneratePrDescription;
+  /** Write the generated description back to the PR body (#33). */
+  updatePullRequestBody?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -145,6 +155,13 @@ export interface ReviewPullRequestOptions {
    * from `ensemble` config + per-provider env keys. Omitted/single → normal review.
    */
   ensemble?: { configs: ProviderConfig[] };
+  /**
+   * Auto-generate a PR description from the diff (#33). Opt-in. When enabled and
+   * the PR body is empty (or already holds prowl-review's generated block), the
+   * pipeline writes/refreshes a summary in the PR body; a human-authored body is
+   * never overwritten.
+   */
+  prDescription?: { enabled?: boolean };
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -268,6 +285,8 @@ export interface ReviewPullRequestResult {
   headAdvanced?: boolean;
   /** Multi-provider ensemble outcome (#53); undefined for a normal single-provider review. */
   ensemble?: { providers: EnsembleProviderReport[] };
+  /** True when an auto-generated PR description was written to the body (#33). */
+  prDescriptionUpdated?: boolean;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -1024,6 +1043,8 @@ export async function reviewPullRequest(
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const ensembleReview = deps.runEnsembleReview ?? defaultRunEnsembleReview;
+  const describePr = deps.generatePrDescription ?? defaultGeneratePrDescription;
+  const updateBody = deps.updatePullRequestBody ?? defaultUpdatePullRequestBody;
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
@@ -1451,6 +1472,32 @@ export async function reviewPullRequest(
     reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
+  // Auto-generate a PR description (#33) when enabled and the body is empty (or
+  // already holds our generated block). The new body is PATCHed at publish time;
+  // a human-authored description is never touched. Tolerant — a failure here is a
+  // note, never a sink for the review.
+  let prDescriptionBody: string | undefined;
+  let prDescriptionUsage = emptyUsage();
+  const prDescriptionNotes: string[] = [];
+  if (options.prDescription?.enabled && shouldDescribePr(meta.body)) {
+    try {
+      const generated = await describePr(
+        { title: meta.title, diff: diffText, guidelines: options.guidelines },
+        { config, retry: undefined }
+      );
+      prDescriptionUsage = generated.usage;
+      prDescriptionBody = embedPrDescription(meta.body, generated.description);
+      prDescriptionNotes.push(
+        meta.body && meta.body.trim()
+          ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
+          : "Generated a PR description from the diff because the body was empty (#33)."
+      );
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      prDescriptionNotes.push(truncateNote(`PR description generation failed; continuing without it: ${message}`));
+    }
+  }
+
   // Drop findings muted via `@prowl-review ignore` (#30) before the gate + tidy.
   const ignoredSuppression = suppressIgnoredFindingsWithRefill({
     findings: reviewResult.findings,
@@ -1478,7 +1525,7 @@ export async function reviewPullRequest(
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
   const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
 
-  const totalUsage = addUsage(reviewResult.usage, contextUsage);
+  const totalUsage = addUsage(addUsage(reviewResult.usage, contextUsage), prDescriptionUsage);
 
   const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human
@@ -1531,6 +1578,7 @@ export async function reviewPullRequest(
       ...incrementalNotesList,
       ...approvalNotes(approval),
       ...ensembleNotes(ensembleProviders),
+      ...prDescriptionNotes,
       ...ignoredSuppression.notes,
       ...tidied.notes,
       ...tierNotes,
@@ -1601,6 +1649,16 @@ export async function reviewPullRequest(
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       throw new ReviewPublishError(message, result);
+    }
+    // Write the generated PR description (#33). Non-fatal: a failure here never
+    // sinks the published review.
+    if (prDescriptionBody !== undefined) {
+      try {
+        await updateBody(octokit, ref, prDescriptionBody);
+        result.prDescriptionUpdated = true;
+      } catch {
+        // surfaced via the review note; body update is best-effort
+      }
     }
   }
   // Merge gate (#24): conclusion from the approval rubric (#52) when engaged,

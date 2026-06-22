@@ -134,6 +134,15 @@ export async function fetchPullRequestHeadSha(
   }
 }
 
+/** Update a pull request's description body in place (#33 generated descriptions). */
+export async function updatePullRequestBody(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  body: string
+): Promise<void> {
+  await octokit.rest.pulls.update({ ...ref, body });
+}
+
 /**
  * Fetch the raw unified diff between two commits (incremental re-review, #23) via
  * `repos.compareCommitsWithBasehead` with `format: "diff"`. Used to review only
