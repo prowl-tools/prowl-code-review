@@ -101,7 +101,7 @@ When you discover new bugs, tech debt, or feature opportunities:
 
 ## Existing Workflows
 
-This repo currently has placeholder Anthropic workflows (`.github/workflows/claude-code-review.yml`, `claude.yml`) from `anthropics/claude-code-action`. Keep them as a dogfooding baseline during early milestones; replace `claude-code-review.yml` with our own `prowl-review` action once inline reviews land (backlog item 10).
+This repo dogfoods its own tool: `.github/workflows/prowl-review.yml` (auto review on PRs) and `prowl-review-command.yml` (`@prowl-review` chat/commands) run a Claude + Gemini ensemble (#53) against every PR. The placeholder `anthropics/claude-code-action` workflows (`claude-code-review.yml`, `claude.yml`) were retired once prowl-review reached parity (#44) — the ensemble replaces the baseline reviewer and `@prowl-review` replaces the `@claude` assistant, so the repo is prowl-review-only.
 
 ## Access Policy
 
