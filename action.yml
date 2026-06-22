@@ -7,8 +7,20 @@ branding:
 
 inputs:
   ai-key:
-    description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret unless using provider-specific PROWL_AI_KEY_<PROVIDER> env vars."
+    description: "Generic provider API key fallback (used by the primary provider when no provider-scoped key is set). Pass a secret."
     required: false
+  ai-key-anthropic:
+    description: "Anthropic API key (PROWL_AI_KEY_ANTHROPIC). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
+  ai-key-openai:
+    description: "OpenAI API key (PROWL_AI_KEY_OPENAI). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
+  ai-key-gemini:
+    description: "Gemini API key (PROWL_AI_KEY_GEMINI). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
   ai-provider:
     description: "Optional LLM provider override: anthropic | openai | gemini. Leave blank for the CLI default or ensemble bootstrap."
     required: false
@@ -80,7 +92,12 @@ runs:
       shell: bash
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
-        PROWL_AI_KEY: ${{ inputs.ai-key }}
+        PROWL_INPUT_AI_KEY: ${{ inputs.ai-key }}
+        # Provider-scoped keys for the multi-provider ensemble (#53). Export
+        # these below only when non-empty, so blank inputs preserve caller env.
+        PROWL_INPUT_AI_KEY_ANTHROPIC: ${{ inputs.ai-key-anthropic }}
+        PROWL_INPUT_AI_KEY_OPENAI: ${{ inputs.ai-key-openai }}
+        PROWL_INPUT_AI_KEY_GEMINI: ${{ inputs.ai-key-gemini }}
         PROWL_AI_PROVIDER: ${{ inputs.ai-provider }}
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
@@ -93,4 +110,17 @@ runs:
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
         PROWL_REVIEWED_HEAD_SHA: ${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}
       # 'review' reviews the PR; 'command' handles an @prowl-review comment (#26).
-      run: node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"
+      run: |
+        if [ -n "${PROWL_INPUT_AI_KEY}" ]; then
+          export PROWL_AI_KEY="${PROWL_INPUT_AI_KEY}"
+        fi
+        if [ -n "${PROWL_INPUT_AI_KEY_ANTHROPIC}" ]; then
+          export PROWL_AI_KEY_ANTHROPIC="${PROWL_INPUT_AI_KEY_ANTHROPIC}"
+        fi
+        if [ -n "${PROWL_INPUT_AI_KEY_OPENAI}" ]; then
+          export PROWL_AI_KEY_OPENAI="${PROWL_INPUT_AI_KEY_OPENAI}"
+        fi
+        if [ -n "${PROWL_INPUT_AI_KEY_GEMINI}" ]; then
+          export PROWL_AI_KEY_GEMINI="${PROWL_INPUT_AI_KEY_GEMINI}"
+        fi
+        node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"

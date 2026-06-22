@@ -839,17 +839,28 @@ describe("GitHub Action provider metadata", () => {
     const reviewStep = action.runs?.steps?.find((step) => step.id === "review");
 
     expect(action.inputs?.["ai-key"]?.required).toBe(false);
+    expect(action.inputs?.["ai-key-anthropic"]?.default).toBe("");
+    expect(action.inputs?.["ai-key-openai"]?.default).toBe("");
+    expect(action.inputs?.["ai-key-gemini"]?.default).toBe("");
     expect(action.inputs?.["ai-provider"]?.default).toBe("");
     expect(action.inputs?.["ai-provider"]?.description).toContain("Leave blank");
     expect(action.inputs?.["config-path"]?.default).toBe("");
     expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
+    expect(reviewStep?.env?.PROWL_INPUT_AI_KEY).toBe("${{ inputs.ai-key }}");
+    expect(reviewStep?.env?.PROWL_INPUT_AI_KEY_ANTHROPIC).toBe("${{ inputs.ai-key-anthropic }}");
+    expect(reviewStep?.env?.PROWL_INPUT_AI_KEY_OPENAI).toBe("${{ inputs.ai-key-openai }}");
+    expect(reviewStep?.env?.PROWL_INPUT_AI_KEY_GEMINI).toBe("${{ inputs.ai-key-gemini }}");
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
       "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"
     );
-    expect(reviewStep?.run).toBe(
+    expect(reviewStep?.run).toContain('export PROWL_AI_KEY="${PROWL_INPUT_AI_KEY}"');
+    expect(reviewStep?.run).toContain('export PROWL_AI_KEY_ANTHROPIC="${PROWL_INPUT_AI_KEY_ANTHROPIC}"');
+    expect(reviewStep?.run).toContain('export PROWL_AI_KEY_OPENAI="${PROWL_INPUT_AI_KEY_OPENAI}"');
+    expect(reviewStep?.run).toContain('export PROWL_AI_KEY_GEMINI="${PROWL_INPUT_AI_KEY_GEMINI}"');
+    expect(reviewStep?.run).toContain(
       'node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == \'command\' && \'command\' || \'review\' }}"'
     );
     expect(action.inputs?.mode?.default).toBe("review");

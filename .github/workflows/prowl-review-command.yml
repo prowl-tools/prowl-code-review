@@ -82,11 +82,13 @@ jobs:
 
           if [ -n "${action_file}" ] &&
             grep -Eq '^[[:space:]]{2}mode:' "${action_file}" &&
-            grep -q 'inputs.mode' "${action_file}"; then
+            grep -q 'inputs.mode' "${action_file}" &&
+            grep -q 'ai-key-anthropic' "${action_file}" &&
+            grep -q 'ai-key-gemini' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base does not support prowl-review command mode yet; skipping command run."
+            echo "Trusted base does not support the prowl-review command-mode ensemble yet; skipping command run."
           fi
 
       - name: Checkout PR head for context
@@ -104,8 +106,10 @@ jobs:
           PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
         with:
           mode: command
-          ai-key: ${{ secrets.PROWL_AI_KEY }}
-          ai-provider: gemini
-          ai-model: gemini-2.5-flash
+          # Claude + Gemini ensemble (#53) — same config as auto reviews, so an
+          # @prowl-review review command produces the cross-provider result too.
+          ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+          ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
+          config-path: ${{ github.workspace }}/.prowl-review.yml
           workspace-path: ${{ github.workspace }}/pr-head
           guidelines-path: ${{ github.workspace }}
