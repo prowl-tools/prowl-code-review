@@ -45,7 +45,9 @@ jobs:
             action_file="action.yaml"
           fi
 
-          if [ -n "${action_file}" ] && grep -q 'ai-key-anthropic' "${action_file}"; then
+          if [ -n "${action_file}" ] &&
+            grep -q 'ai-key-anthropic' "${action_file}" &&
+            grep -q 'ai-key-gemini' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"

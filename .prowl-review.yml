@@ -7,6 +7,7 @@
 # (mirrors the prior gemini-2.5-flash dogfood choice); bump per-provider `model`
 # for a higher-fidelity review.
 provider: anthropic            # primary — also runs the shared cross-file context pass (#4)
+model: claude-haiku-4-5        # pin the primary/context pass to the cheap dogfood model
 ensemble:
   enabled: true
   providers:

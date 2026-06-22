@@ -749,6 +749,9 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
     // Command mode also gates on ensemble-key support so it self-bootstraps (#53).
     expect(workflow).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
+    expect(workflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
     expect(workflow).toContain("Trusted base does not support the prowl-review command-mode ensemble yet");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
