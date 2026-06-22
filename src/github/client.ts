@@ -27,6 +27,13 @@ export interface OctokitLike {
         /** Optional media format override for non-JSON responses. */
         mediaType?: { format: string };
       }): Promise<{ data: unknown }>;
+      /** Update PR fields in place — used to write a generated description (#33). */
+      update(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        body?: string;
+      }): Promise<{ data: unknown }>;
       /** Publish a review: a summary `body`, an `event`, and inline `comments`. */
       createReview(params: {
         owner: string;

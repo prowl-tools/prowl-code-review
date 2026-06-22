@@ -2582,3 +2582,95 @@ describe("reviewPullRequest ensemble (#53)", () => {
     expect(result.ensemble?.providers.find((p) => p.provider === "openai")?.ok).toBe(false);
   });
 });
+
+describe("reviewPullRequest PR description (#33)", () => {
+  it("generates and PATCHes a description when enabled and the body is empty", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- adds a thing",
+      usage: { inputTokens: 5, outputTokens: 3, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(generatePrDescription).toHaveBeenCalledTimes(1);
+    expect(generatePrDescription.mock.calls[0][0]).toMatchObject({ title: "T" });
+    expect(updatePullRequestBody).toHaveBeenCalledTimes(1);
+    const [, , newBody] = updatePullRequestBody.mock.calls[0];
+    expect(newBody).toContain("- adds a thing");
+    expect(newBody).toContain("prowl-review:pr-summary:start");
+    expect(result.prDescriptionUpdated).toBe(true);
+  });
+
+  it("does not touch a human-authored PR body", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "I wrote this myself." }, diff: DIFF }))
+    };
+    const generatePrDescription = vi.fn();
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(generatePrDescription).not.toHaveBeenCalled();
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(result.prDescriptionUpdated).toBeUndefined();
+  });
+
+  it("does nothing when the feature is disabled", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn();
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps: { ...deps, generatePrDescription }
+    });
+    expect(generatePrDescription).not.toHaveBeenCalled();
+  });
+
+  it("never PATCHes on a dry run, even when enabled", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn(async () => ({
+      description: "x",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      dryRun: true,
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(result.prDescriptionUpdated).toBeUndefined();
+  });
+
+  it("surfaces a note and still publishes when generation fails (non-fatal)", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn(async () => {
+      throw new Error("provider down");
+    });
+    const updatePullRequestBody = vi.fn(async () => {});
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(result.posted).toBe(true);
+    expect(result.payload.body).toContain("PR description generation failed");
+  });
+});

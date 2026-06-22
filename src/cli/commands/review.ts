@@ -303,6 +303,7 @@ type ResolvedReviewOptions = Pick<
   | "resolveThreads"
   | "checkRun"
   | "approval"
+  | "prDescription"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -462,7 +463,9 @@ export function resolveReviewOptions(
     // Merge gate (#24); opt-in via config (needs checks: write).
     checkRun: config.checkRun,
     // Approval rubric + break-glass (#52); opt-in via config.
-    approval: config.approval
+    approval: config.approval,
+    // Auto-generate a PR description when the body is empty (#33); opt-in via config.
+    prDescription: config.prDescription
   };
 }
 
@@ -585,6 +588,9 @@ export function reportReviewCommandResult(
       .map((p) => `${p.provider}${p.ok ? "" : " (failed)"}`)
       .join(", ");
     console.log(`prowl-review: ensemble → ${summary}`);
+  }
+  if (result.prDescriptionUpdated) {
+    console.log("prowl-review: wrote a generated PR description (#33).");
   }
   if (result.approval?.enabled) {
     const verdict = result.approval.event.toLowerCase().replace("_", " ");
