@@ -96,10 +96,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a prospective user, I want docs and a landing section, so that I can discover and set up the tool.
     - Acceptance: `docs/code-review.md` + sidebar entry in `prowl-docs`; a code-review section + install snippet in `prowl-web`; raccoon/brand conventions; "made for agents, controlled by humans" framing.
 
-44. **Retire/replace baseline Anthropic workflows**
-    As a maintainer, I want to remove the placeholder `claude-code-action` workflows once `prowl-review` reaches parity, so that the repo dogfoods its own tool.
-    - Acceptance: replace `.github/workflows/claude-code-review.yml` after inline reviews land; revisit `claude.yml` after `@prowl-review` chat lands.
-
 45. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
     As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
     - Acceptance: implementation is blocked until documented Legal/Compliance sign-off is obtained and recorded.
