@@ -67,6 +67,14 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #     - provider: openai
 #       # model: gpt-5.2
 
+# --- Auto-generated PR description --------------------------------------------
+# When a PR is opened with an empty description, write one from the diff (#33),
+# CodeRabbit-style. Opt-in. The generated text lives between markers in the PR
+# body and refreshes on new commits; a human-authored description is never
+# overwritten. Needs pull-requests: write (already required to post reviews).
+# prDescription:
+#   enabled: true
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info

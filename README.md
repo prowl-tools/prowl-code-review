@@ -280,6 +280,25 @@ providers, and risk-tiering (#31) still applies. A provider with no key is
 skipped with a note; with fewer than two usable keys it runs as a normal
 single-provider review.
 
+## Auto-generated PR descriptions (#33)
+
+When a pull request is opened with an **empty description**, prowl-review can
+write one from the diff — CodeRabbit-style — so reviewers get a plain-language
+summary of what changed. Opt-in:
+
+```yaml
+# .prowl-review.yml
+prDescription:
+  enabled: true
+```
+
+The generated summary is written into the PR body between
+`<!-- prowl-review:pr-summary:start -->` / `…:end -->` markers, so later pushes
+refresh it in place while preserving anything you add around it. A
+**human-authored description is never overwritten** — it only fires on an empty
+body (or to refresh prowl-review's own block). Needs `pull-requests: write`
+(already required to post reviews).
+
 ## Development
 
 ```bash
