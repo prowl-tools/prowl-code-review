@@ -222,24 +222,40 @@ and consolidate their findings, so you get cross-model consensus and
 higher-confidence, more granular insight — something resale-based reviewers
 (CodeRabbit/Greptile) can't offer. Opt-in, default off.
 
-Provide a key per provider (the one matching your primary also falls back to
-`PROWL_AI_KEY`; if both are set, the scoped key wins for that provider):
+Give each provider its **own** key — the cleanest setup, with no dependence on
+which provider the generic key maps to. Locally (or any runner), set them as env
+vars (the provider matching your primary also falls back to `PROWL_AI_KEY`; if
+both are set, the scoped key wins):
 
 ```bash
 PROWL_AI_KEY_ANTHROPIC=sk-ant-…
-PROWL_AI_KEY_OPENAI=sk-…
 PROWL_AI_KEY_GEMINI=…
 ```
 
-…and list the providers in `.prowl-review.yml`:
+In the **GitHub Action**, pass them through the per-provider inputs (each maps to
+the matching `PROWL_AI_KEY_<PROVIDER>` env var):
 
 ```yaml
+- uses: prowl-tools/prowl-code-review@v1
+  with:
+    ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+    ai-key-gemini:    ${{ secrets.PROWL_AI_KEY_GEMINI }}
+    # ai-key-openai:  ${{ secrets.PROWL_AI_KEY_OPENAI }}
+    config-path: prowl-review-config/.prowl-review.yml   # trusted base-branch config
+```
+
+…and list the providers in `.prowl-review.yml` (the first listed provider is the
+**primary** — it runs the shared cross-file context retrieval, so put your
+strongest model there):
+
+```yaml
+provider: anthropic        # primary (also used for the shared context pass)
 ensemble:
   enabled: true
   providers:
     - provider: anthropic
-    - provider: openai
-      # model: gpt-5.2   # optional per-provider model override
+    - provider: gemini
+      # model: gemini-2.5-pro   # optional per-provider model override
 ```
 
 Each provider runs the full multi-pass review **in parallel**; the cross-file
