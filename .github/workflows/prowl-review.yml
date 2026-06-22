@@ -33,11 +33,23 @@ jobs:
         id: trusted-action
         shell: bash
         run: |
-          if [ -f action.yml ] || [ -f action.yaml ] || [ -f Dockerfile ]; then
+          # Require the base action to support per-provider ensemble keys (#53), so
+          # the new workflow never runs against an old base action that would ignore
+          # the scoped keys/config and fail on a missing key. Self-bootstraps once
+          # this PR merges (the new action.yml + .prowl-review.yml land together on
+          # the base branch).
+          action_file=""
+          if [ -f action.yml ]; then
+            action_file="action.yml"
+          elif [ -f action.yaml ]; then
+            action_file="action.yaml"
+          fi
+
+          if [ -n "${action_file}" ] && grep -q 'ai-key-anthropic' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base does not contain prowl-review yet; skipping bootstrap run."
+            echo "Trusted base does not support the prowl-review ensemble yet; skipping bootstrap run."
           fi
 
       - name: Checkout PR head for context
@@ -52,11 +64,12 @@ jobs:
         if: steps.trusted-action.outputs.available == 'true'
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         with:
-          ai-key: ${{ secrets.PROWL_AI_KEY }}
-          ai-provider: gemini
-          # Flash for dogfooding: ~4x cheaper than 2.5-pro and priced in our table,
-          # so the CI cost line shows real dollars instead of "n/a".
-          ai-model: gemini-2.5-flash
+          # Claude + Gemini ensemble (#53); per-provider keys, models pinned in
+          # the trusted base-branch config. Provider/model come from config-path,
+          # not inputs, so the primary stays Claude.
+          ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+          ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
+          config-path: ${{ github.workspace }}/.prowl-review.yml
           workspace-path: ${{ github.workspace }}/pr-head
           guidelines-path: ${{ github.workspace }}
           # min-severity: major

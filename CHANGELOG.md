@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Per-provider key inputs on the GitHub Action (backlog #53 follow-up): `action.yml` gains
+  `ai-key-anthropic` / `ai-key-openai` / `ai-key-gemini` inputs, each forwarded to the matching
+  `PROWL_AI_KEY_<PROVIDER>` env var, so the multi-provider ensemble can be driven from the Action (the
+  composite step previously forwarded only the generic `ai-key` → `PROWL_AI_KEY`). Empty inputs are treated
+  as unset, so existing single-provider workflows are unaffected. README documents the explicit per-provider
+  key setup (each provider its own key, primary listed first for the shared context pass). The repo now
+  **dogfoods the ensemble**: a root `.prowl-review.yml` runs a Claude + Gemini ensemble (cheap priced models:
+  `claude-haiku-4-5` + `gemini-2.5-flash`), and both dogfood workflows pass the per-provider keys + a trusted
+  base-branch `config-path`; their availability guards require an ensemble-capable base action so they
+  self-bootstrap on merge.
 - Per-model perspectives on ensemble findings (backlog #53 follow-up): when the ensemble consolidates an
   issue more than one model flagged, the inline PR comment now preserves **each model's own take** in a
   collapsible "🔀 N model perspectives" block (per-provider severity, confidence, and reasoning), instead of
