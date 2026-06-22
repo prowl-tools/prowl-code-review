@@ -1,0 +1,16 @@
+# prowl-review dogfoods itself with a multi-provider ensemble (#53): every PR is
+# reviewed by Claude and Gemini at once, with findings consolidated and a 🤝
+# consensus badge on issues both models flag. Loaded by the workflows via a
+# trusted base-branch `config-path` (never the PR checkout).
+#
+# Cheap, priced models on both sides so the CI cost line shows real dollars
+# (mirrors the prior gemini-2.5-flash dogfood choice); bump per-provider `model`
+# for a higher-fidelity review.
+provider: anthropic            # primary — also runs the shared cross-file context pass (#4)
+ensemble:
+  enabled: true
+  providers:
+    - provider: anthropic
+      model: claude-haiku-4-5
+    - provider: gemini
+      model: gemini-2.5-flash

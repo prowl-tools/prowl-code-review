@@ -7,8 +7,20 @@ branding:
 
 inputs:
   ai-key:
-    description: "Provider API key (Anthropic / OpenAI / Gemini). Pass a secret unless using provider-specific PROWL_AI_KEY_<PROVIDER> env vars."
+    description: "Generic provider API key fallback (used by the primary provider when no provider-scoped key is set). Pass a secret."
     required: false
+  ai-key-anthropic:
+    description: "Anthropic API key (PROWL_AI_KEY_ANTHROPIC). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
+  ai-key-openai:
+    description: "OpenAI API key (PROWL_AI_KEY_OPENAI). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
+  ai-key-gemini:
+    description: "Gemini API key (PROWL_AI_KEY_GEMINI). Use for the multi-provider ensemble (#53) or as an explicit per-provider key."
+    required: false
+    default: ""
   ai-provider:
     description: "Optional LLM provider override: anthropic | openai | gemini. Leave blank for the CLI default or ensemble bootstrap."
     required: false
@@ -81,6 +93,10 @@ runs:
       env:
         GITHUB_TOKEN: ${{ inputs.github-token }}
         PROWL_AI_KEY: ${{ inputs.ai-key }}
+        # Provider-scoped keys for the multi-provider ensemble (#53); empty = unset.
+        PROWL_AI_KEY_ANTHROPIC: ${{ inputs.ai-key-anthropic }}
+        PROWL_AI_KEY_OPENAI: ${{ inputs.ai-key-openai }}
+        PROWL_AI_KEY_GEMINI: ${{ inputs.ai-key-gemini }}
         PROWL_AI_PROVIDER: ${{ inputs.ai-provider }}
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
