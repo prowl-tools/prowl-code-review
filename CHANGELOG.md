@@ -4,6 +4,13 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Removed
+- Retired the placeholder `anthropics/claude-code-action` workflows (backlog #44): deleted
+  `.github/workflows/claude-code-review.yml` (the baseline auto-reviewer, now redundant with the
+  prowl-review ensemble that reviews every PR) and `claude.yml` (the `@claude` assistant, superseded by
+  `@prowl-review` chat/commands, #27). The repo is now prowl-review-only (`prowl-review.yml` +
+  `prowl-review-command.yml` + `ci.yml`); CLAUDE.md's "Existing Workflows" section updated to match.
+
 ### Added
 - Per-provider key inputs on the GitHub Action (backlog #53 follow-up): `action.yml` gains
   `ai-key-anthropic` / `ai-key-openai` / `ai-key-gemini` inputs, each forwarded to the matching
