@@ -2642,6 +2642,45 @@ describe("reviewPullRequest PR description (#33)", () => {
     expect(result.prDescriptionUpdated).toBe(true);
   });
 
+  it("generates and PATCHes a description when all changed files are skipped", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi.fn(async () => ({
+      meta,
+      diff: `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+    }));
+    const fetchPullRequestMeta = vi.fn(async () => meta);
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- updates dependencies",
+      usage: { inputTokens: 2, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(deps.runReview).not.toHaveBeenCalled();
+    expect(generatePrDescription).toHaveBeenCalledTimes(1);
+    expect(generatePrDescription.mock.calls[0][0].diff).not.toContain("package-lock.json");
+    expect(fetchPullRequestMeta).toHaveBeenCalledTimes(1);
+    expect(updatePullRequestBody).toHaveBeenCalledTimes(1);
+    const [, , newBody] = updatePullRequestBody.mock.calls[0];
+    expect(newBody).toContain("- updates dependencies");
+    expect(result.prDescriptionUpdated).toBe(true);
+    expect(result.usage).toEqual({ inputTokens: 2, outputTokens: 1, cachedInputTokens: 0 });
+    expect(result.payload.body).toContain("Generated a PR description");
+    expect(result.payload.body).toContain("No reviewable files remained after filters");
+  });
+
   it("passes the redacted full PR diff when generating a non-incremental description", async () => {
     const secret = ["AKIA", "1234567890ABCD99"].join("");
     const deps = makeDeps();

@@ -1236,6 +1236,97 @@ export async function reviewPullRequest(
     }
   }
 
+  // Redact secrets from anything that will reach the provider.
+  const renderedDiff = renderGuardedDiff(reviewFiles);
+  const redactedDiff = redactSecrets(renderedDiff);
+  const diffText = redactedDiff.text;
+  if (redactedDiff.count > 0) {
+    redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
+  }
+  let descriptionRenderedDiff: string | undefined;
+  const renderDescriptionDiff = () => {
+    if (incrementalBaseSha === undefined) {
+      return renderedDiff;
+    }
+    descriptionRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
+    return descriptionRenderedDiff;
+  };
+  const redactedTitle = redactSecrets(meta.title);
+  if (redactedTitle.count > 0) {
+    redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
+  }
+
+  // Auto-generate a PR description (#33) when enabled and the body is empty (or
+  // already holds our generated block). The new body is PATCHed at publish time;
+  // a human-authored description is never touched. Tolerant — a failure here is a
+  // note, never a sink for the review.
+  let prDescriptionText: string | undefined;
+  let prDescriptionUsage = emptyUsage();
+  const prDescriptionNotes: string[] = [];
+  const generatePrDescriptionIfAllowed = async (usageBeforePrDescription: TokenUsage): Promise<void> => {
+    const prDescriptionAllowed = options.prDescription?.enabled === true && shouldDescribePr(meta.body);
+    const prDescriptionBudgetExhausted =
+      options.budgetTokens !== undefined && totalTokens(usageBeforePrDescription) >= options.budgetTokens;
+    if (prDescriptionAllowed && prDescriptionBudgetExhausted) {
+      prDescriptionNotes.push("Skipped PR description generation because the token budget was exhausted (#18).");
+    } else if (prDescriptionAllowed) {
+      try {
+        let descriptionDiffText = diffText;
+        if (incrementalBaseSha !== undefined) {
+          const redactedDescriptionDiff = redactSecrets(renderDescriptionDiff());
+          descriptionDiffText = redactedDescriptionDiff.text;
+          if (redactedDescriptionDiff.count > 0) {
+            redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
+          }
+        }
+        const generated = await describePr(
+          { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
+          { config, retry: undefined }
+        );
+        prDescriptionUsage = generated.usage;
+        const redactedDescription = redactSecrets(generated.description);
+        if (redactedDescription.count > 0) {
+          redactionNotes.push(`Redacted ${redactedDescription.count} secret(s) from PR description output.`);
+        }
+        prDescriptionText = redactedDescription.text;
+        prDescriptionNotes.push(
+          meta.body && meta.body.trim()
+            ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
+            : "Generated a PR description from the diff because the body was empty (#33)."
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const redacted = redactSecrets(message);
+        if (redacted.count > 0) {
+          redactionNotes.push(`Redacted ${redacted.count} secret(s) from PR description generation output.`);
+        }
+        prDescriptionNotes.push(
+          truncateNote(`PR description generation failed; continuing without it: ${redacted.text}`)
+        );
+      }
+    }
+  };
+  const publishPrDescription = async (result: ReviewPullRequestResult): Promise<void> => {
+    if (prDescriptionText === undefined) {
+      return;
+    }
+    try {
+      const latestMeta = await fetchPrMeta(octokit, ref);
+      if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
+        result.headAdvanced = true;
+        result.prDescriptionUpdated = false;
+      } else if (!shouldDescribePr(latestMeta.body)) {
+        result.prDescriptionUpdated = false;
+      } else {
+        await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+        result.prDescriptionUpdated = true;
+      }
+    } catch {
+      result.prDescriptionUpdated = false;
+      // surfaced via the review note; body update is best-effort
+    }
+  };
+
   if (reviewFiles.length === 0) {
     const reviewResult = {
       ...emptyReviewResult(),
@@ -1257,6 +1348,8 @@ export async function reviewPullRequest(
       reviewResult.judge.capped = ignoredSuppression.capped;
     }
     reviewResult.raw = reviewResult.findings;
+    await generatePrDescriptionIfAllowed(reviewResult.usage);
+    const totalUsage = addUsage(reviewResult.usage, prDescriptionUsage);
     const approvalCoverageIncomplete = fullSkipped.length > 0;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
@@ -1300,10 +1393,12 @@ export async function reviewPullRequest(
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
+        ...prDescriptionNotes,
         ...ignoredSuppression.notes,
         ...tidied.notes,
         ...redactionNotes,
         ...groundingNotes,
+        ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note)),
         incrementalBaseSha
           ? "No reviewable changes since the last reviewed commit; provider review skipped."
           : "No reviewable files remained after filters; provider review skipped."
@@ -1321,7 +1416,7 @@ export async function reviewPullRequest(
       meta,
       payload,
       review: reviewResult,
-      usage: reviewResult.usage,
+      usage: totalUsage,
       skipped,
       contextFiles: 0,
       incremental: incrementalBaseSha !== undefined,
@@ -1358,6 +1453,17 @@ export async function reviewPullRequest(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new ReviewPublishError(message, result);
+      }
+      if (await hasHeadAdvanced()) {
+        result.headAdvanced = true;
+        if (prDescriptionText !== undefined) {
+          result.prDescriptionUpdated = false;
+        }
+        return result;
+      }
+      await publishPrDescription(result);
+      if (result.headAdvanced) {
+        return result;
       }
     }
     // A passing gate still posts on a no-findings run so a Required check isn't left pending.
@@ -1397,26 +1503,6 @@ export async function reviewPullRequest(
     specialistKeys: tierSpecialistKeys,
     contextLimited: tierLimitedContext
   });
-
-  // Redact secrets from anything that will reach the provider.
-  const renderedDiff = renderGuardedDiff(reviewFiles);
-  const redactedDiff = redactSecrets(renderedDiff);
-  const diffText = redactedDiff.text;
-  if (redactedDiff.count > 0) {
-    redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
-  }
-  let descriptionRenderedDiff: string | undefined;
-  const renderDescriptionDiff = () => {
-    if (incrementalBaseSha === undefined) {
-      return renderedDiff;
-    }
-    descriptionRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
-    return descriptionRenderedDiff;
-  };
-  const redactedTitle = redactSecrets(meta.title);
-  if (redactedTitle.count > 0) {
-    redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
-  }
 
   let context: string | undefined;
   let contextFiles = 0;
@@ -1514,55 +1600,8 @@ export async function reviewPullRequest(
     reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
-  // Auto-generate a PR description (#33) when enabled and the body is empty (or
-  // already holds our generated block). The new body is PATCHed at publish time;
-  // a human-authored description is never touched. Tolerant — a failure here is a
-  // note, never a sink for the review.
-  let prDescriptionText: string | undefined;
-  let prDescriptionUsage = emptyUsage();
-  const prDescriptionNotes: string[] = [];
   const usageBeforePrDescription = addUsage(reviewResult.usage, contextUsage);
-  const prDescriptionAllowed = options.prDescription?.enabled === true && shouldDescribePr(meta.body);
-  const prDescriptionBudgetExhausted =
-    options.budgetTokens !== undefined && totalTokens(usageBeforePrDescription) >= options.budgetTokens;
-  if (prDescriptionAllowed && prDescriptionBudgetExhausted) {
-    prDescriptionNotes.push("Skipped PR description generation because the token budget was exhausted (#18).");
-  } else if (prDescriptionAllowed) {
-    try {
-      let descriptionDiffText = diffText;
-      if (incrementalBaseSha !== undefined) {
-        const redactedDescriptionDiff = redactSecrets(renderDescriptionDiff());
-        descriptionDiffText = redactedDescriptionDiff.text;
-        if (redactedDescriptionDiff.count > 0) {
-          redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
-        }
-      }
-      const generated = await describePr(
-        { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
-        { config, retry: undefined }
-      );
-      prDescriptionUsage = generated.usage;
-      const redactedDescription = redactSecrets(generated.description);
-      if (redactedDescription.count > 0) {
-        redactionNotes.push(`Redacted ${redactedDescription.count} secret(s) from PR description output.`);
-      }
-      prDescriptionText = redactedDescription.text;
-      prDescriptionNotes.push(
-        meta.body && meta.body.trim()
-          ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
-          : "Generated a PR description from the diff because the body was empty (#33)."
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const redacted = redactSecrets(message);
-      if (redacted.count > 0) {
-        redactionNotes.push(`Redacted ${redacted.count} secret(s) from PR description generation output.`);
-      }
-      prDescriptionNotes.push(
-        truncateNote(`PR description generation failed; continuing without it: ${redacted.text}`)
-      );
-    }
-  }
+  await generatePrDescriptionIfAllowed(usageBeforePrDescription);
 
   // Drop findings muted via `@prowl-review ignore` (#30) before the gate + tidy.
   const ignoredSuppression = suppressIgnoredFindingsWithRefill({
@@ -1723,25 +1762,7 @@ export async function reviewPullRequest(
       }
       return result;
     }
-    // Write the generated PR description (#33). Non-fatal: a failure here never
-    // sinks the published review.
-    if (prDescriptionText !== undefined) {
-      try {
-        const latestMeta = await fetchPrMeta(octokit, ref);
-        if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
-          result.headAdvanced = true;
-          result.prDescriptionUpdated = false;
-        } else if (!shouldDescribePr(latestMeta.body)) {
-          result.prDescriptionUpdated = false;
-        } else {
-          await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
-          result.prDescriptionUpdated = true;
-        }
-      } catch {
-        result.prDescriptionUpdated = false;
-        // surfaced via the review note; body update is best-effort
-      }
-    }
+    await publishPrDescription(result);
   }
   if (result.headAdvanced) {
     return result;
