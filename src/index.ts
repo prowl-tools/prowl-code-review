@@ -103,6 +103,7 @@ export {
   fetchPullRequest,
   fetchComparisonDiff,
   fetchPullRequestHeadSha,
+  fetchPullRequestMeta,
   updatePullRequestBody,
   type PullRequestRef,
   type PullRequestMeta,
