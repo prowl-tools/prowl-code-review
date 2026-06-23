@@ -63,44 +63,35 @@ function analyzeSummaryMarkers(body: string): {
   return { hasStart: true, hasEnd: body.lastIndexOf(PR_SUMMARY_END, start) !== -1 };
 }
 
-function renderDescriptionBlockWithinLimit(description: string): string {
+function joinBodyParts(parts: string[]): string {
+  const body = parts.filter((part) => part.length > 0).join(PR_BODY_SEPARATOR);
+  return body.length > PR_BODY_LIMIT ? sliceAtCharacterBoundary(body, PR_BODY_LIMIT) : body;
+}
+
+function renderDescriptionBlockWithinLimit(description: string, maxLength = PR_BODY_LIMIT): string | undefined {
   const block = renderDescriptionBlock(description);
-  if (block.length <= PR_BODY_LIMIT) {
+  if (block.length <= maxLength) {
     return block;
   }
   const emptyBlock = renderDescriptionBlock("");
-  const descriptionBudget = PR_BODY_LIMIT - emptyBlock.length;
+  const descriptionBudget = maxLength - emptyBlock.length;
   if (descriptionBudget <= 0) {
-    return emptyBlock;
+    return undefined;
   }
   return renderDescriptionBlock(sliceAtCharacterBoundary(description.trim(), descriptionBudget).trimEnd());
 }
 
-function composeWithGeneratedBlock(before: string, block: string, after = ""): string {
-  const parts: string[] = [];
+function composeWithGeneratedBlock(before: string, description: string, after = ""): string {
   const beforeText = before.trimEnd();
   const afterText = after.trimStart();
-
-  if (beforeText) {
-    const beforeBudget = PR_BODY_LIMIT - block.length - PR_BODY_SEPARATOR.length;
-    const boundedBefore = sliceAtCharacterBoundary(beforeText, beforeBudget).trimEnd();
-    if (boundedBefore) {
-      parts.push(boundedBefore);
-    }
+  const separatorCount = Number(beforeText.length > 0) + Number(afterText.length > 0);
+  const blockBudget =
+    PR_BODY_LIMIT - beforeText.length - afterText.length - separatorCount * PR_BODY_SEPARATOR.length;
+  const block = renderDescriptionBlockWithinLimit(description, blockBudget);
+  if (!block) {
+    return joinBodyParts([beforeText, afterText]);
   }
-
-  parts.push(block);
-
-  if (afterText) {
-    const used = parts.join(PR_BODY_SEPARATOR).length;
-    const afterBudget = PR_BODY_LIMIT - used - PR_BODY_SEPARATOR.length;
-    const boundedAfter = sliceAtCharacterBoundary(afterText, afterBudget).trimStart();
-    if (boundedAfter) {
-      parts.push(boundedAfter);
-    }
-  }
-
-  return parts.join(PR_BODY_SEPARATOR);
+  return joinBodyParts([beforeText, block, afterText]);
 }
 
 /**
@@ -128,16 +119,15 @@ export function renderDescriptionBlock(description: string): string {
  * GitHub's body size limit.
  */
 export function embedPrDescription(existingBody: string | null | undefined, description: string): string {
-  const block = renderDescriptionBlockWithinLimit(description);
   const body = existingBody ?? "";
   const markers = analyzeSummaryMarkers(body);
   if (markers.range) {
-    return composeWithGeneratedBlock(body.slice(0, markers.range.start), block, body.slice(markers.range.end));
+    return composeWithGeneratedBlock(body.slice(0, markers.range.start), description, body.slice(markers.range.end));
   }
   if (markers.hasStart || markers.hasEnd) {
     return sliceAtCharacterBoundary(body, PR_BODY_LIMIT);
   }
-  return body.trim() ? composeWithGeneratedBlock(body.trim(), block) : block;
+  return composeWithGeneratedBlock(body.trim(), description);
 }
 
 /** Build the stable, trusted system prompt for description generation. */

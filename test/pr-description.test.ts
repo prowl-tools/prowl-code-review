@@ -86,6 +86,20 @@ describe("renderDescriptionBlock / embedPrDescription", () => {
     expect(body.length).toBeLessThanOrEqual(65_536);
     expect(body.includes(PR_SUMMARY_START)).toBe(body.includes(PR_SUMMARY_END));
   });
+
+  it("preserves author text around the generated block near the body limit", () => {
+    const intro = "a".repeat(32_600);
+    const footer = "b".repeat(32_600);
+    const existing = `${intro}\n\n${renderDescriptionBlock("old summary")}\n\n${footer}`;
+    const body = embedPrDescription(existing, "fresh summary ".repeat(1_000));
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain(intro);
+    expect(body).toContain(PR_SUMMARY_START);
+    expect(body).toContain("fresh summary");
+    expect(body).toContain(footer);
+    expect(body.includes(PR_SUMMARY_START)).toBe(body.includes(PR_SUMMARY_END));
+  });
 });
 
 describe("buildDescriptionPrompt / system", () => {
