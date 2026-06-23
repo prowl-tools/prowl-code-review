@@ -67,6 +67,14 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #     - provider: openai
 #       # model: gpt-5.2
 
+# --- Issue / ticket validation ------------------------------------------------
+# When a PR links a GitHub issue (a closing keyword like "Closes #12", an
+# owner/repo#n reference, or an issue URL in the title/body), pull the issue's
+# acceptance criteria and flag any the diff doesn't satisfy (#32). Opt-in.
+# issueValidation:
+#   enabled: true
+#   maxIssues: 3        # cap linked issues fetched per PR (default 3)
+
 # --- Auto-generated PR description --------------------------------------------
 # When a PR is opened with an empty description, write one from the diff (#33),
 # CodeRabbit-style. Opt-in. The generated text lives between markers in the PR
