@@ -299,6 +299,28 @@ refresh it in place while preserving anything you add around it. A
 body (or to refresh prowl-review's own block). Needs `pull-requests: write`
 (already required to post reviews).
 
+## Issue / ticket validation (#32)
+
+When a PR **links a GitHub issue**, prowl-review pulls the issue's acceptance
+criteria and flags anything the diff doesn't satisfy — so scope gaps are caught
+in review. Opt-in:
+
+```yaml
+# .prowl-review.yml
+issueValidation:
+  enabled: true
+  # maxIssues: 3   # cap linked issues fetched per PR (default 3)
+```
+
+It recognizes the references GitHub treats as links: a **closing keyword**
+(`Closes #12`, `Fixes owner/repo#5`) or an **issue URL** in the PR title/body. A
+dedicated *requirements* review lens receives the issue's criteria and raises a
+finding for each one the PR misses or only partially implements — so the gaps
+appear inline alongside the normal review (and, in an ensemble, get cross-model
+consensus too). Fetching is tolerant: a missing or inaccessible issue (or one
+that's actually a PR) is skipped with a note. Cross-tracker support
+(Linear/Jira) is a future extension.
+
 ## Development
 
 ```bash

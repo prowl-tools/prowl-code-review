@@ -19,3 +19,8 @@ ensemble:
 # Fill an empty PR description from the diff (#33); never overwrites a body you wrote.
 prDescription:
   enabled: true
+
+# Validate the PR against its linked issue's acceptance criteria (#32); only acts
+# when a PR links an issue (e.g. "Closes #12").
+issueValidation:
+  enabled: true
