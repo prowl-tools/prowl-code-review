@@ -1405,6 +1405,14 @@ export async function reviewPullRequest(
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
   }
+  let descriptionRenderedDiff: string | undefined;
+  const renderDescriptionDiff = () => {
+    if (incrementalBaseSha === undefined) {
+      return renderedDiff;
+    }
+    descriptionRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
+    return descriptionRenderedDiff;
+  };
   const redactedTitle = redactSecrets(meta.title);
   if (redactedTitle.count > 0) {
     redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
@@ -1523,7 +1531,7 @@ export async function reviewPullRequest(
     try {
       let descriptionDiffText = diffText;
       if (incrementalBaseSha !== undefined) {
-        const redactedDescriptionDiff = redactSecrets(renderGuardedDiff(fullGuarded.files));
+        const redactedDescriptionDiff = redactSecrets(renderDescriptionDiff());
         descriptionDiffText = redactedDescriptionDiff.text;
         if (redactedDescriptionDiff.count > 0) {
           redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
@@ -1708,24 +1716,26 @@ export async function reviewPullRequest(
       const message = error instanceof Error ? error.message : String(error);
       throw new ReviewPublishError(message, result);
     }
+    if (await hasHeadAdvanced()) {
+      result.headAdvanced = true;
+      if (prDescriptionText !== undefined) {
+        result.prDescriptionUpdated = false;
+      }
+      return result;
+    }
     // Write the generated PR description (#33). Non-fatal: a failure here never
     // sinks the published review.
     if (prDescriptionText !== undefined) {
       try {
-        if (await hasHeadAdvanced()) {
+        const latestMeta = await fetchPrMeta(octokit, ref);
+        if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
           result.headAdvanced = true;
           result.prDescriptionUpdated = false;
+        } else if (!shouldDescribePr(latestMeta.body)) {
+          result.prDescriptionUpdated = false;
         } else {
-          const latestMeta = await fetchPrMeta(octokit, ref);
-          if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
-            result.headAdvanced = true;
-            result.prDescriptionUpdated = false;
-          } else if (!shouldDescribePr(latestMeta.body)) {
-            result.prDescriptionUpdated = false;
-          } else {
-            await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
-            result.prDescriptionUpdated = true;
-          }
+          await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+          result.prDescriptionUpdated = true;
         }
       } catch {
         result.prDescriptionUpdated = false;
