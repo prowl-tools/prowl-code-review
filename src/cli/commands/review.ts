@@ -304,6 +304,7 @@ type ResolvedReviewOptions = Pick<
   | "checkRun"
   | "approval"
   | "prDescription"
+  | "issueValidation"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -465,7 +466,9 @@ export function resolveReviewOptions(
     // Approval rubric + break-glass (#52); opt-in via config.
     approval: config.approval,
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.
-    prDescription: config.prDescription
+    prDescription: config.prDescription,
+    // Validate the PR against its linked issue's acceptance criteria (#32); opt-in via config.
+    issueValidation: config.issueValidation
   };
 }
 
@@ -591,6 +594,9 @@ export function reportReviewCommandResult(
   }
   if (result.prDescriptionUpdated) {
     console.log("prowl-review: wrote a generated PR description (#33).");
+  }
+  if (result.issuesValidated) {
+    console.log(`prowl-review: validated against ${result.issuesValidated} linked issue(s) (#32).`);
   }
   if (result.approval?.enabled) {
     const verdict = result.approval.event.toLowerCase().replace("_", " ");

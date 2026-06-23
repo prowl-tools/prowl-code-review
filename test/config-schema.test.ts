@@ -41,6 +41,21 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ pricing: { m: { input: -1, output: 2 } } })).toThrow(); // negative
   });
 
+  it("accepts the issueValidation block and rejects malformed entries (#32)", () => {
+    expect(configSchema.parse({ issueValidation: { enabled: true } })).toEqual({ issueValidation: { enabled: true } });
+    expect(configSchema.parse({ issueValidation: { enabled: true, maxIssues: 5 } })).toEqual({
+      issueValidation: { enabled: true, maxIssues: 5 }
+    });
+    expect(() => configSchema.parse({ issueValidation: { maxIssues: 0 } })).toThrow(); // positive
+    expect(() => configSchema.parse({ issueValidation: { nope: true } })).toThrow(); // strict
+  });
+
+  it("reserves the requirements category from custom specialists (#32)", () => {
+    expect(() =>
+      configSchema.parse({ specialists: { custom: [{ key: "requirements", focus: "x" }] } })
+    ).toThrow();
+  });
+
   it("accepts the prDescription toggle and rejects malformed entries (#33)", () => {
     expect(configSchema.parse({ prDescription: { enabled: true } })).toEqual({ prDescription: { enabled: true } });
     expect(() => configSchema.parse({ prDescription: { enabled: "yes" } })).toThrow();

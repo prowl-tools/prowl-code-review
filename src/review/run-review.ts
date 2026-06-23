@@ -15,6 +15,8 @@ import { verifyFindings, type VerifyResult } from "./verify.js";
 import { totalTokens } from "../cost/pricing.js";
 import {
   DEFAULT_SPECIALISTS,
+  REQUIREMENTS_SPECIALIST,
+  REQUIREMENTS_SPECIALIST_KEY,
   buildSpecialistPrompt,
   buildSharedSystem,
   type Specialist
@@ -42,6 +44,12 @@ export interface ReviewInput {
   learnedPatterns?: string;
   /** Human labels of languages this PR changes, for language-aware review (#5). */
   languages?: string[];
+  /**
+   * Linked-issue requirements / acceptance criteria (#32). When present, a
+   * conditional requirements lens runs in addition to the configured specialists
+   * and flags acceptance criteria the diff does not satisfy.
+   */
+  requirements?: string;
   /** Specialist set; defaults to {@link DEFAULT_SPECIALISTS}. */
   specialists?: Specialist[];
   /**
@@ -148,7 +156,13 @@ export async function runReview(
   // both specialist passes and the verification pass, so both get resilience.
   const run = options.complete ?? retrying(defaultComplete, options.retry);
   const baseConfig = options.config ?? resolveProviderConfig();
-  const specialists = input.specialists ?? DEFAULT_SPECIALISTS;
+  const configuredSpecialists = input.specialists ?? DEFAULT_SPECIALISTS;
+  // Issue/ticket validation (#32): when the PR links an issue, append the
+  // requirements lens (with the acceptance criteria supplied in its prompt) so
+  // it runs alongside the configured specialists regardless of risk tier.
+  const specialists = input.requirements?.trim()
+    ? [...configuredSpecialists, REQUIREMENTS_SPECIALIST]
+    : configuredSpecialists;
 
   // Shared, byte-identical trusted instructions; untrusted PR content stays in prompt.
   const system = buildSharedSystem({
@@ -169,7 +183,9 @@ export async function runReview(
               specialist,
               diff: input.diff,
               context: input.context,
-              grounding: input.grounding?.summary
+              grounding: input.grounding?.summary,
+              // Only the requirements lens receives the linked-issue criteria (#32).
+              requirements: specialist.key === REQUIREMENTS_SPECIALIST_KEY ? input.requirements : undefined
             }),
             // Native JSON output where the provider supports it (#7).
             responseFormat: "json"

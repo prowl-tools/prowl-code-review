@@ -99,6 +99,20 @@ export interface OctokitLike {
     };
     /** Issue endpoints — a PR is an issue, so its top-level comments live here. */
     issues: {
+      /** Fetch one issue's metadata (title/body) for issue/ticket validation (#32). */
+      get(params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+      }): Promise<{
+        data: {
+          title?: string;
+          body?: string | null;
+          state?: string;
+          /** Present when the "issue" is actually a pull request. */
+          pull_request?: unknown;
+        };
+      }>;
       /** List a PR/issue's top-level comments (used to find our prior summary). */
       listComments(params: {
         owner: string;

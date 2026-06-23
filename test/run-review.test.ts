@@ -373,3 +373,45 @@ describe("runReview", () => {
     expect(result.findings[0].title).toBe("suspect");
   });
 });
+
+describe("runReview requirements lens (#32)", () => {
+  it("appends the requirements lens only when requirements are provided", async () => {
+    const seen: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Requirements reviewer")) {
+        seen.push("requirements");
+        // The acceptance criteria reach only this lens's prompt.
+        if (request.prompt.includes("must support dark mode")) {
+          seen.push("criteria-present");
+        }
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "requirements", title: "dark mode missing", body: "z", confidence: 0.8 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview(
+      { diff: "diff", requirements: "### #5: Theme\nThe app must support dark mode." },
+      { config, complete, verify: false }
+    );
+
+    expect(seen).toContain("requirements");
+    expect(seen).toContain("criteria-present");
+    expect(result.passes.some((p) => p.specialist === "requirements")).toBe(true);
+    expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
+  });
+
+  it("does not run the requirements lens without requirements", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Requirements reviewer")) {
+        throw new Error("requirements lens should not run");
+      }
+      return reply("[]");
+    });
+    const result = await runReview({ diff: "diff" }, { config, complete, verify: false });
+    expect(result.passes.some((p) => p.specialist === "requirements")).toBe(false);
+  });
+});

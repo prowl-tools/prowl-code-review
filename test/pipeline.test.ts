@@ -2976,3 +2976,58 @@ describe("reviewPullRequest PR description (#33)", () => {
     expect(result.prDescriptionUpdated).toBe(false);
   });
 });
+
+describe("reviewPullRequest issue validation (#32)", () => {
+  it("fetches linked issues and feeds requirements into the review", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: DIFF })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      }))
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    expect(deps.fetchIssue).toHaveBeenCalledTimes(1);
+    expect(deps.fetchIssue.mock.calls[0][1]).toMatchObject({ number: 5 });
+    // The acceptance criteria reach runReview as requirements.
+    expect(deps.runReview.mock.calls[0][0].requirements).toContain("Must support dark mode.");
+    expect(result.issuesValidated).toBe(1);
+    expect(result.payload.body).toContain("linked issue");
+  });
+
+  it("does nothing when no issue is linked", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "no refs here" }, diff: DIFF })),
+      fetchIssue: vi.fn()
+    };
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+    expect(deps.fetchIssue).not.toHaveBeenCalled();
+    expect(deps.runReview.mock.calls[0][0].requirements).toBeUndefined();
+    expect(result.issuesValidated).toBeUndefined();
+  });
+
+  it("does not fetch issues when the feature is disabled", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: DIFF })),
+      fetchIssue: vi.fn()
+    };
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+    expect(deps.fetchIssue).not.toHaveBeenCalled();
+  });
+});
