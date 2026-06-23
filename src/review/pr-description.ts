@@ -47,20 +47,20 @@ function sliceAtCharacterBoundary(text: string, maxLength: number): string {
   return text.slice(0, end);
 }
 
-function findSummaryBlock(body: string): { start: number; end: number } | undefined {
+function analyzeSummaryMarkers(body: string): {
+  range?: { start: number; end: number };
+  hasStart: boolean;
+  hasEnd: boolean;
+} {
   const start = body.indexOf(PR_SUMMARY_START);
   if (start === -1) {
-    return undefined;
+    return { hasStart: false, hasEnd: body.indexOf(PR_SUMMARY_END) !== -1 };
   }
-  const end = body.indexOf(PR_SUMMARY_END, start + PR_SUMMARY_START.length);
-  if (end === -1) {
-    return undefined;
+  const endAfterStart = body.indexOf(PR_SUMMARY_END, start + PR_SUMMARY_START.length);
+  if (endAfterStart !== -1) {
+    return { hasStart: true, hasEnd: true, range: { start, end: endAfterStart + PR_SUMMARY_END.length } };
   }
-  return { start, end: end + PR_SUMMARY_END.length };
-}
-
-function hasAnySummaryMarker(body: string): boolean {
-  return body.includes(PR_SUMMARY_START) || body.includes(PR_SUMMARY_END);
+  return { hasStart: true, hasEnd: body.lastIndexOf(PR_SUMMARY_END, start) !== -1 };
 }
 
 function renderDescriptionBlockWithinLimit(description: string): string {
@@ -113,7 +113,7 @@ export function shouldDescribePr(body: string | null | undefined): boolean {
   if (!body || !body.trim()) {
     return true;
   }
-  return findSummaryBlock(body) !== undefined;
+  return analyzeSummaryMarkers(body).range !== undefined;
 }
 
 /** Wrap generated Markdown in the marked, attributed block written to the PR body. */
@@ -130,11 +130,11 @@ export function renderDescriptionBlock(description: string): string {
 export function embedPrDescription(existingBody: string | null | undefined, description: string): string {
   const block = renderDescriptionBlockWithinLimit(description);
   const body = existingBody ?? "";
-  const range = findSummaryBlock(body);
-  if (range) {
-    return composeWithGeneratedBlock(body.slice(0, range.start), block, body.slice(range.end));
+  const markers = analyzeSummaryMarkers(body);
+  if (markers.range) {
+    return composeWithGeneratedBlock(body.slice(0, markers.range.start), block, body.slice(markers.range.end));
   }
-  if (hasAnySummaryMarker(body)) {
+  if (markers.hasStart || markers.hasEnd) {
     return sliceAtCharacterBoundary(body, PR_BODY_LIMIT);
   }
   return body.trim() ? composeWithGeneratedBlock(body.trim(), block) : block;
