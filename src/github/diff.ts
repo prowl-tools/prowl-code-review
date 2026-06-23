@@ -70,6 +70,7 @@ interface RawComparison {
   status?: unknown;
 }
 
+/** Normalize the subset of GitHub's raw PR payload used by the review pipeline. */
 function normalizePullRequestMeta(pr: RawPullRequest): PullRequestMeta {
   return {
     number: pr.number,

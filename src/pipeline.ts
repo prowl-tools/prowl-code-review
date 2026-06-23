@@ -528,6 +528,7 @@ function normalizeSubmitReviewResult(result: SubmitReviewResult | void): SubmitR
   return result ?? { posted: true, cancelled: false };
 }
 
+/** Apply reviewability filters and size limits, returning files plus user-visible skip notes. */
 function filterAndGuardDiffFiles(
   files: DiffFile[],
   ignorePatterns: readonly string[],
@@ -537,6 +538,7 @@ function filterAndGuardDiffFiles(
   return guardReviewableDiffFiles(keptFiles, diffLimits, skipped);
 }
 
+/** Remove sensitive and ignored files before size budgeting or publish-file selection. */
 function filterReviewableDiffFiles(
   files: DiffFile[],
   ignorePatterns: readonly string[]
@@ -550,6 +552,7 @@ function filterReviewableDiffFiles(
   return { files: keptFiles, skipped: [...sensitiveSkipped, ...ignoredSkipped] };
 }
 
+/** Apply configured diff size limits to already-filtered files. */
 function guardReviewableDiffFiles(
   files: DiffFile[],
   diffLimits: DiffLimits | undefined,
@@ -559,6 +562,7 @@ function guardReviewableDiffFiles(
   return { files: guarded.files, skipped: [...guarded.skipped, ...skipped] };
 }
 
+/** Keep only full-PR files that correspond to paths reviewed in an incremental delta. */
 function filterPublishDiffFiles(
   reviewableFiles: DiffFile[],
   reviewedPaths: Set<string>
