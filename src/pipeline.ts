@@ -1409,13 +1409,6 @@ export async function reviewPullRequest(
   if (redactedTitle.count > 0) {
     redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
   }
-  const descriptionRenderedDiff = incrementalBaseSha === undefined ? renderedDiff : renderGuardedDiff(fullGuarded.files);
-  const redactedDescriptionDiff =
-    incrementalBaseSha === undefined ? redactedDiff : redactSecrets(descriptionRenderedDiff);
-  const descriptionDiffText = redactedDescriptionDiff.text;
-  if (incrementalBaseSha !== undefined && redactedDescriptionDiff.count > 0) {
-    redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
-  }
 
   let context: string | undefined;
   let contextFiles = 0;
@@ -1528,6 +1521,14 @@ export async function reviewPullRequest(
     prDescriptionNotes.push("Skipped PR description generation because the token budget was exhausted (#18).");
   } else if (prDescriptionAllowed) {
     try {
+      let descriptionDiffText = diffText;
+      if (incrementalBaseSha !== undefined) {
+        const redactedDescriptionDiff = redactSecrets(renderGuardedDiff(fullGuarded.files));
+        descriptionDiffText = redactedDescriptionDiff.text;
+        if (redactedDescriptionDiff.count > 0) {
+          redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
+        }
+      }
       const generated = await describePr(
         { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
         { config, retry: undefined }
@@ -1722,8 +1723,16 @@ export async function reviewPullRequest(
           } else if (!shouldDescribePr(latestMeta.body)) {
             result.prDescriptionUpdated = false;
           } else {
-            await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
-            result.prDescriptionUpdated = true;
+            const confirmedMeta = await fetchPrMeta(octokit, ref);
+            if (staleGuardEnabled && confirmedMeta.headSha !== reviewedHeadSha) {
+              result.headAdvanced = true;
+              result.prDescriptionUpdated = false;
+            } else if (!shouldDescribePr(confirmedMeta.body)) {
+              result.prDescriptionUpdated = false;
+            } else {
+              await updateBody(octokit, ref, embedPrDescription(confirmedMeta.body, prDescriptionText));
+              result.prDescriptionUpdated = true;
+            }
           }
         }
       } catch {
