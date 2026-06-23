@@ -1723,16 +1723,8 @@ export async function reviewPullRequest(
           } else if (!shouldDescribePr(latestMeta.body)) {
             result.prDescriptionUpdated = false;
           } else {
-            const confirmedMeta = await fetchPrMeta(octokit, ref);
-            if (staleGuardEnabled && confirmedMeta.headSha !== reviewedHeadSha) {
-              result.headAdvanced = true;
-              result.prDescriptionUpdated = false;
-            } else if (!shouldDescribePr(confirmedMeta.body)) {
-              result.prDescriptionUpdated = false;
-            } else {
-              await updateBody(octokit, ref, embedPrDescription(confirmedMeta.body, prDescriptionText));
-              result.prDescriptionUpdated = true;
-            }
+            await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+            result.prDescriptionUpdated = true;
           }
         }
       } catch {
