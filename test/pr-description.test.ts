@@ -27,6 +27,11 @@ describe("shouldDescribePr", () => {
   it("is false for a human-authored body (never overwrite)", () => {
     expect(shouldDescribePr("This PR fixes the login bug.")).toBe(false);
   });
+
+  it("is false when only one marker is present", () => {
+    expect(shouldDescribePr(`intro\n${PR_SUMMARY_START}\nmanual text`)).toBe(false);
+    expect(shouldDescribePr(`intro\n${PR_SUMMARY_END}\nmanual text`)).toBe(false);
+  });
 });
 
 describe("renderDescriptionBlock / embedPrDescription", () => {
@@ -54,6 +59,33 @@ describe("renderDescriptionBlock / embedPrDescription", () => {
     // Exactly one block remains.
     expect(body.match(new RegExp(PR_SUMMARY_START, "g"))).toHaveLength(1);
   });
+
+  it("leaves malformed marker-like bodies unchanged", () => {
+    const startOnly = `Author intro.\n\n${PR_SUMMARY_START}\nmanual text`;
+    const endOnly = `Author intro.\n\n${PR_SUMMARY_END}\nmanual text`;
+    const reversed = `Author intro.\n\n${PR_SUMMARY_END}\nmanual text\n${PR_SUMMARY_START}`;
+
+    expect(embedPrDescription(startOnly, "fresh summary")).toBe(startOnly);
+    expect(embedPrDescription(endOnly, "fresh summary")).toBe(endOnly);
+    expect(embedPrDescription(reversed, "fresh summary")).toBe(reversed);
+  });
+
+  it("is idempotent when called repeatedly on a generated block", () => {
+    const once = embedPrDescription("", "fresh summary");
+    const twice = embedPrDescription(once, "fresh summary");
+
+    expect(twice).toBe(once);
+    expect(twice.match(new RegExp(PR_SUMMARY_START, "g"))).toHaveLength(1);
+    expect(twice.match(new RegExp(PR_SUMMARY_END, "g"))).toHaveLength(1);
+  });
+
+  it("never leaves a partial generated block after truncation", () => {
+    const nearLimitBody = "x".repeat(65_520);
+    const body = embedPrDescription(nearLimitBody, "fresh summary");
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body.includes(PR_SUMMARY_START)).toBe(body.includes(PR_SUMMARY_END));
+  });
 });
 
 describe("buildDescriptionPrompt / system", () => {
@@ -73,6 +105,15 @@ describe("buildDescriptionPrompt / system", () => {
     const secret = ["AKIA", "1234567890ABCD99"].join("");
     const prompt = buildDescriptionPrompt({ title: `key ${secret}`, diff: `+const k = "${secret}"` });
     expect(prompt).not.toContain(secret);
+  });
+
+  it("uses already-redacted prompt input as-is", () => {
+    const prompt = buildDescriptionPrompt({
+      title: "key [REDACTED:aws-access-key]",
+      diff: '+const k = "[REDACTED:aws-access-key]"',
+      alreadyRedacted: true
+    });
+    expect(prompt).toContain("[REDACTED:aws-access-key]");
   });
 });
 

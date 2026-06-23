@@ -2600,12 +2600,67 @@ describe("reviewPullRequest PR description (#33)", () => {
     });
 
     expect(generatePrDescription).toHaveBeenCalledTimes(1);
-    expect(generatePrDescription.mock.calls[0][0]).toMatchObject({ title: "T" });
+    expect(generatePrDescription.mock.calls[0][0]).toMatchObject({ title: "T", alreadyRedacted: true });
     expect(updatePullRequestBody).toHaveBeenCalledTimes(1);
     const [, , newBody] = updatePullRequestBody.mock.calls[0];
     expect(newBody).toContain("- adds a thing");
     expect(newBody).toContain("prowl-review:pr-summary:start");
     expect(result.prDescriptionUpdated).toBe(true);
+  });
+
+  it("uses the full guarded PR diff when refreshing during an incremental run", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF)
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: `${DIFF}\n${DELTA_DIFF}` }));
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- full summary",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.diff).toContain("src/b.ts");
+    expect(reviewInput.diff).not.toContain("src/a.ts");
+    const descriptionInput = generatePrDescription.mock.calls[0][0];
+    expect(descriptionInput.alreadyRedacted).toBe(true);
+    expect(descriptionInput.diff).toContain("src/a.ts");
+    expect(descriptionInput.diff).toContain("src/b.ts");
+  });
+
+  it("does not overwrite a human body added before the PATCH", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi
+      .fn()
+      .mockResolvedValueOnce({ meta: { ...meta, body: "" }, diff: DIFF })
+      .mockResolvedValueOnce({ meta: { ...meta, body: "I wrote this while review was running." }, diff: DIFF });
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- generated",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(generatePrDescription).toHaveBeenCalledTimes(1);
+    expect(deps.fetchPullRequest).toHaveBeenCalledTimes(2);
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(result.prDescriptionUpdated).toBeUndefined();
   });
 
   it("does not touch a human-authored PR body", async () => {
@@ -2672,5 +2727,46 @@ describe("reviewPullRequest PR description (#33)", () => {
     expect(updatePullRequestBody).not.toHaveBeenCalled();
     expect(result.posted).toBe(true);
     expect(result.payload.body).toContain("PR description generation failed");
+  });
+
+  it("redacts provider errors before publishing PR description failure notes", async () => {
+    const secret = ["AKIA", "1234567890ABCD99"].join("");
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn(async () => {
+      throw new Error(`provider leaked ${secret}`);
+    });
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription }
+    });
+
+    expect(result.payload.body).toContain("PR description generation failed");
+    expect(result.payload.body).not.toContain(secret);
+    expect(result.payload.body).toContain("REDACTED:aws-access-key");
+    expect(result.payload.body).toContain("from PR description generation output.");
+  });
+
+  it("leaves prDescriptionUpdated unset when the body update fails", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- generated",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {
+      throw new Error("GitHub unavailable");
+    });
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(updatePullRequestBody).toHaveBeenCalledTimes(1);
+    expect(result.posted).toBe(true);
+    expect(result.prDescriptionUpdated).toBeUndefined();
   });
 });

@@ -1135,10 +1135,11 @@ export async function reviewPullRequest(
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
-  const fullSkipped =
+  const fullGuarded =
     incrementalBaseSha === undefined
-      ? skipped
-      : filterAndGuardDiffFiles(fullParsed.files, ignorePatterns, options.diffLimits).skipped;
+      ? { files: reviewFiles, skipped }
+      : filterAndGuardDiffFiles(fullParsed.files, ignorePatterns, options.diffLimits);
+  const fullSkipped = fullGuarded.skipped;
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
@@ -1375,6 +1376,18 @@ export async function reviewPullRequest(
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
   }
+  const redactedTitle = redactSecrets(meta.title);
+  if (redactedTitle.count > 0) {
+    redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
+  }
+  let descriptionDiffText = diffText;
+  if (incrementalBaseSha !== undefined) {
+    const redactedDescriptionDiff = redactSecrets(renderGuardedDiff(fullGuarded.files));
+    descriptionDiffText = redactedDescriptionDiff.text;
+    if (redactedDescriptionDiff.count > 0) {
+      redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
+    }
+  }
 
   let context: string | undefined;
   let contextFiles = 0;
@@ -1476,17 +1489,17 @@ export async function reviewPullRequest(
   // already holds our generated block). The new body is PATCHed at publish time;
   // a human-authored description is never touched. Tolerant — a failure here is a
   // note, never a sink for the review.
-  let prDescriptionBody: string | undefined;
+  let prDescriptionText: string | undefined;
   let prDescriptionUsage = emptyUsage();
   const prDescriptionNotes: string[] = [];
   if (options.prDescription?.enabled && shouldDescribePr(meta.body)) {
     try {
       const generated = await describePr(
-        { title: meta.title, diff: diffText, guidelines: options.guidelines },
+        { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
         { config, retry: undefined }
       );
       prDescriptionUsage = generated.usage;
-      prDescriptionBody = embedPrDescription(meta.body, generated.description);
+      prDescriptionText = generated.description;
       prDescriptionNotes.push(
         meta.body && meta.body.trim()
           ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
@@ -1494,7 +1507,13 @@ export async function reviewPullRequest(
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      prDescriptionNotes.push(truncateNote(`PR description generation failed; continuing without it: ${message}`));
+      const redacted = redactSecrets(message);
+      if (redacted.count > 0) {
+        redactionNotes.push(`Redacted ${redacted.count} secret(s) from PR description generation output.`);
+      }
+      prDescriptionNotes.push(
+        truncateNote(`PR description generation failed; continuing without it: ${redacted.text}`)
+      );
     }
   }
 
@@ -1652,10 +1671,15 @@ export async function reviewPullRequest(
     }
     // Write the generated PR description (#33). Non-fatal: a failure here never
     // sinks the published review.
-    if (prDescriptionBody !== undefined) {
+    if (prDescriptionText !== undefined) {
       try {
-        await updateBody(octokit, ref, prDescriptionBody);
-        result.prDescriptionUpdated = true;
+        const { meta: latestMeta } = await fetchPr(octokit, ref);
+        if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
+          result.headAdvanced = true;
+        } else if (shouldDescribePr(latestMeta.body)) {
+          await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+          result.prDescriptionUpdated = true;
+        }
       } catch {
         // surfaced via the review note; body update is best-effort
       }
