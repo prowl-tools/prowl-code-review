@@ -285,7 +285,7 @@ export interface ReviewPullRequestResult {
   headAdvanced?: boolean;
   /** Multi-provider ensemble outcome (#53); undefined for a normal single-provider review. */
   ensemble?: { providers: EnsembleProviderReport[] };
-  /** True when an auto-generated PR description was written to the body (#33). */
+  /** True when an auto-generated PR description was written; false when generated but skipped/failed (#33). */
   prDescriptionUpdated?: boolean;
   /** True when the review was published (false on dry run). */
   posted: boolean;
@@ -1380,13 +1380,12 @@ export async function reviewPullRequest(
   if (redactedTitle.count > 0) {
     redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
   }
-  let descriptionDiffText = diffText;
-  if (incrementalBaseSha !== undefined) {
-    const redactedDescriptionDiff = redactSecrets(renderGuardedDiff(fullGuarded.files));
-    descriptionDiffText = redactedDescriptionDiff.text;
-    if (redactedDescriptionDiff.count > 0) {
-      redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
-    }
+  const descriptionRenderedDiff = incrementalBaseSha === undefined ? renderedDiff : renderGuardedDiff(fullGuarded.files);
+  const redactedDescriptionDiff =
+    incrementalBaseSha === undefined ? redactedDiff : redactSecrets(descriptionRenderedDiff);
+  const descriptionDiffText = redactedDescriptionDiff.text;
+  if (incrementalBaseSha !== undefined && redactedDescriptionDiff.count > 0) {
+    redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
   }
 
   let context: string | undefined;
@@ -1499,7 +1498,11 @@ export async function reviewPullRequest(
         { config, retry: undefined }
       );
       prDescriptionUsage = generated.usage;
-      prDescriptionText = generated.description;
+      const redactedDescription = redactSecrets(generated.description);
+      if (redactedDescription.count > 0) {
+        redactionNotes.push(`Redacted ${redactedDescription.count} secret(s) from PR description output.`);
+      }
+      prDescriptionText = redactedDescription.text;
       prDescriptionNotes.push(
         meta.body && meta.body.trim()
           ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
@@ -1676,14 +1679,24 @@ export async function reviewPullRequest(
         const { meta: latestMeta } = await fetchPr(octokit, ref);
         if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
           result.headAdvanced = true;
-        } else if (shouldDescribePr(latestMeta.body)) {
+          result.prDescriptionUpdated = false;
+        } else if (!shouldDescribePr(latestMeta.body)) {
+          result.prDescriptionUpdated = false;
+        } else if (await hasHeadAdvanced()) {
+          result.headAdvanced = true;
+          result.prDescriptionUpdated = false;
+        } else {
           await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
           result.prDescriptionUpdated = true;
         }
       } catch {
+        result.prDescriptionUpdated = false;
         // surfaced via the review note; body update is best-effort
       }
     }
+  }
+  if (result.headAdvanced) {
+    return result;
   }
   // Merge gate (#24): conclusion from the approval rubric (#52) when engaged,
   // else from the surfaced findings against `failOn`.
