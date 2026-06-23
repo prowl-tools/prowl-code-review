@@ -1520,7 +1520,13 @@ export async function reviewPullRequest(
   let prDescriptionText: string | undefined;
   let prDescriptionUsage = emptyUsage();
   const prDescriptionNotes: string[] = [];
-  if (options.prDescription?.enabled && shouldDescribePr(meta.body)) {
+  const usageBeforePrDescription = addUsage(reviewResult.usage, contextUsage);
+  const prDescriptionAllowed = options.prDescription?.enabled === true && shouldDescribePr(meta.body);
+  const prDescriptionBudgetExhausted =
+    options.budgetTokens !== undefined && totalTokens(usageBeforePrDescription) >= options.budgetTokens;
+  if (prDescriptionAllowed && prDescriptionBudgetExhausted) {
+    prDescriptionNotes.push("Skipped PR description generation because the token budget was exhausted (#18).");
+  } else if (prDescriptionAllowed) {
     try {
       const generated = await describePr(
         { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
@@ -1576,7 +1582,7 @@ export async function reviewPullRequest(
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
   const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
 
-  const totalUsage = addUsage(addUsage(reviewResult.usage, contextUsage), prDescriptionUsage);
+  const totalUsage = addUsage(usageBeforePrDescription, prDescriptionUsage);
 
   const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human

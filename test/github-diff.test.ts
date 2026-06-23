@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { fetchPullRequest, fetchComparisonDiff, fetchPullRequestHeadSha } from "../src/github/diff.js";
+import { fetchPullRequest, fetchPullRequestMeta, fetchComparisonDiff, fetchPullRequestHeadSha } from "../src/github/diff.js";
 import type { OctokitLike } from "../src/github/client.js";
 
 function mockOctokit(prData: unknown, diff: string) {
@@ -67,6 +67,40 @@ describe("fetchPullRequest", () => {
     expect(result.meta.author).toBeNull();
     expect(result.meta.draft).toBe(false);
     expect(result.meta.changedFiles).toBe(0);
+  });
+});
+
+describe("fetchPullRequestMeta", () => {
+  const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
+
+  it("fetches and normalizes metadata without requesting the raw diff", async () => {
+    const { octokit, get } = mockOctokit(
+      {
+        number: 7,
+        title: "Add thing",
+        body: null,
+        base: { sha: "base-sha" },
+        head: { sha: "head-sha" },
+        draft: undefined,
+        state: "open",
+        user: null
+      },
+      "RAW DIFF TEXT"
+    );
+
+    await expect(fetchPullRequestMeta(octokit, ref)).resolves.toEqual({
+      number: 7,
+      title: "Add thing",
+      body: null,
+      baseSha: "base-sha",
+      headSha: "head-sha",
+      draft: false,
+      state: "open",
+      author: null,
+      changedFiles: 0
+    });
+    expect(get).toHaveBeenCalledTimes(1);
+    expect(get).toHaveBeenCalledWith(expect.not.objectContaining({ mediaType: expect.anything() }));
   });
 });
 

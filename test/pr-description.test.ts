@@ -9,7 +9,7 @@ import {
   PR_SUMMARY_START,
   PR_SUMMARY_END
 } from "../src/review/pr-description.js";
-import type { ProviderConfig } from "../src/providers/types.js";
+import type { ProviderConfig } from "../src/providers/index.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
 

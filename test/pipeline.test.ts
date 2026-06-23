@@ -2719,6 +2719,26 @@ describe("reviewPullRequest PR description (#33)", () => {
     expect(result.prDescriptionUpdated).toBeUndefined();
   });
 
+  it("skips PR description generation when prior review usage exhausts the token budget", async () => {
+    const deps = makeDeps();
+    const generatePrDescription = vi.fn();
+    const updatePullRequestBody = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      budgetTokens: 2,
+      prDescription: { enabled: true },
+      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+    });
+
+    expect(generatePrDescription).not.toHaveBeenCalled();
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(result.prDescriptionUpdated).toBeUndefined();
+    expect(result.usage).toEqual({ inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 });
+    expect(result.payload.body).toContain("Skipped PR description generation because the token budget was exhausted");
+  });
+
   it("does nothing when the feature is disabled", async () => {
     const deps = makeDeps();
     const generatePrDescription = vi.fn();
