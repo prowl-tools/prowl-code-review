@@ -148,4 +148,32 @@ describe("generatePrDescription", () => {
     expect(description).toContain("&#64;everyone");
     expect(description).not.toContain("<script>");
   });
+
+  it("keeps the default description cap for non-Gemini providers", async () => {
+    const complete = vi.fn().mockResolvedValue({
+      text: "summary",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    });
+
+    await generatePrDescription({ title: "t", diff: "d" }, { config, deps: { complete } });
+
+    expect(complete.mock.calls[0][0]).toEqual(expect.objectContaining({ maxTokens: 1024 }));
+  });
+
+  it("lets Gemini use the provider output-token default unless explicitly capped", async () => {
+    const geminiConfig: ProviderConfig = { provider: "gemini", model: "gemini-2.5-pro", apiKey: "k" };
+    const complete = vi.fn().mockResolvedValue({
+      text: "summary",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    });
+
+    await generatePrDescription({ title: "t", diff: "d" }, { config: geminiConfig, deps: { complete } });
+    expect(complete.mock.calls[0][0]).not.toHaveProperty("maxTokens");
+
+    await generatePrDescription(
+      { title: "t", diff: "d" },
+      { config: geminiConfig, maxTokens: 4096, deps: { complete } }
+    );
+    expect(complete.mock.calls[1][0]).toEqual(expect.objectContaining({ maxTokens: 4096 }));
+  });
 });

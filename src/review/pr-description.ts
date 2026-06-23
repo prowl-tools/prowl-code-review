@@ -25,7 +25,7 @@ export const PR_SUMMARY_END = "<!-- prowl-review:pr-summary:end -->";
 /** GitHub caps PR bodies at 65536 chars; keep the whole block well under it. */
 const PR_BODY_LIMIT = 65_536;
 const PR_BODY_SEPARATOR = "\n\n";
-/** Output-token cap for the description — a summary, not an essay. */
+/** Output-token cap for non-Gemini descriptions — a summary, not an essay. */
 export const DEFAULT_DESCRIPTION_MAX_TOKENS = 1024;
 
 const GENERATED_NOTE =
@@ -187,11 +187,13 @@ export async function generatePrDescription(
   options: { config: ProviderConfig; maxTokens?: number; retry?: RetryOptions; deps?: GeneratePrDescriptionDeps }
 ): Promise<{ description: string; usage: TokenUsage }> {
   const run = options.deps?.complete ?? retrying(defaultComplete, options.retry);
+  const defaultMaxTokens = options.config.provider === "gemini" ? undefined : DEFAULT_DESCRIPTION_MAX_TOKENS;
+  const maxTokens = options.maxTokens ?? defaultMaxTokens;
   const result = await run(
     {
       system: buildDescriptionSystem(input.guidelines),
       prompt: buildDescriptionPrompt(input),
-      maxTokens: options.maxTokens ?? DEFAULT_DESCRIPTION_MAX_TOKENS
+      ...(maxTokens !== undefined ? { maxTokens } : {})
     },
     options.config
   );
