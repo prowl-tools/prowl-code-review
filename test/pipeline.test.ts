@@ -2591,16 +2591,19 @@ describe("reviewPullRequest PR description (#33)", () => {
       usage: { inputTokens: 5, outputTokens: 3, cachedInputTokens: 0 }
     }));
     const updatePullRequestBody = vi.fn(async () => {});
+    const fetchPullRequestMeta = vi.fn(async () => meta);
 
     const result = await reviewPullRequest(octokit, ref, {
       config,
       toolkitRoot: "/repo",
       prDescription: { enabled: true },
-      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+      deps: { ...deps, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody }
     });
 
     expect(generatePrDescription).toHaveBeenCalledTimes(1);
     expect(generatePrDescription.mock.calls[0][0]).toMatchObject({ title: "T", alreadyRedacted: true });
+    expect(deps.fetchPullRequest).toHaveBeenCalledTimes(1);
+    expect(fetchPullRequestMeta).toHaveBeenCalledTimes(1);
     expect(updatePullRequestBody).toHaveBeenCalledTimes(1);
     const [, , newBody] = updatePullRequestBody.mock.calls[0];
     expect(newBody).toContain("- adds a thing");
@@ -2640,10 +2643,11 @@ describe("reviewPullRequest PR description (#33)", () => {
 
   it("does not overwrite a human body added before the PATCH", async () => {
     const deps = makeDeps();
-    deps.fetchPullRequest = vi
-      .fn()
-      .mockResolvedValueOnce({ meta: { ...meta, body: "" }, diff: DIFF })
-      .mockResolvedValueOnce({ meta: { ...meta, body: "I wrote this while review was running." }, diff: DIFF });
+    deps.fetchPullRequest = vi.fn(async () => ({ meta: { ...meta, body: "" }, diff: DIFF }));
+    const fetchPullRequestMeta = vi.fn(async () => ({
+      ...meta,
+      body: "I wrote this while review was running."
+    }));
     const generatePrDescription = vi.fn(async () => ({
       description: "- generated",
       usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
@@ -2654,11 +2658,12 @@ describe("reviewPullRequest PR description (#33)", () => {
       config,
       toolkitRoot: "/repo",
       prDescription: { enabled: true },
-      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+      deps: { ...deps, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody }
     });
 
     expect(generatePrDescription).toHaveBeenCalledTimes(1);
-    expect(deps.fetchPullRequest).toHaveBeenCalledTimes(2);
+    expect(deps.fetchPullRequest).toHaveBeenCalledTimes(1);
+    expect(fetchPullRequestMeta).toHaveBeenCalledTimes(1);
     expect(updatePullRequestBody).not.toHaveBeenCalled();
     expect(result.prDescriptionUpdated).toBe(false);
   });
@@ -2780,13 +2785,41 @@ describe("reviewPullRequest PR description (#33)", () => {
     }));
     const updatePullRequestBody = vi.fn(async () => {});
     const submitCheckRun = vi.fn(async () => {});
+    const fetchPullRequestMeta = vi.fn(async () => meta);
 
     const result = await reviewPullRequest(octokit, ref, {
       config,
       toolkitRoot: "/repo",
       prDescription: { enabled: true },
       checkRun: { enabled: true },
-      deps: { ...deps, fetchHeadSha, generatePrDescription, updatePullRequestBody, submitCheckRun }
+      deps: { ...deps, fetchHeadSha, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody, submitCheckRun }
+    });
+
+    expect(result.posted).toBe(true);
+    expect(result.headAdvanced).toBe(true);
+    expect(result.prDescriptionUpdated).toBe(false);
+    expect(fetchPullRequestMeta).not.toHaveBeenCalled();
+    expect(updatePullRequestBody).not.toHaveBeenCalled();
+    expect(submitCheckRun).not.toHaveBeenCalled();
+  });
+
+  it("marks prDescriptionUpdated false when latest metadata shows a newer head before PATCH", async () => {
+    const deps = makeDeps();
+    const fetchHeadSha = vi.fn(async () => "head");
+    const fetchPullRequestMeta = vi.fn(async () => ({ ...meta, headSha: "newer-sha" }));
+    const generatePrDescription = vi.fn(async () => ({
+      description: "- generated",
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    }));
+    const updatePullRequestBody = vi.fn(async () => {});
+    const submitCheckRun = vi.fn(async () => {});
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      prDescription: { enabled: true },
+      checkRun: { enabled: true },
+      deps: { ...deps, fetchHeadSha, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody, submitCheckRun }
     });
 
     expect(result.posted).toBe(true);
@@ -2798,6 +2831,7 @@ describe("reviewPullRequest PR description (#33)", () => {
 
   it("marks prDescriptionUpdated false when the body update fails", async () => {
     const deps = makeDeps();
+    const fetchPullRequestMeta = vi.fn(async () => meta);
     const generatePrDescription = vi.fn(async () => ({
       description: "- generated",
       usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
@@ -2810,7 +2844,7 @@ describe("reviewPullRequest PR description (#33)", () => {
       config,
       toolkitRoot: "/repo",
       prDescription: { enabled: true },
-      deps: { ...deps, generatePrDescription, updatePullRequestBody }
+      deps: { ...deps, fetchPullRequestMeta, generatePrDescription, updatePullRequestBody }
     });
 
     expect(updatePullRequestBody).toHaveBeenCalledTimes(1);

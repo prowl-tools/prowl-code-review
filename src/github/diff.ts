@@ -70,6 +70,20 @@ interface RawComparison {
   status?: unknown;
 }
 
+function normalizePullRequestMeta(pr: RawPullRequest): PullRequestMeta {
+  return {
+    number: pr.number,
+    title: pr.title,
+    body: pr.body,
+    baseSha: pr.base.sha,
+    headSha: pr.head.sha,
+    draft: pr.draft ?? false,
+    state: pr.state,
+    author: pr.user?.login ?? null,
+    changedFiles: pr.changed_files ?? 0
+  };
+}
+
 function comparisonStatus(data: unknown): string | undefined {
   if (!data || typeof data !== "object") {
     return undefined;
@@ -98,19 +112,18 @@ export async function fetchPullRequest(
   const diff = diffResponse.data as unknown as string;
 
   return {
-    meta: {
-      number: pr.number,
-      title: pr.title,
-      body: pr.body,
-      baseSha: pr.base.sha,
-      headSha: pr.head.sha,
-      draft: pr.draft ?? false,
-      state: pr.state,
-      author: pr.user?.login ?? null,
-      changedFiles: pr.changed_files ?? 0
-    },
+    meta: normalizePullRequestMeta(pr),
     diff
   };
+}
+
+/** Fetch only PR metadata in a single `pulls.get` call, without downloading the diff. */
+export async function fetchPullRequestMeta(
+  octokit: OctokitLike,
+  ref: PullRequestRef
+): Promise<PullRequestMeta> {
+  const response = await octokit.rest.pulls.get({ ...ref });
+  return normalizePullRequestMeta(response.data as RawPullRequest);
 }
 
 /**

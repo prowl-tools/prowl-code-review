@@ -3,6 +3,7 @@ import {
   fetchPullRequest as defaultFetchPullRequest,
   fetchComparisonDiff as defaultFetchComparisonDiff,
   fetchPullRequestHeadSha as defaultFetchPullRequestHeadSha,
+  fetchPullRequestMeta as defaultFetchPullRequestMeta,
   updatePullRequestBody as defaultUpdatePullRequestBody,
   type FetchedPullRequest,
   type PullRequestMeta,
@@ -100,6 +101,8 @@ import { totalTokens } from "./cost/pricing.js";
 /** Injectable pipeline stages (default to the library implementations). */
 export interface PipelineDeps {
   fetchPullRequest?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
+  /** Fetch current PR metadata without downloading the diff, used for final body/head checks (#33). */
+  fetchPullRequestMeta?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PullRequestMeta>;
   /** Load prior persisted review state to find the last reviewed SHA (#23). */
   fetchPriorState?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<ReviewState | null>;
   /** Fetch the raw delta diff between two commits for incremental re-review (#23). */
@@ -530,24 +533,37 @@ function filterAndGuardDiffFiles(
   ignorePatterns: readonly string[],
   diffLimits: DiffLimits | undefined
 ): { files: DiffFile[]; skipped: SkippedFile[] } {
+  const { files: keptFiles, skipped } = filterReviewableDiffFiles(files, ignorePatterns);
+  return guardReviewableDiffFiles(keptFiles, diffLimits, skipped);
+}
+
+function filterReviewableDiffFiles(
+  files: DiffFile[],
+  ignorePatterns: readonly string[]
+): { files: DiffFile[]; skipped: SkippedFile[] } {
   // Keep sensitive files out of the review entirely and out of size budgets.
   const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(files);
   // Drop generated/vendored files (#19) before size guards so they don't burn the
   // budget; reported as skipped, never dropped silently. Omitted config → built-in
   // defaults; an explicit list (including []) replaces them.
   const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
-  const guarded = applyDiffLimits({ files: keptFiles }, diffLimits);
-  return { files: guarded.files, skipped: [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped] };
+  return { files: keptFiles, skipped: [...sensitiveSkipped, ...ignoredSkipped] };
+}
+
+function guardReviewableDiffFiles(
+  files: DiffFile[],
+  diffLimits: DiffLimits | undefined,
+  skipped: SkippedFile[] = []
+): { files: DiffFile[]; skipped: SkippedFile[] } {
+  const guarded = applyDiffLimits({ files }, diffLimits);
+  return { files: guarded.files, skipped: [...guarded.skipped, ...skipped] };
 }
 
 function filterPublishDiffFiles(
-  files: DiffFile[],
-  ignorePatterns: readonly string[],
+  reviewableFiles: DiffFile[],
   reviewedPaths: Set<string>
 ): DiffFile[] {
-  const { files: safeFiles } = filterSensitiveDiffFiles(files);
-  const { files: keptFiles } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
-  return keptFiles.filter((file) => reviewedPaths.has(file.path));
+  return reviewableFiles.filter((file) => reviewedPaths.has(file.path));
 }
 
 function changedLineKeys(file: DiffFile): Set<string> {
@@ -1039,6 +1055,11 @@ export async function reviewPullRequest(
   const config = options.config ?? resolveProviderConfig();
   const deps = options.deps ?? {};
   const fetchPr = deps.fetchPullRequest ?? defaultFetchPullRequest;
+  const fetchPrMeta: NonNullable<PipelineDeps["fetchPullRequestMeta"]> =
+    deps.fetchPullRequestMeta ??
+    (deps.fetchPullRequest
+      ? async (octokit: OctokitLike, ref: PullRequestRef) => (await fetchPr(octokit, ref)).meta
+      : defaultFetchPullRequestMeta);
   const gather = deps.gatherContext ?? defaultGatherContext;
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
@@ -1135,15 +1156,17 @@ export async function reviewPullRequest(
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
+  const fullReviewable =
+    incrementalBaseSha === undefined ? { files: reviewFiles, skipped } : filterReviewableDiffFiles(fullParsed.files, ignorePatterns);
   const fullGuarded =
     incrementalBaseSha === undefined
       ? { files: reviewFiles, skipped }
-      : filterAndGuardDiffFiles(fullParsed.files, ignorePatterns, options.diffLimits);
+      : guardReviewableDiffFiles(fullReviewable.files, options.diffLimits, fullReviewable.skipped);
   const fullSkipped = fullGuarded.skipped;
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
-      : filterPublishDiffFiles(fullParsed.files, ignorePatterns, new Set(reviewFiles.map((file) => file.path)));
+      : filterPublishDiffFiles(fullReviewable.files, new Set(reviewFiles.map((file) => file.path)));
   const reviewPathSet = new Set(reviewFiles.map((file) => file.path));
   const sensitiveSkippedPaths = new Set(skipped.filter((file) => file.reason === "sensitive").map((file) => file.path));
   const secretScanFiles = parsed.files.filter((file) => sensitiveSkippedPaths.has(file.path) && !reviewPathSet.has(file.path));
@@ -1676,18 +1699,20 @@ export async function reviewPullRequest(
     // sinks the published review.
     if (prDescriptionText !== undefined) {
       try {
-        const { meta: latestMeta } = await fetchPr(octokit, ref);
-        if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
-          result.headAdvanced = true;
-          result.prDescriptionUpdated = false;
-        } else if (!shouldDescribePr(latestMeta.body)) {
-          result.prDescriptionUpdated = false;
-        } else if (await hasHeadAdvanced()) {
+        if (await hasHeadAdvanced()) {
           result.headAdvanced = true;
           result.prDescriptionUpdated = false;
         } else {
-          await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
-          result.prDescriptionUpdated = true;
+          const latestMeta = await fetchPrMeta(octokit, ref);
+          if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
+            result.headAdvanced = true;
+            result.prDescriptionUpdated = false;
+          } else if (!shouldDescribePr(latestMeta.body)) {
+            result.prDescriptionUpdated = false;
+          } else {
+            await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+            result.prDescriptionUpdated = true;
+          }
         }
       } catch {
         result.prDescriptionUpdated = false;
@@ -1708,6 +1733,5 @@ export async function reviewPullRequest(
     incremental: incrementalBaseSha !== undefined,
     approval
   });
-
   return result;
 }
