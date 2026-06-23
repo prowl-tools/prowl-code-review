@@ -58,9 +58,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a developer, I want the reviewer to check whether the PR satisfies its linked issue, so that scope gaps are caught early.
     - Acceptance: when a PR links a GitHub issue (and optionally Linear/Jira), pull the issue's acceptance criteria into the review and flag unmet/missing requirements.
 
-33. **Finishing touches: PR description / docstring / test generation**
+33. **Finishing touches: PR description / docstring / test generation** *(PR-description generation done — see resolved.md)*
     As a developer, I want the reviewer to draft the PR description and offer docstrings/unit tests, so that I get CodeRabbit-style assists.
-    - Acceptance: auto-generate/update a PR description from the diff (opt-in); commands to generate docstrings and unit-test stubs for changed code.
+    - **Done:** auto-generate/update a PR description from the diff (opt-in `prDescription.enabled`) — fills an empty PR body with a marked, self-refreshing summary block; never overwrites a human-authored description.
+    - Acceptance (remaining): commands to generate **docstrings** and **unit-test stubs** for changed code (likely `@prowl-review` verbs producing committable suggestions).
 
 34. **Dependency-CVE / license scanning**
     As a security-conscious developer, I want changed dependencies checked for known CVEs and license issues, so that risky deps are flagged in review.

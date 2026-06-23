@@ -3,10 +3,17 @@ import {
   fetchPullRequest as defaultFetchPullRequest,
   fetchComparisonDiff as defaultFetchComparisonDiff,
   fetchPullRequestHeadSha as defaultFetchPullRequestHeadSha,
+  fetchPullRequestMeta as defaultFetchPullRequestMeta,
+  updatePullRequestBody as defaultUpdatePullRequestBody,
   type FetchedPullRequest,
   type PullRequestMeta,
   type PullRequestRef
 } from "./github/diff.js";
+import {
+  generatePrDescription as defaultGeneratePrDescription,
+  shouldDescribePr,
+  embedPrDescription
+} from "./review/pr-description.js";
 import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
@@ -94,6 +101,8 @@ import { totalTokens } from "./cost/pricing.js";
 /** Injectable pipeline stages (default to the library implementations). */
 export interface PipelineDeps {
   fetchPullRequest?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<FetchedPullRequest>;
+  /** Fetch current PR metadata without downloading the diff, used for final body/head checks (#33). */
+  fetchPullRequestMeta?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PullRequestMeta>;
   /** Load prior persisted review state to find the last reviewed SHA (#23). */
   fetchPriorState?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<ReviewState | null>;
   /** Fetch the raw delta diff between two commits for incremental re-review (#23). */
@@ -134,6 +143,10 @@ export interface PipelineDeps {
   resolveReviewThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
   /** Re-fetch the PR's current head SHA for the stale-publish guard (#21). */
   fetchHeadSha?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<string | undefined>;
+  /** Generate a PR description from the diff (#33). */
+  generatePrDescription?: typeof defaultGeneratePrDescription;
+  /** Write the generated description back to the PR body (#33). */
+  updatePullRequestBody?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
 }
 
 export interface ReviewPullRequestOptions {
@@ -145,6 +158,13 @@ export interface ReviewPullRequestOptions {
    * from `ensemble` config + per-provider env keys. Omitted/single → normal review.
    */
   ensemble?: { configs: ProviderConfig[] };
+  /**
+   * Auto-generate a PR description from the diff (#33). Opt-in. When enabled and
+   * the PR body is empty (or already holds prowl-review's generated block), the
+   * pipeline writes/refreshes a summary in the PR body; a human-authored body is
+   * never overwritten.
+   */
+  prDescription?: { enabled?: boolean };
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -268,6 +288,8 @@ export interface ReviewPullRequestResult {
   headAdvanced?: boolean;
   /** Multi-provider ensemble outcome (#53); undefined for a normal single-provider review. */
   ensemble?: { providers: EnsembleProviderReport[] };
+  /** True when an auto-generated PR description was written; false when generated but skipped/failed (#33). */
+  prDescriptionUpdated?: boolean;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -506,10 +528,20 @@ function normalizeSubmitReviewResult(result: SubmitReviewResult | void): SubmitR
   return result ?? { posted: true, cancelled: false };
 }
 
+/** Apply reviewability filters and size limits, returning files plus user-visible skip notes. */
 function filterAndGuardDiffFiles(
   files: DiffFile[],
   ignorePatterns: readonly string[],
   diffLimits: DiffLimits | undefined
+): { files: DiffFile[]; skipped: SkippedFile[] } {
+  const { files: keptFiles, skipped } = filterReviewableDiffFiles(files, ignorePatterns);
+  return guardReviewableDiffFiles(keptFiles, diffLimits, skipped);
+}
+
+/** Remove sensitive and ignored files before size budgeting or publish-file selection. */
+function filterReviewableDiffFiles(
+  files: DiffFile[],
+  ignorePatterns: readonly string[]
 ): { files: DiffFile[]; skipped: SkippedFile[] } {
   // Keep sensitive files out of the review entirely and out of size budgets.
   const { files: safeFiles, skipped: sensitiveSkipped } = filterSensitiveDiffFiles(files);
@@ -517,18 +549,25 @@ function filterAndGuardDiffFiles(
   // budget; reported as skipped, never dropped silently. Omitted config → built-in
   // defaults; an explicit list (including []) replaces them.
   const { files: keptFiles, skipped: ignoredSkipped } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
-  const guarded = applyDiffLimits({ files: keptFiles }, diffLimits);
-  return { files: guarded.files, skipped: [...guarded.skipped, ...sensitiveSkipped, ...ignoredSkipped] };
+  return { files: keptFiles, skipped: [...sensitiveSkipped, ...ignoredSkipped] };
 }
 
-function filterPublishDiffFiles(
+/** Apply configured diff size limits to already-filtered files. */
+function guardReviewableDiffFiles(
   files: DiffFile[],
-  ignorePatterns: readonly string[],
+  diffLimits: DiffLimits | undefined,
+  skipped: SkippedFile[] = []
+): { files: DiffFile[]; skipped: SkippedFile[] } {
+  const guarded = applyDiffLimits({ files }, diffLimits);
+  return { files: guarded.files, skipped: [...guarded.skipped, ...skipped] };
+}
+
+/** Keep only full-PR files that correspond to paths reviewed in an incremental delta. */
+function filterPublishDiffFiles(
+  reviewableFiles: DiffFile[],
   reviewedPaths: Set<string>
 ): DiffFile[] {
-  const { files: safeFiles } = filterSensitiveDiffFiles(files);
-  const { files: keptFiles } = filterIgnoredDiffFiles(safeFiles, ignorePatterns);
-  return keptFiles.filter((file) => reviewedPaths.has(file.path));
+  return reviewableFiles.filter((file) => reviewedPaths.has(file.path));
 }
 
 function changedLineKeys(file: DiffFile): Set<string> {
@@ -1020,10 +1059,17 @@ export async function reviewPullRequest(
   const config = options.config ?? resolveProviderConfig();
   const deps = options.deps ?? {};
   const fetchPr = deps.fetchPullRequest ?? defaultFetchPullRequest;
+  const fetchPrMeta: NonNullable<PipelineDeps["fetchPullRequestMeta"]> =
+    deps.fetchPullRequestMeta ??
+    (deps.fetchPullRequest
+      ? async (octokit: OctokitLike, ref: PullRequestRef) => (await fetchPr(octokit, ref)).meta
+      : defaultFetchPullRequestMeta);
   const gather = deps.gatherContext ?? defaultGatherContext;
   const ground = deps.gatherGrounding ?? defaultGatherGrounding;
   const review = deps.runReview ?? defaultRunReview;
   const ensembleReview = deps.runEnsembleReview ?? defaultRunEnsembleReview;
+  const describePr = deps.generatePrDescription ?? defaultGeneratePrDescription;
+  const updateBody = deps.updatePullRequestBody ?? defaultUpdatePullRequestBody;
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
@@ -1114,14 +1160,19 @@ export async function reviewPullRequest(
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
-  const fullSkipped =
+  const fullReviewable =
+    incrementalBaseSha === undefined ? { files: reviewFiles, skipped } : filterReviewableDiffFiles(fullParsed.files, ignorePatterns);
+  const fullGuarded =
     incrementalBaseSha === undefined
-      ? skipped
-      : filterAndGuardDiffFiles(fullParsed.files, ignorePatterns, options.diffLimits).skipped;
+      ? { files: reviewFiles, skipped }
+      : guardReviewableDiffFiles(fullReviewable.files, options.diffLimits, fullReviewable.skipped);
+  const fullSkipped = fullGuarded.skipped;
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
-      : filterPublishDiffFiles(fullParsed.files, ignorePatterns, new Set(reviewFiles.map((file) => file.path)));
+      // Publish anchors come from the reviewed delta paths, but need the full PR
+      // diff for current line positions; do not re-apply full-PR size caps here.
+      : filterPublishDiffFiles(fullReviewable.files, new Set(reviewFiles.map((file) => file.path)));
   const reviewPathSet = new Set(reviewFiles.map((file) => file.path));
   const sensitiveSkippedPaths = new Set(skipped.filter((file) => file.reason === "sensitive").map((file) => file.path));
   const secretScanFiles = parsed.files.filter((file) => sensitiveSkippedPaths.has(file.path) && !reviewPathSet.has(file.path));
@@ -1185,6 +1236,97 @@ export async function reviewPullRequest(
     }
   }
 
+  // Redact secrets from anything that will reach the provider.
+  const renderedDiff = renderGuardedDiff(reviewFiles);
+  const redactedDiff = redactSecrets(renderedDiff);
+  const diffText = redactedDiff.text;
+  if (redactedDiff.count > 0) {
+    redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
+  }
+  let descriptionRenderedDiff: string | undefined;
+  const renderDescriptionDiff = () => {
+    if (incrementalBaseSha === undefined) {
+      return renderedDiff;
+    }
+    descriptionRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
+    return descriptionRenderedDiff;
+  };
+  const redactedTitle = redactSecrets(meta.title);
+  if (redactedTitle.count > 0) {
+    redactionNotes.push(`Redacted ${redactedTitle.count} secret(s) from the PR title.`);
+  }
+
+  // Auto-generate a PR description (#33) when enabled and the body is empty (or
+  // already holds our generated block). The new body is PATCHed at publish time;
+  // a human-authored description is never touched. Tolerant — a failure here is a
+  // note, never a sink for the review.
+  let prDescriptionText: string | undefined;
+  let prDescriptionUsage = emptyUsage();
+  const prDescriptionNotes: string[] = [];
+  const generatePrDescriptionIfAllowed = async (usageBeforePrDescription: TokenUsage): Promise<void> => {
+    const prDescriptionAllowed = options.prDescription?.enabled === true && shouldDescribePr(meta.body);
+    const prDescriptionBudgetExhausted =
+      options.budgetTokens !== undefined && totalTokens(usageBeforePrDescription) >= options.budgetTokens;
+    if (prDescriptionAllowed && prDescriptionBudgetExhausted) {
+      prDescriptionNotes.push("Skipped PR description generation because the token budget was exhausted (#18).");
+    } else if (prDescriptionAllowed) {
+      try {
+        let descriptionDiffText = diffText;
+        if (incrementalBaseSha !== undefined) {
+          const redactedDescriptionDiff = redactSecrets(renderDescriptionDiff());
+          descriptionDiffText = redactedDescriptionDiff.text;
+          if (redactedDescriptionDiff.count > 0) {
+            redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
+          }
+        }
+        const generated = await describePr(
+          { title: redactedTitle.text, diff: descriptionDiffText, guidelines: options.guidelines, alreadyRedacted: true },
+          { config, retry: undefined }
+        );
+        prDescriptionUsage = generated.usage;
+        const redactedDescription = redactSecrets(generated.description);
+        if (redactedDescription.count > 0) {
+          redactionNotes.push(`Redacted ${redactedDescription.count} secret(s) from PR description output.`);
+        }
+        prDescriptionText = redactedDescription.text;
+        prDescriptionNotes.push(
+          meta.body && meta.body.trim()
+            ? "Refreshed the auto-generated PR description block from the latest changes (#33)."
+            : "Generated a PR description from the diff because the body was empty (#33)."
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const redacted = redactSecrets(message);
+        if (redacted.count > 0) {
+          redactionNotes.push(`Redacted ${redacted.count} secret(s) from PR description generation output.`);
+        }
+        prDescriptionNotes.push(
+          truncateNote(`PR description generation failed; continuing without it: ${redacted.text}`)
+        );
+      }
+    }
+  };
+  const publishPrDescription = async (result: ReviewPullRequestResult): Promise<void> => {
+    if (prDescriptionText === undefined) {
+      return;
+    }
+    try {
+      const latestMeta = await fetchPrMeta(octokit, ref);
+      if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
+        result.headAdvanced = true;
+        result.prDescriptionUpdated = false;
+      } else if (!shouldDescribePr(latestMeta.body)) {
+        result.prDescriptionUpdated = false;
+      } else {
+        await updateBody(octokit, ref, embedPrDescription(latestMeta.body, prDescriptionText));
+        result.prDescriptionUpdated = true;
+      }
+    } catch {
+      result.prDescriptionUpdated = false;
+      // surfaced via the review note; body update is best-effort
+    }
+  };
+
   if (reviewFiles.length === 0) {
     const reviewResult = {
       ...emptyReviewResult(),
@@ -1206,6 +1348,8 @@ export async function reviewPullRequest(
       reviewResult.judge.capped = ignoredSuppression.capped;
     }
     reviewResult.raw = reviewResult.findings;
+    await generatePrDescriptionIfAllowed(reviewResult.usage);
+    const totalUsage = addUsage(reviewResult.usage, prDescriptionUsage);
     const approvalCoverageIncomplete = fullSkipped.length > 0;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
@@ -1249,10 +1393,12 @@ export async function reviewPullRequest(
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
+        ...prDescriptionNotes,
         ...ignoredSuppression.notes,
         ...tidied.notes,
         ...redactionNotes,
         ...groundingNotes,
+        ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note)),
         incrementalBaseSha
           ? "No reviewable changes since the last reviewed commit; provider review skipped."
           : "No reviewable files remained after filters; provider review skipped."
@@ -1270,7 +1416,7 @@ export async function reviewPullRequest(
       meta,
       payload,
       review: reviewResult,
-      usage: reviewResult.usage,
+      usage: totalUsage,
       skipped,
       contextFiles: 0,
       incremental: incrementalBaseSha !== undefined,
@@ -1307,6 +1453,17 @@ export async function reviewPullRequest(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         throw new ReviewPublishError(message, result);
+      }
+      if (await hasHeadAdvanced()) {
+        result.headAdvanced = true;
+        if (prDescriptionText !== undefined) {
+          result.prDescriptionUpdated = false;
+        }
+        return result;
+      }
+      await publishPrDescription(result);
+      if (result.headAdvanced) {
+        return result;
       }
     }
     // A passing gate still posts on a no-findings run so a Required check isn't left pending.
@@ -1346,14 +1503,6 @@ export async function reviewPullRequest(
     specialistKeys: tierSpecialistKeys,
     contextLimited: tierLimitedContext
   });
-
-  // Redact secrets from anything that will reach the provider.
-  const renderedDiff = renderGuardedDiff(reviewFiles);
-  const redactedDiff = redactSecrets(renderedDiff);
-  const diffText = redactedDiff.text;
-  if (redactedDiff.count > 0) {
-    redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
-  }
 
   let context: string | undefined;
   let contextFiles = 0;
@@ -1451,6 +1600,9 @@ export async function reviewPullRequest(
     reviewResult.uncappedFindings = [...directGroundingFindings, ...uncappedFindings];
   }
 
+  const usageBeforePrDescription = addUsage(reviewResult.usage, contextUsage);
+  await generatePrDescriptionIfAllowed(usageBeforePrDescription);
+
   // Drop findings muted via `@prowl-review ignore` (#30) before the gate + tidy.
   const ignoredSuppression = suppressIgnoredFindingsWithRefill({
     findings: reviewResult.findings,
@@ -1478,7 +1630,7 @@ export async function reviewPullRequest(
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
   const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
 
-  const totalUsage = addUsage(reviewResult.usage, contextUsage);
+  const totalUsage = addUsage(usageBeforePrDescription, prDescriptionUsage);
 
   const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human
@@ -1531,6 +1683,7 @@ export async function reviewPullRequest(
       ...incrementalNotesList,
       ...approvalNotes(approval),
       ...ensembleNotes(ensembleProviders),
+      ...prDescriptionNotes,
       ...ignoredSuppression.notes,
       ...tidied.notes,
       ...tierNotes,
@@ -1602,6 +1755,17 @@ export async function reviewPullRequest(
       const message = error instanceof Error ? error.message : String(error);
       throw new ReviewPublishError(message, result);
     }
+    if (await hasHeadAdvanced()) {
+      result.headAdvanced = true;
+      if (prDescriptionText !== undefined) {
+        result.prDescriptionUpdated = false;
+      }
+      return result;
+    }
+    await publishPrDescription(result);
+  }
+  if (result.headAdvanced) {
+    return result;
   }
   // Merge gate (#24): conclusion from the approval rubric (#52) when engaged,
   // else from the surfaced findings against `failOn`.
@@ -1613,6 +1777,5 @@ export async function reviewPullRequest(
     incremental: incrementalBaseSha !== undefined,
     approval
   });
-
   return result;
 }

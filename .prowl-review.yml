@@ -15,3 +15,7 @@ ensemble:
       model: claude-haiku-4-5
     - provider: gemini
       model: gemini-2.5-flash
+
+# Fill an empty PR description from the diff (#33); never overwrites a body you wrote.
+prDescription:
+  enabled: true

@@ -103,10 +103,24 @@ export {
   fetchPullRequest,
   fetchComparisonDiff,
   fetchPullRequestHeadSha,
+  fetchPullRequestMeta,
+  updatePullRequestBody,
   type PullRequestRef,
   type PullRequestMeta,
   type FetchedPullRequest
 } from "./github/diff.js";
+export {
+  generatePrDescription,
+  shouldDescribePr,
+  embedPrDescription,
+  renderDescriptionBlock,
+  buildDescriptionSystem,
+  buildDescriptionPrompt,
+  PR_SUMMARY_START,
+  PR_SUMMARY_END,
+  DEFAULT_DESCRIPTION_MAX_TOKENS,
+  type PrDescriptionInput
+} from "./review/pr-description.js";
 export {
   submitReview,
   planPublish,
