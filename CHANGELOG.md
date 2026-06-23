@@ -4,6 +4,16 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Auto-generated PR descriptions (backlog #33): when a pull request is opened with an empty body,
+  prowl-review writes a description from the diff and PATCHes it into the PR body — CodeRabbit-style. Opt-in
+  via `prDescription.enabled` (default off). The summary lives between `<!-- prowl-review:pr-summary:start/end -->`
+  markers so re-runs refresh it in place while preserving any author text around it; a human-authored
+  description is **never** overwritten (it only fires on an empty body or prowl-review's own prior block).
+  Title/diff are framed as untrusted data and the output is secret-redacted + sanitized. New
+  `src/review/pr-description.ts`, `pulls.update` on the Octokit surface + `updatePullRequestBody`; the result
+  reports `prDescriptionUpdated`. Needs `pull-requests: write` (already required to post reviews).
+
 ### Removed
 - Retired the placeholder `anthropics/claude-code-action` workflows (backlog #44): deleted
   `.github/workflows/claude-code-review.yml` (the baseline auto-reviewer, now redundant with the

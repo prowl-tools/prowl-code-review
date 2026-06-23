@@ -223,6 +223,18 @@ const ensembleSchema = z
   })
   .strict();
 
+/**
+ * Auto-generated PR descriptions (#33). Opt-in, default off. When enabled,
+ * prowl-review writes a description from the diff for a PR opened with an empty
+ * body (and refreshes its own generated block on later pushes); it never
+ * overwrites a human-authored description.
+ */
+const prDescriptionSchema = z
+  .object({
+    enabled: z.boolean().optional()
+  })
+  .strict();
+
 export const configSchema = z
   .object({
     /** Provider selection (API keys always come from environment variables). */
@@ -253,6 +265,8 @@ export const configSchema = z
     approval: approvalSchema.optional(),
     /** Multi-provider ensemble review (#53); opt-in, default off. */
     ensemble: ensembleSchema.optional(),
+    /** Auto-generate a PR description from the diff when the body is empty (#33); opt-in. */
+    prDescription: prDescriptionSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
