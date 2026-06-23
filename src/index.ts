@@ -121,6 +121,8 @@ export {
   DEFAULT_DESCRIPTION_MAX_TOKENS,
   type PrDescriptionInput
 } from "./review/pr-description.js";
+export { parseIssueReferences, formatIssueRef, type IssueRef } from "./review/issue-refs.js";
+export { fetchIssue, type FetchedIssue } from "./github/issues.js";
 export {
   submitReview,
   planPublish,
@@ -332,6 +334,8 @@ export {
 export {
   DEFAULT_SPECIALISTS,
   BUILTIN_SPECIALIST_KEYS,
+  REQUIREMENTS_SPECIALIST,
+  REQUIREMENTS_SPECIALIST_KEY,
   resolveSpecialists,
   buildSharedSystem,
   buildSpecialistDirective,

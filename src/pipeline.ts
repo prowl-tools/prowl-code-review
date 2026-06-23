@@ -14,6 +14,8 @@ import {
   shouldDescribePr,
   embedPrDescription
 } from "./review/pr-description.js";
+import { parseIssueReferences, formatIssueRef } from "./review/issue-refs.js";
+import { fetchIssue as defaultFetchIssue, type FetchedIssue } from "./github/issues.js";
 import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
@@ -147,6 +149,8 @@ export interface PipelineDeps {
   generatePrDescription?: typeof defaultGeneratePrDescription;
   /** Write the generated description back to the PR body (#33). */
   updatePullRequestBody?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
+  /** Fetch a linked issue's content for issue/ticket validation (#32). */
+  fetchIssue?: typeof defaultFetchIssue;
 }
 
 export interface ReviewPullRequestOptions {
@@ -165,6 +169,12 @@ export interface ReviewPullRequestOptions {
    * never overwritten.
    */
   prDescription?: { enabled?: boolean };
+  /**
+   * Issue/ticket validation (#32). Opt-in. When enabled and the PR links a GitHub
+   * issue, the pipeline fetches the issue's acceptance criteria and a requirements
+   * lens flags any the diff doesn't satisfy.
+   */
+  issueValidation?: { enabled?: boolean; maxIssues?: number };
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -290,6 +300,8 @@ export interface ReviewPullRequestResult {
   ensemble?: { providers: EnsembleProviderReport[] };
   /** True when an auto-generated PR description was written; false when generated but skipped/failed (#33). */
   prDescriptionUpdated?: boolean;
+  /** Count of linked issues whose acceptance criteria were validated (#32). */
+  issuesValidated?: number;
   /** True when the review was published (false on dry run). */
   posted: boolean;
 }
@@ -394,6 +406,51 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
     notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
   }
   return notes;
+}
+
+/**
+ * Resolve linked-issue requirements for issue/ticket validation (#32): parse the
+ * PR title/body for linked issues, fetch each (capped, tolerant), and assemble
+ * their acceptance criteria into one redacted block for the requirements lens.
+ * Returns the requirements text (undefined when none), the count validated, and
+ * surfaced notes — never throws.
+ */
+async function resolveLinkedIssueRequirements(params: {
+  fetchIssue: typeof defaultFetchIssue;
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  meta: PullRequestMeta;
+  maxIssues: number;
+}): Promise<{ requirements?: string; count: number; notes: string[] }> {
+  const text = [params.meta.title, params.meta.body ?? ""].join("\n\n");
+  const refs = parseIssueReferences(text, { owner: params.ref.owner, repo: params.ref.repo });
+  if (refs.length === 0) {
+    return { count: 0, notes: [] };
+  }
+  const notes: string[] = [];
+  const capped = refs.slice(0, params.maxIssues);
+  if (refs.length > capped.length) {
+    notes.push(
+      `Issue validation: ${refs.length} linked issues found; validating the first ${capped.length} (maxIssues).`
+    );
+  }
+  const fetched = (await Promise.all(capped.map((ref) => params.fetchIssue(params.octokit, ref)))).filter(
+    (issue): issue is FetchedIssue => issue !== null
+  );
+  if (fetched.length === 0) {
+    notes.push("Issue validation: linked issue(s) could not be fetched (missing, inaccessible, or a PR); skipped.");
+    return { count: 0, notes };
+  }
+  const blocks = fetched.map((issue) => {
+    const label = formatIssueRef(issue.ref, { owner: params.ref.owner, repo: params.ref.repo });
+    return `### ${label}: ${issue.title}\n${issue.body || "(no description)"}`;
+  });
+  const requirements = redactSecrets(blocks.join("\n\n")).text;
+  notes.push(
+    `Issue validation: checking the PR against ${fetched.length} linked issue(s): ` +
+      `${fetched.map((issue) => formatIssueRef(issue.ref, { owner: params.ref.owner, repo: params.ref.repo })).join(", ")}.`
+  );
+  return { requirements, count: fetched.length, notes };
 }
 
 /** Notes describing the multi-provider ensemble run + any provider that failed (#53). */
@@ -1070,6 +1127,7 @@ export async function reviewPullRequest(
   const ensembleReview = deps.runEnsembleReview ?? defaultRunEnsembleReview;
   const describePr = deps.generatePrDescription ?? defaultGeneratePrDescription;
   const updateBody = deps.updatePullRequestBody ?? defaultUpdatePullRequestBody;
+  const getIssue = deps.fetchIssue ?? defaultFetchIssue;
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
@@ -1554,6 +1612,17 @@ export async function reviewPullRequest(
       : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
+  // Issue/ticket validation (#32): pull linked-issue acceptance criteria so the
+  // requirements lens can flag gaps. Tolerant — notes only on failure.
+  const issueValidation = options.issueValidation?.enabled
+    ? await resolveLinkedIssueRequirements({
+        fetchIssue: getIssue,
+        octokit,
+        ref,
+        meta,
+        maxIssues: options.issueValidation.maxIssues ?? 3
+      })
+    : { requirements: undefined, count: 0, notes: [] as string[] };
   // Shared input: context (#4) + grounding (#16) run once and feed every provider.
   const reviewInput: ReviewInput = {
     diff: diffText,
@@ -1562,6 +1631,7 @@ export async function reviewPullRequest(
     learnedPatterns: options.learnedPatterns,
     languages: summarizeLanguages(reviewFiles.map((file) => file.path)).map((language) => language.label),
     grounding,
+    requirements: issueValidation.requirements,
     specialists: effectiveSpecialists
   };
   // Ensemble (#53): fan out across providers when ≥2 configs were resolved; the
@@ -1683,6 +1753,7 @@ export async function reviewPullRequest(
       ...incrementalNotesList,
       ...approvalNotes(approval),
       ...ensembleNotes(ensembleProviders),
+      ...issueValidation.notes,
       ...prDescriptionNotes,
       ...ignoredSuppression.notes,
       ...tidied.notes,
@@ -1723,6 +1794,7 @@ export async function reviewPullRequest(
     ...(approval.enabled ? { approval } : {}),
     ...(tidied.tidy ? { threads: tidied.tidy } : {}),
     ...(ensembleProviders ? { ensemble: { providers: ensembleProviders } } : {}),
+    ...(issueValidation.count > 0 ? { issuesValidated: issueValidation.count } : {}),
     posted: false
   };
   // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
