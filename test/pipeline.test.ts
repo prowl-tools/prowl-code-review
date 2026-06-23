@@ -31,6 +31,20 @@ const DELTA_DIFF = `diff --git a/src/b.ts b/src/b.ts
 +const y = 2;
 `;
 
+const BINARY_DELTA_DIFF = `diff --git a/img.png b/img.png
+new file mode 100644
+index 0000000..abc1234
+Binary files /dev/null and b/img.png differ
+`;
+
+const TEXT_IMAGE_DIFF = `diff --git a/img.png b/img.png
+--- a/img.png
++++ b/img.png
+@@ -1,1 +1,1 @@
+-old
++new
+`;
+
 const meta = {
   number: 7, title: "T", body: null, baseSha: "base", headSha: "head",
   draft: false, state: "open", author: "me", changedFiles: 1
@@ -459,6 +473,23 @@ ${DELTA_DIFF}`;
     expect(result.incremental).toBe(false);
     expect(deps.runReview.mock.calls[0][0].diff).toContain("const y = 2;");
     expect(deps.runReview.mock.calls[0][0].diff).not.toContain("const y = 3;");
+    expect(result.payload.body).toContain("Could not safely use the incremental delta");
+  });
+
+  it("falls back when an incremental delta has a different binary status than the PR diff (#23)", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => BINARY_DELTA_DIFF)
+    };
+    deps.fetchPullRequest = vi.fn(async () => ({ meta, diff: TEXT_IMAGE_DIFF }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(result.incremental).toBe(false);
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("img.png");
+    expect(deps.runReview.mock.calls[0][0].diff).toContain("+new");
     expect(result.payload.body).toContain("Could not safely use the incremental delta");
   });
 

@@ -1170,6 +1170,8 @@ export async function reviewPullRequest(
   const publishFiles =
     incrementalBaseSha === undefined
       ? reviewFiles
+      // Publish anchors come from the reviewed delta paths, but need the full PR
+      // diff for current line positions; do not re-apply full-PR size caps here.
       : filterPublishDiffFiles(fullReviewable.files, new Set(reviewFiles.map((file) => file.path)));
   const reviewPathSet = new Set(reviewFiles.map((file) => file.path));
   const sensitiveSkippedPaths = new Set(skipped.filter((file) => file.reason === "sensitive").map((file) => file.path));
