@@ -100,6 +100,32 @@ describe("renderDescriptionBlock / embedPrDescription", () => {
     expect(body).toContain(footer);
     expect(body.includes(PR_SUMMARY_START)).toBe(body.includes(PR_SUMMARY_END));
   });
+
+  it("does not split UTF-16 surrogate pairs when shrinking generated text", () => {
+    const emptyBlockLength = renderDescriptionBlock("").length;
+    const descriptionBudget = 2;
+    const authorText = "a".repeat(65_536 - "\n\n".length - emptyBlockLength - descriptionBudget);
+    const body = embedPrDescription(authorText, "x😀tail");
+
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("## Summary\n\nx\n\n");
+    expect(body).not.toContain("😀");
+    expect(body).not.toContain("\uD83D");
+  });
+
+  it("replaces only the first complete generated block when multiple blocks are present", () => {
+    const secondBlock = renderDescriptionBlock("second generated block");
+    const existing = `Author intro.\n\n${renderDescriptionBlock("first generated block")}\n\nSecond block:\n${secondBlock}`;
+    const body = embedPrDescription(existing, "fresh summary");
+
+    expect(body).toContain("Author intro.");
+    expect(body).toContain("fresh summary");
+    expect(body).not.toContain("first generated block");
+    expect(body).toContain("Second block:");
+    expect(body).toContain("second generated block");
+    expect(body.match(new RegExp(PR_SUMMARY_START, "g"))).toHaveLength(2);
+    expect(body.match(new RegExp(PR_SUMMARY_END, "g"))).toHaveLength(2);
+  });
 });
 
 describe("buildDescriptionPrompt / system", () => {
