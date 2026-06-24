@@ -434,9 +434,13 @@ async function resolveLinkedIssueRequirements(params: {
       `Issue validation: ${refs.length} linked issues found; validating the first ${capped.length} (maxIssues).`
     );
   }
-  const fetched = (await Promise.all(capped.map((ref) => params.fetchIssue(params.octokit, ref)))).filter(
-    (issue): issue is FetchedIssue => issue !== null
+  const settled = await Promise.allSettled(capped.map((ref) => params.fetchIssue(params.octokit, ref)));
+  const fetched = settled.flatMap((result): FetchedIssue[] =>
+    result.status === "fulfilled" && result.value !== null ? [result.value] : []
   );
+  if (settled.some((result) => result.status === "rejected")) {
+    notes.push("Issue validation: one or more linked issue fetches failed; continued with the rest.");
+  }
   if (fetched.length === 0) {
     notes.push("Issue validation: linked issue(s) could not be fetched (missing, inaccessible, or a PR); skipped.");
     return { count: 0, notes };
@@ -1794,7 +1798,7 @@ export async function reviewPullRequest(
     ...(approval.enabled ? { approval } : {}),
     ...(tidied.tidy ? { threads: tidied.tidy } : {}),
     ...(ensembleProviders ? { ensemble: { providers: ensembleProviders } } : {}),
-    ...(issueValidation.count > 0 ? { issuesValidated: issueValidation.count } : {}),
+    ...(options.issueValidation?.enabled ? { issuesValidated: issueValidation.count } : {}),
     posted: false
   };
   // Stale-publish guard (#21): a newer push superseded this run — don't clobber.

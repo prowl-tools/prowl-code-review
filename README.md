@@ -312,7 +312,7 @@ issueValidation:
   # maxIssues: 3   # cap linked issues fetched per PR (default 3)
 ```
 
-It recognizes the references GitHub treats as links: a **closing keyword**
+It recognizes these PR references for issue validation: a **closing keyword**
 (`Closes #12`, `Fixes owner/repo#5`) or an **issue URL** in the PR title/body. A
 dedicated *requirements* review lens receives the issue's criteria and raises a
 finding for each one the PR misses or only partially implements — so the gaps

@@ -404,6 +404,43 @@ describe("runReview requirements lens (#32)", () => {
     expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
   });
 
+  it("passes linked issue requirements into verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        return reply(
+          JSON.stringify([
+            {
+              file: "a.ts",
+              line: 1,
+              severity: "major",
+              category: "requirements",
+              title: "dark mode missing",
+              body: "z",
+              confidence: 0.8
+            }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview(
+      { diff: "diff", requirements: "### #5: Theme\nThe app must support dark mode." },
+      { config, complete }
+    );
+
+    expect(
+      prompts.some((prompt) => prompt.includes("# Untrusted linked issue requirements") && prompt.includes("dark mode"))
+    ).toBe(true);
+    expect(result.verification.verified).toBe(1);
+    expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
+  });
+
   it("does not run the requirements lens without requirements", async () => {
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       if (request.prompt.includes("Requirements reviewer")) {

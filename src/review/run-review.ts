@@ -256,7 +256,7 @@ export async function runReview(
       }
     : await verifyFindings(
         raw,
-        { diff: input.diff, context: input.context },
+        { diff: input.diff, context: input.context, requirements: input.requirements },
         { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
       );
   usage = addUsage(usage, verification.usage);

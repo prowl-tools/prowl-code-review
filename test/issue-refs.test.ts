@@ -39,6 +39,17 @@ describe("parseIssueReferences", () => {
     ]);
   });
 
+  it("preserves first-seen order across keyword and URL references", () => {
+    const refs = parseIssueReferences(
+      "see https://github.com/octo/repo/issues/5 before this closes #1",
+      repo
+    );
+    expect(refs).toEqual([
+      { owner: "octo", repo: "repo", number: 5 },
+      { ...repo, number: 1 }
+    ]);
+  });
+
   it("returns [] for empty/missing text", () => {
     expect(parseIssueReferences("", repo)).toEqual([]);
     expect(parseIssueReferences(null, repo)).toEqual([]);

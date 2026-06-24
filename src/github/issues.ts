@@ -7,7 +7,8 @@ import type { IssueRef } from "../review/issue-refs.js";
  * Pulls a referenced issue's title + body so the review can check the PR against
  * its acceptance criteria. Tolerant: a missing issue, a permissions error
  * (cross-repo), or a reference that is actually a pull request resolves to
- * `null` so the review proceeds without it (never a sink).
+ * `null` so the review proceeds without it. Transient/API failures are allowed
+ * to reject so the pipeline can surface a degraded validation note.
  */
 
 /** A fetched linked issue's content. */
@@ -15,6 +16,19 @@ export interface FetchedIssue {
   ref: IssueRef;
   title: string;
   body: string;
+}
+
+/** Extract an Octokit-style HTTP status from an unknown thrown value. */
+function getHttpStatus(error: unknown): number | undefined {
+  return typeof error === "object" && error !== null && "status" in error && typeof error.status === "number"
+    ? error.status
+    : undefined;
+}
+
+/** Return true for permanent responses where the linked issue cannot be used. */
+function isUnusableIssueError(error: unknown): boolean {
+  const status = getHttpStatus(error);
+  return status === 403 || status === 404 || status === 410 || status === 451;
 }
 
 /**
@@ -38,7 +52,10 @@ export async function fetchIssue(octokit: OctokitLike, ref: IssueRef): Promise<F
       return null;
     }
     return { ref, title, body };
-  } catch {
-    return null;
+  } catch (error) {
+    if (isUnusableIssueError(error)) {
+      return null;
+    }
+    throw error;
   }
 }
