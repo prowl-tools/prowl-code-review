@@ -280,14 +280,27 @@ describe("fetchReviewThreads (#22)", () => {
     expect(await fetchReviewThreads(octokit, ref, "b")).toEqual([]);
   });
 
-  it("returns [] when the bot login cannot be resolved", async () => {
-    const graphql = vi.fn();
-    const octokit = {
-      graphql,
-      rest: { users: { getAuthenticated: vi.fn(async () => { throw new Error("no auth"); }) } }
-    } as unknown as OctokitLike;
-    expect(await fetchReviewThreads(octokit, ref)).toEqual([]);
-    expect(graphql).not.toHaveBeenCalled();
+  it("returns [] when the bot login cannot be resolved outside Actions", async () => {
+    // Deterministic regardless of the CI env: no override, no PROWL_BOT_LOGIN,
+    // not in Actions → login is genuinely unresolved, so no threads are fetched.
+    const savedActions = process.env.GITHUB_ACTIONS;
+    const savedLogin = process.env.PROWL_BOT_LOGIN;
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.PROWL_BOT_LOGIN;
+    try {
+      const graphql = vi.fn();
+      const octokit = {
+        graphql,
+        rest: { users: { getAuthenticated: vi.fn(async () => { throw new Error("no auth"); }) } }
+      } as unknown as OctokitLike;
+      expect(await fetchReviewThreads(octokit, ref)).toEqual([]);
+      expect(graphql).not.toHaveBeenCalled();
+    } finally {
+      if (savedActions === undefined) delete process.env.GITHUB_ACTIONS;
+      else process.env.GITHUB_ACTIONS = savedActions;
+      if (savedLogin === undefined) delete process.env.PROWL_BOT_LOGIN;
+      else process.env.PROWL_BOT_LOGIN = savedLogin;
+    }
   });
 });
 

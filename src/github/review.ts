@@ -198,18 +198,42 @@ export async function fetchPriorReviewState(
   }
 }
 
-/** Resolve the authenticated bot login used to trust prior prowl-review comments. */
+/**
+ * Resolve the authenticated bot login used to find prior prowl-review comments,
+ * threads, and state. Precedence: explicit override → `GET /user` →
+ * `PROWL_BOT_LOGIN` env hint → the GitHub Actions default.
+ *
+ * The Actions `GITHUB_TOKEN` is a GitHub App *installation* token, so `GET /user`
+ * returns 403 ("Resource not accessible by integration"). Without a fallback the
+ * login is `undefined`, which silently disables every stateful feature — the
+ * summary is never found so it's re-posted every run (duplicate comments),
+ * incremental re-review (#23), pause/resume (#26), the ignore list (#30), and
+ * thread tidy (#22) all no-op. So when `GET /user` fails inside Actions we use
+ * an operator-provided `PROWL_BOT_LOGIN` for custom GitHub-App tokens, otherwise
+ * the default token's identity, `github-actions[bot]`.
+ */
 export async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
-  if (botLogin) {
-    return botLogin;
+  if (botLogin?.trim()) {
+    return botLogin.trim();
   }
+  const envLogin = process.env.PROWL_BOT_LOGIN?.trim();
 
   try {
     const response = await octokit.rest.users.getAuthenticated();
-    return response.data.login;
+    if (response.data.login) {
+      return response.data.login;
+    }
   } catch {
-    return undefined;
+    // installation tokens 403 on GET /user; fall through to the Actions default
   }
+
+  if (envLogin) {
+    return envLogin;
+  }
+  if (process.env.GITHUB_ACTIONS === "true") {
+    return "github-actions[bot]";
+  }
+  return undefined;
 }
 
 function isRequestChangesState(state: string | undefined): boolean {
@@ -382,28 +406,33 @@ export async function submitReview(
 
   let postedInlineComments: ReviewComment[] = [];
   let posted = false;
-  const reviewComments = options.commitId ? initialPlan.newInlineComments.map(toGitHubComment) : [];
+  const newInline = options.commitId ? initialPlan.newInlineComments : [];
+  const reviewComments = newInline.map(toGitHubComment);
 
-  if (reviewComments.length > 0) {
-    // Post before persisting fingerprints; otherwise a failed GitHub review
-    // submission would suppress retries for inline comments that never existed.
-    if (options.shouldPublish && !(await options.shouldPublish())) {
-      return { posted, cancelled: true };
+  if (payload.event === "COMMENT") {
+    // COMMENT path (#22): publish net-new inline findings as one cohesive review
+    // instead of one REST mutation per finding.
+    if (reviewComments.length > 0) {
+      // Post before persisting fingerprints; otherwise a failed GitHub review
+      // submission would suppress retries for inline comments that never existed.
+      if (options.shouldPublish && !(await options.shouldPublish())) {
+        return { posted, cancelled: true };
+      }
+      await octokit.rest.pulls.createReview({
+        owner: ref.owner,
+        repo: ref.repo,
+        pull_number: ref.pull_number,
+        event: "COMMENT",
+        ...(options.commitId ? { commit_id: options.commitId } : {}),
+        body: inlineBatchReviewBody(reviewComments.length),
+        comments: reviewComments
+      });
+      posted = true;
+      postedInlineComments = newInline;
     }
-    await octokit.rest.pulls.createReview({
-      owner: ref.owner,
-      repo: ref.repo,
-      pull_number: ref.pull_number,
-      event: "COMMENT",
-      ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: inlineBatchReviewBody(reviewComments.length),
-      comments: reviewComments
-    });
-    posted = true;
-    postedInlineComments = initialPlan.newInlineComments;
-  }
-
-  if (payload.event !== "COMMENT") {
+  } else {
+    // Verdict path (#52): one review carries the REQUEST_CHANGES/APPROVE event
+    // plus the inline findings — a single, meaningful review entry.
     if (options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
@@ -413,9 +442,11 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: eventReviewBody(payload.event)
+      body: eventReviewBody(payload.event),
+      ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     posted = true;
+    postedInlineComments = newInline;
   }
 
   // Re-read the summary just before writing so command-side state changes
