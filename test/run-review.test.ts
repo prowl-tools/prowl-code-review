@@ -451,4 +451,30 @@ describe("runReview requirements lens (#32)", () => {
     const result = await runReview({ diff: "diff" }, { config, complete, verify: false });
     expect(result.passes.some((p) => p.specialist === "requirements")).toBe(false);
   });
+
+  it("does not pass blank requirements into verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        throw new Error("requirements lens should not run");
+      }
+      if (request.prompt.includes("Correctness reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "bug", body: "b", confidence: 0.8 }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    await runReview({ diff: "diff", requirements: "   " }, { config, complete });
+
+    expect(prompts.some((prompt) => prompt.includes("Requirements reviewer"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("# Untrusted linked issue requirements"))).toBe(false);
+  });
 });
