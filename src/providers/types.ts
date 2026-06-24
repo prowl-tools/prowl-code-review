@@ -48,6 +48,12 @@ export function redactedProviderConfig(config: ProviderConfig): RedactedProvider
 /** Install best-effort redaction hooks on resolver-created provider configs. */
 export function protectProviderConfig<T extends ProviderConfig>(config: T): T {
   const redacted = () => redactedProviderConfig(config);
+  Object.defineProperty(config, "apiKey", {
+    value: config.apiKey,
+    enumerable: false,
+    writable: true,
+    configurable: true
+  });
   Object.defineProperty(config, "toJSON", { value: redacted, enumerable: false, configurable: true });
   Object.defineProperty(config, INSPECT_CUSTOM, { value: redacted, enumerable: false, configurable: true });
   return config;

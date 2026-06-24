@@ -1,5 +1,5 @@
 import { isRetryableError } from "./retry.js";
-import type { ProviderConfig, ProviderName } from "./types.js";
+import { protectProviderConfig, type ProviderConfig, type ProviderName } from "./types.js";
 
 /**
  * Cross-generation failback (backlog #17).
@@ -74,7 +74,10 @@ export function withFailback<Req, Res>(
     let pendingFailback: FailbackEvent | undefined;
     for (let index = 0; index < models.length; index += 1) {
       try {
-        const result = await complete(request, { ...config, model: models[index] });
+        const result = await complete(
+          request,
+          protectProviderConfig({ provider: config.provider, model: models[index], apiKey: config.apiKey })
+        );
         if (pendingFailback) {
           options.onFailback?.(pendingFailback);
         }
