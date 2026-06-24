@@ -157,10 +157,11 @@ export async function runReview(
   const run = options.complete ?? retrying(defaultComplete, options.retry);
   const baseConfig = options.config ?? resolveProviderConfig();
   const configuredSpecialists = input.specialists ?? DEFAULT_SPECIALISTS;
+  const activeRequirements = input.requirements?.trim() ? input.requirements : undefined;
   // Issue/ticket validation (#32): when the PR links an issue, append the
   // requirements lens (with the acceptance criteria supplied in its prompt) so
   // it runs alongside the configured specialists regardless of risk tier.
-  const specialists = input.requirements?.trim()
+  const specialists = activeRequirements
     ? [...configuredSpecialists, REQUIREMENTS_SPECIALIST]
     : configuredSpecialists;
 
@@ -185,7 +186,7 @@ export async function runReview(
               context: input.context,
               grounding: input.grounding?.summary,
               // Only the requirements lens receives the linked-issue criteria (#32).
-              requirements: specialist.key === REQUIREMENTS_SPECIALIST_KEY ? input.requirements : undefined
+              requirements: specialist.key === REQUIREMENTS_SPECIALIST_KEY ? activeRequirements : undefined
             }),
             // Native JSON output where the provider supports it (#7).
             responseFormat: "json"
@@ -256,7 +257,7 @@ export async function runReview(
       }
     : await verifyFindings(
         raw,
-        { diff: input.diff, context: input.context, requirements: input.requirements },
+        { diff: input.diff, context: input.context, requirements: activeRequirements },
         { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
       );
   usage = addUsage(usage, verification.usage);
