@@ -305,6 +305,7 @@ type ResolvedReviewOptions = Pick<
   | "approval"
   | "prDescription"
   | "issueValidation"
+  | "failback"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -468,7 +469,9 @@ export function resolveReviewOptions(
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.
     prDescription: config.prDescription,
     // Validate the PR against its linked issue's acceptance criteria (#32); opt-in via config.
-    issueValidation: config.issueValidation
+    issueValidation: config.issueValidation,
+    // Cross-generation failback on persistent overload (#17); opt-in via config.
+    failback: config.resilience?.failback?.enabled === true ? true : undefined
   };
 }
 
