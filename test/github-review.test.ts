@@ -902,12 +902,21 @@ describe("getAuthenticatedLogin (#22 dedup on the Actions token)", () => {
     expect(await getAuthenticatedLogin(octokit, "my-app[bot]")).toBe("my-app[bot]");
   });
 
-  it("uses PROWL_BOT_LOGIN when no override", async () => {
+  it("prefers GET /user over PROWL_BOT_LOGIN when the token identifies itself", async () => {
     process.env.PROWL_BOT_LOGIN = "github-actions[bot]";
-    const getAuth = vi.fn();
+    const getAuth = vi.fn(async () => ({ data: { login: "real-user" } }));
     const octokit = { rest: { users: { getAuthenticated: getAuth } } } as unknown as OctokitLike;
-    expect(await getAuthenticatedLogin(octokit)).toBe("github-actions[bot]");
-    expect(getAuth).not.toHaveBeenCalled(); // env short-circuits the API call
+    expect(await getAuthenticatedLogin(octokit)).toBe("real-user");
+    expect(getAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses PROWL_BOT_LOGIN as a hint when a custom GitHub App token cannot resolve itself", async () => {
+    process.env.PROWL_BOT_LOGIN = "my-app[bot]";
+    process.env.GITHUB_ACTIONS = "true";
+    const octokit = octokitGetUser(async () => {
+      throw new Error("Resource not accessible by integration");
+    });
+    expect(await getAuthenticatedLogin(octokit)).toBe("my-app[bot]");
   });
 
   it("falls back to GET /user for a PAT", async () => {
