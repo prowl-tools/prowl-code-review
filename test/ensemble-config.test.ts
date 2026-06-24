@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { describe, expect, it } from "vitest";
 import {
   resolveEnsembleConfigs,
@@ -41,6 +42,25 @@ describe("resolveEnsembleConfigs (#53)", () => {
     expect(configs[0].apiKey).toBe(primary.apiKey);
     expect(Object.keys(configs[0])).not.toContain("apiKey");
     expect(notes).toEqual([]);
+  });
+
+  it("redacts ensemble API keys from serialization, inspect, and shallow copies", () => {
+    const { configs } = resolveEnsembleConfigs({
+      primary,
+      providers: [{ provider: "anthropic" }, { provider: "openai" }],
+      env: { PROWL_AI_KEY_OPENAI: "openai-secret" } as NodeJS.ProcessEnv
+    });
+    const openai = configs.find((config) => config.provider === "openai");
+
+    expect(openai).toBeDefined();
+    expect(openai?.apiKey).toBe("openai-secret");
+    expect(JSON.stringify(openai)).toContain("<redacted>");
+    expect(JSON.stringify(openai)).not.toContain("openai-secret");
+    expect(inspect(openai)).toContain("<redacted>");
+    expect(inspect(openai)).not.toContain("openai-secret");
+    expect(Object.keys(openai ?? {})).not.toContain("apiKey");
+    expect({ ...openai }).not.toHaveProperty("apiKey");
+    expect(Object.assign({}, openai)).not.toHaveProperty("apiKey");
   });
 
   it("resolves each provider's key from its env var", () => {
