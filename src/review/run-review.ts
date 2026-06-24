@@ -89,8 +89,8 @@ export interface RunReviewOptions {
   retry?: RetryOptions;
   /**
    * Cross-generation failback (#17): on retryable exhaustion, retry with an older
-   * same-family model. Applied to the default completion only (an injected
-   * `complete` controls its own resilience). Omitted → no failback.
+   * same-family model. Wraps whichever completion is in use (the default retried
+   * completion or an injected `complete`). Omitted → no failback.
    */
   failback?: FailbackOptions;
 }
