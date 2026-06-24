@@ -3084,6 +3084,46 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(reviewInput.requirementsDiff).toContain("src/b.ts");
   });
 
+  it("runs requirements validation against the full PR diff when the incremental delta has no reviewable files", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const ignoredDelta = `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ignoredDelta),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: `${DIFF}\n${ignoredDelta}` })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      }))
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(result.incremental).toBe(true);
+    expect(deps.gatherContext).not.toHaveBeenCalled();
+    expect(reviewInput.specialists).toEqual([]);
+    expect(reviewInput.requirements).toContain("Must support dark mode.");
+    expect(reviewInput.diff).not.toContain("package-lock.json");
+    expect(reviewInput.requirementsDiff).toContain("src/a.ts");
+    expect(reviewInput.requirementsDiff).not.toContain("package-lock.json");
+    expect(result.issuesValidated).toBe(1);
+    expect(result.payload.body).toContain("ran linked-issue requirements validation against the full PR diff");
+  });
+
   it("redacts secrets from requirementsDiff during incremental issue validation", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fullDiffWithSecret = `diff --git a/src/a.ts b/src/a.ts

@@ -1389,13 +1389,63 @@ export async function reviewPullRequest(
     }
   };
 
+  // Issue/ticket validation (#32): pull linked-issue acceptance criteria so the
+  // requirements lens can flag gaps. Resolve before the no-file shortcut so an
+  // incremental run with an ignored/filtered delta can still validate against the
+  // full guarded PR diff.
+  const issueValidation = options.issueValidation?.enabled
+    ? await resolveLinkedIssueRequirements({
+        fetchIssue: getIssue,
+        octokit,
+        ref,
+        meta,
+        maxIssues: options.issueValidation.maxIssues ?? 3
+      })
+    : { requirements: undefined, count: 0, notes: [] as string[] };
+  let requirementsDiff: string | undefined;
+  if (issueValidation.requirements && incrementalBaseSha !== undefined) {
+    const redactedRequirementsDiff = redactSecrets(renderFullGuardedDiff());
+    requirementsDiff = redactedRequirementsDiff.text;
+    if (redactedRequirementsDiff.count > 0) {
+      redactionNotes.push(`Redacted ${redactedRequirementsDiff.count} secret(s) from the issue validation diff.`);
+    }
+  }
+
   if (reviewFiles.length === 0) {
-    const reviewResult = {
-      ...emptyReviewResult(),
-      findings: groundingFindings,
-      uncappedFindings: groundingFindings,
-      raw: groundingFindings
-    };
+    const runRequirementsOnlyReview = issueValidation.requirements !== undefined && fullGuarded.files.length > 0;
+    const reviewResult = runRequirementsOnlyReview
+      ? await review(
+          {
+            diff: diffText,
+            guidelines: options.guidelines,
+            learnedPatterns: options.learnedPatterns,
+            languages: summarizeLanguages(fullGuarded.files.map((file) => file.path)).map((language) => language.label),
+            requirements: issueValidation.requirements,
+            requirementsDiff: requirementsDiff ?? diffText,
+            specialists: []
+          },
+          {
+            config,
+            minSeverity: options.minSeverity,
+            minConfidence: options.minConfidence,
+            maxFindings: options.maxFindings,
+            verify: options.verify,
+            verifyConfidence: options.verifyConfidence,
+            maxTokens: options.budgetTokens
+          }
+        )
+      : {
+          ...emptyReviewResult(),
+          findings: groundingFindings,
+          uncappedFindings: groundingFindings,
+          raw: groundingFindings
+        };
+    if (runRequirementsOnlyReview && groundingFindings.length > 0) {
+      const uncappedFindings = reviewResult.uncappedFindings ?? reviewResult.findings;
+      reviewResult.raw = [...reviewResult.raw, ...groundingFindings];
+      reviewResult.findings = [...groundingFindings, ...reviewResult.findings];
+      reviewResult.uncappedFindings = [...groundingFindings, ...uncappedFindings];
+    }
     // Drop findings muted via `@prowl-review ignore` (#30) before the gate.
     const ignoredSuppression = suppressIgnoredFindingsWithRefill({
       findings: reviewResult.findings,
@@ -1412,7 +1462,16 @@ export async function reviewPullRequest(
     reviewResult.raw = reviewResult.findings;
     await generatePrDescriptionIfAllowed(reviewResult.usage);
     const totalUsage = addUsage(reviewResult.usage, prDescriptionUsage);
-    const approvalCoverageIncomplete = fullSkipped.length > 0;
+    const requirementsCoverage = runRequirementsOnlyReview
+      ? {
+          passed: reviewResult.passes.filter((pass) => pass.ok).length,
+          total: reviewResult.passes.length
+        }
+      : undefined;
+    const requirementsDegraded =
+      requirementsCoverage !== undefined &&
+      (requirementsCoverage.passed < requirementsCoverage.total || !reviewResult.verification.ok);
+    const approvalCoverageIncomplete = requirementsDegraded || fullSkipped.length > 0;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
     const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
@@ -1450,25 +1509,42 @@ export async function reviewPullRequest(
     approval = inhibitApprovalForWithheldThreads(approval, tidied.tidy);
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
-      files: parsed.files,
+      files: runRequirementsOnlyReview ? fullGuarded.files : parsed.files,
       skipped,
+      coverage: requirementsCoverage,
+      degraded: requirementsDegraded,
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
+        ...issueValidation.notes,
         ...prDescriptionNotes,
         ...ignoredSuppression.notes,
         ...tidied.notes,
         ...redactionNotes,
         ...groundingNotes,
+        ...(runRequirementsOnlyReview
+          ? [
+              incrementalBaseSha
+                ? "No reviewable changes since the last reviewed commit; ran linked-issue requirements validation against the full PR diff."
+                : "No reviewable files remained after filters; ran linked-issue requirements validation against the guarded PR diff."
+            ]
+          : []),
+        ...verificationNotes(reviewResult),
+        ...judgeNotes(reviewResult),
+        ...reviewPassNotes(reviewResult),
         ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note)),
-        incrementalBaseSha
-          ? "No reviewable changes since the last reviewed commit; provider review skipped."
-          : "No reviewable files remained after filters; provider review skipped."
+        ...(runRequirementsOnlyReview
+          ? []
+          : [
+              incrementalBaseSha
+                ? "No reviewable changes since the last reviewed commit; provider review skipped."
+                : "No reviewable files remained after filters; provider review skipped."
+            ])
       ]
     });
     const payload = buildReviewPayload({
       findings: reviewResult.findings,
-      diff: { files: [] },
+      diff: { files: runRequirementsOnlyReview ? fullGuarded.files : [] },
       summaryBody,
       event: options.event ?? approval.event,
       agentPrompt: options.agentPrompt
@@ -1484,6 +1560,7 @@ export async function reviewPullRequest(
       incremental: incrementalBaseSha !== undefined,
       ...(approval.enabled ? { approval } : {}),
       ...(tidied.tidy ? { threads: tidied.tidy } : {}),
+      ...(options.issueValidation?.enabled ? { issuesValidated: issueValidation.count } : {}),
       posted: false
     };
     // Stale-publish guard (#21): a newer push superseded this run — don't clobber.
@@ -1501,7 +1578,7 @@ export async function reviewPullRequest(
             submitOptionsForReview(
               meta,
               incrementalBaseSha,
-              fullSkipped.length === 0,
+              !approvalCoverageIncomplete,
               tidied.tidy?.repostableFindings,
               shouldPublishReview
             )
@@ -1616,25 +1693,6 @@ export async function reviewPullRequest(
       : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
-  // Issue/ticket validation (#32): pull linked-issue acceptance criteria so the
-  // requirements lens can flag gaps. Tolerant — notes only on failure.
-  const issueValidation = options.issueValidation?.enabled
-    ? await resolveLinkedIssueRequirements({
-        fetchIssue: getIssue,
-        octokit,
-        ref,
-        meta,
-        maxIssues: options.issueValidation.maxIssues ?? 3
-      })
-    : { requirements: undefined, count: 0, notes: [] as string[] };
-  let requirementsDiff: string | undefined;
-  if (issueValidation.requirements && incrementalBaseSha !== undefined) {
-    const redactedRequirementsDiff = redactSecrets(renderFullGuardedDiff());
-    requirementsDiff = redactedRequirementsDiff.text;
-    if (redactedRequirementsDiff.count > 0) {
-      redactionNotes.push(`Redacted ${redactedRequirementsDiff.count} secret(s) from the issue validation diff.`);
-    }
-  }
   // Shared input: context (#4) + grounding (#16) run once and feed every provider.
   const reviewInput: ReviewInput = {
     diff: diffText,
