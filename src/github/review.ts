@@ -200,8 +200,8 @@ export async function fetchPriorReviewState(
 
 /**
  * Resolve the authenticated bot login used to find prior prowl-review comments,
- * threads, and state. Precedence: explicit override → `PROWL_BOT_LOGIN` env →
- * `GET /user` → the GitHub Actions default.
+ * threads, and state. Precedence: explicit override → `GET /user` →
+ * `PROWL_BOT_LOGIN` env hint → the GitHub Actions default.
  *
  * The Actions `GITHUB_TOKEN` is a GitHub App *installation* token, so `GET /user`
  * returns 403 ("Resource not accessible by integration"). Without a fallback the
@@ -209,17 +209,14 @@ export async function fetchPriorReviewState(
  * summary is never found so it's re-posted every run (duplicate comments),
  * incremental re-review (#23), pause/resume (#26), the ignore list (#30), and
  * thread tidy (#22) all no-op. So when `GET /user` fails inside Actions we use
- * the default token's identity, `github-actions[bot]`; custom GitHub-App tokens
- * set `PROWL_BOT_LOGIN` (or pass an override) to their own bot login.
+ * an operator-provided `PROWL_BOT_LOGIN` for custom GitHub-App tokens, otherwise
+ * the default token's identity, `github-actions[bot]`.
  */
 export async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: string): Promise<string | undefined> {
   if (botLogin?.trim()) {
     return botLogin.trim();
   }
   const envLogin = process.env.PROWL_BOT_LOGIN?.trim();
-  if (envLogin) {
-    return envLogin;
-  }
 
   try {
     const response = await octokit.rest.users.getAuthenticated();
@@ -230,6 +227,9 @@ export async function getAuthenticatedLogin(octokit: OctokitLike, botLogin?: str
     // installation tokens 403 on GET /user; fall through to the Actions default
   }
 
+  if (envLogin) {
+    return envLogin;
+  }
   if (process.env.GITHUB_ACTIONS === "true") {
     return "github-actions[bot]";
   }

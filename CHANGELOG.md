@@ -9,9 +9,10 @@ All notable changes to Prowl Review will be documented in this file.
   token, so `GET /user` 403s and the bot couldn't resolve its own login — the prior summary comment was
   never found, so a **new walkthrough was posted every run** (and incremental re-review #23, pause/resume
   #26, the ignore list #30, and thread tidy #22 all silently no-op'd). `getAuthenticatedLogin` now resolves
-  via explicit override → `PROWL_BOT_LOGIN` → `GET /user` → `github-actions[bot]` (the default-token
+  via explicit override → `GET /user` → `PROWL_BOT_LOGIN` hint → `github-actions[bot]` (the default-token
   identity) inside Actions. New `bot-login` Action input (empty by default; set it for custom
-  GitHub-App tokens). Existing duplicate comments on open PRs need a one-time manual delete.
+  GitHub-App tokens that cannot resolve their login through `GET /user`). Existing duplicate comments on open
+  PRs need a one-time manual delete.
 
 ### Changed
 - Cohesive review publishing (#22): inline findings for the default `COMMENT` review are published in one
