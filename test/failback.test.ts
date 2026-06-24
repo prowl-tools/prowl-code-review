@@ -57,6 +57,38 @@ describe("withFailback", () => {
     expect(events[0]).toMatchObject({ provider: "anthropic", from: "claude-opus-4-8", to: "claude-opus-4-7" });
   });
 
+  it("emits the failback event only after the older model succeeds", async () => {
+    const onFailback = vi.fn();
+    const complete = vi.fn(async (_req: unknown, cfg: ProviderConfig) => {
+      if (cfg.model === "claude-opus-4-8") {
+        throw retryable(429);
+      }
+      expect(onFailback).not.toHaveBeenCalled();
+      return `ok:${cfg.model}`;
+    });
+    const run = withFailback(complete, { onFailback });
+
+    expect(await run({}, config)).toBe("ok:claude-opus-4-7");
+    expect(onFailback).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: "anthropic", from: "claude-opus-4-8", to: "claude-opus-4-7" })
+    );
+  });
+
+  it("reports the final successful target when intermediate fallback models fail", async () => {
+    const complete = vi.fn(async (_req: unknown, cfg: ProviderConfig) => {
+      if (cfg.model !== "claude-opus-4-6") {
+        throw retryable(503);
+      }
+      return `ok:${cfg.model}`;
+    });
+    const events: FailbackEvent[] = [];
+    const run = withFailback(complete, { onFailback: (e) => events.push(e) });
+
+    expect(await run({}, config)).toBe("ok:claude-opus-4-6");
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "anthropic", from: "claude-opus-4-8", to: "claude-opus-4-6" });
+  });
+
   it("does not fall back on a non-retryable error", async () => {
     const complete = vi.fn().mockRejectedValue(Object.assign(new Error("bad request"), { status: 400 }));
     const onFailback = vi.fn();
@@ -68,10 +100,24 @@ describe("withFailback", () => {
 
   it("throws the last error after exhausting the whole ladder", async () => {
     const complete = vi.fn().mockRejectedValue(retryable(503));
-    const run = withFailback(complete);
+    const onFailback = vi.fn();
+    const run = withFailback(complete, { onFailback });
     await expect(run({}, { ...config, model: "claude-sonnet-4-6" })).rejects.toThrow(/503/);
     // sonnet-4-6 → sonnet-4-5 → throw: two attempts.
     expect(complete).toHaveBeenCalledTimes(2);
+    expect(onFailback).not.toHaveBeenCalled();
+  });
+
+  it("does not emit a failback event when the fallback target fails", async () => {
+    const complete = vi
+      .fn()
+      .mockRejectedValueOnce(retryable(429))
+      .mockRejectedValueOnce(Object.assign(new Error("bad request"), { status: 400 }));
+    const onFailback = vi.fn();
+    const run = withFailback(complete, { chain: () => ["claude-opus-4-7"], onFailback });
+
+    await expect(run({}, config)).rejects.toThrow("bad request");
+    expect(onFailback).not.toHaveBeenCalled();
   });
 
   it("does not fall back when the model has no older generation", async () => {
