@@ -357,12 +357,6 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
-/** Build the marker-free review body used when batching inline COMMENT reviews. */
-function inlineBatchReviewBody(commentCount: number): string {
-  const noun = commentCount === 1 ? "finding" : "findings";
-  return `prowl-review posted ${commentCount} new inline ${noun}. The updatable summary comment has the full review context.`;
-}
-
 /**
  * Short body for an APPROVE/REQUEST_CHANGES review event (#52). The full
  * walkthrough lives in the updatable summary comment, so the event review just
@@ -406,28 +400,34 @@ export async function submitReview(
 
   let postedInlineComments: ReviewComment[] = [];
   let posted = false;
-  const reviewComments = options.commitId ? initialPlan.newInlineComments.map(toGitHubComment) : [];
+  const newInline = options.commitId ? initialPlan.newInlineComments : [];
 
-  if (reviewComments.length > 0) {
-    // Post before persisting fingerprints; otherwise a failed GitHub review
-    // submission would suppress retries for inline comments that never existed.
-    if (options.shouldPublish && !(await options.shouldPublish())) {
+  if (payload.event === "COMMENT") {
+    // Quiet path (#22): a COMMENT review would require a body and surface as a
+    // separate "…reviewed / left a comment" timeline entry. Post the inline
+    // findings individually instead, so the updatable summary comment is the
+    // only conversation entry; failures just leave that finding for next run.
+    if (newInline.length > 0 && options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
-    await octokit.rest.pulls.createReview({
-      owner: ref.owner,
-      repo: ref.repo,
-      pull_number: ref.pull_number,
-      event: "COMMENT",
-      ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: inlineBatchReviewBody(reviewComments.length),
-      comments: reviewComments
-    });
-    posted = true;
-    postedInlineComments = initialPlan.newInlineComments;
-  }
-
-  if (payload.event !== "COMMENT") {
+    for (const comment of newInline) {
+      try {
+        await octokit.rest.pulls.createReviewComment({
+          owner: ref.owner,
+          repo: ref.repo,
+          pull_number: ref.pull_number,
+          commit_id: options.commitId as string,
+          ...toGitHubComment(comment)
+        });
+        postedInlineComments.push(comment);
+        posted = true;
+      } catch {
+        // leave this fingerprint out of state so it's retried on the next run
+      }
+    }
+  } else {
+    // Verdict path (#52): one review carries the REQUEST_CHANGES/APPROVE event
+    // plus the inline findings — a single, meaningful review entry.
     if (options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
@@ -437,9 +437,11 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: eventReviewBody(payload.event)
+      body: eventReviewBody(payload.event),
+      ...(newInline.length > 0 ? { comments: newInline.map(toGitHubComment) } : {})
     });
     posted = true;
+    postedInlineComments = newInline;
   }
 
   // Re-read the summary just before writing so command-side state changes

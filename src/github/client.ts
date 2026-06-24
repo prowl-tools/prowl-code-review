@@ -83,6 +83,19 @@ export interface OctokitLike {
         comment_id: number;
         body: string;
       }): Promise<{ data: unknown }>;
+      /** Post a single inline review comment (no review wrapper) — quiet COMMENT path (#22). */
+      createReviewComment(params: {
+        owner: string;
+        repo: string;
+        pull_number: number;
+        body: string;
+        commit_id: string;
+        path: string;
+        line?: number;
+        side?: ReviewSide;
+        start_line?: number;
+        start_side?: ReviewSide;
+      }): Promise<{ data: unknown }>;
       /** List review submissions already posted on the PR. */
       listReviews(params: {
         owner: string;
