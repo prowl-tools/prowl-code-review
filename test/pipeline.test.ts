@@ -3084,6 +3084,42 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(reviewInput.requirementsDiff).toContain("src/b.ts");
   });
 
+  it("redacts secrets from requirementsDiff during incremental issue validation", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const fullDiffWithSecret = `diff --git a/src/a.ts b/src/a.ts
+--- a/src/a.ts
++++ b/src/a.ts
+@@ -1,1 +1,2 @@
+ const a = 1;
++export const db = "DATABASE_URL=postgres://user:pass@host/db";
+
+${DELTA_DIFF}`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: fullDiffWithSecret })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      }))
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    const requirementsDiff = deps.runReview.mock.calls[0][0].requirementsDiff;
+    expect(requirementsDiff).toContain("DATABASE_URL=[REDACTED:assignment]");
+    expect(requirementsDiff).not.toContain("postgres://user:pass@host/db");
+    expect(result.payload.body).toContain("Redacted 1 secret");
+    expect(result.payload.body).toContain("issue validation diff");
+  });
+
   it("does nothing when no issue is linked", async () => {
     const deps = {
       ...makeDeps(),

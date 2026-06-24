@@ -50,6 +50,18 @@ describe("parseIssueReferences", () => {
     ]);
   });
 
+  it("preserves interleaved keyword and URL reference order", () => {
+    const refs = parseIssueReferences(
+      "Closes #1, then https://github.com/octo/repo/issues/5, then fixes prowl-tools/other#2",
+      repo
+    );
+    expect(refs).toEqual([
+      { ...repo, number: 1 },
+      { owner: "octo", repo: "repo", number: 5 },
+      { owner: "prowl-tools", repo: "other", number: 2 }
+    ]);
+  });
+
   it("returns [] for empty/missing text", () => {
     expect(parseIssueReferences("", repo)).toEqual([]);
     expect(parseIssueReferences(null, repo)).toEqual([]);
