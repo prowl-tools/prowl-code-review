@@ -89,6 +89,7 @@ import {
   type FailbackEvent,
   type FailbackOptions,
   type ProviderConfig,
+  type RetryOptions,
   type TokenUsage
 } from "./providers/index.js";
 import type { Finding, Severity } from "./review/findings.js";
@@ -188,6 +189,11 @@ export interface ReviewPullRequestOptions {
    * of the same family before failing; each failback is surfaced as a review note.
    */
   failback?: boolean;
+  /**
+   * Retry/backoff config for the review passes (#17). Mainly used to wire an
+   * `onRetry` hook for heartbeat/progress logging; omitted → built-in defaults.
+   */
+  retry?: RetryOptions;
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -1759,6 +1765,7 @@ export async function reviewPullRequest(
         verify: options.verify,
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
+        ...(options.retry ? { retry: options.retry } : {}),
         ...(failback ? { failback } : {}),
         ...(ensembleRunReview ? { runReview: ensembleRunReview } : {})
       })
@@ -1770,6 +1777,7 @@ export async function reviewPullRequest(
         verify: options.verify,
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
+        ...(options.retry ? { retry: options.retry } : {}),
         ...(failback ? { failback } : {})
       });
   const ensembleProviders = ensembleActive
