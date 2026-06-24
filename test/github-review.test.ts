@@ -56,12 +56,20 @@ function mockOctokit(
   const createComment = vi.fn(async () => ({ data: {} }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
+  const createReviewComment = vi.fn(async () => ({ data: {} }));
   const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
   const getReviewComment = vi.fn(async () => ({ data: { body: "root finding" } }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, createReplyForReviewComment, getReviewComment, listReviewComments, listReviews },
+      pulls: {
+        createReview,
+        createReviewComment,
+        createReplyForReviewComment,
+        getReviewComment,
+        listReviewComments,
+        listReviews
+      },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
@@ -74,6 +82,7 @@ function mockOctokit(
     createComment,
     updateComment,
     createReview,
+    createReviewComment,
     createReplyForReviewComment,
     getReviewComment,
     getAuthenticated
@@ -341,29 +350,21 @@ describe("fetchReviewCommentBody", () => {
 });
 
 describe("submitReview", () => {
-  it("creates the summary comment and posts inline findings as one review on a first run", async () => {
-    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+  it("creates the summary comment and posts inline findings individually on a first run", async () => {
+    const { octokit, createComment, updateComment, createReview, createReviewComment } = mockOctokit([]);
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
     expect(updateComment).not.toHaveBeenCalled();
-    expect(createReview).toHaveBeenCalledTimes(1);
-    const review = createReview.mock.calls[0][0] as {
-      commit_id?: string;
-      event?: string;
-      comments?: Array<Record<string, unknown>>;
-    };
-    expect(review.commit_id).toBe("head");
-    expect(review.event).toBe("COMMENT");
-    expect(review).toEqual(
-      expect.objectContaining({
-        body: "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
-      })
-    );
-    expect(review.body).not.toContain(REVIEW_MARKER);
-    expect(review.body).not.toContain("prowl-review:state");
-    expect(review.comments).toHaveLength(1);
-    expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
-    expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
+    // Quiet COMMENT path: no review submission, just an individual inline comment.
+    expect(createReview).not.toHaveBeenCalled();
+    expect(createReviewComment).toHaveBeenCalledTimes(1);
+    const inline = createReviewComment.mock.calls[0][0] as Record<string, unknown>;
+    expect(inline.commit_id).toBe("head");
+    expect(inline.path).toBe("src/a.ts");
+    expect(inline.line).toBe(6);
+    expect(inline.side).toBe("RIGHT");
+    expect(inline).not.toHaveProperty("fingerprint"); // internal field stripped
+    expect(inline.body as string).toContain("prowl-review:finding fp-a");
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string; issue_number: number };
     expect(created.issue_number).toBe(12);
@@ -393,7 +394,7 @@ describe("submitReview", () => {
       body: `${REVIEW_MARKER}\n## prowl-review\nold summary\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
       user: { login: "github-actions[bot]" }
     };
-    const { octokit, createComment, updateComment, createReview } = mockOctokit([prior]);
+    const { octokit, createComment, updateComment, createReview, createReviewComment } = mockOctokit([prior]);
 
     await submitReview(
       octokit,
@@ -406,10 +407,10 @@ describe("submitReview", () => {
     );
 
     expect(updateComment).not.toHaveBeenCalled();
-    expect(createReview).toHaveBeenCalledTimes(1);
-    const review = createReview.mock.calls[0][0] as { comments?: Array<{ body?: string }> };
-    expect(review.comments).toHaveLength(1);
-    expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-b");
+    expect(createReview).not.toHaveBeenCalled();
+    // Only the net-new finding (fp-b) is posted as an individual inline comment.
+    expect(createReviewComment).toHaveBeenCalledTimes(1);
+    expect((createReviewComment.mock.calls[0][0] as { body: string }).body).toContain("prowl-review:finding fp-b");
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string };
     expect(created.body).toContain("new delta summary");
@@ -508,16 +509,17 @@ describe("submitReview", () => {
     expect(parseState(created.body)?.postedFindings).toEqual([]);
   });
 
-  it("does not persist new fingerprints when posting the review fails", async () => {
-    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
-    createReview.mockRejectedValueOnce(new Error("github unavailable"));
+  it("does not persist a fingerprint when its inline comment fails to post", async () => {
+    const { octokit, createComment, createReviewComment } = mockOctokit([]);
+    createReviewComment.mockRejectedValueOnce(new Error("github unavailable"));
 
-    await expect(
-      submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" })
-    ).rejects.toThrow("github unavailable");
+    // Inline failures are tolerated (retried next run) and never sink the review:
+    // the summary still updates, but the failed finding is left out of state.
+    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
-    expect(createComment).not.toHaveBeenCalled();
-    expect(updateComment).not.toHaveBeenCalled();
+    expect(createReviewComment).toHaveBeenCalledTimes(1);
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
   });
 
   it("cancels before the first publish write when the publish guard fails", async () => {
@@ -538,7 +540,7 @@ describe("submitReview", () => {
   });
 
   it("re-checks the publish guard after the summary re-read", async () => {
-    const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([]);
+    const { octokit, listComments, createComment, updateComment, createReviewComment } = mockOctokit([]);
     const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     const result = await submitReview(octokit, ref, payload(), {
@@ -551,7 +553,8 @@ describe("submitReview", () => {
     expect(shouldPublish).toHaveBeenCalledTimes(2);
     expect(listComments).toHaveBeenCalledTimes(2);
     expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
-    expect(createReview).toHaveBeenCalledTimes(1);
+    // Inline finding posted on the first guard pass; summary write cancelled on the second.
+    expect(createReviewComment).toHaveBeenCalledTimes(1);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
   });
@@ -655,8 +658,8 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
-  it("submits inline comments as COMMENT before a separate non-comment review event", async () => {
-    const { octokit, createComment, createReview } = mockOctokit([]);
+  it("carries inline findings on the verdict review for a non-comment event", async () => {
+    const { octokit, createComment, createReview, createReviewComment } = mockOctokit([]);
     await submitReview(
       octokit,
       ref,
@@ -664,20 +667,15 @@ describe("submitReview", () => {
       { commitId: "head", headSha: "head" }
     );
 
-    expect(createReview).toHaveBeenCalledTimes(2);
-    const inlineReview = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
-    expect(inlineReview.event).toBe("COMMENT");
-    expect(inlineReview.comments).toHaveLength(1);
-    expect(inlineReview.body).not.toContain(REVIEW_MARKER);
-
-    const eventReview = createReview.mock.calls[1][0] as { event?: string; body?: string; comments?: unknown[] };
-    expect(eventReview).toEqual(
-      expect.objectContaining({
-        event: "REQUEST_CHANGES",
-        body: expect.stringContaining("summary")
-      })
-    );
-    expect(eventReview).not.toHaveProperty("comments");
+    // One review carries both the verdict and the inline findings (no quiet
+    // individual posting on the verdict path).
+    expect(createReview).toHaveBeenCalledTimes(1);
+    expect(createReviewComment).not.toHaveBeenCalled();
+    const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
+    expect(review.event).toBe("REQUEST_CHANGES");
+    expect(review.body).toContain("summary");
+    expect(review.comments).toHaveLength(1);
+    expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
@@ -763,7 +761,7 @@ describe("submitReview", () => {
       body: "noise",
       user: { login: "github-actions[bot]" }
     }));
-    const { octokit, createComment, createReview, listReviewComments } = mockOctokit(
+    const { octokit, createComment, createReviewComment, listReviewComments } = mockOctokit(
       [],
       [...filler, { body: "old inline\n\n<!-- prowl-review:finding fp-a -->", user: { login: "github-actions[bot]" } }]
     );
@@ -771,7 +769,8 @@ describe("submitReview", () => {
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
     expect(listReviewComments).toHaveBeenCalledTimes(10);
-    expect(createReview).toHaveBeenCalledTimes(1);
+    // Recovery caps before reaching fp-a (page 11), so it posts as net-new.
+    expect(createReviewComment).toHaveBeenCalledTimes(1);
     expect(createComment).toHaveBeenCalledTimes(1);
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
       "fp-a"
