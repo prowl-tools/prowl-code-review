@@ -1305,13 +1305,13 @@ export async function reviewPullRequest(
   if (redactedDiff.count > 0) {
     redactionNotes.push(`Redacted ${redactedDiff.count} secret(s) from the diff.`);
   }
-  let descriptionRenderedDiff: string | undefined;
-  const renderDescriptionDiff = () => {
+  let fullGuardedRenderedDiff: string | undefined;
+  const renderFullGuardedDiff = () => {
     if (incrementalBaseSha === undefined) {
       return renderedDiff;
     }
-    descriptionRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
-    return descriptionRenderedDiff;
+    fullGuardedRenderedDiff ??= renderGuardedDiff(fullGuarded.files);
+    return fullGuardedRenderedDiff;
   };
   const redactedTitle = redactSecrets(meta.title);
   if (redactedTitle.count > 0) {
@@ -1335,7 +1335,7 @@ export async function reviewPullRequest(
       try {
         let descriptionDiffText = diffText;
         if (incrementalBaseSha !== undefined) {
-          const redactedDescriptionDiff = redactSecrets(renderDescriptionDiff());
+          const redactedDescriptionDiff = redactSecrets(renderFullGuardedDiff());
           descriptionDiffText = redactedDescriptionDiff.text;
           if (redactedDescriptionDiff.count > 0) {
             redactionNotes.push(`Redacted ${redactedDescriptionDiff.count} secret(s) from the PR description diff.`);
@@ -1627,6 +1627,14 @@ export async function reviewPullRequest(
         maxIssues: options.issueValidation.maxIssues ?? 3
       })
     : { requirements: undefined, count: 0, notes: [] as string[] };
+  let requirementsDiff: string | undefined;
+  if (issueValidation.requirements && incrementalBaseSha !== undefined) {
+    const redactedRequirementsDiff = redactSecrets(renderFullGuardedDiff());
+    requirementsDiff = redactedRequirementsDiff.text;
+    if (redactedRequirementsDiff.count > 0) {
+      redactionNotes.push(`Redacted ${redactedRequirementsDiff.count} secret(s) from the issue validation diff.`);
+    }
+  }
   // Shared input: context (#4) + grounding (#16) run once and feed every provider.
   const reviewInput: ReviewInput = {
     diff: diffText,
@@ -1636,6 +1644,7 @@ export async function reviewPullRequest(
     languages: summarizeLanguages(reviewFiles.map((file) => file.path)).map((language) => language.label),
     grounding,
     requirements: issueValidation.requirements,
+    requirementsDiff,
     specialists: effectiveSpecialists
   };
   // Ensemble (#53): fan out across providers when ≥2 configs were resolved; the

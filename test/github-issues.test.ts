@@ -53,4 +53,36 @@ describe("fetchIssue (#32)", () => {
     } as unknown as OctokitLike;
     await expect(fetchIssue(octokit, ref)).rejects.toThrow(/rate limited/);
   });
+
+  it("throws rate-limit 403s so the pipeline can report degraded validation", async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          get: vi.fn(async () => {
+            throw Object.assign(new Error("API rate limit exceeded"), {
+              status: 403,
+              response: { headers: { "x-ratelimit-remaining": "0" } }
+            });
+          })
+        }
+      }
+    } as unknown as OctokitLike;
+    await expect(fetchIssue(octokit, ref)).rejects.toThrow(/rate limit/i);
+  });
+
+  it("throws secondary rate-limit 403s with retry headers", async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          get: vi.fn(async () => {
+            throw Object.assign(new Error("You have exceeded a secondary rate limit"), {
+              status: 403,
+              response: { headers: { "retry-after": "60" } }
+            });
+          })
+        }
+      }
+    } as unknown as OctokitLike;
+    await expect(fetchIssue(octokit, ref)).rejects.toThrow(/secondary rate limit/i);
+  });
 });
