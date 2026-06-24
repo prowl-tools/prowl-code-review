@@ -23,12 +23,17 @@ describe("fetchIssue (#32)", () => {
     expect(await fetchIssue(octokitReturning({ title: "  ", body: "" }), ref)).toBeNull();
   });
 
-  it("returns null for permanent unusable issue responses", async () => {
+  it.each([
+    [403, "forbidden"],
+    [404, "not found"],
+    [410, "gone"],
+    [451, "unavailable for legal reasons"]
+  ])("returns null for permanent unusable issue response %i", async (status, message) => {
     const octokit = {
       rest: {
         issues: {
           get: vi.fn(async () => {
-            throw Object.assign(new Error("not found"), { status: 404 });
+            throw Object.assign(new Error(message), { status });
           })
         }
       }
