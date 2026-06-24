@@ -347,9 +347,10 @@ before giving up — so a degraded-but-real review beats a failed pass. It never
 crosses providers (that's the ensemble's job) and never falls back on a
 non-retryable error; each fallback is noted in the review.
 
-Long ensemble runs also emit a **heartbeat** to the Action log (`still
-reviewing … (Ns elapsed)`) and log transient retries, so a slow review isn't
-mistaken for a hung CI job.
+Long review runs also emit a **heartbeat** to the Action log (`still
+reviewing … (Ns elapsed)`) and log transient retries across specialist,
+verification, and ensemble passes, so a slow review isn't mistaken for a hung CI
+job.
 
 ## Development
 

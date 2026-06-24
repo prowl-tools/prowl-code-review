@@ -1451,6 +1451,13 @@ export async function reviewPullRequest(
     }
   }
 
+  // Cross-generation failback (#17): on retryable exhaustion, retry with an older
+  // same-family model. Events are collected into review notes (#56).
+  const failbackEvents: FailbackEvent[] = [];
+  const failback: FailbackOptions | undefined = options.failback
+    ? { onFailback: (event) => failbackEvents.push(event) }
+    : undefined;
+
   if (reviewFiles.length === 0) {
     const runRequirementsOnlyReview = issueValidation.requirements !== undefined && fullGuarded.files.length > 0;
     const reviewResult = runRequirementsOnlyReview
@@ -1471,7 +1478,9 @@ export async function reviewPullRequest(
             maxFindings: options.maxFindings,
             verify: options.verify,
             verifyConfidence: options.verifyConfidence,
-            maxTokens: options.budgetTokens
+            maxTokens: options.budgetTokens,
+            ...(options.retry ? { retry: options.retry } : {}),
+            ...(failback ? { failback } : {})
           }
         )
       : {
@@ -1560,6 +1569,7 @@ export async function reviewPullRequest(
         ...prDescriptionNotes,
         ...ignoredSuppression.notes,
         ...tidied.notes,
+        ...failbackNotes(failbackEvents),
         ...redactionNotes,
         ...groundingNotes,
         ...(runRequirementsOnlyReview
@@ -1745,12 +1755,6 @@ export async function reviewPullRequest(
     requirementsDiff,
     specialists: effectiveSpecialists
   };
-  // Cross-generation failback (#17): on retryable exhaustion, retry with an older
-  // same-family model. Events are collected into review notes (#56).
-  const failbackEvents: FailbackEvent[] = [];
-  const failback: FailbackOptions | undefined = options.failback
-    ? { onFailback: (event) => failbackEvents.push(event) }
-    : undefined;
   // Ensemble (#53): fan out across providers when ≥2 configs were resolved; the
   // cross-provider judge consolidates with provenance. Otherwise a normal review.
   const ensembleConfigs = options.ensemble?.configs ?? [];
