@@ -33,6 +33,12 @@ export {
   DEFAULT_MAX_DELAY_MS,
   type RetryOptions
 } from "./retry.js";
+export {
+  withFailback,
+  modelFailbackChain,
+  type FailbackEvent,
+  type FailbackOptions
+} from "./failback.js";
 
 const PROVIDERS: Record<ProviderName, Provider> = {
   anthropic: anthropicProvider,

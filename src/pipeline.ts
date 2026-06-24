@@ -83,7 +83,14 @@ import {
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
-import { emptyUsage, resolveProviderConfig, type ProviderConfig, type TokenUsage } from "./providers/index.js";
+import {
+  emptyUsage,
+  resolveProviderConfig,
+  type FailbackEvent,
+  type FailbackOptions,
+  type ProviderConfig,
+  type TokenUsage
+} from "./providers/index.js";
 import type { Finding, Severity } from "./review/findings.js";
 import { redactSecrets } from "./review/redact.js";
 import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
@@ -175,6 +182,12 @@ export interface ReviewPullRequestOptions {
    * lens flags any the diff doesn't satisfy.
    */
   issueValidation?: { enabled?: boolean; maxIssues?: number };
+  /**
+   * Cross-generation failback (#17). Opt-in. When true, a review pass that keeps
+   * hitting retryable/overload errors after retries falls back to an older model
+   * of the same family before failing; each failback is surfaced as a review note.
+   */
+  failback?: boolean;
   /** Repo checkout root for agentic context; context is skipped if unset. */
   toolkitRoot?: string;
   /**
@@ -476,6 +489,27 @@ function ensembleNotes(providers: EnsembleProviderReport[] | undefined): string[
       truncateNote(
         `Ensemble: provider "${failed.provider}" did not complete${safeError ? ` (${safeError})` : ""}.`
       )
+    );
+  }
+  return notes;
+}
+
+/** Notes for cross-generation failbacks that occurred during the review (#17). */
+function failbackNotes(events: FailbackEvent[]): string[] {
+  if (events.length === 0) {
+    return [];
+  }
+  // One note per distinct provider/from/to swap (a model can fail back on many passes).
+  const seen = new Set<string>();
+  const notes: string[] = [];
+  for (const event of events) {
+    const key = `${event.provider}:${event.from}->${event.to}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    notes.push(
+      `Provider overload (#17): ${event.provider} fell back from \`${event.from}\` to \`${event.to}\` after retries — review ran on the older model.`
     );
   }
   return notes;
@@ -1705,6 +1739,12 @@ export async function reviewPullRequest(
     requirementsDiff,
     specialists: effectiveSpecialists
   };
+  // Cross-generation failback (#17): on retryable exhaustion, retry with an older
+  // same-family model. Events are collected into review notes (#56).
+  const failbackEvents: FailbackEvent[] = [];
+  const failback: FailbackOptions | undefined = options.failback
+    ? { onFailback: (event) => failbackEvents.push(event) }
+    : undefined;
   // Ensemble (#53): fan out across providers when ≥2 configs were resolved; the
   // cross-provider judge consolidates with provenance. Otherwise a normal review.
   const ensembleConfigs = options.ensemble?.configs ?? [];
@@ -1719,6 +1759,7 @@ export async function reviewPullRequest(
         verify: options.verify,
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
+        ...(failback ? { failback } : {}),
         ...(ensembleRunReview ? { runReview: ensembleRunReview } : {})
       })
     : await review(reviewInput, {
@@ -1728,7 +1769,8 @@ export async function reviewPullRequest(
         maxFindings: options.maxFindings,
         verify: options.verify,
         verifyConfidence: options.verifyConfidence,
-        maxTokens: reviewBudgetTokens
+        maxTokens: reviewBudgetTokens,
+        ...(failback ? { failback } : {})
       });
   const ensembleProviders = ensembleActive
     ? (reviewResult as EnsembleReviewResult).providers
@@ -1825,6 +1867,7 @@ export async function reviewPullRequest(
       ...incrementalNotesList,
       ...approvalNotes(approval),
       ...ensembleNotes(ensembleProviders),
+      ...failbackNotes(failbackEvents),
       ...issueValidation.notes,
       ...prDescriptionNotes,
       ...ignoredSuppression.notes,

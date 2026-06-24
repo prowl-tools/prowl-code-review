@@ -50,6 +50,15 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ issueValidation: { nope: true } })).toThrow(); // strict
   });
 
+  it("accepts the resilience.failback toggle and rejects malformed entries (#17)", () => {
+    expect(configSchema.parse({ resilience: { failback: { enabled: true } } })).toEqual({
+      resilience: { failback: { enabled: true } }
+    });
+    expect(() => configSchema.parse({ resilience: { failback: { enabled: "yes" } } })).toThrow();
+    expect(() => configSchema.parse({ resilience: { failback: { nope: true } } })).toThrow(); // strict
+    expect(() => configSchema.parse({ resilience: { nope: true } })).toThrow(); // strict
+  });
+
   it("reserves the requirements category from custom specialists (#32)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "requirements", focus: "x" }] } })
