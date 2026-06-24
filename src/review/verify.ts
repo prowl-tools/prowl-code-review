@@ -309,7 +309,12 @@ export async function verifyFindings(
   try {
     const request: CompletionRequest = {
       system: buildVerifySystem(),
-      prompt: buildVerifyPrompt({ candidates, diff: input.diff, context: input.context }),
+      prompt: buildVerifyPrompt({
+        candidates,
+        diff: input.diff,
+        context: input.context,
+        requirements: input.requirements
+      }),
       // Native JSON output where the provider supports it (#7).
       responseFormat: "json"
     };
