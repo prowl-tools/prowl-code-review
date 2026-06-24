@@ -22,12 +22,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Done:** Ruff (Python) and Gitleaks (secrets) added to the `src/grounding` registry, normalized to the findings schema, per-language-selected via #5's detector, running ungated (own rulesets, no repo code); graceful degradation when a tool is absent.
     - Acceptance (remaining): add **Semgrep** (SAST, rule-configurable) as a runner — needs a ruleset-sourcing decision (network registry `--config auto`/`p/…` vs. repo `.semgrep.yml` vs. a bundled set) consistent with the no-extra-infra principle.
 
-17. **LLM resilience: cross-generation failback + heartbeat** *(retry/backoff + partial-failure done — see resolved.md)*
-    As a developer, I want reviews to survive sustained provider trouble and long "thinking", so that overload or a slow model doesn't kill or appear to hang the review.
-    - **Done:** exponential backoff + jitter on 429/408/425/5xx/network across specialist passes, verification, and context retrieval; a failed specialist pass already degrades gracefully and is reported (#56 surfaces it).
-    - Acceptance: per-model-family failback (fall back to an older generation on persistent overload, not across providers); failback only on retryable errors (429/503) after retries are exhausted.
-    - Acceptance: heartbeat progress logs so long model "thinking" isn't mistaken for a hung job (wire the existing `onRetry` hook + a periodic tick).
-
 20. **Fork-PR handling / security model**
     As an OSS maintainer, I want defined behavior on fork PRs, so that the tool degrades safely when secrets and write tokens aren't available.
     - Acceptance: detect fork PRs (read-only token / no `PROWL_AI_KEY`); fall back to a documented mode (e.g. summary-only via `pull_request_target` guidance, or skip with a clear message). No secret leakage to fork code.

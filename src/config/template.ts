@@ -83,6 +83,15 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # prDescription:
 #   enabled: true
 
+# --- LLM resilience -----------------------------------------------------------
+# Retry/backoff on transient provider errors is always on. Failback is opt-in:
+# on sustained overload (retryable errors that survive retries), retry with an
+# older model of the SAME family before giving up (#17) — a degraded-but-real
+# review beats a failed pass. Never crosses providers.
+# resilience:
+#   failback:
+#     enabled: true
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info
