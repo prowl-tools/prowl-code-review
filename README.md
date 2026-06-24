@@ -267,12 +267,18 @@ Consolidated findings carry a **🤝 N/M consensus badge** in the summary and an
 inline note naming the agreeing providers; single-provider findings are kept and
 attributed to the model that raised them.
 
-**Two perspectives, one comment.** When more than one model flags the same issue,
-the inline comment keeps *each model's own take* in a collapsible **🔀 N model
-perspectives** block — every provider's severity, confidence, and reasoning side
-by side — so you get cross-model insight in the PR without running multiple tools.
-The top-line comment stays the strongest representative; expand the block to
-compare how each model saw it.
+**See what each model said.** The walkthrough leads with the consolidated,
+deduped table (🤝 marks agreement), then a **Per-model findings** area with one
+collapsible section per provider — Anthropic, Gemini, … — listing that model's
+findings in its own words and severity. Inline comments additionally keep a
+collapsible **🔀 N model perspectives** block when models agree on a line. So you
+get the high-signal consensus *and* each model's distinct take, in one place.
+
+**One conversation comment.** The walkthrough is a single comment that's
+**updated in place** on every push (not re-posted), and inline findings are
+posted directly on the diff lines — so prowl-review adds one conversation entry,
+not a separate "reviewed / left a comment" block. (A review *is* submitted when
+the approval gate, #52, sets an explicit Request-changes/Approve verdict.)
 
 **Cost:** roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap (#18) is **split evenly** across
