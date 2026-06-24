@@ -20,7 +20,11 @@ describe("resolveEnsembleConfigs (#53)", () => {
   it("defaults omitted providers to the primary provider", () => {
     const { configs, notes } = resolveEnsembleConfigs({ primary, env: {} as NodeJS.ProcessEnv });
 
-    expect(configs).toEqual([primary]);
+    expect(configs).toHaveLength(1);
+    expect(configs[0].provider).toBe(primary.provider);
+    expect(configs[0].model).toBe(primary.model);
+    expect(configs[0].apiKey).toBe(primary.apiKey);
+    expect(Object.keys(configs[0])).not.toContain("apiKey");
     expect(notes).toEqual([]);
   });
 
@@ -31,7 +35,11 @@ describe("resolveEnsembleConfigs (#53)", () => {
       env: {} as NodeJS.ProcessEnv
     });
 
-    expect(configs).toEqual([primary]);
+    expect(configs).toHaveLength(1);
+    expect(configs[0].provider).toBe(primary.provider);
+    expect(configs[0].model).toBe(primary.model);
+    expect(configs[0].apiKey).toBe(primary.apiKey);
+    expect(Object.keys(configs[0])).not.toContain("apiKey");
     expect(notes).toEqual([]);
   });
 

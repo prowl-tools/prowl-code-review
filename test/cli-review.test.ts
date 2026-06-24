@@ -699,7 +699,9 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
       { provider: "openai", model: "gpt-x" }
     );
 
-    expect(cfg).toEqual({ provider: "openai", model: "gpt-x", apiKey: "openai-key" });
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("gpt-x");
+    expect(cfg.apiKey).toBe("openai-key");
   });
 
   it("bootstraps the primary provider from a keyed ensemble provider", () => {
@@ -718,7 +720,7 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     );
 
     expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
-    expect(resolveProviderConfig(env, defaults)).toEqual({
+    expect(resolveProviderConfig(env, defaults)).toMatchObject({
       provider: "openai",
       model: "gpt-x",
       apiKey: "openai-key"
@@ -742,7 +744,7 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     );
 
     expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
-    expect(resolveProviderConfig(env, defaults)).toEqual({
+    expect(resolveProviderConfig(env, defaults)).toMatchObject({
       provider: "openai",
       model: "gpt-x",
       apiKey: "openai-key"
@@ -767,7 +769,7 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     );
 
     expect(defaults).toEqual({ provider: "openai", model: "gpt-x" });
-    expect(resolveProviderConfig(env, defaults)).toEqual({
+    expect(resolveProviderConfig(env, defaults)).toMatchObject({
       provider: "openai",
       model: "gpt-x",
       apiKey: "openai-key"
