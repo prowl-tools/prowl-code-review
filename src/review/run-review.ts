@@ -50,6 +50,12 @@ export interface ReviewInput {
    * and flags acceptance criteria the diff does not satisfy.
    */
   requirements?: string;
+  /**
+   * Optional full guarded PR diff for requirements validation. Incremental
+   * re-reviews keep normal lenses on the delta while requirements are checked
+   * against the full PR surface.
+   */
+  requirementsDiff?: string;
   /** Specialist set; defaults to {@link DEFAULT_SPECIALISTS}. */
   specialists?: Specialist[];
   /**
@@ -158,6 +164,7 @@ export async function runReview(
   const baseConfig = options.config ?? resolveProviderConfig();
   const configuredSpecialists = input.specialists ?? DEFAULT_SPECIALISTS;
   const activeRequirements = input.requirements?.trim() ? input.requirements : undefined;
+  const activeRequirementsDiff = activeRequirements ? input.requirementsDiff ?? input.diff : undefined;
   // Issue/ticket validation (#32): when the PR links an issue, append the
   // requirements lens (with the acceptance criteria supplied in its prompt) so
   // it runs alongside the configured specialists regardless of risk tier.
@@ -176,13 +183,17 @@ export async function runReview(
     specialists.map(async (specialist): Promise<{ report: SpecialistPassReport; findings: Finding[]; usage: TokenUsage }> => {
       const config = specialist.model ? { ...baseConfig, model: specialist.model } : baseConfig;
       try {
+        const specialistDiff =
+          specialist.key === REQUIREMENTS_SPECIALIST_KEY && activeRequirementsDiff
+            ? activeRequirementsDiff
+            : input.diff;
         const pass = await runSpecialistPass(
           run,
           {
             system,
             prompt: buildSpecialistPrompt({
               specialist,
-              diff: input.diff,
+              diff: specialistDiff,
               context: input.context,
               grounding: input.grounding?.summary,
               // Only the requirements lens receives the linked-issue criteria (#32).
@@ -257,7 +268,7 @@ export async function runReview(
       }
     : await verifyFindings(
         raw,
-        { diff: input.diff, context: input.context, requirements: activeRequirements },
+        { diff: activeRequirementsDiff ?? input.diff, context: input.context, requirements: activeRequirements },
         { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
       );
   usage = addUsage(usage, verification.usage);

@@ -3004,6 +3004,86 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(result.payload.body).toContain("linked issue");
   });
 
+  it("validates only the configured maxIssues cap", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5\nFixes #6\nResolves #7" }, diff: DIFF })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: `Issue ${r.number}`,
+        body: `Requirement ${r.number}`
+      }))
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true, maxIssues: 2 },
+      deps
+    });
+
+    expect(deps.fetchIssue).toHaveBeenCalledTimes(2);
+    expect(deps.fetchIssue.mock.calls.map((call) => call[1].number)).toEqual([5, 6]);
+    expect(deps.runReview.mock.calls[0][0].requirements).toContain("Requirement 5");
+    expect(deps.runReview.mock.calls[0][0].requirements).toContain("Requirement 6");
+    expect(deps.runReview.mock.calls[0][0].requirements).not.toContain("Requirement 7");
+    expect(result.issuesValidated).toBe(2);
+    expect(result.payload.body).toContain("3 linked issues found");
+    expect(result.payload.body).toContain("validating the first 2");
+  });
+
+  it("redacts secrets in linked issue requirements before review", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: DIFF })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Database",
+        body: "Acceptance: configure DATABASE_URL=postgres://user:pass@host/db"
+      }))
+    };
+
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    const requirements = deps.runReview.mock.calls[0][0].requirements;
+    expect(requirements).toContain("DATABASE_URL=[REDACTED:assignment]");
+    expect(requirements).not.toContain("postgres://user:pass@host/db");
+  });
+
+  it("checks requirements against the full guarded PR diff during incremental review", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => DELTA_DIFF),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: `${DIFF}\n${DELTA_DIFF}` })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      }))
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(result.incremental).toBe(true);
+    expect(reviewInput.diff).toContain("src/b.ts");
+    expect(reviewInput.diff).not.toContain("src/a.ts");
+    expect(reviewInput.requirementsDiff).toContain("src/a.ts");
+    expect(reviewInput.requirementsDiff).toContain("src/b.ts");
+  });
+
   it("does nothing when no issue is linked", async () => {
     const deps = {
       ...makeDeps(),

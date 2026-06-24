@@ -441,6 +441,51 @@ describe("runReview requirements lens (#32)", () => {
     expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
   });
 
+  it("uses the full requirements diff only for the requirements lens and verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        return reply(
+          JSON.stringify([
+            {
+              file: "a.ts",
+              line: 1,
+              severity: "major",
+              category: "requirements",
+              title: "requirement missing",
+              body: "z",
+              confidence: 0.8
+            }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    await runReview(
+      {
+        diff: "incremental delta only",
+        requirementsDiff: "full PR diff with original implementation",
+        requirements: "### #5: Theme\nThe app must support dark mode."
+      },
+      { config, complete }
+    );
+
+    const requirementsPrompt = prompts.find((prompt) => prompt.includes("Requirements reviewer"));
+    const correctnessPrompt = prompts.find((prompt) => prompt.includes("Correctness reviewer"));
+    const verifierPrompt = prompts.find((prompt) => prompt.includes("# Candidate findings"));
+    expect(requirementsPrompt).toContain("full PR diff with original implementation");
+    expect(requirementsPrompt).not.toContain("incremental delta only");
+    expect(correctnessPrompt).toContain("incremental delta only");
+    expect(correctnessPrompt).not.toContain("full PR diff with original implementation");
+    expect(verifierPrompt).toContain("full PR diff with original implementation");
+    expect(verifierPrompt).not.toContain("incremental delta only");
+  });
+
   it("does not run the requirements lens without requirements", async () => {
     const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
       if (request.prompt.includes("Requirements reviewer")) {

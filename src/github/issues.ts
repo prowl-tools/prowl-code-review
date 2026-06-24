@@ -25,10 +25,49 @@ function getHttpStatus(error: unknown): number | undefined {
     : undefined;
 }
 
+/** Extract a response header from an Octokit-style error object. */
+function getResponseHeader(error: unknown, name: string): string | undefined {
+  if (typeof error !== "object" || error === null || !("response" in error)) {
+    return undefined;
+  }
+  const response = error.response;
+  if (typeof response !== "object" || response === null || !("headers" in response)) {
+    return undefined;
+  }
+  const headers = response.headers;
+  if (typeof headers !== "object" || headers === null) {
+    return undefined;
+  }
+  const headerMap = headers as Record<string, unknown>;
+  const key = Object.keys(headerMap).find((candidate) => candidate.toLowerCase() === name.toLowerCase());
+  const value = key ? headerMap[key] : undefined;
+  if (Array.isArray(value)) {
+    return value.length > 0 ? String(value[0]) : undefined;
+  }
+  return typeof value === "string" || typeof value === "number" ? String(value) : undefined;
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+/** GitHub reports primary and secondary rate limits as 403 in some cases. */
+function isRateLimitError(error: unknown): boolean {
+  if (getHttpStatus(error) !== 403) {
+    return false;
+  }
+  const message = getErrorMessage(error).toLowerCase();
+  return (
+    message.includes("rate limit") ||
+    getResponseHeader(error, "retry-after") !== undefined ||
+    getResponseHeader(error, "x-ratelimit-remaining") === "0"
+  );
+}
+
 /** Return true for permanent responses where the linked issue cannot be used. */
 function isUnusableIssueError(error: unknown): boolean {
   const status = getHttpStatus(error);
-  return status === 403 || status === 404 || status === 410 || status === 451;
+  return (status === 403 && !isRateLimitError(error)) || status === 404 || status === 410 || status === 451;
 }
 
 /**
