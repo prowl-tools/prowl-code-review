@@ -10,7 +10,8 @@ import {
   type ToolCompletionRequest,
   type ToolCompletionResult,
   DEFAULT_MODELS,
-  PROVIDER_NAMES
+  PROVIDER_NAMES,
+  protectProviderConfig
 } from "./types.js";
 
 export * from "./types.js";
@@ -103,7 +104,7 @@ export function resolveProviderConfig(
   const configModel = configModelApplies ? defaults.model?.trim() : undefined;
   const model = env.PROWL_AI_MODEL?.trim() || configModel || DEFAULT_MODELS[raw];
 
-  return { provider: raw, model, apiKey };
+  return protectProviderConfig({ provider: raw, model, apiKey });
 }
 
 /**

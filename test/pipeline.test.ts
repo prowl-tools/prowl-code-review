@@ -110,6 +110,37 @@ describe("reviewPullRequest", () => {
     expect(result.contextFiles).toBe(1);
   });
 
+  it("threads retry and failback through the normal review path", async () => {
+    const deps = {
+      ...makeDeps(),
+      runReview: vi.fn(async (_input: unknown, options: RunReviewOptions) => {
+        options.failback?.onFailback?.({
+          provider: "anthropic",
+          from: "claude-sonnet-4-6",
+          to: "claude-sonnet-4-5",
+          error: new Error("429")
+        });
+        return reviewResult([]);
+      })
+    };
+    const retry = { maxAttempts: 2 };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      retry,
+      failback: true,
+      deps
+    });
+
+    const reviewOptions = deps.runReview.mock.calls[0][1];
+    expect(reviewOptions.retry).toBe(retry);
+    expect(reviewOptions.failback).toEqual(expect.objectContaining({ onFailback: expect.any(Function) }));
+    expect(result.payload.body).toContain("Provider overload");
+    expect(result.payload.body).toContain("claude-sonnet-4-6");
+    expect(result.payload.body).toContain("claude-sonnet-4-5");
+  });
+
   it("does not publish on a dry run", async () => {
     const deps = makeDeps();
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, dryRun: true });

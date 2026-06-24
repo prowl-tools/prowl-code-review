@@ -1,4 +1,4 @@
-import { DEFAULT_MODELS, PROVIDER_NAMES, type ProviderConfig, type ProviderName } from "./types.js";
+import { DEFAULT_MODELS, PROVIDER_NAMES, protectProviderConfig, type ProviderConfig, type ProviderName } from "./types.js";
 
 /**
  * Per-provider key resolution for the multi-provider ensemble (#53).
@@ -67,7 +67,7 @@ export function resolveEnsembleConfigs(params: ResolveEnsembleParams): ResolveEn
     }
 
     const model = spec.model?.trim() || (isPrimary ? params.primary.model : DEFAULT_MODELS[spec.provider]);
-    configs.push({ provider: spec.provider, model, apiKey });
+    configs.push(protectProviderConfig({ provider: spec.provider, model, apiKey }));
   }
 
   return { configs, notes };
