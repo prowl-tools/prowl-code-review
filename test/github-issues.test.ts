@@ -23,10 +23,29 @@ describe("fetchIssue (#32)", () => {
     expect(await fetchIssue(octokitReturning({ title: "  ", body: "" }), ref)).toBeNull();
   });
 
-  it("returns null (tolerant) when the fetch throws", async () => {
+  it("returns null for permanent unusable issue responses", async () => {
     const octokit = {
-      rest: { issues: { get: vi.fn(async () => { throw new Error("404"); }) } }
+      rest: {
+        issues: {
+          get: vi.fn(async () => {
+            throw Object.assign(new Error("not found"), { status: 404 });
+          })
+        }
+      }
     } as unknown as OctokitLike;
     expect(await fetchIssue(octokit, ref)).toBeNull();
+  });
+
+  it("throws transient fetch errors so the pipeline can report degraded validation", async () => {
+    const octokit = {
+      rest: {
+        issues: {
+          get: vi.fn(async () => {
+            throw Object.assign(new Error("rate limited"), { status: 429 });
+          })
+        }
+      }
+    } as unknown as OctokitLike;
+    await expect(fetchIssue(octokit, ref)).rejects.toThrow(/rate limited/);
   });
 });

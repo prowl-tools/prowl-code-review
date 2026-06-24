@@ -542,6 +542,21 @@ describe("review command action env helpers", () => {
     });
   });
 
+  it("logs zero linked issues validated", () => {
+    const root = tempDir();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    reportReviewCommandResult(reviewCommandResult({ issuesValidated: 0 }), {
+      owner: "o",
+      repo: "r",
+      pullNumber: 7,
+      root,
+      providerConfig: { provider: "openai", model: "gpt-5", apiKey: "k" }
+    });
+
+    expect(logSpy.mock.calls.some(([line]) => String(line).includes("validated against 0 linked issue(s)"))).toBe(true);
+  });
+
   it("prices ensemble runs with each provider's own model and usage", () => {
     const root = tempDir();
     const summaryPath = join(root, "summary.md");

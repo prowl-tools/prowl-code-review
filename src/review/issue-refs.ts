@@ -3,9 +3,9 @@
  *
  * Pure: scans a PR's title + body for the GitHub issues it links, so the
  * pipeline can fetch their acceptance criteria and validate the diff against
- * them. We recognize the references GitHub itself treats as links — a closing
- * keyword (`Closes #12`, `Fixes owner/repo#5`) or an explicit issue URL — rather
- * than every bare `#n`, which is usually an incidental mention, not a requirement.
+ * them. We recognize prowl-review issue-validation links: a closing keyword
+ * (`Closes #12`, `Fixes owner/repo#5`) or an explicit issue URL rather than
+ * every bare `#n`, which is usually an incidental mention, not a requirement.
  */
 
 /** A referenced GitHub issue: repository coordinates + number. */
@@ -16,8 +16,9 @@ export interface IssueRef {
 }
 
 /** GitHub's closing keywords; any of these before a reference links the issue. */
-const CLOSING_KEYWORD = "(?:close|closes|closed|fix|fixes|fixed|resolve|resolves|resolved)";
+const CLOSING_KEYWORD = "(?:close[sd]?|fix(?:es|ed)?|resolve[sd]?)";
 const OWNER_REPO = "[A-Za-z0-9._-]+";
+type IssueReferenceMatch = { index: number; owner: string; repo: string; number: number };
 /** `Closes #12` / `Fixes owner/repo#5` / `Resolves https://github.com/o/r/issues/7`. */
 const KEYWORD_RE = new RegExp(
   `\\b${CLOSING_KEYWORD}\\b\\s*:?\\s+` +
@@ -32,6 +33,7 @@ const URL_RE = new RegExp(
   "gi"
 );
 
+/** Append a valid, deduped issue reference while preserving caller order. */
 function pushRef(into: IssueRef[], seen: Set<string>, owner: string, repo: string, number: number): void {
   if (!owner || !repo || !Number.isInteger(number) || number <= 0) {
     return;
@@ -59,19 +61,30 @@ export function parseIssueReferences(
   }
   const refs: IssueRef[] = [];
   const seen = new Set<string>();
+  const matches: IssueReferenceMatch[] = [];
 
   for (const match of text.matchAll(KEYWORD_RE)) {
     const [, bare, ownerRepoOwner, ownerRepoRepo, ownerRepoNum, urlOwner, urlRepo, urlNum] = match;
+    const index = match.index ?? Number.MAX_SAFE_INTEGER;
     if (bare) {
-      pushRef(refs, seen, defaultRepo.owner, defaultRepo.repo, Number(bare));
+      matches.push({ index, owner: defaultRepo.owner, repo: defaultRepo.repo, number: Number(bare) });
     } else if (ownerRepoNum) {
-      pushRef(refs, seen, ownerRepoOwner, ownerRepoRepo, Number(ownerRepoNum));
+      matches.push({ index, owner: ownerRepoOwner, repo: ownerRepoRepo, number: Number(ownerRepoNum) });
     } else if (urlNum) {
-      pushRef(refs, seen, urlOwner, urlRepo, Number(urlNum));
+      matches.push({ index, owner: urlOwner, repo: urlRepo, number: Number(urlNum) });
     }
   }
   for (const match of text.matchAll(URL_RE)) {
-    pushRef(refs, seen, match[1], match[2], Number(match[3]));
+    matches.push({
+      index: match.index ?? Number.MAX_SAFE_INTEGER,
+      owner: match[1],
+      repo: match[2],
+      number: Number(match[3])
+    });
+  }
+  matches.sort((a, b) => a.index - b.index);
+  for (const match of matches) {
+    pushRef(refs, seen, match.owner, match.repo, match.number);
   }
   return refs;
 }

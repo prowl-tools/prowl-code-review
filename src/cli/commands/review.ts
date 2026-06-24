@@ -595,7 +595,7 @@ export function reportReviewCommandResult(
   if (result.prDescriptionUpdated) {
     console.log("prowl-review: wrote a generated PR description (#33).");
   }
-  if (result.issuesValidated) {
+  if (result.issuesValidated !== undefined) {
     console.log(`prowl-review: validated against ${result.issuesValidated} linked issue(s) (#32).`);
   }
   if (result.approval?.enabled) {

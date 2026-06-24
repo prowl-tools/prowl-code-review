@@ -3018,7 +3018,27 @@ describe("reviewPullRequest issue validation (#32)", () => {
     });
     expect(deps.fetchIssue).not.toHaveBeenCalled();
     expect(deps.runReview.mock.calls[0][0].requirements).toBeUndefined();
-    expect(result.issuesValidated).toBeUndefined();
+    expect(result.issuesValidated).toBe(0);
+  });
+
+  it("continues when linked issue fetching rejects", async () => {
+    const deps = {
+      ...makeDeps(),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: DIFF })),
+      fetchIssue: vi.fn(async () => {
+        throw new Error("timeout");
+      })
+    };
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+    expect(deps.fetchIssue).toHaveBeenCalledTimes(1);
+    expect(deps.runReview.mock.calls[0][0].requirements).toBeUndefined();
+    expect(result.issuesValidated).toBe(0);
+    expect(result.payload.body).toContain("one or more linked issue fetches failed");
   });
 
   it("does not fetch issues when the feature is disabled", async () => {
