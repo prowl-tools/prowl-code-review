@@ -42,7 +42,7 @@ export function modelFailbackChain(provider: ProviderName, model: string): strin
   return ladder.slice(ladder.indexOf(model) + 1);
 }
 
-/** A failback event: a provider's model was swapped for an older one mid-review. */
+/** A failback event: a provider successfully completed with an older model. */
 export interface FailbackEvent {
   provider: ProviderName;
   from: string;
@@ -53,7 +53,7 @@ export interface FailbackEvent {
 export interface FailbackOptions {
   /** Resolve the fallback model chain (defaults to {@link modelFailbackChain}). */
   chain?: (provider: ProviderName, model: string) => string[];
-  /** Notified when a failback to an older model happens (for review notes/logs). */
+  /** Notified after a failback target successfully completes (for review notes/logs). */
   onFailback?: (event: FailbackEvent) => void;
 }
 
@@ -71,16 +71,26 @@ export function withFailback<Req, Res>(
   return async (request, config) => {
     const models = [config.model, ...chain(config.provider, config.model)];
     let lastError: unknown;
+    let pendingFailback: FailbackEvent | undefined;
     for (let index = 0; index < models.length; index += 1) {
       try {
-        return await complete(request, { ...config, model: models[index] });
+        const result = await complete(request, { ...config, model: models[index] });
+        if (pendingFailback) {
+          options.onFailback?.(pendingFailback);
+        }
+        return result;
       } catch (error) {
         lastError = error;
         const hasOlder = index < models.length - 1;
         if (!hasOlder || !isRetryableError(error)) {
           throw error;
         }
-        options.onFailback?.({ provider: config.provider, from: models[index], to: models[index + 1], error });
+        pendingFailback = {
+          provider: config.provider,
+          from: pendingFailback?.from ?? models[index],
+          to: models[index + 1],
+          error
+        };
       }
     }
     throw lastError ?? new Error("withFailback exhausted without an error");
