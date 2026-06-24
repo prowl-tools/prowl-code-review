@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   submitReview,
   planPublish,
@@ -7,7 +7,8 @@ import {
   setIgnoredFindings,
   fetchReviewCommentFingerprints,
   replyToReviewComment,
-  fetchReviewCommentBody
+  fetchReviewCommentBody,
+  getAuthenticatedLogin
 } from "../src/github/review.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
@@ -60,7 +61,13 @@ function mockOctokit(
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
   const octokit = {
     rest: {
-      pulls: { createReview, createReplyForReviewComment, getReviewComment, listReviewComments, listReviews },
+      pulls: {
+        createReview,
+        createReplyForReviewComment,
+        getReviewComment,
+        listReviewComments,
+        listReviews
+      },
       issues: { listComments, createComment, updateComment },
       users: { getAuthenticated }
     }
@@ -350,13 +357,12 @@ describe("submitReview", () => {
       commit_id?: string;
       event?: string;
       comments?: Array<Record<string, unknown>>;
+      body?: string;
     };
     expect(review.commit_id).toBe("head");
     expect(review.event).toBe("COMMENT");
-    expect(review).toEqual(
-      expect.objectContaining({
-        body: "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
-      })
+    expect(review.body).toBe(
+      "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
     );
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(review.body).not.toContain("prowl-review:state");
@@ -511,9 +517,9 @@ describe("submitReview", () => {
     const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
     createReview.mockRejectedValueOnce(new Error("github unavailable"));
 
-    await expect(
-      submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" })
-    ).rejects.toThrow("github unavailable");
+    await expect(submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" })).rejects.toThrow(
+      "github unavailable"
+    );
 
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
@@ -550,6 +556,7 @@ describe("submitReview", () => {
     expect(shouldPublish).toHaveBeenCalledTimes(2);
     expect(listComments).toHaveBeenCalledTimes(2);
     expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
+    // Inline finding posted on the first guard pass; summary write cancelled on the second.
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
@@ -571,21 +578,64 @@ describe("submitReview", () => {
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
   });
 
-  it("falls back to a fresh summary when the authenticated login cannot be resolved", async () => {
-    const prior = {
-      id: 77,
-      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
-      user: { login: "github-actions[bot]" }
-    };
-    const { octokit, createComment, getAuthenticated, updateComment } = mockOctokit([prior]);
-    getAuthenticated.mockRejectedValueOnce(new Error("auth unavailable"));
+  it("falls back to a fresh summary when the login cannot be resolved outside Actions", async () => {
+    // No override, no PROWL_BOT_LOGIN, not in Actions → login is genuinely
+    // unresolved, so there's no prior to find and a fresh summary is created.
+    const savedActions = process.env.GITHUB_ACTIONS;
+    const savedLogin = process.env.PROWL_BOT_LOGIN;
+    delete process.env.GITHUB_ACTIONS;
+    delete process.env.PROWL_BOT_LOGIN;
+    try {
+      const prior = {
+        id: 77,
+        body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+        user: { login: "github-actions[bot]" }
+      };
+      const { octokit, createComment, getAuthenticated, updateComment } = mockOctokit([prior]);
+      getAuthenticated.mockRejectedValueOnce(new Error("auth unavailable"));
 
-    await submitReview(octokit, ref, payload());
+      await submitReview(octokit, ref, payload());
 
-    expect(getAuthenticated).toHaveBeenCalledTimes(1);
-    expect(updateComment).not.toHaveBeenCalled();
-    expect(createComment).toHaveBeenCalledTimes(1);
-    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
+      expect(getAuthenticated).toHaveBeenCalledTimes(1);
+      expect(updateComment).not.toHaveBeenCalled();
+      expect(createComment).toHaveBeenCalledTimes(1);
+      expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
+    } finally {
+      if (savedActions === undefined) delete process.env.GITHUB_ACTIONS;
+      else process.env.GITHUB_ACTIONS = savedActions;
+      if (savedLogin === undefined) delete process.env.PROWL_BOT_LOGIN;
+      else process.env.PROWL_BOT_LOGIN = savedLogin;
+    }
+  });
+
+  it("resolves to github-actions[bot] and updates the prior summary in place inside Actions", async () => {
+    // The Actions GITHUB_TOKEN can't resolve its login via GET /user; the fix
+    // falls back to github-actions[bot] so the prior summary is found + edited
+    // instead of duplicated (#22 dedup regression).
+    const savedActions = process.env.GITHUB_ACTIONS;
+    const savedLogin = process.env.PROWL_BOT_LOGIN;
+    process.env.GITHUB_ACTIONS = "true";
+    delete process.env.PROWL_BOT_LOGIN;
+    try {
+      const prior = {
+        id: 77,
+        body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: [] })}`,
+        user: { login: "github-actions[bot]" }
+      };
+      const { octokit, createComment, updateComment, getAuthenticated } = mockOctokit([prior]);
+      getAuthenticated.mockRejectedValue(new Error("Resource not accessible by integration"));
+
+      await submitReview(octokit, ref, payload({ comments: [] }));
+
+      expect(updateComment).toHaveBeenCalledTimes(1);
+      expect(updateComment.mock.calls[0][0]).toMatchObject({ comment_id: 77 });
+      expect(createComment).not.toHaveBeenCalled();
+    } finally {
+      if (savedActions === undefined) delete process.env.GITHUB_ACTIONS;
+      else process.env.GITHUB_ACTIONS = savedActions;
+      if (savedLogin === undefined) delete process.env.PROWL_BOT_LOGIN;
+      else process.env.PROWL_BOT_LOGIN = savedLogin;
+    }
   });
 
   it("preserves non-comment review events", async () => {
@@ -611,7 +661,7 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
-  it("submits inline comments as COMMENT before a separate non-comment review event", async () => {
+  it("carries inline findings on the verdict review for a non-comment event", async () => {
     const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(
       octokit,
@@ -620,20 +670,14 @@ describe("submitReview", () => {
       { commitId: "head", headSha: "head" }
     );
 
-    expect(createReview).toHaveBeenCalledTimes(2);
-    const inlineReview = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
-    expect(inlineReview.event).toBe("COMMENT");
-    expect(inlineReview.comments).toHaveLength(1);
-    expect(inlineReview.body).not.toContain(REVIEW_MARKER);
-
-    const eventReview = createReview.mock.calls[1][0] as { event?: string; body?: string; comments?: unknown[] };
-    expect(eventReview).toEqual(
-      expect.objectContaining({
-        event: "REQUEST_CHANGES",
-        body: expect.stringContaining("summary")
-      })
-    );
-    expect(eventReview).not.toHaveProperty("comments");
+    // One review carries both the verdict and the inline findings (no quiet
+    // individual posting on the verdict path).
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
+    expect(review.event).toBe("REQUEST_CHANGES");
+    expect(review.body).toContain("summary");
+    expect(review.comments).toHaveLength(1);
+    expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
@@ -727,6 +771,7 @@ describe("submitReview", () => {
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
     expect(listReviewComments).toHaveBeenCalledTimes(10);
+    // Recovery caps before reaching fp-a (page 11), so it posts as net-new.
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).toHaveBeenCalledTimes(1);
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
@@ -834,5 +879,63 @@ describe("fetchReviewCommentFingerprints (#30)", () => {
     const { octokit, getReviewComment } = mockOctokit();
     getReviewComment.mockResolvedValueOnce({ data: { body: "just a human reply" } });
     expect(await fetchReviewCommentFingerprints(octokit, ref, 100)).toEqual([]);
+  });
+});
+
+describe("getAuthenticatedLogin (#22 dedup on the Actions token)", () => {
+  const ORIGINAL_ENV = process.env;
+  beforeEach(() => {
+    process.env = { ...ORIGINAL_ENV };
+    delete process.env.PROWL_BOT_LOGIN;
+    delete process.env.GITHUB_ACTIONS;
+  });
+  afterEach(() => {
+    process.env = ORIGINAL_ENV;
+  });
+
+  function octokitGetUser(impl: () => Promise<{ data: { login?: string } }>): OctokitLike {
+    return { rest: { users: { getAuthenticated: vi.fn(impl) } } } as unknown as OctokitLike;
+  }
+
+  it("prefers an explicit override", async () => {
+    const octokit = octokitGetUser(async () => ({ data: { login: "x" } }));
+    expect(await getAuthenticatedLogin(octokit, "my-app[bot]")).toBe("my-app[bot]");
+  });
+
+  it("prefers GET /user over PROWL_BOT_LOGIN when the token identifies itself", async () => {
+    process.env.PROWL_BOT_LOGIN = "github-actions[bot]";
+    const getAuth = vi.fn(async () => ({ data: { login: "real-user" } }));
+    const octokit = { rest: { users: { getAuthenticated: getAuth } } } as unknown as OctokitLike;
+    expect(await getAuthenticatedLogin(octokit)).toBe("real-user");
+    expect(getAuth).toHaveBeenCalledTimes(1);
+  });
+
+  it("uses PROWL_BOT_LOGIN as a hint when a custom GitHub App token cannot resolve itself", async () => {
+    process.env.PROWL_BOT_LOGIN = "my-app[bot]";
+    process.env.GITHUB_ACTIONS = "true";
+    const octokit = octokitGetUser(async () => {
+      throw new Error("Resource not accessible by integration");
+    });
+    expect(await getAuthenticatedLogin(octokit)).toBe("my-app[bot]");
+  });
+
+  it("falls back to GET /user for a PAT", async () => {
+    const octokit = octokitGetUser(async () => ({ data: { login: "real-user" } }));
+    expect(await getAuthenticatedLogin(octokit)).toBe("real-user");
+  });
+
+  it("falls back to github-actions[bot] when GET /user 403s inside Actions", async () => {
+    process.env.GITHUB_ACTIONS = "true";
+    const octokit = octokitGetUser(async () => {
+      throw new Error("Resource not accessible by integration");
+    });
+    expect(await getAuthenticatedLogin(octokit)).toBe("github-actions[bot]");
+  });
+
+  it("returns undefined when GET /user fails outside Actions", async () => {
+    const octokit = octokitGetUser(async () => {
+      throw new Error("403");
+    });
+    expect(await getAuthenticatedLogin(octokit)).toBeUndefined();
   });
 });

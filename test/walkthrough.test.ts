@@ -417,6 +417,48 @@ describe("consensusBadge (#53)", () => {
   });
 });
 
+describe("buildWalkthrough per-model sections (#53)", () => {
+  const files = [makeFile("src/a.ts", 10, 0)];
+
+  it("renders a collapsible section per provider with each model's own findings", () => {
+    const findings = [
+      makeFinding("major", {
+        title: "Consolidated title",
+        file: "src/a.ts",
+        line: 5,
+        sources: ["anthropic", "gemini"],
+        perspectives: [
+          { provider: "anthropic", severity: "major", confidence: 0.7, title: "Anthropic wording", body: "a" },
+          { provider: "gemini", severity: "critical", confidence: 0.9, title: "Gemini wording", body: "g" }
+        ]
+      }),
+      makeFinding("major", {
+        title: "Only gemini",
+        file: "src/b.ts",
+        line: 2,
+        sources: ["gemini"],
+        perspectives: [{ provider: "gemini", severity: "major", confidence: 0.6, title: "Only gemini", body: "g2" }]
+      })
+    ];
+    const md = buildWalkthrough({ findings, files, providerCount: 2, providers: ["anthropic", "gemini"] });
+
+    expect(md).toContain("### Per-model findings");
+    expect(md).toContain("<summary>🟣 anthropic — 1 finding</summary>");
+    expect(md).toContain("<summary>🔷 gemini — 2 findings</summary>");
+    // Each model's own wording + severity is shown.
+    expect(md).toContain("Anthropic wording");
+    expect(md).toContain("Gemini wording");
+    expect(md).toContain("Only gemini");
+    // Consolidated table still leads.
+    expect(md.indexOf("### Findings")).toBeLessThan(md.indexOf("### Per-model findings"));
+  });
+
+  it("omits per-model sections for a single-provider (non-ensemble) review", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files });
+    expect(md).not.toContain("Per-model findings");
+  });
+});
+
 describe("buildWalkthrough consensus badges (#53)", () => {
   const files = [makeFile("src/a.ts", 10, 0)];
 

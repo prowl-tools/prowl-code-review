@@ -1820,6 +1820,7 @@ export async function reviewPullRequest(
     coverage,
     degraded,
     providerCount,
+    providers: ensembleProviders?.filter((p) => p.ok).map((p) => p.provider),
     notes: [
       ...incrementalNotesList,
       ...approvalNotes(approval),

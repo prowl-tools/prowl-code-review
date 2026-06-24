@@ -4,6 +4,25 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Duplicate review comments on the GitHub Action (#22): the Actions `GITHUB_TOKEN` is an installation
+  token, so `GET /user` 403s and the bot couldn't resolve its own login — the prior summary comment was
+  never found, so a **new walkthrough was posted every run** (and incremental re-review #23, pause/resume
+  #26, the ignore list #30, and thread tidy #22 all silently no-op'd). `getAuthenticatedLogin` now resolves
+  via explicit override → `GET /user` → `PROWL_BOT_LOGIN` hint → `github-actions[bot]` (the default-token
+  identity) inside Actions. New `bot-login` Action input (empty by default; set it for custom
+  GitHub-App tokens that cannot resolve their login through `GET /user`). Existing duplicate comments on open
+  PRs need a one-time manual delete.
+
+### Changed
+- Cohesive review publishing (#22): inline findings for the default `COMMENT` review are published in one
+  `pulls.createReview` call with `comments[]`, so GitHub receives a single review submission instead of one
+  API call per finding. The updatable walkthrough comment is still edited in place, and an explicit
+  Request-changes/Approve verdict (#52) carries its inline findings on that one verdict review.
+- Per-model findings in the ensemble walkthrough (#53): below the consolidated table, a **Per-model
+  findings** area shows one collapsible section per provider listing that model's own findings (its wording +
+  severity), so it's clear which model said what — not just the deduped result.
+
 ### Added
 - Issue/ticket validation (backlog #32): when a PR links a GitHub issue, prowl-review pulls the issue's
   acceptance criteria and flags any the diff doesn't satisfy. Opt-in via `issueValidation.enabled` (default
