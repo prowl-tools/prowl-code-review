@@ -1,6 +1,6 @@
 import type { DiffFile } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
-import { SEVERITIES, isBlockingFinding } from "./findings.js";
+import { SEVERITIES, SEVERITY_ORDER, isBlockingFinding } from "./findings.js";
 import type { SkipReason, SkippedFile } from "./diff-types.js";
 
 /**
@@ -82,6 +82,12 @@ export interface WalkthroughInput {
    * findings agreed on by multiple providers get a 🤝 consensus badge.
    */
   providerCount?: number;
+  /**
+   * Ensemble provider lineup, in order (#53). When ≥ 2, the walkthrough adds a
+   * per-model collapsible section so each model's own findings are visible
+   * alongside the consolidated table.
+   */
+  providers?: string[];
 }
 
 const SKIP_LABELS: Record<SkipReason, string> = {
@@ -443,6 +449,47 @@ function nitpickSection(findings: Finding[], providerCount?: number): string {
   ].join("\n");
 }
 
+/** A small per-provider glyph for the per-model sections; falls back to 🔹. */
+const PROVIDER_GLYPH: Record<string, string> = {
+  anthropic: "🟣",
+  openai: "🟢",
+  gemini: "🔷"
+};
+
+/** Order a provider's findings most-severe-first using that provider's own take. */
+function providerFindingLine(finding: Finding, provider: string): { severity: Severity; line: string } {
+  const perspective = finding.perspectives?.find((p) => p.provider === provider);
+  const severity = perspective?.severity ?? finding.severity;
+  const title = perspective?.title ?? finding.title;
+  return {
+    severity,
+    line: `- ${SEVERITY_BADGE[severity]} ${severity} ${findingLocation(finding)} — ${escapeMarkdownParagraphFlat(title)}`
+  };
+}
+
+/**
+ * Per-model breakdown for an ensemble run (#53): one collapsed `<details>` per
+ * provider listing the findings it raised, in that provider's own words and
+ * severity — so a reader can see what each model returned, not just the
+ * consolidated result. Empty unless ≥ 2 providers ran.
+ */
+function perModelSections(findings: Finding[], providers: string[] | undefined): string {
+  if (!providers || providers.length < 2) {
+    return "";
+  }
+  const sections = providers.map((provider) => {
+    const own = findings
+      .filter((finding) => (finding.sources ?? []).includes(provider))
+      .map((finding) => providerFindingLine(finding, provider))
+      .sort((a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity]);
+    const glyph = PROVIDER_GLYPH[provider.toLowerCase()] ?? "🔹";
+    const heading = `${glyph} ${provider} — ${own.length} finding${own.length === 1 ? "" : "s"}`;
+    const inner = own.length > 0 ? own.map((entry) => entry.line).join("\n") : "_No findings from this model._";
+    return ["<details>", `<summary>${heading}</summary>`, "", inner, "", "</details>"].join("\n");
+  });
+  return ["### Per-model findings", "", ...sections].join("\n");
+}
+
 /** Render caller-provided summaries as escaped text, preserving the fallback style. */
 function summarySection(summary: string | undefined): string {
   const trimmed = summary?.trim();
@@ -562,6 +609,8 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       impactAlert(impact, effort, counts),
       // Findings lead; the file inventory is secondary and stays collapsed below.
       findingsSection(input.findings, input.providerCount),
+      // Per-model breakdown (#53): each model's own findings, collapsed.
+      perModelSections(input.findings, input.providers),
       changedFilesSection(input.files, lineDeltas),
       nitpickSection(input.findings, input.providerCount),
       notesSection(input.notes)
