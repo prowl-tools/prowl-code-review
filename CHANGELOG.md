@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Issue/ticket validation (backlog #32): when a PR links a GitHub issue, prowl-review pulls the issue's
+  acceptance criteria and flags any the diff doesn't satisfy. Opt-in via `issueValidation.enabled` (default
+  off; `maxIssues` default 3). Linked issues are parsed from the PR title/body — closing keywords
+  (`Closes #12`, `Fixes owner/repo#5`) and issue URLs (a bare `#n` needs a keyword) — fetched tolerantly
+  (missing/inaccessible/PR/empty → skipped with a note), and their criteria are fed to a new conditional
+  `requirements` review lens that runs alongside the configured specialists (in single- and ensemble-provider
+  runs) and raises a finding per unmet criterion. The issue text is treated as untrusted data and secret-
+  redacted. New `src/review/issue-refs.ts`, `src/github/issues.ts` (`issues.get` added to the Octokit
+  surface), and a reserved `requirements` specialist key; the result reports `issuesValidated`.
 - Auto-generated PR descriptions (backlog #33): when a pull request is opened with an empty body,
   prowl-review writes a description from the diff and PATCHes it into the PR body — CodeRabbit-style. Opt-in
   via `prDescription.enabled` (default off). The summary lives between `<!-- prowl-review:pr-summary:start/end -->`

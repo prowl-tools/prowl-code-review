@@ -373,3 +373,153 @@ describe("runReview", () => {
     expect(result.findings[0].title).toBe("suspect");
   });
 });
+
+describe("runReview requirements lens (#32)", () => {
+  it("appends the requirements lens only when requirements are provided", async () => {
+    const seen: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Requirements reviewer")) {
+        seen.push("requirements");
+        // The acceptance criteria reach only this lens's prompt.
+        if (request.prompt.includes("must support dark mode")) {
+          seen.push("criteria-present");
+        }
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "requirements", title: "dark mode missing", body: "z", confidence: 0.8 }
+          ])
+        );
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview(
+      { diff: "diff", requirements: "### #5: Theme\nThe app must support dark mode." },
+      { config, complete, verify: false }
+    );
+
+    expect(seen).toContain("requirements");
+    expect(seen).toContain("criteria-present");
+    expect(result.passes.some((p) => p.specialist === "requirements")).toBe(true);
+    expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
+  });
+
+  it("passes linked issue requirements into verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        return reply(
+          JSON.stringify([
+            {
+              file: "a.ts",
+              line: 1,
+              severity: "major",
+              category: "requirements",
+              title: "dark mode missing",
+              body: "z",
+              confidence: 0.8
+            }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    const result = await runReview(
+      { diff: "diff", requirements: "### #5: Theme\nThe app must support dark mode." },
+      { config, complete }
+    );
+
+    expect(
+      prompts.some((prompt) => prompt.includes("# Untrusted linked issue requirements") && prompt.includes("dark mode"))
+    ).toBe(true);
+    expect(result.verification.verified).toBe(1);
+    expect(result.findings.some((f) => f.category === "requirements")).toBe(true);
+  });
+
+  it("uses the full requirements diff only for the requirements lens and verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        return reply(
+          JSON.stringify([
+            {
+              file: "a.ts",
+              line: 1,
+              severity: "major",
+              category: "requirements",
+              title: "requirement missing",
+              body: "z",
+              confidence: 0.8
+            }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    await runReview(
+      {
+        diff: "incremental delta only",
+        requirementsDiff: "full PR diff with original implementation",
+        requirements: "### #5: Theme\nThe app must support dark mode."
+      },
+      { config, complete }
+    );
+
+    const requirementsPrompt = prompts.find((prompt) => prompt.includes("Requirements reviewer"));
+    const correctnessPrompt = prompts.find((prompt) => prompt.includes("Correctness reviewer"));
+    const verifierPrompt = prompts.find((prompt) => prompt.includes("# Candidate findings"));
+    expect(requirementsPrompt).toContain("full PR diff with original implementation");
+    expect(requirementsPrompt).not.toContain("incremental delta only");
+    expect(correctnessPrompt).toContain("incremental delta only");
+    expect(correctnessPrompt).not.toContain("full PR diff with original implementation");
+    expect(verifierPrompt).toContain("full PR diff with original implementation");
+    expect(verifierPrompt).not.toContain("incremental delta only");
+  });
+
+  it("does not run the requirements lens without requirements", async () => {
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Requirements reviewer")) {
+        throw new Error("requirements lens should not run");
+      }
+      return reply("[]");
+    });
+    const result = await runReview({ diff: "diff" }, { config, complete, verify: false });
+    expect(result.passes.some((p) => p.specialist === "requirements")).toBe(false);
+  });
+
+  it("does not pass blank requirements into verification", async () => {
+    const prompts: string[] = [];
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      prompts.push(request.prompt);
+      if (request.prompt.includes("Requirements reviewer")) {
+        throw new Error("requirements lens should not run");
+      }
+      if (request.prompt.includes("Correctness reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 1, severity: "major", category: "correctness", title: "bug", body: "b", confidence: 0.8 }
+          ])
+        );
+      }
+      if (request.prompt.includes("# Candidate findings")) {
+        return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+      }
+      return reply("[]");
+    });
+
+    await runReview({ diff: "diff", requirements: "   " }, { config, complete });
+
+    expect(prompts.some((prompt) => prompt.includes("Requirements reviewer"))).toBe(false);
+    expect(prompts.some((prompt) => prompt.includes("# Untrusted linked issue requirements"))).toBe(false);
+  });
+});
