@@ -274,11 +274,11 @@ findings in its own words and severity. Inline comments additionally keep a
 collapsible **🔀 N model perspectives** block when models agree on a line. So you
 get the high-signal consensus *and* each model's distinct take, in one place.
 
-**One conversation comment.** The walkthrough is a single comment that's
+**Cohesive review publishing.** The walkthrough is a single comment that's
 **updated in place** on every push (not re-posted), and inline findings are
-posted directly on the diff lines — so prowl-review adds one conversation entry,
-not a separate "reviewed / left a comment" block. (A review *is* submitted when
-the approval gate, #52, sets an explicit Request-changes/Approve verdict.)
+published as one GitHub `COMMENT` review with a `comments[]` batch. When the
+approval gate (#52) sets an explicit Request-changes/Approve verdict, those
+inline findings ride on that one verdict review.
 
 **Cost:** roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap (#18) is **split evenly** across

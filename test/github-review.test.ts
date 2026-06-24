@@ -56,7 +56,6 @@ function mockOctokit(
   const createComment = vi.fn(async () => ({ data: {} }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
-  const createReviewComment = vi.fn(async () => ({ data: {} }));
   const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
   const getReviewComment = vi.fn(async () => ({ data: { body: "root finding" } }));
   const getAuthenticated = vi.fn(async () => ({ data: { login } }));
@@ -64,7 +63,6 @@ function mockOctokit(
     rest: {
       pulls: {
         createReview,
-        createReviewComment,
         createReplyForReviewComment,
         getReviewComment,
         listReviewComments,
@@ -82,7 +80,6 @@ function mockOctokit(
     createComment,
     updateComment,
     createReview,
-    createReviewComment,
     createReplyForReviewComment,
     getReviewComment,
     getAuthenticated
@@ -350,21 +347,28 @@ describe("fetchReviewCommentBody", () => {
 });
 
 describe("submitReview", () => {
-  it("creates the summary comment and posts inline findings individually on a first run", async () => {
-    const { octokit, createComment, updateComment, createReview, createReviewComment } = mockOctokit([]);
+  it("creates the summary comment and posts inline findings as one review on a first run", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
     expect(updateComment).not.toHaveBeenCalled();
-    // Quiet COMMENT path: no review submission, just an individual inline comment.
-    expect(createReview).not.toHaveBeenCalled();
-    expect(createReviewComment).toHaveBeenCalledTimes(1);
-    const inline = createReviewComment.mock.calls[0][0] as Record<string, unknown>;
-    expect(inline.commit_id).toBe("head");
-    expect(inline.path).toBe("src/a.ts");
-    expect(inline.line).toBe(6);
-    expect(inline.side).toBe("RIGHT");
-    expect(inline).not.toHaveProperty("fingerprint"); // internal field stripped
-    expect(inline.body as string).toContain("prowl-review:finding fp-a");
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as {
+      commit_id?: string;
+      event?: string;
+      comments?: Array<Record<string, unknown>>;
+      body?: string;
+    };
+    expect(review.commit_id).toBe("head");
+    expect(review.event).toBe("COMMENT");
+    expect(review.body).toBe(
+      "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
+    );
+    expect(review.body).not.toContain(REVIEW_MARKER);
+    expect(review.body).not.toContain("prowl-review:state");
+    expect(review.comments).toHaveLength(1);
+    expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
+    expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string; issue_number: number };
     expect(created.issue_number).toBe(12);
@@ -394,7 +398,7 @@ describe("submitReview", () => {
       body: `${REVIEW_MARKER}\n## prowl-review\nold summary\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
       user: { login: "github-actions[bot]" }
     };
-    const { octokit, createComment, updateComment, createReview, createReviewComment } = mockOctokit([prior]);
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([prior]);
 
     await submitReview(
       octokit,
@@ -407,10 +411,10 @@ describe("submitReview", () => {
     );
 
     expect(updateComment).not.toHaveBeenCalled();
-    expect(createReview).not.toHaveBeenCalled();
-    // Only the net-new finding (fp-b) is posted as an individual inline comment.
-    expect(createReviewComment).toHaveBeenCalledTimes(1);
-    expect((createReviewComment.mock.calls[0][0] as { body: string }).body).toContain("prowl-review:finding fp-b");
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { comments?: Array<{ body?: string }> };
+    expect(review.comments).toHaveLength(1);
+    expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-b");
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string };
     expect(created.body).toContain("new delta summary");
@@ -509,17 +513,16 @@ describe("submitReview", () => {
     expect(parseState(created.body)?.postedFindings).toEqual([]);
   });
 
-  it("does not persist a fingerprint when its inline comment fails to post", async () => {
-    const { octokit, createComment, createReviewComment } = mockOctokit([]);
-    createReviewComment.mockRejectedValueOnce(new Error("github unavailable"));
+  it("does not persist new fingerprints when posting the review fails", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+    createReview.mockRejectedValueOnce(new Error("github unavailable"));
 
-    // Inline failures are tolerated (retried next run) and never sink the review:
-    // the summary still updates, but the failed finding is left out of state.
-    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
+    await expect(submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" })).rejects.toThrow(
+      "github unavailable"
+    );
 
-    expect(createReviewComment).toHaveBeenCalledTimes(1);
-    expect(createComment).toHaveBeenCalledTimes(1);
-    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
+    expect(createComment).not.toHaveBeenCalled();
+    expect(updateComment).not.toHaveBeenCalled();
   });
 
   it("cancels before the first publish write when the publish guard fails", async () => {
@@ -540,7 +543,7 @@ describe("submitReview", () => {
   });
 
   it("re-checks the publish guard after the summary re-read", async () => {
-    const { octokit, listComments, createComment, updateComment, createReviewComment } = mockOctokit([]);
+    const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([]);
     const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
 
     const result = await submitReview(octokit, ref, payload(), {
@@ -554,7 +557,7 @@ describe("submitReview", () => {
     expect(listComments).toHaveBeenCalledTimes(2);
     expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
     // Inline finding posted on the first guard pass; summary write cancelled on the second.
-    expect(createReviewComment).toHaveBeenCalledTimes(1);
+    expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).not.toHaveBeenCalled();
     expect(updateComment).not.toHaveBeenCalled();
   });
@@ -659,7 +662,7 @@ describe("submitReview", () => {
   });
 
   it("carries inline findings on the verdict review for a non-comment event", async () => {
-    const { octokit, createComment, createReview, createReviewComment } = mockOctokit([]);
+    const { octokit, createComment, createReview } = mockOctokit([]);
     await submitReview(
       octokit,
       ref,
@@ -670,7 +673,6 @@ describe("submitReview", () => {
     // One review carries both the verdict and the inline findings (no quiet
     // individual posting on the verdict path).
     expect(createReview).toHaveBeenCalledTimes(1);
-    expect(createReviewComment).not.toHaveBeenCalled();
     const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
     expect(review.event).toBe("REQUEST_CHANGES");
     expect(review.body).toContain("summary");
@@ -761,7 +763,7 @@ describe("submitReview", () => {
       body: "noise",
       user: { login: "github-actions[bot]" }
     }));
-    const { octokit, createComment, createReviewComment, listReviewComments } = mockOctokit(
+    const { octokit, createComment, createReview, listReviewComments } = mockOctokit(
       [],
       [...filler, { body: "old inline\n\n<!-- prowl-review:finding fp-a -->", user: { login: "github-actions[bot]" } }]
     );
@@ -770,7 +772,7 @@ describe("submitReview", () => {
 
     expect(listReviewComments).toHaveBeenCalledTimes(10);
     // Recovery caps before reaching fp-a (page 11), so it posts as net-new.
-    expect(createReviewComment).toHaveBeenCalledTimes(1);
+    expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).toHaveBeenCalledTimes(1);
     expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
       "fp-a"
