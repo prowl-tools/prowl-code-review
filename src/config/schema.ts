@@ -133,8 +133,8 @@ const specialistsSchema = z
   })
   .strict();
 
-/** Categories reserved for deterministic non-specialist findings. */
-const RESERVED_CUSTOM_SPECIALIST_KEYS = new Set(["lint"]);
+/** Categories reserved for deterministic + built-in conditional findings. */
+const RESERVED_CUSTOM_SPECIALIST_KEYS = new Set(["lint", "requirements"]);
 
 /** Risk-tiered orchestration thresholds (#31); all bounds are optional overrides. */
 const riskTieringSchema = z
@@ -235,6 +235,20 @@ const prDescriptionSchema = z
   })
   .strict();
 
+/**
+ * Issue/ticket validation (#32). Opt-in, default off. When enabled and the PR
+ * links a GitHub issue (a closing keyword or issue URL in the title/body), the
+ * review pulls the issue's acceptance criteria and a requirements lens flags any
+ * the diff doesn't satisfy.
+ */
+const issueValidationSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    /** Max linked issues fetched per PR (bounds cost). Default 3. */
+    maxIssues: z.number().int().positive().optional()
+  })
+  .strict();
+
 export const configSchema = z
   .object({
     /** Provider selection (API keys always come from environment variables). */
@@ -267,6 +281,8 @@ export const configSchema = z
     ensemble: ensembleSchema.optional(),
     /** Auto-generate a PR description from the diff when the body is empty (#33); opt-in. */
     prDescription: prDescriptionSchema.optional(),
+    /** Validate the PR against its linked issue's acceptance criteria (#32); opt-in. */
+    issueValidation: issueValidationSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
