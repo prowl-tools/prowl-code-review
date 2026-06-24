@@ -10,15 +10,14 @@ All notable changes to Prowl Review will be documented in this file.
   never found, so a **new walkthrough was posted every run** (and incremental re-review #23, pause/resume
   #26, the ignore list #30, and thread tidy #22 all silently no-op'd). `getAuthenticatedLogin` now resolves
   via explicit override → `PROWL_BOT_LOGIN` → `GET /user` → `github-actions[bot]` (the default-token
-  identity) inside Actions. New `bot-login` Action input (default `github-actions[bot]`) for custom
-  GitHub-App tokens. Existing duplicate comments on open PRs need a one-time manual delete.
+  identity) inside Actions. New `bot-login` Action input (empty by default; set it for custom
+  GitHub-App tokens). Existing duplicate comments on open PRs need a one-time manual delete.
 
 ### Changed
-- One conversation comment per review (#22): inline findings for the default `COMMENT` review are now posted
-  individually (`pulls.createReviewComment`) instead of via a `COMMENT` review submission — which required a
-  body and showed up as a separate "…reviewed / left a comment" entry. The updatable walkthrough comment is
-  now the single conversation entry; findings sit inline on the diff. A review is still submitted for an
-  explicit Request-changes/Approve verdict (#52), now carrying its inline findings on that one review.
+- Cohesive review publishing (#22): inline findings for the default `COMMENT` review are published in one
+  `pulls.createReview` call with `comments[]`, so GitHub receives a single review submission instead of one
+  API call per finding. The updatable walkthrough comment is still edited in place, and an explicit
+  Request-changes/Approve verdict (#52) carries its inline findings on that one verdict review.
 - Per-model findings in the ensemble walkthrough (#53): below the consolidated table, a **Per-model
   findings** area shows one collapsible section per provider listing that model's own findings (its wording +
   severity), so it's clear which model said what — not just the deduped result.

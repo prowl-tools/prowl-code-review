@@ -62,9 +62,9 @@ inputs:
     required: false
     default: ${{ github.token }}
   bot-login:
-    description: "Login the review posts as, used to find prowl-review's own prior comment/threads/state (update-not-duplicate). Defaults to github-actions[bot]; set this to your app's login when posting with a custom GitHub-App token."
+    description: "Login the review posts as, used to find prowl-review's own prior comment/threads/state (update-not-duplicate). Leave empty for the default Actions token; set this to your app's login when posting with a custom GitHub-App token."
     required: false
-    default: "github-actions[bot]"
+    default: ""
   mode:
     description: "What to run: 'review' (default) for a PR review, or 'command' to handle an @prowl-review comment (#26)."
     required: false
@@ -104,9 +104,8 @@ runs:
         PROWL_INPUT_AI_KEY_GEMINI: ${{ inputs.ai-key-gemini }}
         PROWL_AI_PROVIDER: ${{ inputs.ai-provider }}
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
-        # Bot login for update-not-duplicate (#22): the Actions GITHUB_TOKEN can't
-        # resolve its own login via GET /user, so pass it explicitly.
-        PROWL_BOT_LOGIN: ${{ inputs.bot-login }}
+        # Staged separately so PROWL_BOT_LOGIN is only exported when the input is explicit.
+        PROWL_INPUT_BOT_LOGIN: ${{ inputs.bot-login }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
@@ -129,5 +128,8 @@ runs:
         fi
         if [ -n "${PROWL_INPUT_AI_KEY_GEMINI}" ]; then
           export PROWL_AI_KEY_GEMINI="${PROWL_INPUT_AI_KEY_GEMINI}"
+        fi
+        if [ -n "${PROWL_INPUT_BOT_LOGIN}" ]; then
+          export PROWL_BOT_LOGIN="${PROWL_INPUT_BOT_LOGIN}"
         fi
         node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"
