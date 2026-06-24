@@ -24,7 +24,33 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
 export interface ProviderConfig {
   provider: ProviderName;
   model: string;
+  /**
+   * Secret provider credential. Do not log or serialize. Configs returned by the
+   * built-in resolvers install JSON/inspect redaction hooks, while still exposing
+   * the raw string for provider request headers.
+   */
   apiKey: string;
+}
+
+export interface RedactedProviderConfig {
+  provider: ProviderName;
+  model: string;
+  apiKey: "<redacted>";
+}
+
+const INSPECT_CUSTOM = Symbol.for("nodejs.util.inspect.custom");
+
+/** Return a non-secret view of a provider config for logs and serialization. */
+export function redactedProviderConfig(config: ProviderConfig): RedactedProviderConfig {
+  return { provider: config.provider, model: config.model, apiKey: "<redacted>" };
+}
+
+/** Install best-effort redaction hooks on resolver-created provider configs. */
+export function protectProviderConfig<T extends ProviderConfig>(config: T): T {
+  const redacted = () => redactedProviderConfig(config);
+  Object.defineProperty(config, "toJSON", { value: redacted, enumerable: false, configurable: true });
+  Object.defineProperty(config, INSPECT_CUSTOM, { value: redacted, enumerable: false, configurable: true });
+  return config;
 }
 
 export interface CompletionRequest {

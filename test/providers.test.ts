@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   complete,
@@ -75,6 +76,16 @@ describe("resolveProviderConfig", () => {
       model: DEFAULT_MODELS.anthropic,
       apiKey: "k"
     });
+  });
+
+  it("redacts resolved API keys from accidental serialization and inspect output", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "super-secret-key" } as NodeJS.ProcessEnv);
+
+    expect(cfg.apiKey).toBe("super-secret-key");
+    expect(JSON.stringify(cfg)).toContain("<redacted>");
+    expect(JSON.stringify(cfg)).not.toContain("super-secret-key");
+    expect(inspect(cfg)).toContain("<redacted>");
+    expect(inspect(cfg)).not.toContain("super-secret-key");
   });
 
   it("throws when the API key is missing", () => {
