@@ -4,6 +4,18 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- LLM resilience: cross-generation failback + heartbeat (backlog #17). **Failback** (opt-in via
+  `resilience.failback.enabled`): when a review pass keeps hitting retryable/overload errors (429/503/5xx)
+  after retries are exhausted, it retries with an **older model of the same family + provider**
+  (`claude-opus-4-8` → `4-7` → …; `gemini-2.5-pro` → `gemini-2.5-flash`) before failing — a degraded-but-real
+  review beats a failed pass. Never crosses providers (that's the ensemble, #53), never falls back on a
+  non-retryable error, and each failback is surfaced as a review note. New `src/providers/failback.ts`
+  (`modelFailbackChain` + `withFailback`), applied to specialist + verification passes (single and ensemble).
+  **Heartbeat**: `withHeartbeat` ticks a progress log (default every 30s) while a long review is in flight, so
+  a slow ensemble run isn't mistaken for a hung CI job; the CLI also logs transient retries via the `onRetry`
+  hook. New `src/review/heartbeat.ts`.
+
 ### Fixed
 - Duplicate review comments on the GitHub Action (#22): the Actions `GITHUB_TOKEN` is an installation
   token, so `GET /user` 403s and the bot couldn't resolve its own login — the prior summary comment was

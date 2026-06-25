@@ -3,7 +3,7 @@ import { ReviewPublishError, reviewPullRequest } from "../src/pipeline.js";
 import { ContextRetrievalError } from "../src/context/retrieval.js";
 import type { OctokitLike } from "../src/github/client.js";
 import type { ProviderConfig } from "../src/providers/index.js";
-import type { ReviewResult } from "../src/review/run-review.js";
+import type { ReviewResult, RunReviewOptions } from "../src/review/run-review.js";
 import type { Finding } from "../src/review/findings.js";
 import { findingFingerprint, type ReviewState } from "../src/review/state.js";
 import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
@@ -108,6 +108,37 @@ describe("reviewPullRequest", () => {
 
     expect(result.posted).toBe(true);
     expect(result.contextFiles).toBe(1);
+  });
+
+  it("threads retry and failback through the normal review path", async () => {
+    const deps = {
+      ...makeDeps(),
+      runReview: vi.fn(async (_input: unknown, options: RunReviewOptions) => {
+        options.failback?.onFailback?.({
+          provider: "anthropic",
+          from: "claude-sonnet-4-6",
+          to: "claude-sonnet-4-5",
+          error: new Error("429")
+        });
+        return reviewResult([]);
+      })
+    };
+    const retry = { maxAttempts: 2 };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      retry,
+      failback: true,
+      deps
+    });
+
+    const reviewOptions = deps.runReview.mock.calls[0][1];
+    expect(reviewOptions.retry).toBe(retry);
+    expect(reviewOptions.failback).toEqual(expect.objectContaining({ onFailback: expect.any(Function) }));
+    expect(result.payload.body).toContain("Provider overload");
+    expect(result.payload.body).toContain("claude-sonnet-4-6");
+    expect(result.payload.body).toContain("claude-sonnet-4-5");
   });
 
   it("does not publish on a dry run", async () => {
@@ -3102,25 +3133,48 @@ describe("reviewPullRequest issue validation (#32)", () => {
         ref: { owner: "o", repo: "r", number: r.number },
         title: "Theme",
         body: "Must support dark mode."
-      }))
+      })),
+      runReview: vi.fn(
+        async (
+          _input: unknown,
+          options: RunReviewOptions
+        ) => {
+          options.failback?.onFailback?.({
+            provider: "anthropic",
+            from: "claude-sonnet-4-6",
+            to: "claude-sonnet-4-5",
+            error: new Error("429")
+          });
+          return reviewResult([]);
+        }
+      )
     };
+    const retry = { maxAttempts: 2 };
 
     const result = await reviewPullRequest(octokit, ref, {
       config,
       toolkitRoot: "/repo",
       issueValidation: { enabled: true },
+      retry,
+      failback: true,
       deps
     });
 
     const reviewInput = deps.runReview.mock.calls[0][0];
+    const reviewOptions = deps.runReview.mock.calls[0][1];
     expect(result.incremental).toBe(true);
     expect(deps.gatherContext).not.toHaveBeenCalled();
     expect(reviewInput.specialists).toEqual([]);
+    expect(reviewOptions.retry).toBe(retry);
+    expect(reviewOptions.failback).toEqual(expect.objectContaining({ onFailback: expect.any(Function) }));
     expect(reviewInput.requirements).toContain("Must support dark mode.");
     expect(reviewInput.diff).not.toContain("package-lock.json");
     expect(reviewInput.requirementsDiff).toContain("src/a.ts");
     expect(reviewInput.requirementsDiff).not.toContain("package-lock.json");
     expect(result.issuesValidated).toBe(1);
+    expect(result.payload.body).toContain("Provider overload");
+    expect(result.payload.body).toContain("claude-sonnet-4-6");
+    expect(result.payload.body).toContain("claude-sonnet-4-5");
     expect(result.payload.body).toContain("ran linked-issue requirements validation against the full PR diff");
   });
 

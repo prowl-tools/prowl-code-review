@@ -24,3 +24,9 @@ prDescription:
 # when a PR links an issue (e.g. "Closes #12").
 issueValidation:
   enabled: true
+
+# Survive sustained provider overload by falling back to an older same-family
+# model (#17); only triggers after retries are exhausted on a retryable error.
+resilience:
+  failback:
+    enabled: true

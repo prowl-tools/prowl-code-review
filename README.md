@@ -327,6 +327,31 @@ consensus too). Fetching is tolerant: a missing or inaccessible issue (or one
 that's actually a PR) is skipped with a note. Cross-tracker support
 (Linear/Jira) is a future extension.
 
+## Resilience (#17)
+
+Transient provider blips (a 429, a 5xx, a dropped socket) are **retried with
+exponential backoff + jitter** automatically. For *sustained* overload, opt into
+**cross-generation failback**:
+
+```yaml
+# .prowl-review.yml
+resilience:
+  failback:
+    enabled: true
+```
+
+When a review pass keeps failing with retryable/overload errors *after* retries
+are exhausted, it retries with an **older model of the same family** (e.g.
+`claude-opus-4-8` → `claude-opus-4-7`, `gemini-2.5-pro` → `gemini-2.5-flash`)
+before giving up — so a degraded-but-real review beats a failed pass. It never
+crosses providers (that's the ensemble's job) and never falls back on a
+non-retryable error; each fallback is noted in the review.
+
+Long review runs also emit a **heartbeat** to the Action log (`still
+reviewing … (Ns elapsed)`) and log transient retries across specialist,
+verification, and ensemble passes, so a slow review isn't mistaken for a hung CI
+job.
+
 ## Development
 
 ```bash

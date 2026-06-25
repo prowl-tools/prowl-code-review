@@ -1,10 +1,12 @@
 import {
   complete as defaultComplete,
   retrying,
+  withFailback,
   emptyUsage,
   resolveProviderConfig,
   type CompletionRequest,
   type CompletionResult,
+  type FailbackOptions,
   type ProviderConfig,
   type RetryOptions,
   type TokenUsage
@@ -85,6 +87,12 @@ export interface RunReviewOptions {
   complete?: (request: CompletionRequest, config: ProviderConfig) => Promise<CompletionResult>;
   /** Retry/backoff config for transient provider errors (#17). Applied to the default completion. */
   retry?: RetryOptions;
+  /**
+   * Cross-generation failback (#17): on retryable exhaustion, retry with an older
+   * same-family model. Wraps whichever completion is in use (the default retried
+   * completion or an injected `complete`). Omitted → no failback.
+   */
+  failback?: FailbackOptions;
 }
 
 export interface SpecialistPassReport {
@@ -158,9 +166,11 @@ export async function runReview(
   options: RunReviewOptions = {}
 ): Promise<ReviewResult> {
   // Default provider calls retry transient failures (#17); an injected `complete`
-  // is used as-is (tests/consumers control their own retry). `run` is reused for
-  // both specialist passes and the verification pass, so both get resilience.
-  const run = options.complete ?? retrying(defaultComplete, options.retry);
+  // is used as-is for retry (tests/consumers control that). `run` is reused for
+  // both specialist passes and the verification pass, so both get resilience —
+  // and cross-generation failback (#17) wraps either when configured.
+  const base = options.complete ?? retrying(defaultComplete, options.retry);
+  const run = options.failback ? withFailback(base, options.failback) : base;
   const baseConfig = options.config ?? resolveProviderConfig();
   const configuredSpecialists = input.specialists ?? DEFAULT_SPECIALISTS;
   const activeRequirements = input.requirements?.trim() ? input.requirements : undefined;
