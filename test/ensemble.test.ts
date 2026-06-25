@@ -3,6 +3,7 @@ import { runEnsembleReview } from "../src/review/ensemble.js";
 import type { ProviderConfig } from "../src/providers/types.js";
 import type { Finding } from "../src/review/findings.js";
 import type { ReviewInput, ReviewResult } from "../src/review/run-review.js";
+import { createDebugRecorder, type DebugEvent } from "../src/debug/trace.js";
 
 const CONFIGS: ProviderConfig[] = [
   { provider: "anthropic", model: "claude-x", apiKey: "a" },
@@ -38,6 +39,10 @@ function result(findings: Finding[], over: Partial<ReviewResult> = {}): ReviewRe
 }
 
 describe("runEnsembleReview (#53)", () => {
+  function byType<T extends DebugEvent["type"]>(events: DebugEvent[], type: T) {
+    return events.filter((event): event is Extract<DebugEvent, { type: T }> => event.type === type);
+  }
+
   it("pools findings and tags provenance per provider", async () => {
     const runReview = vi
       .fn()
@@ -193,6 +198,21 @@ describe("runEnsembleReview (#53)", () => {
     const res = await runEnsembleReview(INPUT, { configs: CONFIGS, runReview });
     expect(res.usage.inputTokens).toBe(20); // 10 + 10
     expect(res.passes.map((p) => p.specialist).sort()).toEqual(["anthropic:correctness", "openai:correctness"]);
+  });
+
+  it("emits the final cross-provider judge event when debug tracing is enabled", async () => {
+    const runReview = vi
+      .fn()
+      .mockResolvedValueOnce(result([finding({ confidence: 0.6 })]))
+      .mockResolvedValueOnce(result([finding({ confidence: 0.6 })]));
+    const { sink, records } = createDebugRecorder();
+
+    await runEnsembleReview(INPUT, { configs: CONFIGS, runReview, debug: sink });
+
+    const judges = byType(records.map((record) => record.event), "judge");
+    expect(judges).toHaveLength(1);
+    expect(judges[0]).toMatchObject({ provider: "ensemble", duplicatesRemoved: 1 });
+    expect(judges[0].findings[0].sources).toEqual(["anthropic", "openai"]);
   });
 });
 

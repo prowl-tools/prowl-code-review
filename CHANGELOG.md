@@ -9,11 +9,12 @@ All notable changes to Prowl Review will be documented in this file.
   [path]` flag (or `PROWL_DEBUG`/`PROWL_DEBUG_LOG` env, `debug.enabled`/`debug.path` config, or the Action
   `debug` input) writes a **line-per-event JSONL trace** of what a run actually did: the assembled prompts
   (specialist + verification passes), the fetched-context file list, the findings at each stage (per-pass →
-  raw → verified → judged), and the token/cost breakdown. Streamed with `appendFileSync` so a run that exits
-  early is still readable; every string field is redacted (#15) at the sink boundary. New `src/debug/trace.ts`
-  (`DebugEvent`/`DebugSink`, `createJsonlSink`, `createDebugRecorder`), threaded through the pipeline, the
-  multi-pass review, and the ensemble (events carry their provider). The trace path is confined to the
-  workspace.
+  raw → verified → judged), and the token/cost breakdown. File writes are queued as ordered async appends so
+  tracing does not block review work on per-event disk I/O; every string field is redacted (#15) at
+  serialization. New `src/debug/trace.ts` (`DebugEvent`/`DebugSink`, `createJsonlSink`, `createDebugRecorder`),
+  threaded through the pipeline, local review mode, the multi-pass review, and the ensemble (including the
+  final cross-provider judge event). The trace path is confined to the workspace and nested parent directories
+  are created automatically.
 - LLM resilience: cross-generation failback + heartbeat (backlog #17). **Failback** (opt-in via
   `resilience.failback.enabled`): when a review pass keeps hitting retryable/overload errors (429/503/5xx)
   after retries are exhausted, it retries with an **older model of the same family + provider**

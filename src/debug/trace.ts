@@ -1,4 +1,6 @@
-import { appendFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { appendFile } from "node:fs/promises";
+import { dirname } from "node:path";
 import { redactSecrets } from "../review/redact.js";
 import type { Finding } from "../review/findings.js";
 
@@ -9,9 +11,9 @@ import type { Finding } from "../review/findings.js";
  * prompts it assembled, the files context retrieval pulled, the findings at each
  * stage (raw → verified → judged), and the token/cost breakdown. This module is
  * the seam: the pipeline, the multi-pass review, and the CLI emit structured
- * {@link DebugEvent}s to an injected {@link DebugSink}; the CLI's sink streams
- * them to a line-per-event JSONL file so a run that exits early is still
- * readable.
+ * {@link DebugEvent}s to an injected {@link DebugSink}; the CLI's sink appends
+ * them to a line-per-event JSONL file in order, without blocking review work on
+ * per-event disk I/O.
  *
  * Secrets never leak (#15): every string field of every event is run through
  * {@link redactSecrets} at the sink boundary, so emitters can stay oblivious.
@@ -112,22 +114,39 @@ export function toDebugFindings(findings: readonly Finding[]): DebugFinding[] {
   }));
 }
 
-/** Recursively redact secrets from every string in a JSON-ish value (#15 defense-in-depth). */
-function redactDeep<T>(value: T): T {
+/** JSON serializer hook: redact only string leaves while JSON.stringify traverses the record. */
+function redactJsonString(_key: string, value: unknown): unknown {
   if (typeof value === "string") {
-    return redactSecrets(value).text as unknown as T;
-  }
-  if (Array.isArray(value)) {
-    return value.map((item) => redactDeep(item)) as unknown as T;
-  }
-  if (value && typeof value === "object") {
-    const out: Record<string, unknown> = {};
-    for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
-      out[key] = redactDeep(item);
-    }
-    return out as T;
+    return redactSecrets(value).text;
   }
   return value;
+}
+
+/** Serialize a debug record as redacted JSON without a separate deep-copy walk. */
+function stringifyDebugRecord(record: DebugRecord): string {
+  const json = JSON.stringify(record, redactJsonString);
+  if (json === undefined) {
+    throw new Error("Debug record was not JSON serializable.");
+  }
+  return json;
+}
+
+/** Redact a record for in-memory consumers while preserving the public DebugRecord shape. */
+function redactRecord(record: DebugRecord): DebugRecord {
+  return JSON.parse(stringifyDebugRecord(record)) as DebugRecord;
+}
+
+/** Stamp a debug event with monotonic sequence and elapsed milliseconds. */
+function createDebugRecord(
+  event: DebugEvent,
+  state: { seq: number; start: number },
+  now: () => number
+): DebugRecord {
+  return {
+    seq: state.seq++,
+    t: Math.max(0, Math.round(now() - state.start)),
+    event
+  };
 }
 
 /**
@@ -141,16 +160,10 @@ export function createDebugSink(
   options: { now?: () => number } = {}
 ): DebugSink {
   const now = options.now ?? (() => Date.now());
-  const start = now();
-  let seq = 0;
+  const state = { seq: 0, start: now() };
   return (event: DebugEvent) => {
-    const record: DebugRecord = {
-      seq: seq++,
-      t: Math.max(0, Math.round(now() - start)),
-      event: redactDeep(event)
-    };
     try {
-      write(record);
+      write(redactRecord(createDebugRecord(event, state, now)));
     } catch {
       // tracing is best-effort; never throw into the review
     }
@@ -171,12 +184,30 @@ export function createDebugRecorder(options: { now?: () => number } = {}): {
 }
 
 /**
- * File sink: append each event as one JSON line (#49). `appendFileSync` flushes
- * per line, so a run that exits mid-review still leaves a readable, parseable
- * trace up to the last completed event.
+ * File sink: append each event as one JSON line (#49). Writes are queued in
+ * order with async appendFile so debug tracing does not block the review hot
+ * path on per-event disk I/O. Parent directories are created best-effort for
+ * explicit nested paths such as `traces/run.jsonl`.
  */
 export function createJsonlSink(path: string, options: { now?: () => number } = {}): DebugSink {
-  return createDebugSink((record) => {
-    appendFileSync(path, `${JSON.stringify(record)}\n`);
-  }, options);
+  const now = options.now ?? (() => Date.now());
+  const state = { seq: 0, start: now() };
+  let pending: Promise<void> = Promise.resolve();
+
+  try {
+    mkdirSync(dirname(path), { recursive: true });
+  } catch {
+    // write failures are swallowed below; directory creation is best-effort too
+  }
+
+  return (event: DebugEvent) => {
+    let line: string;
+    try {
+      line = `${stringifyDebugRecord(createDebugRecord(event, state, now))}\n`;
+    } catch {
+      return;
+    }
+    pending = pending.then(() => appendFile(path, line)).catch(() => {});
+    void pending;
+  };
 }

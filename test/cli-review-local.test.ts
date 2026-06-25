@@ -82,6 +82,20 @@ function reviewResult(over: Partial<ReviewResult> = {}): ReviewResult {
   };
 }
 
+async function waitForTrace(path: string, lines: number): Promise<unknown[]> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (existsSync(path)) {
+      const content = readFileSync(path, "utf8").trim();
+      const parsed = content ? content.split("\n").map((line) => JSON.parse(line) as unknown) : [];
+      if (parsed.length >= lines) {
+        return parsed;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${lines} trace line(s).`);
+}
+
 /** Build injected deps with capturing out/err sinks and stubbed heavy stages. */
 function deps(over: Partial<LocalReviewDeps> = {}): {
   deps: LocalReviewDeps;
@@ -108,7 +122,14 @@ function deps(over: Partial<LocalReviewDeps> = {}): {
       ),
       resolveHead: vi.fn().mockResolvedValue(undefined),
       resolveDiff: vi.fn().mockResolvedValue(DIFF),
-      gatherContext: vi.fn().mockResolvedValue({ files: [], notes: [], usage: emptyUsage() }),
+      gatherContext: vi.fn().mockResolvedValue({
+        files: [],
+        notes: [],
+        usage: emptyUsage(),
+        rounds: 0,
+        reachedLimit: false,
+        toolOutputs: []
+      }),
       gatherGrounding: vi.fn().mockResolvedValue({ findings: [], notes: [] }),
       runReview: vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] })),
       ...overrideDeps
@@ -178,6 +199,23 @@ new file mode 100644
     const parsed = JSON.parse(out.join("\n"));
     expect(parsed.summary.total).toBe(1);
     expect(parsed.findings[0].file).toBe("src/a.ts");
+  });
+
+  it("writes a debug trace in local mode without contaminating stdout JSON", async () => {
+    const workspace = isolatedWorkspace();
+    const { deps: d, out, err } = deps();
+    await runLocalReview({ base: "main", config: false, debug: "traces/local.jsonl", json: true }, d);
+
+    expect(() => JSON.parse(out.join("\n"))).not.toThrow();
+    expect(err.join("\n")).toContain("writing debug trace");
+    expect(d.runReview).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ debug: expect.any(Function) })
+    );
+
+    const records = await waitForTrace(join(workspace, "traces", "local.jsonl"), 7);
+    const eventTypes = records.map((record) => (record as { event: { type: string } }).event.type);
+    expect(eventTypes).toEqual(expect.arrayContaining(["run-start", "diff", "grounding", "context", "usage", "cost", "run-end"]));
   });
 
   it("passes the merge-base diff through git ref resolution", async () => {

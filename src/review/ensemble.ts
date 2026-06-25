@@ -13,6 +13,7 @@ import {
 } from "./run-review.js";
 import { judgeEnsembleFindings } from "./judge.js";
 import type { Finding } from "./findings.js";
+import { toDebugFindings } from "../debug/trace.js";
 
 /**
  * Multi-provider ensemble review (backlog #53).
@@ -245,6 +246,15 @@ export async function runEnsembleReview(
         }).findings
       : judged.findings;
   const { findings, ...judge } = judged;
+  options.debug?.({
+    type: "judge",
+    provider: "ensemble",
+    duplicatesRemoved: judge.duplicatesRemoved,
+    belowThreshold: judge.belowThreshold,
+    belowConfidence: judge.belowConfidence,
+    capped: judge.capped,
+    findings: toDebugFindings(findings)
+  });
 
   return {
     findings,
