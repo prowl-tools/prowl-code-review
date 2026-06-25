@@ -137,6 +137,22 @@ describe("extractChangelogSection (#42)", () => {
     }
   });
 
+  it("allows absolute CLI changelog paths inside the current working directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-changelog-"));
+    try {
+      const changelogPath = join(dir, "CHANGELOG.md");
+      writeFileSync(changelogPath, CHANGELOG, "utf8");
+      const output = execFileSync(process.execPath, [SCRIPT_PATH, "1.2.0", changelogPath], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(output).toContain("Shiny new feature.");
+      expect(output).not.toContain("Older feature.");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
   it("returns usage and exits non-zero when the CLI version argument is missing", () => {
     const result = spawnSync(process.execPath, [SCRIPT_PATH], { encoding: "utf8" });
     expect(result.status).toBe(2);
