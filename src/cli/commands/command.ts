@@ -40,6 +40,7 @@ import {
   resolveRepo,
   runReviewWithOptions,
   resolveConfigLoadOptions,
+  resolveForkReviewDecisionFromEvent,
   resolveForkReviewDecisionForRun,
   resolveWorkspace,
   resolveTrustedConfigBase,
@@ -477,7 +478,8 @@ export function buildCommandCommand(): Command {
       // require an AI key.
       const respond = async (question: string): Promise<void> => {
         const root = resolveWorkspace();
-        const fork = await resolveForkReviewDecisionForRun(octokit, ref);
+        const eventFork = resolveForkReviewDecisionFromEvent(process.env);
+        const fork = eventFork ?? (await resolveForkReviewDecisionForRun(octokit, ref));
         const { config } = loadConfig(
           resolveConfigLoadOptions({}, root, process.env, fork.isFork, resolveTrustedConfigBase(process.env))
         );

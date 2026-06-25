@@ -280,11 +280,14 @@ function readGitHubEventPayload(env: NodeJS.ProcessEnv = process.env): GitHubEve
   }
 }
 
-function forkMetadataFromEvent(event: GitHubEventPayload | undefined): ForkRepositoryMetadata {
+function forkMetadataFromEvent(
+  event: GitHubEventPayload | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): ForkRepositoryMetadata {
   const pullRequest = event?.pull_request;
   return {
-    headRepoFullName: pullRequest?.head?.repo?.full_name,
-    baseRepoFullName: pullRequest?.base?.repo?.full_name ?? event?.repository?.full_name,
+    headRepoFullName: pullRequest?.head?.repo?.full_name ?? env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim() ?? undefined,
+    baseRepoFullName: pullRequest?.base?.repo?.full_name ?? event?.repository?.full_name ?? env.GITHUB_REPOSITORY,
     headRepoFork: pullRequest?.head?.repo?.fork
   };
 }
@@ -303,6 +306,12 @@ function needsPullRequestFetchForForkDecision(
   event: GitHubEventPayload | undefined,
   env: NodeJS.ProcessEnv
 ): boolean {
+  if (env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim()) {
+    return false;
+  }
+  if (!event) {
+    return true;
+  }
   const eventHeadRepo = event?.pull_request?.head?.repo;
   if (eventHeadRepo) {
     return false;
@@ -310,13 +319,13 @@ function needsPullRequestFetchForForkDecision(
   if (eventHeadRepo === null) {
     return true;
   }
-  return Boolean(event?.issue?.pull_request) || env.GITHUB_EVENT_NAME === "pull_request_review_comment";
+  return Boolean(event.pull_request) || Boolean(event.issue?.pull_request) || env.GITHUB_EVENT_NAME === "pull_request_review_comment";
 }
 
 /** Detect fork PR events where repo-local tooling must not be trusted. */
 export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): boolean {
   const event = readGitHubEventPayload(env);
-  return isForkRepository(forkMetadataFromEvent(event), env);
+  return isForkRepository(forkMetadataFromEvent(event, env), env);
 }
 
 /** True when any provider API key is present in the environment (generic or provider-scoped, #20). */
@@ -382,14 +391,22 @@ export function resolveForkReviewDecision(
   return buildForkReviewDecision(isFork, env);
 }
 
+export function resolveForkReviewDecisionFromEvent(env: NodeJS.ProcessEnv = process.env): ForkReviewDecision | undefined {
+  const event = readGitHubEventPayload(env);
+  if (needsPullRequestFetchForForkDecision(event, env)) {
+    return undefined;
+  }
+  return buildForkReviewDecision(isForkRepository(forkMetadataFromEvent(event, env), env), env);
+}
+
 export async function resolveForkReviewDecisionForRun(
   octokit: OctokitLike,
   ref: PullRequestRef,
   env: NodeJS.ProcessEnv = process.env
 ): Promise<ForkReviewDecision> {
-  const event = readGitHubEventPayload(env);
-  if (!needsPullRequestFetchForForkDecision(event, env)) {
-    return buildForkReviewDecision(isForkRepository(forkMetadataFromEvent(event), env), env);
+  const eventDecision = resolveForkReviewDecisionFromEvent(env);
+  if (eventDecision) {
+    return eventDecision;
   }
 
   try {
@@ -1010,7 +1027,8 @@ export async function runReviewWithOptions(
   const ref = { owner, repo, pull_number: pullNumber };
   const octokit = createOctokit(token);
   const root = resolveWorkspace();
-  const fork = await resolveForkReviewDecisionForRun(octokit, ref);
+  const eventFork = resolveForkReviewDecisionFromEvent(process.env);
+  const fork = eventFork ?? (await resolveForkReviewDecisionForRun(octokit, ref));
   const { config } = loadConfig(
     resolveConfigLoadOptions(options, root, process.env, fork.isFork, resolveTrustedConfigBase())
   );

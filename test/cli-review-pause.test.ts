@@ -98,6 +98,18 @@ function reviewResult(over: Partial<ReviewPullRequestResult> = {}): ReviewPullRe
   };
 }
 
+function sameRepoEvent(draft = false): unknown {
+  return {
+    repository: { full_name: "prowl-tools/prowl-code-review" },
+    pull_request: {
+      number: 7,
+      draft,
+      head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" }, sha: "head" },
+      base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+    }
+  };
+}
+
 beforeEach(() => {
   process.env = { ...ORIGINAL_ENV, GITHUB_TOKEN: "token" };
   vi.restoreAllMocks();
@@ -117,6 +129,7 @@ afterEach(() => {
 
 describe("runReviewWithOptions pause gate", () => {
   it("skips the review pipeline when auto-review is paused", async () => {
+    writeEvent(sameRepoEvent());
     mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -133,6 +146,7 @@ describe("runReviewWithOptions pause gate", () => {
   });
 
   it("publishes a neutral check run when paused and checkRun is enabled", async () => {
+    writeEvent(sameRepoEvent());
     const tempDir = mkdtempSync(join(tmpdir(), "prowl-review-pause-"));
     const configPath = join(tempDir, ".prowl-review.yml");
     writeFileSync(configPath, "checkRun:\n  enabled: true\n");
@@ -170,6 +184,7 @@ describe("runReviewWithOptions pause gate", () => {
 
   it("does not fail the skip when neutral check-run submission fails", async () => {
     isolateWorkspace();
+    writeEvent(sameRepoEvent());
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
     mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
     mocks.submitCheckRun.mockRejectedValue(new Error("checks API unavailable"));
@@ -194,7 +209,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("skips a draft PR by default on the auto path", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
@@ -207,7 +222,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -226,7 +241,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: false } });
+    writeEvent(sameRepoEvent(false));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-ready";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -244,7 +259,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("reviews a draft when invoked on demand (respectPause cleared)", async () => {
     isolateWorkspace();
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-demand";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -263,7 +278,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("skips on the auto path when review.auto is false (on-demand only)", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: false } });
+    writeEvent(sameRepoEvent(false));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const config = writeConfig("review:\n  auto: false\n");
 
@@ -279,7 +294,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("posts a neutral check run when skipping a draft with checkRun enabled", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
     vi.spyOn(console, "log").mockImplementation(() => {});
     const config = writeConfig("checkRun:\n  enabled: true\n");
@@ -380,6 +395,30 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
     expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
+  it("uses complete same-repo event metadata without fetching PR repo metadata", async () => {
+    isolateWorkspace();
+    writeEvent({
+      repository: { full_name: "prowl-tools/prowl-code-review" },
+      pull_request: {
+        number: 7,
+        draft: false,
+        head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" }, sha: "head" },
+        base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+      }
+    });
+    process.env.PROWL_AI_KEY = "key";
+    const pullsGet = vi.fn();
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    mocks.fetchPriorReviewState.mockResolvedValue(null);
+    mocks.reviewPullRequest.mockResolvedValue(reviewResult());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(pullsGet).not.toHaveBeenCalled();
+    expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
   });
 
   it("posts a neutral check run for a skipped fork PR when checkRun is enabled (tolerant)", async () => {
