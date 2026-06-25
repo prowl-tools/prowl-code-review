@@ -285,24 +285,34 @@ function forkMetadataFromEvent(
   env: NodeJS.ProcessEnv = process.env
 ): ForkRepositoryMetadata {
   const pullRequest = event?.pull_request;
+  const headRepoFullName =
+    pullRequest?.head?.repo?.full_name ?? env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim() ?? undefined;
+  const baseRepoFullName =
+    pullRequest?.base?.repo?.full_name ??
+    event?.repository?.full_name ??
+    (event || headRepoFullName ? env.GITHUB_REPOSITORY : undefined);
   return {
-    headRepoFullName: pullRequest?.head?.repo?.full_name ?? env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim() ?? undefined,
-    baseRepoFullName: pullRequest?.base?.repo?.full_name ?? event?.repository?.full_name ?? env.GITHUB_REPOSITORY,
+    headRepoFullName,
+    baseRepoFullName,
     headRepoFork: pullRequest?.head?.repo?.fork
   };
 }
 
 function isForkRepository(metadata: ForkRepositoryMetadata, env: NodeJS.ProcessEnv): boolean {
-  const baseRepository =
-    normalizeRepositoryName(metadata.baseRepoFullName) ?? normalizeRepositoryName(env.GITHUB_REPOSITORY);
+  const explicitBaseRepository = normalizeRepositoryName(metadata.baseRepoFullName);
+  const baseRepository = explicitBaseRepository ?? normalizeRepositoryName(env.GITHUB_REPOSITORY);
   const headRepository = normalizeRepositoryName(metadata.headRepoFullName);
+  const hasRepositorySignal =
+    Boolean(explicitBaseRepository || headRepository) || typeof metadata.headRepoFork === "boolean";
+  if (!hasRepositorySignal) {
+    return false;
+  }
   if (baseRepository && headRepository) {
     return baseRepository !== headRepository;
   }
-  if (headRepository && !baseRepository) {
-    return true;
-  }
-  return metadata.headRepoFork === true;
+  // Missing repository identities are only trusted when GitHub explicitly
+  // says the head repository is not a fork. Otherwise fail closed.
+  return metadata.headRepoFork !== false;
 }
 
 function needsPullRequestFetchForForkDecision(

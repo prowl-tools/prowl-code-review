@@ -345,6 +345,27 @@ describe("review command helpers", () => {
     expect(isForkPullRequestEvent({ GITHUB_EVENT_PATH: eventPath } as NodeJS.ProcessEnv)).toBe(true);
   });
 
+  it("fails closed on incomplete fork metadata unless GitHub explicitly reports a non-fork head", () => {
+    expect(
+      resolveForkReviewDecision({} as NodeJS.ProcessEnv, {
+        headRepoFullName: "contributor/prowl-code-review"
+      })
+    ).toMatchObject({ isFork: true, skip: true });
+
+    expect(
+      resolveForkReviewDecision({} as NodeJS.ProcessEnv, {
+        baseRepoFullName: "prowl-tools/prowl-code-review"
+      })
+    ).toMatchObject({ isFork: true, skip: true });
+
+    expect(
+      resolveForkReviewDecision({} as NodeJS.ProcessEnv, {
+        headRepoFullName: "prowl-tools/prowl-code-review",
+        headRepoFork: false
+      })
+    ).toMatchObject({ isFork: false, skip: false });
+  });
+
   it("detects whether any provider key is present (generic or scoped, #20)", () => {
     expect(hasAnyProviderKey({} as NodeJS.ProcessEnv)).toBe(false);
     expect(hasAnyProviderKey({ PROWL_AI_KEY: "  " } as NodeJS.ProcessEnv)).toBe(false);

@@ -46,7 +46,7 @@ describe("command CLI entrypoint", () => {
   beforeEach(() => {
     const workspace = tempDir();
     const eventPath = join(workspace, "event.json");
-    writeFileSync(join(workspace, ".prowl-review.yml"), "provider: openai\n");
+    writeFileSync(join(workspace, ".prowl-review.yml"), "provider: gemini\n");
     writeFileSync(
       eventPath,
       JSON.stringify({
@@ -108,7 +108,7 @@ describe("command CLI entrypoint", () => {
     const octokit = mocks.createOctokit.mock.results[0].value;
     expect(octokit.rest.pulls.get).not.toHaveBeenCalled();
     expect(mocks.fetchPullRequest).toHaveBeenCalledTimes(1);
-    expect(mocks.generateChatReply.mock.calls[0][1].config.provider).toBe("openai");
+    expect(mocks.generateChatReply.mock.calls[0][1].config.provider).toBe("gemini");
     expect(mocks.postPullRequestComment).toHaveBeenCalledWith(
       octokit,
       { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
