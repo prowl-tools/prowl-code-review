@@ -126,7 +126,8 @@ describe("extractChangelogSection (#42)", () => {
     try {
       const changelogPath = join(dir, "CHANGELOG.md");
       writeFileSync(changelogPath, CHANGELOG, "utf8");
-      const output = execFileSync(process.execPath, [SCRIPT_PATH, "1.2.0", changelogPath], {
+      const output = execFileSync(process.execPath, [SCRIPT_PATH, "1.2.0", "CHANGELOG.md"], {
+        cwd: dir,
         encoding: "utf8",
       });
       expect(output).toContain("Shiny new feature.");
@@ -154,10 +155,25 @@ describe("extractChangelogSection (#42)", () => {
     try {
       const changelogPath = join(dir, "CHANGELOG.md");
       writeFileSync(changelogPath, "", "utf8");
-      const output = execFileSync(process.execPath, [SCRIPT_PATH, "1.0.0", changelogPath], {
+      const output = execFileSync(process.execPath, [SCRIPT_PATH, "1.0.0", "CHANGELOG.md"], {
+        cwd: dir,
         encoding: "utf8",
       });
       expect(output).toBe("Release 1.0.0.\n");
+    } finally {
+      rmSync(dir, { force: true, recursive: true });
+    }
+  });
+
+  it("rejects CLI changelog paths outside the current working directory", () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-changelog-"));
+    try {
+      const result = spawnSync(process.execPath, [SCRIPT_PATH, "1.0.0", "../CHANGELOG.md"], {
+        cwd: dir,
+        encoding: "utf8",
+      });
+      expect(result.status).toBe(2);
+      expect(result.stderr).toContain("changelog path must stay within the current working directory");
     } finally {
       rmSync(dir, { force: true, recursive: true });
     }
