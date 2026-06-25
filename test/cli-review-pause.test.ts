@@ -306,7 +306,7 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     pull_request: { number: 7, draft: false, head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
   };
 
-  it("skips a fork PR that has no provider key, before touching prior state", async () => {
+  it("does not fetch prior review state when skipping a keyless fork PR", async () => {
     isolateWorkspace();
     writeEvent(forkEvent);
     clearProviderKeys();

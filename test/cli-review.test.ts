@@ -11,6 +11,7 @@ import {
   isForkPullRequestEvent,
   hasAnyProviderKey,
   resolveForkReviewDecision,
+  resolveForkReviewDecisionForRun,
   resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
@@ -29,6 +30,7 @@ import {
   resolveWorkspace,
   reportReviewCommandResult
 } from "../src/cli/commands/review.js";
+import type { OctokitLike } from "../src/github/client.js";
 import { resolveProviderConfig } from "../src/providers/index.js";
 import { defaultUsageLogPath } from "../src/cost/usage-log.js";
 import type { ProwlReviewConfig } from "../src/config/schema.js";
@@ -364,6 +366,100 @@ describe("review command helpers", () => {
     // Same-repo PR with no key → not skipped here (a real misconfig fails loudly downstream).
     const sameRepo = resolveForkReviewDecision({ ...base, GITHUB_EVENT_PATH: samePath } as NodeJS.ProcessEnv);
     expect(sameRepo).toMatchObject({ isFork: false, skip: false });
+  });
+
+  it("uses complete pull request event metadata for fork decisions without fetching", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "fork.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        repository: { full_name: "prowl-tools/prowl-code-review" },
+        pull_request: {
+          head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } },
+          base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+        }
+      })
+    );
+    const pullsGet = vi.fn();
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: true, hasKey: false, skip: true });
+    expect(pullsGet).not.toHaveBeenCalled();
+  });
+
+  it("fetches pull request metadata when event repo metadata is explicitly null", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "fork.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 7,
+          head: { repo: null, sha: "head-sha" }
+        }
+      })
+    );
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base-sha", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: { sha: "head-sha", repo: { full_name: "contributor/prowl-code-review", fork: true } },
+        state: "open",
+        user: null
+      }
+    });
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: true, hasKey: false, skip: true });
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+  });
+
+  it("treats fork-decision metadata fetch failures as untrusted", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "comment.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } }
+      })
+    );
+    const pullsGet = vi.fn().mockRejectedValue(new Error("not found"));
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: true, hasKey: false, skip: true });
+    expect(pullsGet).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("treating prowl-tools/prowl-code-review#7 as untrusted"));
   });
 
   it("does not load workspace config on a fork PR, but honors an explicit trusted path (#20)", () => {
