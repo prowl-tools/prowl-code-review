@@ -69,9 +69,10 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     As a privacy-conscious user, I want it documented that my code only ever goes to my own provider, so that I trust the tool over hosted SaaS.
     - Acceptance: doc + landing point — BYOK means we never see/store code or keys; inference goes directly from the user's runner to the user's chosen provider (paired with secret redaction, #15).
 
-41. **Repo hygiene & demo**
+41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
-    - Acceptance: `CONTRIBUTING.md`, `SECURITY.md`, an example/demo repo, a demo GIF/screenshots, and a documented telemetry-opt-in (default off) policy.
+    - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
+    - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
 
 42. **npm + Homebrew distribution (CD / release pipeline)**
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
