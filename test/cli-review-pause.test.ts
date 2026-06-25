@@ -351,6 +351,37 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
   });
 
+  it("fetches PR repo metadata before deciding fork safety when event head repo is null", async () => {
+    isolateWorkspace();
+    writeEvent({ pull_request: { number: 7, draft: false, head: { repo: null, sha: "head" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: {
+          sha: "head",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
+        draft: false,
+        state: "open",
+        user: { login: "contributor" },
+        changed_files: 1
+      }
+    });
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
   it("posts a neutral check run for a skipped fork PR when checkRun is enabled (tolerant)", async () => {
     isolateWorkspace();
     writeEvent(forkEvent);

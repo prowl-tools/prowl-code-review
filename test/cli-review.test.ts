@@ -113,6 +113,24 @@ describe("review command helpers", () => {
     expect(resolvePullNumber()).toBe(8);
   });
 
+  it("keeps pull request event basics readable when the head repo is null", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          number: 7,
+          head: { repo: null, sha: "head-sha" }
+        }
+      })
+    );
+
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    expect(resolvePullNumber()).toBe(7);
+    expect(resolveReviewedHeadSha()).toBe("head-sha");
+  });
+
   it("rejects invalid pull numbers and invalid event payloads", () => {
     expect(() => resolvePullNumber("0")).toThrow(/Invalid --pr/);
     expect(() => resolvePullNumber("not-a-number")).toThrow(/Invalid --pr/);
@@ -633,6 +651,22 @@ describe("review command action env helpers", () => {
         { PROWL_NO_CONFIG: "true", PROWL_CONFIG_PATH: " /trusted/.prowl-review.yml " } as NodeJS.ProcessEnv
       )
     ).toEqual({ cwd: "/repo", configPath: "/trusted/.prowl-review.yml" });
+  });
+
+  it("resolves relative action config paths from the trusted workspace", () => {
+    expect(
+      resolveConfigLoadOptions(
+        {},
+        "/runner/workspace/pr-head",
+        {
+          GITHUB_WORKSPACE: "/runner/workspace/base",
+          PROWL_CONFIG_PATH: "prowl-review-config/.prowl-review.yml"
+        } as NodeJS.ProcessEnv
+      )
+    ).toEqual({
+      cwd: "/runner/workspace/pr-head",
+      configPath: "/runner/workspace/base/prowl-review-config/.prowl-review.yml"
+    });
   });
 
   it("lets CLI --no-config override an action config path", () => {

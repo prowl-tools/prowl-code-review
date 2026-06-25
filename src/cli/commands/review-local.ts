@@ -297,11 +297,12 @@ function resolveLocalConfigLoadOptions(
   root: string,
   env: NodeJS.ProcessEnv
 ): LoadConfigOptions {
-  const configOptions = resolveConfigLoadOptions(options, root, env);
+  const isFork = isForkPullRequestEvent(env);
+  const configOptions = resolveConfigLoadOptions(options, root, env, isFork, root);
   const localConfigOptions = configOptions.configPath
     ? { ...configOptions, configPath: resolveLocalConfigPath(configOptions.configPath, root) }
     : configOptions;
-  if (!isForkPullRequestEvent(env) || localConfigOptions.disabled) {
+  if (!isFork || localConfigOptions.disabled) {
     return localConfigOptions;
   }
   if (localConfigOptions.configPath) {

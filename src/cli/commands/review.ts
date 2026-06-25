@@ -207,12 +207,12 @@ const gitHubEventPayloadSchema = z
       .object({
         head: z
           .object({
-            repo: gitHubEventRepoSchema.optional(),
+            repo: gitHubEventRepoSchema.nullable().optional(),
             sha: z.string().optional()
           })
           .passthrough()
           .optional(),
-        base: z.object({ repo: gitHubEventRepoSchema.optional() }).passthrough().optional(),
+        base: z.object({ repo: gitHubEventRepoSchema.nullable().optional() }).passthrough().optional(),
         draft: z.boolean().optional(),
         number: z.number().optional()
       })
@@ -303,8 +303,12 @@ function needsPullRequestFetchForForkDecision(
   event: GitHubEventPayload | undefined,
   env: NodeJS.ProcessEnv
 ): boolean {
-  if (event?.pull_request?.head?.repo) {
+  const eventHeadRepo = event?.pull_request?.head?.repo;
+  if (eventHeadRepo) {
     return false;
+  }
+  if (eventHeadRepo === null) {
+    return true;
   }
   return Boolean(event?.issue?.pull_request) || env.GITHUB_EVENT_NAME === "pull_request_review_comment";
 }
@@ -490,7 +494,7 @@ export function resolveConfigLoadOptions(
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
   isFork = isForkPullRequestEvent(env),
-  configPathBase = cwd
+  configPathBase = resolveTrustedConfigBase(env)
 ): LoadConfigOptions {
   if (cli.config === false) {
     return { cwd, disabled: true };
