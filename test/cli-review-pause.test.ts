@@ -358,7 +358,7 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" });
 
     expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
     expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
@@ -389,12 +389,32 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
-    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" });
 
     expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
     expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
     expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
+  it("does not fetch PR repo metadata before a paused auto-review exit when event metadata is incomplete", async () => {
+    isolateWorkspace();
+    writeEvent({ issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn();
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.fetchPriorReviewState).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 }
+    );
+    expect(pullsGet).not.toHaveBeenCalled();
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("auto-review paused"));
   });
 
   it("uses complete same-repo event metadata without fetching PR repo metadata", async () => {

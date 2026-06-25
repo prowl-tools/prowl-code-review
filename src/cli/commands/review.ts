@@ -1041,18 +1041,29 @@ export async function runReviewWithOptions(
   const octokit = createOctokit(token);
   const root = resolveWorkspace();
   const eventFork = resolveForkReviewDecisionFromEvent(process.env);
-  const fork = eventFork ?? (await resolveForkReviewDecisionForRun(octokit, ref));
-  const { config } = loadConfig(
-    resolveConfigLoadOptions(options, root, process.env, fork.isFork, resolveTrustedConfigBase())
+  const safeConfigFork = eventFork?.isFork ?? true;
+  let { config } = loadConfig(
+    resolveConfigLoadOptions(options, root, process.env, safeConfigFork, resolveTrustedConfigBase())
   );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
 
-  // Fork-PR safety (#20): a fork `pull_request` run gets no secrets, so there's
-  // no provider key to review with — skip with a clear message instead of
-  // crashing on the missing key. A fork reviewed via pull_request_target has a
-  // key (and a write token) and proceeds, with the fork checkout never trusted.
-  if (fork.skip) {
+  let fork = eventFork;
+  const resolveForkForReview = async (): Promise<ForkReviewDecision> => {
+    if (fork) {
+      return fork;
+    }
+    fork = await resolveForkReviewDecisionForRun(octokit, ref);
+    if (!fork.isFork) {
+      ({ config } = loadConfig(resolveConfigLoadOptions(options, root, process.env, false, resolveTrustedConfigBase())));
+    }
+    return fork;
+  };
+
+  const skipForkReview = async (decision: ForkReviewDecision): Promise<boolean> => {
+    if (!decision.skip) {
+      return false;
+    }
     const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
       checkRun: config.checkRun,
       dryRun,
@@ -1065,19 +1076,20 @@ export async function runReviewWithOptions(
         "write token and secrets, checks out the trusted base, and never trusts the fork's code/config). " +
         "See the README's fork-PR section."
     });
-    console.log(`prowl-review: skipped fork pull request ${owner}/${repo}#${pullNumber} — ${fork.reason}`);
+    console.log(`prowl-review: skipped fork pull request ${owner}/${repo}#${pullNumber} — ${decision.reason}`);
     if (conclusion) {
       console.log(`prowl-review: merge-gate check run → ${conclusion}`);
     }
+    return true;
+  };
+
+  // Fork-PR safety (#20): a fork `pull_request` run gets no secrets, so there's
+  // no provider key to review with — skip with a clear message instead of
+  // crashing on the missing key. A fork reviewed via pull_request_target has a
+  // key (and a write token) and proceeds, with the fork checkout never trusted.
+  if (eventFork && (await skipForkReview(eventFork))) {
     return;
   }
-  if (fork.isFork) {
-    console.warn(
-      `prowl-review: reviewing a FORK pull request ${owner}/${repo}#${pullNumber} — repo-local linters/config ` +
-        "are NOT trusted, and your provider key is only ever sent to the provider, never to fork code."
-    );
-  }
-
   // The auto path (pull_request trigger) honors the per-PR pause (#26) and the
   // repo-level draft / on-demand controls (#28). An explicit `@prowl-review
   // review` clears respectPause, so it always runs — even on a draft.
@@ -1102,7 +1114,20 @@ export async function runReviewWithOptions(
       }
       return;
     }
+  }
 
+  const forkDecision = await resolveForkForReview();
+  if (await skipForkReview(forkDecision)) {
+    return;
+  }
+  if (forkDecision.isFork) {
+    console.warn(
+      `prowl-review: reviewing a FORK pull request ${owner}/${repo}#${pullNumber} — repo-local linters/config ` +
+        "are NOT trusted, and your provider key is only ever sent to the provider, never to fork code."
+    );
+  }
+
+  if (runtime.respectPause) {
     // On-demand only (#28): auto-review disabled by config.
     if (config.review?.auto === false) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
@@ -1156,7 +1181,7 @@ export async function runReviewWithOptions(
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
   const providerConfig = resolveProviderConfig(process.env, resolveProviderDefaults(config, process.env));
-  const resolved = resolveReviewOptions(options, config, process.env, fork.isFork);
+  const resolved = resolveReviewOptions(options, config, process.env, forkDecision.isFork);
 
   // Multi-provider ensemble (#53): opt-in. Resolve per-provider keys from the env
   // and run the review across every provider that has one; <2 → normal review.
