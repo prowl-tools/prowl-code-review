@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -434,6 +434,19 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     // A path escaping the workspace is rejected.
     expect(resolveDebugLogPath({ debug: "../escape.jsonl" }, {}, "/ws", noEnv)).toBeNull();
     expect(resolveDebugLogPath({ debug: "/tmp/escape.jsonl" }, {}, "/ws", noEnv)).toBeNull();
+  });
+
+  it("rejects debug trace paths that traverse symlinked components (#49)", () => {
+    const workspace = tempDir();
+    const outside = tempDir();
+
+    symlinkSync(outside, join(workspace, "traces"), "dir");
+    expect(resolveDebugLogPath({ debug: "traces/run.jsonl" }, {}, workspace, {} as NodeJS.ProcessEnv)).toBeNull();
+
+    const target = join(outside, "trace.jsonl");
+    writeFileSync(target, "");
+    symlinkSync(target, join(workspace, "trace.jsonl"), "file");
+    expect(resolveDebugLogPath({ debug: "trace.jsonl" }, {}, workspace, {} as NodeJS.ProcessEnv)).toBeNull();
   });
 
   it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {

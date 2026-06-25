@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
 import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
@@ -418,8 +418,33 @@ export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = 
   return defaultUsageLogPath(workspaceRoot);
 }
 
-/** Default file name for the debug/verbose JSONL run trace (#49). */
-export const DEFAULT_DEBUG_LOG_FILENAME = ".prowl-review-debug.jsonl";
+/** Default relative path for the debug/verbose JSONL run trace (#49). */
+export const DEFAULT_DEBUG_LOG_FILENAME = ".prowl-review/debug.jsonl";
+
+/** True when any existing path component is a symlink. Missing tail segments are allowed. */
+function hasSymlinkComponent(path: string, workspace: string): boolean {
+  const workspaceRoot = resolve(workspace);
+  const relativePath = relative(workspaceRoot, resolve(path));
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  let current = workspaceRoot;
+
+  for (const segment of segments) {
+    current = join(current, segment);
+    try {
+      if (lstatSync(current).isSymbolicLink()) {
+        return true;
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return false;
+      }
+      return true;
+    }
+  }
+
+  return false;
+}
 
 /**
  * Resolve where (if anywhere) to write the debug/verbose JSONL run trace (#49).
@@ -449,7 +474,7 @@ export function resolveDebugLogPath(
     DEFAULT_DEBUG_LOG_FILENAME;
   const resolvedPath = resolve(workspaceRoot, requested);
   const relativePath = relative(workspaceRoot, resolvedPath);
-  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+  if (relativePath.startsWith("..") || isAbsolute(relativePath) || hasSymlinkComponent(resolvedPath, workspaceRoot)) {
     return null;
   }
   return resolvedPath;
@@ -763,7 +788,7 @@ export function buildReviewCommand(): Command {
     .option("--dry-run", "build the review but do not publish it")
     .option(
       "--debug [path]",
-      "write a structured JSONL run trace (prompts, context, findings, cost) to [path] (default .prowl-review-debug.jsonl)"
+      "write a structured JSONL run trace (prompts, context, findings, cost) to [path] (default .prowl-review/debug.jsonl)"
     )
     .option("--json", "local mode: print findings as JSON instead of the human report")
     .option("--no-color", "local mode: disable ANSI color in the terminal report")

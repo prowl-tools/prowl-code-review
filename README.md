@@ -361,7 +361,7 @@ breakdown. Secrets are redacted (#15), and the log is appended one line per
 event in order without blocking review work on disk I/O.
 
 ```bash
-# Local: write the trace to the default file (.prowl-review-debug.jsonl)
+# Local: write the trace to the default ignored file (.prowl-review/debug.jsonl)
 prowl-review review --base origin/main --debug
 
 # …or to an explicit path
@@ -374,7 +374,7 @@ Equivalent config / env (the flag wins):
 # .prowl-review.yml
 debug:
   enabled: true
-  path: traces/run.jsonl   # optional; defaults to .prowl-review-debug.jsonl
+  path: traces/run.jsonl   # optional; defaults to .prowl-review/debug.jsonl
 ```
 
 ```bash
@@ -383,16 +383,17 @@ PROWL_DEBUG=true PROWL_DEBUG_LOG=traces/run.jsonl prowl-review review --pr 123
 
 In the GitHub Action, set the `debug: true` input and upload the trace with
 `actions/upload-artifact` to inspect it after the run. The trace path is confined
-to the workspace, and nested parent directories are created automatically.
+to the workspace, rejects symlinked path components, and nested parent
+directories are created automatically.
 
 Each line is a `{ seq, t, event }` record (`t` = ms since the run started). Inspect
 it with `jq`:
 
 ```bash
 # Just the assembled prompts
-jq 'select(.event.type == "prompt") | .event.pass' .prowl-review-debug.jsonl
+jq 'select(.event.type == "prompt") | .event.pass' .prowl-review/debug.jsonl
 # The post-judge findings + cost
-jq 'select(.event.type == "judge" or .event.type == "cost") | .event' .prowl-review-debug.jsonl
+jq 'select(.event.type == "judge" or .event.type == "cost") | .event' .prowl-review/debug.jsonl
 ```
 
 ## Development

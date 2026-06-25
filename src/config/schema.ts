@@ -269,9 +269,9 @@ const resilienceSchema = z
  * Debug/verbose run tracing (#49). Opt-in, default off. When enabled, the run
  * emits the assembled prompts, fetched-context list, findings at each stage, and
  * the token/cost breakdown to a line-per-event JSONL trace (secrets redacted).
- * `path` overrides the default trace file location (resolved within the
- * workspace). The CLI `--debug [path]` flag and `PROWL_DEBUG`/`PROWL_DEBUG_LOG`
- * env take precedence.
+ * `path` overrides the default ignored trace file location (resolved within the
+ * workspace and rejected if existing components are symlinks). The CLI
+ * `--debug [path]` flag and `PROWL_DEBUG`/`PROWL_DEBUG_LOG` env take precedence.
  */
 const debugSchema = z
   .object({
