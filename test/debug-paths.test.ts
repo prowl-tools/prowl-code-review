@@ -46,10 +46,12 @@ describe("debug path helpers", () => {
 
   it("prepares absolute paths that stay inside the workspace", () => {
     const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
-    const path = join(workspace, "traces", "absolute.jsonl");
+    const parent = join(workspace, "absolute-parent");
+    const path = join(parent, "absolute.jsonl");
 
+    expect(existsSync(parent)).toBe(false);
     expect(prepareDebugLogPathForWrite(path, workspace)).toBe(path);
-    expect(existsSync(join(workspace, "traces"))).toBe(true);
+    expect(existsSync(parent)).toBe(true);
   });
 
   it("rejects paths that escape the workspace", () => {

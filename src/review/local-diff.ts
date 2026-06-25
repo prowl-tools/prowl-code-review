@@ -181,7 +181,7 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
     return;
   }
 
-  const status = (await exec(["status", "--porcelain", "--untracked-files=normal"])).trim();
+  const status = (await exec(["status", "--porcelain", "--untracked-files=all"])).trim();
   const dirtyInputs = parseStatusEntries(status).filter(
     (entry) => entry.status !== "??" || !isGeneratedLocalReviewOutput(entry.path, generatedOutputPaths)
   );
@@ -191,7 +191,13 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
     );
   }
 
-  const ignoredInputs = await exec(["status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=normal"]);
+  const ignoredInputs = await exec([
+    "status",
+    "--porcelain=v1",
+    "-z",
+    "--ignored=traditional",
+    "--untracked-files=all"
+  ]);
   const reviewVisibleIgnoredInputs = parseStatusPaths(ignoredInputs, "!!").filter(
     (path) => !isSkippedByContextTools(path) && !isGeneratedLocalReviewOutput(path, generatedOutputPaths)
   );
