@@ -108,11 +108,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Acceptance: tracking note records that no provider offers delegated-API OAuth as of 2026-06 (OpenAI "Sign in with ChatGPT" = identity only).
     - Acceptance: when a real authorization-code flow yielding delegated API access (billed to the user's own account) ships, add it as a first-class auth option behind the provider abstraction.
 
-49. **Debug/verbose mode**
-    As a maintainer tuning the reviewer, I want to inspect what a run actually did, so that I can diagnose odd reviews.
-    - Acceptance: a verbose flag emits the assembled prompts, fetched-context list, raw findings (pre/post judge + verification), and token/cost breakdown — without leaking secrets (respects #15).
-    - Acceptance: structured **JSONL** run log (streamable, line-per-event) so a partial run is still readable if the process exits early.
-
 ---
 
 Completed items live in [`docs/resolved.md`](./resolved.md).
