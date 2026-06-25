@@ -2,6 +2,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
 import { writeFileSync, mkdtempSync, rmSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { parse as parseYaml } from "yaml";
 import {
   dispatchCommand,
   loadChatGuidelines,
@@ -719,13 +720,23 @@ describe("command workflow metadata", () => {
   it("filters bot comments and reviews the PR head workspace", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
     const reviewWorkflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review.yml"), "utf8");
+    const parsedWorkflow = parseYaml(workflow) as {
+      jobs: {
+        command: {
+          concurrency?: {
+            group?: string;
+            queue?: string;
+            "cancel-in-progress"?: boolean;
+          };
+        };
+      };
+    };
 
-    expect(workflow).toContain(
-      "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
-    );
-    expect(workflow).toContain("queue: max");
-    expect(workflow).toContain("cancel-in-progress: false");
-    expect(workflow.indexOf("concurrency:")).toBeGreaterThan(workflow.indexOf("if: |"));
+    expect(parsedWorkflow.jobs.command.concurrency).toEqual({
+      group: "prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}",
+      queue: "max",
+      "cancel-in-progress": false
+    });
     // Triggers on both top-level and inline PR comments (#27).
     expect(workflow).toContain("issue_comment:");
     expect(workflow).toContain("pull_request_review_comment:");
