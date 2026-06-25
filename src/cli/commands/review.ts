@@ -789,6 +789,7 @@ export function buildReviewCommand(): Command {
           verify: options.verify,
           trustWorkspace: options.trustWorkspace,
           config: options.config,
+          debug: options.debug,
           json: options.json,
           color: options.color,
           failOn: options.failOn
@@ -956,7 +957,7 @@ export async function runReviewWithOptions(
     }
   };
 
-  // Debug/verbose tracing (#49): when enabled, stream a structured JSONL run
+  // Debug/verbose tracing (#49): when enabled, append a structured JSONL run
   // trace (prompts, context, findings at each stage, cost) for maintainer
   // diagnosis. Confined to the workspace; off by default.
   const debugLogPath = resolveDebugLogPath(options, config, root);

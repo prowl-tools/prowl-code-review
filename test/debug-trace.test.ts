@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -16,6 +16,20 @@ const SECRET = "sk-ant-abcdef0123456789ABCDEFXYZ";
 function clock(values: number[]): () => number {
   let i = 0;
   return () => values[Math.min(i++, values.length - 1)];
+}
+
+async function waitForTrace(path: string, lines: number): Promise<string[]> {
+  for (let attempt = 0; attempt < 50; attempt += 1) {
+    if (existsSync(path)) {
+      const content = readFileSync(path, "utf8").trim();
+      const parsed = content ? content.split("\n") : [];
+      if (parsed.length >= lines) {
+        return parsed;
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  throw new Error(`Timed out waiting for ${lines} trace line(s).`);
 }
 
 describe("debug trace", () => {
@@ -89,23 +103,33 @@ describe("debug trace", () => {
     ]);
   });
 
-  it("writes one parseable JSON line per event, flushed as it goes (partial-run safe)", () => {
+  it("writes one parseable JSON line per event in order", async () => {
     const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
     const path = join(dir, "trace.jsonl");
     const sink = createJsonlSink(path, { now: clock([0, 10, 20]) });
 
     sink({ type: "diff", reviewedFiles: 2, skippedFiles: 1 });
-    // After the first event the file is already readable (streamed, not buffered).
-    const afterOne = readFileSync(path, "utf8").trim().split("\n");
+    const afterOne = await waitForTrace(path, 1);
     expect(afterOne).toHaveLength(1);
 
     sink({ type: "run-end", findings: 0, posted: false });
-    const lines = readFileSync(path, "utf8").trim().split("\n");
+    const lines = await waitForTrace(path, 2);
     expect(lines).toHaveLength(2);
     const records = lines.map((line) => JSON.parse(line) as DebugRecord);
     expect(records[0].event.type).toBe("diff");
     expect(records[1].event.type).toBe("run-end");
     expect(records.map((r) => r.seq)).toEqual([0, 1]);
+  });
+
+  it("creates parent directories for nested trace paths", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
+    const path = join(dir, "traces", "run.jsonl");
+    const sink = createJsonlSink(path, { now: clock([0, 5]) });
+
+    sink({ type: "run-end", findings: 0, posted: false });
+
+    const lines = await waitForTrace(path, 1);
+    expect(JSON.parse(lines[0])).toMatchObject({ event: { type: "run-end" } });
   });
 
   it("never throws into the caller when the write fails", () => {

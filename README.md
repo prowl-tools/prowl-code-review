@@ -357,8 +357,8 @@ job.
 When a review behaves oddly, turn on a structured **JSONL run trace** to see what
 the run actually did — the assembled prompts, the files context retrieval pulled,
 the findings at each stage (raw → verified → judged), and the token/cost
-breakdown. Secrets are redacted (#15), and the log is written one line per event
-as the run proceeds, so a run that exits early is still readable.
+breakdown. Secrets are redacted (#15), and the log is appended one line per
+event in order without blocking review work on disk I/O.
 
 ```bash
 # Local: write the trace to the default file (.prowl-review-debug.jsonl)
@@ -383,7 +383,7 @@ PROWL_DEBUG=true PROWL_DEBUG_LOG=traces/run.jsonl prowl-review review --pr 123
 
 In the GitHub Action, set the `debug: true` input and upload the trace with
 `actions/upload-artifact` to inspect it after the run. The trace path is confined
-to the workspace.
+to the workspace, and nested parent directories are created automatically.
 
 Each line is a `{ seq, t, event }` record (`t` = ms since the run started). Inspect
 it with `jq`:
