@@ -368,15 +368,14 @@ export async function runLocalReview(
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;
-  // Keep explicit-head safety checks before repo config loading so a bad local
-  // config cannot mask a checkout/ref mismatch. CLI/env debug paths are enough
-  // here to ignore traces the current invocation may have generated earlier.
-  const preConfigDebugLogPath = head ? resolveDebugLogPath(options, {}, root, env) : null;
+  // Keep the ref/checkout match before repo config loading so a bad local
+  // config cannot mask a checkout/ref mismatch. The clean check runs after
+  // config loading, when config-only debug trace paths are known.
   try {
     await resolveHead({
       head,
       cwd: root,
-      generatedOutputPaths: preConfigDebugLogPath ? [preConfigDebugLogPath] : []
+      skipCleanCheck: true
     });
   } catch (error) {
     if (error instanceof LocalDiffError) {
@@ -389,6 +388,20 @@ export async function runLocalReview(
   const { config } = loadConfig(resolveLocalConfigLoadOptions(options, root, env));
   const failOn = parseMinSeverity(options.failOn);
   const debugLogPath = resolveDebugLogPath(options, config, root, env);
+  try {
+    await resolveHead({
+      head,
+      cwd: root,
+      generatedOutputPaths: debugLogPath ? [debugLogPath] : [],
+      skipRefCheck: true
+    });
+  } catch (error) {
+    if (error instanceof LocalDiffError) {
+      err(`prowl-review: ${error.message}`);
+      return { findings: [], notes: [error.message], failed: true };
+    }
+    throw error;
+  }
 
   // Reuse the GitHub command's flag→option resolution. Workspace execution is
   // still opt-in locally because repo config can run code via linters/plugins.
