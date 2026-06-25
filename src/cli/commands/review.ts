@@ -38,6 +38,7 @@ import {
 } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 import { createJsonlSink, type DebugSink } from "../../debug/trace.js";
+import { DEFAULT_DEBUG_LOG_FILENAME } from "../../debug/paths.js";
 import { runLocalReview } from "./review-local.js";
 
 /**
@@ -418,8 +419,7 @@ export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = 
   return defaultUsageLogPath(workspaceRoot);
 }
 
-/** Default relative path for the debug/verbose JSONL run trace (#49). */
-export const DEFAULT_DEBUG_LOG_FILENAME = ".prowl-review/debug.jsonl";
+export { DEFAULT_DEBUG_LOG_FILENAME };
 
 /** True when any existing path component is a symlink. Missing tail segments are allowed. */
 function hasSymlinkComponent(path: string, workspace: string): boolean {

@@ -86,6 +86,27 @@ describe("resolveLocalDiff", () => {
     expect(exec).toHaveBeenCalledWith(["ls-files", "--others", "--exclude-standard", "-z"]);
   });
 
+  it("ignores prowl's generated local output when checking working-tree untracked files", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce(".prowl-review/debug.jsonl\0.prowl-review/usage.jsonl\0")
+      .mockResolvedValueOnce("DIFF");
+
+    await expect(resolveLocalDiff({ base: "main", cwd: "/repo", exec })).resolves.toBe("DIFF");
+    expect(exec).toHaveBeenNthCalledWith(1, ["ls-files", "--others", "--exclude-standard", "-z"]);
+    expect(exec).toHaveBeenNthCalledWith(2, [
+      "diff",
+      "--no-ext-diff",
+      "--no-color",
+      "--find-renames",
+      "--find-copies",
+      "--find-copies-harder",
+      "--merge-base",
+      "--end-of-options",
+      "main"
+    ]);
+  });
+
   it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "--help", head: "--stat", cwd: "/repo", exec });
@@ -237,6 +258,16 @@ describe("assertLocalHeadMatchesCheckout", () => {
       .mockResolvedValueOnce("abc123\n")
       .mockResolvedValueOnce("")
       .mockResolvedValueOnce("!! node_modules/\0!! dist/app.js\0");
+    await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).resolves.toBeUndefined();
+  });
+
+  it("allows ignored prowl local output for an explicit head", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("!! .prowl-review/\0!! .prowl-review/debug.jsonl\0");
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).resolves.toBeUndefined();
   });
 });
