@@ -59,6 +59,16 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ resilience: { nope: true } })).toThrow(); // strict
   });
 
+  it("accepts the debug trace toggle + path and rejects malformed entries (#49)", () => {
+    expect(configSchema.parse({ debug: { enabled: true, path: "trace.jsonl" } })).toEqual({
+      debug: { enabled: true, path: "trace.jsonl" }
+    });
+    expect(configSchema.parse({ debug: { enabled: false } })).toEqual({ debug: { enabled: false } });
+    expect(() => configSchema.parse({ debug: { enabled: "yes" } })).toThrow();
+    expect(() => configSchema.parse({ debug: { path: "" } })).toThrow(); // min(1)
+    expect(() => configSchema.parse({ debug: { nope: true } })).toThrow(); // strict
+  });
+
   it("reserves the requirements category from custom specialists (#32)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "requirements", focus: "x" }] } })
