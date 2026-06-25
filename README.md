@@ -110,9 +110,9 @@ repo owner/member/collaborator is honored):
 Anything after the mention that isn't a known command is treated as a question:
 `@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
 thread (inline, when asked on a specific review comment). The command workflow
-listens on both `issue_comment` and `pull_request_review_comment`; only trusted
-comments that mention `@prowl-review` share the PR review queue, while unrelated
-comment events get isolated groups and are skipped by the job guard:
+listens on both `issue_comment` and `pull_request_review_comment`. Put
+concurrency on the guarded job, not the whole workflow, so unrelated comment
+events skip before they can occupy the shared PR review queue:
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
@@ -122,22 +122,6 @@ on:
     types: [created]
   pull_request_review_comment:
     types: [created]
-concurrency:
-  group: >-
-    ${{
-      (github.event.issue.pull_request || github.event.pull_request) &&
-      github.event.comment.user.type != 'Bot' &&
-      (
-        github.event.comment.author_association == 'OWNER' ||
-        github.event.comment.author_association == 'MEMBER' ||
-        github.event.comment.author_association == 'COLLABORATOR'
-      ) &&
-      contains(github.event.comment.body, '@prowl-review') &&
-      format('prowl-review-{0}', github.event.issue.number || github.event.pull_request.number) ||
-      format('prowl-review-comment-{0}', github.event.comment.id)
-    }}
-  queue: max
-  cancel-in-progress: false
 permissions:
   pull-requests: write
   checks: write
@@ -154,6 +138,10 @@ jobs:
         github.event.comment.author_association == 'COLLABORATOR'
       ) &&
       contains(github.event.comment.body, '@prowl-review')
+    concurrency:
+      group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - id: pr
