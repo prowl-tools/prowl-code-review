@@ -521,7 +521,7 @@ export async function runLocalReview(
   const debugLogPath = resolveDebugLogPath(options, config, root, env);
   let debug: DebugSink | undefined;
   if (debugLogPath) {
-    debug = createJsonlSink(debugLogPath);
+    debug = createJsonlSink(debugLogPath, { workspace: root });
     err(`prowl-review: writing debug trace to ${relative(root, debugLogPath) || debugLogPath} (#49).`);
     debug({
       type: "run-start",

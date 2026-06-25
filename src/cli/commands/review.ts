@@ -1,5 +1,5 @@
 import { Command } from "commander";
-import { existsSync, lstatSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
 import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
@@ -38,7 +38,7 @@ import {
 } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 import { createJsonlSink, type DebugSink } from "../../debug/trace.js";
-import { DEFAULT_DEBUG_LOG_FILENAME } from "../../debug/paths.js";
+import { DEFAULT_DEBUG_LOG_FILENAME, hasSymlinkComponent, isWorkspaceConfinedPath } from "../../debug/paths.js";
 import { runLocalReview } from "./review-local.js";
 
 /**
@@ -421,31 +421,6 @@ export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = 
 
 export { DEFAULT_DEBUG_LOG_FILENAME };
 
-/** True when any existing path component is a symlink. Missing tail segments are allowed. */
-function hasSymlinkComponent(path: string, workspace: string): boolean {
-  const workspaceRoot = resolve(workspace);
-  const relativePath = relative(workspaceRoot, resolve(path));
-  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
-  let current = workspaceRoot;
-
-  for (const segment of segments) {
-    current = join(current, segment);
-    try {
-      if (lstatSync(current).isSymbolicLink()) {
-        return true;
-      }
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code === "ENOENT") {
-        return false;
-      }
-      return true;
-    }
-  }
-
-  return false;
-}
-
 /**
  * Resolve where (if anywhere) to write the debug/verbose JSONL run trace (#49).
  * Debug is enabled by the `--debug` flag, `PROWL_DEBUG`, or `debug.enabled` in
@@ -473,8 +448,10 @@ export function resolveDebugLogPath(
     config.debug?.path ??
     DEFAULT_DEBUG_LOG_FILENAME;
   const resolvedPath = resolve(workspaceRoot, requested);
-  const relativePath = relative(workspaceRoot, resolvedPath);
-  if (relativePath.startsWith("..") || isAbsolute(relativePath) || hasSymlinkComponent(resolvedPath, workspaceRoot)) {
+  if (
+    !isWorkspaceConfinedPath(resolvedPath, workspaceRoot) ||
+    hasSymlinkComponent(resolvedPath, workspaceRoot, { allowMissingTail: true })
+  ) {
     return null;
   }
   return resolvedPath;
@@ -988,7 +965,7 @@ export async function runReviewWithOptions(
   const debugLogPath = resolveDebugLogPath(options, config, root);
   let debug: DebugSink | undefined;
   if (debugLogPath) {
-    debug = createJsonlSink(debugLogPath);
+    debug = createJsonlSink(debugLogPath, { workspace: root });
     console.log(`prowl-review: writing debug trace to ${relative(root, debugLogPath) || debugLogPath} (#49).`);
   }
 

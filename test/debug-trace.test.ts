@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, readFileSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -130,6 +130,33 @@ describe("debug trace", () => {
 
     const lines = await waitForTrace(path, 1);
     expect(JSON.parse(lines[0])).toMatchObject({ event: { type: "run-end" } });
+  });
+
+  it("rejects symlinked workspace paths at write time", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
+    const outside = mkdtempSync(join(tmpdir(), "prowl-debug-outside-"));
+    symlinkSync(outside, join(workspace, "traces"), "dir");
+    const path = join(workspace, "traces", "run.jsonl");
+    const sink = createJsonlSink(path, { workspace });
+
+    expect(() => sink({ type: "run-end", findings: 0, posted: false })).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(existsSync(join(outside, "run.jsonl"))).toBe(false);
+  });
+
+  it("rejects a symlinked final trace file at write time", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
+    const outside = mkdtempSync(join(tmpdir(), "prowl-debug-outside-"));
+    const outsideTrace = join(outside, "trace.jsonl");
+    writeFileSync(outsideTrace, "");
+    symlinkSync(outsideTrace, join(workspace, "trace.jsonl"), "file");
+    const sink = createJsonlSink(join(workspace, "trace.jsonl"), { workspace });
+
+    expect(() => sink({ type: "run-end", findings: 0, posted: false })).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(readFileSync(outsideTrace, "utf8")).toBe("");
   });
 
   it("never throws into the caller when the write fails", () => {
