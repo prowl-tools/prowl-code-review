@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -59,6 +59,17 @@ function findSection(changelog, headingRe) {
   return body.join("\n");
 }
 
+function resolveChangelogPath(pathArg) {
+  const requested = pathArg ?? "CHANGELOG.md";
+  const base = process.cwd();
+  const candidate = resolve(base, requested);
+  const relativePath = relative(base, candidate);
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+    throw new Error(`changelog path must stay within the current working directory: ${requested}`);
+  }
+  return candidate;
+}
+
 // CLI: `node scripts/changelog-section.mjs <version> [path]` -> prints notes to stdout.
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const version = process.argv[2];
@@ -66,7 +77,13 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
     console.error("usage: changelog-section.mjs <version> [changelog-path]");
     process.exit(2);
   }
-  const path = process.argv[3] ?? "CHANGELOG.md";
+  let path;
+  try {
+    path = resolveChangelogPath(process.argv[3]);
+  } catch (error) {
+    console.error(error.message);
+    process.exit(2);
+  }
   let changelog = "";
   try {
     changelog = readFileSync(path, "utf8");
