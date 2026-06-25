@@ -98,6 +98,7 @@ import { filterSensitiveDiffFiles } from "./review/sensitive-diff.js";
 import { filterIgnoredDiffFiles, DEFAULT_IGNORE_GLOBS } from "./review/ignore.js";
 import { injectionNotes } from "./review/injection.js";
 import { totalTokens } from "./cost/pricing.js";
+import type { DebugSink } from "./debug/trace.js";
 
 /**
  * End-to-end PR review pipeline (backlog #11): fetch → parse → sensitivity
@@ -288,6 +289,13 @@ export interface ReviewPullRequestOptions {
   groundingLimits?: GroundingLimits;
   /** Build the review but don't publish it. */
   dryRun?: boolean;
+  /**
+   * Debug/verbose tracing (#49). When set, the pipeline + review emit structured
+   * events (assembled prompts, fetched-context list, findings at each stage,
+   * usage) to this sink. The CLI streams them to a JSONL file. Redacted at the
+   * sink boundary; omitted → no tracing.
+   */
+  debug?: DebugSink;
   deps?: PipelineDeps;
 }
 
@@ -1183,6 +1191,17 @@ export async function reviewPullRequest(
   const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
+  const debug = options.debug;
+  const ensembleProviderNames = (options.ensemble?.configs ?? []).map((entry) => entry.provider);
+  debug?.({
+    type: "run-start",
+    pr: `${ref.owner}/${ref.repo}#${ref.pull_number}`,
+    provider: config.provider,
+    model: config.model,
+    ...(ensembleProviderNames.length >= 2 ? { ensemble: ensembleProviderNames } : {}),
+    dryRun: options.dryRun === true,
+    incremental: options.incremental !== false
+  });
 
   const { meta, diff } = await fetchPr(octokit, ref);
   const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
@@ -1262,6 +1281,12 @@ export async function reviewPullRequest(
 
   const ignorePatterns = options.ignore ?? DEFAULT_IGNORE_GLOBS;
   const { files: reviewFiles, skipped } = filterAndGuardDiffFiles(parsed.files, ignorePatterns, options.diffLimits);
+  debug?.({
+    type: "diff",
+    reviewedFiles: reviewFiles.length,
+    skippedFiles: skipped.length,
+    ...(incrementalBaseSha !== undefined ? { incrementalBase: incrementalBaseSha } : {})
+  });
   const fullReviewable =
     incrementalBaseSha === undefined ? { files: reviewFiles, skipped } : filterReviewableDiffFiles(fullParsed.files, ignorePatterns);
   const fullGuarded =
@@ -1337,6 +1362,7 @@ export async function reviewPullRequest(
       groundingNotes = [truncateNote(`Linter grounding failed; continuing without it: ${redacted.text}`)];
     }
   }
+  debug?.({ type: "grounding", findings: groundingFindings.length, notes: groundingNotes.length });
 
   // Redact secrets from anything that will reach the provider.
   const renderedDiff = renderGuardedDiff(reviewFiles);
@@ -1480,7 +1506,8 @@ export async function reviewPullRequest(
             verifyConfidence: options.verifyConfidence,
             maxTokens: options.budgetTokens,
             ...(options.retry ? { retry: options.retry } : {}),
-            ...(failback ? { failback } : {})
+            ...(failback ? { failback } : {}),
+            ...(debug ? { debug } : {})
           }
         )
       : {
@@ -1716,6 +1743,12 @@ export async function reviewPullRequest(
       contextFiles = gathered.files.length;
       contextUsage = gathered.usage;
       contextNotes = gathered.notes.map((note) => truncateNote(`Context retrieval: ${note}`));
+      debug?.({
+        type: "context",
+        files: gathered.files.map((file) => ({ path: file.path, truncated: file.truncated })),
+        rounds: gathered.rounds,
+        reachedLimit: gathered.reachedLimit
+      });
       // A hit bound (max rounds/files) or a truncated search/list is partial
       // context on an otherwise healthy review — not an inability to run. Like a
       // guardrail file-skip it stays a benign note, NOT a degraded headline (#56).
@@ -1771,6 +1804,7 @@ export async function reviewPullRequest(
         maxTokens: reviewBudgetTokens,
         ...(options.retry ? { retry: options.retry } : {}),
         ...(failback ? { failback } : {}),
+        ...(debug ? { debug } : {}),
         ...(ensembleRunReview ? { runReview: ensembleRunReview } : {})
       })
     : await review(reviewInput, {
@@ -1782,7 +1816,8 @@ export async function reviewPullRequest(
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
         ...(options.retry ? { retry: options.retry } : {}),
-        ...(failback ? { failback } : {})
+        ...(failback ? { failback } : {}),
+        ...(debug ? { debug } : {})
       });
   const ensembleProviders = ensembleActive
     ? (reviewResult as EnsembleReviewResult).providers

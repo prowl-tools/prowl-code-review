@@ -37,6 +37,7 @@ import {
   type PriceOverrides
 } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
+import { createJsonlSink, type DebugSink } from "../../debug/trace.js";
 import { runLocalReview } from "./review-local.js";
 
 /**
@@ -281,6 +282,8 @@ interface ReviewCommandOptions {
   dryRun?: boolean;
   /** `--config <path>` → string; `--no-config` → false; otherwise true/undefined. */
   config?: string | boolean;
+  /** `--debug [path]` → true or a string path; absent → undefined (#49). */
+  debug?: string | boolean;
 }
 
 /** The pipeline-tuning options derived from CLI flags + the config file. */
@@ -415,6 +418,43 @@ export function resolveUsageLogPath(workspace: string, env: NodeJS.ProcessEnv = 
   return defaultUsageLogPath(workspaceRoot);
 }
 
+/** Default file name for the debug/verbose JSONL run trace (#49). */
+export const DEFAULT_DEBUG_LOG_FILENAME = ".prowl-review-debug.jsonl";
+
+/**
+ * Resolve where (if anywhere) to write the debug/verbose JSONL run trace (#49).
+ * Debug is enabled by the `--debug` flag, `PROWL_DEBUG`, or `debug.enabled` in
+ * config. The path comes from (in precedence) `--debug <path>`,
+ * `PROWL_DEBUG_LOG`, `debug.path`, else a default in the workspace. The trace is
+ * confined to the workspace (a traversal/outside path returns null) so a
+ * misconfigured path can't write elsewhere on the runner. Returns null when
+ * tracing is off or the path escapes the workspace.
+ */
+export function resolveDebugLogPath(
+  cli: ReviewCommandOptions,
+  config: ProwlReviewConfig,
+  workspace: string,
+  env: NodeJS.ProcessEnv = process.env
+): string | null {
+  const cliEnabled = cli.debug !== undefined && cli.debug !== false;
+  const enabled = cliEnabled || truthyEnv(env.PROWL_DEBUG) || config.debug?.enabled === true;
+  if (!enabled) {
+    return null;
+  }
+  const workspaceRoot = resolve(workspace);
+  const requested =
+    (typeof cli.debug === "string" ? cli.debug : undefined) ??
+    envString(env.PROWL_DEBUG_LOG) ??
+    config.debug?.path ??
+    DEFAULT_DEBUG_LOG_FILENAME;
+  const resolvedPath = resolve(workspaceRoot, requested);
+  const relativePath = relative(workspaceRoot, resolvedPath);
+  if (relativePath.startsWith("..") || isAbsolute(relativePath)) {
+    return null;
+  }
+  return resolvedPath;
+}
+
 /**
  * Merge CLI flags with the `.prowl-review.yml` config into pipeline options.
  * Precedence is **CLI flag > config file > built-in default**: an omitted value
@@ -487,6 +527,8 @@ interface ReportReviewCommandResultOptions {
   env?: NodeJS.ProcessEnv;
   now?: () => Date;
   publishFailed?: boolean;
+  /** Debug/verbose trace sink (#49); emits usage/cost/run-end as the run closes. */
+  debug?: DebugSink;
 }
 
 function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
@@ -666,6 +708,27 @@ export function reportReviewCommandResult(
       // non-fatal: usage log unavailable
     }
   }
+
+  // Close the debug trace (#49) with the token + cost breakdown and the outcome.
+  if (options.debug) {
+    options.debug({
+      type: "usage",
+      inputTokens: result.usage.inputTokens,
+      outputTokens: result.usage.outputTokens,
+      cachedInputTokens: result.usage.cachedInputTokens,
+      cacheWriteInputTokens: result.usage.cacheWriteInputTokens ?? 0
+    });
+    options.debug({
+      type: "cost",
+      estimates: costs.map((cost) => ({
+        provider: cost.provider,
+        model: cost.model,
+        usd: cost.usd,
+        totalTokens: cost.totalTokens
+      }))
+    });
+    options.debug({ type: "run-end", findings: count, posted: result.posted });
+  }
 }
 
 /** CLI options for the local pre-push path (#35), set when `--base`/`--head` is passed. */
@@ -698,6 +761,10 @@ export function buildReviewCommand(): Command {
     .option("--config <path>", "path to a .prowl-review.yml config (defaults to an upward search)")
     .option("--no-config", "ignore any .prowl-review.yml and use built-in defaults")
     .option("--dry-run", "build the review but do not publish it")
+    .option(
+      "--debug [path]",
+      "write a structured JSONL run trace (prompts, context, findings, cost) to [path] (default .prowl-review-debug.jsonl)"
+    )
     .option("--json", "local mode: print findings as JSON instead of the human report")
     .option("--no-color", "local mode: disable ANSI color in the terminal report")
     .option("--fail-on <severity>", `local mode: exit non-zero on a finding at/above this severity (${SEVERITIES.join("|")})`)
@@ -889,6 +956,16 @@ export async function runReviewWithOptions(
     }
   };
 
+  // Debug/verbose tracing (#49): when enabled, stream a structured JSONL run
+  // trace (prompts, context, findings at each stage, cost) for maintainer
+  // diagnosis. Confined to the workspace; off by default.
+  const debugLogPath = resolveDebugLogPath(options, config, root);
+  let debug: DebugSink | undefined;
+  if (debugLogPath) {
+    debug = createJsonlSink(debugLogPath);
+    console.log(`prowl-review: writing debug trace to ${relative(root, debugLogPath) || debugLogPath} (#49).`);
+  }
+
   const reviewOptions = {
     ...resolved,
     config: providerConfig,
@@ -899,6 +976,7 @@ export async function runReviewWithOptions(
     budgetTokens: budget.tokens ?? undefined,
     reviewedHeadSha,
     retry,
+    ...(debug ? { debug } : {}),
     dryRun
   };
 
@@ -909,7 +987,15 @@ export async function runReviewWithOptions(
           `prowl-review: still reviewing ${owner}/${repo}#${pullNumber}… (${Math.round(elapsedMs / 1000)}s elapsed)`
         )
     });
-    reportReviewCommandResult(result, { owner, repo, pullNumber, root, providerConfig, pricing: config.pricing ?? {} });
+    reportReviewCommandResult(result, {
+      owner,
+      repo,
+      pullNumber,
+      root,
+      providerConfig,
+      pricing: config.pricing ?? {},
+      debug
+    });
   } catch (error) {
     if (error instanceof ReviewPublishError) {
       reportReviewCommandResult(error.result, {
@@ -919,7 +1005,8 @@ export async function runReviewWithOptions(
         root,
         providerConfig,
         pricing: config.pricing ?? {},
-        publishFailed: true
+        publishFailed: true,
+        debug
       });
     }
     throw error;

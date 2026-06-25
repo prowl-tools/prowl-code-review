@@ -64,6 +64,8 @@ export interface RunEnsembleOptions {
   retry?: RunReviewOptions["retry"];
   /** Cross-generation failback forwarded to each provider's pass (#17). */
   failback?: RunReviewOptions["failback"];
+  /** Debug/verbose tracing forwarded to each provider's pass (#49); events carry that provider. */
+  debug?: RunReviewOptions["debug"];
   /** Injectable single-provider review (defaults to {@link defaultRunReview}). */
   runReview?: typeof defaultRunReview;
 }
@@ -151,7 +153,8 @@ export async function runEnsembleReview(
           verifyConfidence: options.verifyConfidence,
           maxTokens: perProviderMaxTokens,
           retry: options.retry,
-          failback: options.failback
+          failback: options.failback,
+          debug: options.debug
         });
         return { config, result, error: undefined as string | undefined };
       } catch (error) {
