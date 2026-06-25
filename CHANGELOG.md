@@ -13,9 +13,10 @@ All notable changes to Prowl Review will be documented in this file.
   tracing does not block review work on per-event disk I/O; every string field is redacted (#15) at
   serialization. New `src/debug/trace.ts` (`DebugEvent`/`DebugSink`, `createJsonlSink`, `createDebugRecorder`),
   threaded through the pipeline, local review mode, the multi-pass review, and the ensemble (including the
-  final cross-provider judge event). The default trace lives under the ignored `.prowl-review/` directory; trace
-  paths are confined to the workspace, reject symlinked components, and create nested parent directories
-  automatically.
+  final cross-provider judge event). The default trace lives at `.prowl-review/debug.jsonl`; local diff guards
+  ignore prowl-generated `.prowl-review/` outputs so the default does not break later local reviews in repos
+  that have not ignored that directory. Trace paths are confined to the workspace, reject symlinked components,
+  and create nested parent directories automatically.
 - LLM resilience: cross-generation failback + heartbeat (backlog #17). **Failback** (opt-in via
   `resilience.failback.enabled`): when a review pass keeps hitting retryable/overload errors (429/503/5xx)
   after retries are exhausted, it retries with an **older model of the same family + provider**

@@ -361,7 +361,7 @@ breakdown. Secrets are redacted (#15), and the log is appended one line per
 event in order without blocking review work on disk I/O.
 
 ```bash
-# Local: write the trace to the default ignored file (.prowl-review/debug.jsonl)
+# Local: write the trace to the default local state file (.prowl-review/debug.jsonl)
 prowl-review review --base origin/main --debug
 
 # …or to an explicit path
@@ -384,7 +384,9 @@ PROWL_DEBUG=true PROWL_DEBUG_LOG=traces/run.jsonl prowl-review review --pr 123
 In the GitHub Action, set the `debug: true` input and upload the trace with
 `actions/upload-artifact` to inspect it after the run. The trace path is confined
 to the workspace, rejects symlinked path components, and nested parent
-directories are created automatically.
+directories are created automatically. Local review ignores prowl-generated
+`.prowl-review/` outputs during clean-worktree checks so the default trace does
+not block the next local review in repos that have not ignored that directory.
 
 Each line is a `{ seq, t, event }` record (`t` = ms since the run started). Inspect
 it with `jq`:

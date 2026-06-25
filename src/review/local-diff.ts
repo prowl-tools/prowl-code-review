@@ -1,5 +1,7 @@
 import { execFile } from "node:child_process";
 import { DEFAULT_IGNORE as CONTEXT_DEFAULT_IGNORE } from "../context/tools.js";
+import { USAGE_LOG_DIR, USAGE_LOG_FILENAME } from "../cost/usage-log.js";
+import { DEFAULT_DEBUG_LOG_DIR, DEFAULT_DEBUG_LOG_FILENAME } from "../debug/paths.js";
 
 /**
  * Local diff resolution for the pre-push CLI mode (backlog #35).
@@ -95,8 +97,21 @@ function parsePathList(output: string): string[] {
   return output.split("\0").filter(Boolean);
 }
 
+function normalizeLocalPath(path: string): string {
+  return path.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
+}
+
+function isGeneratedLocalReviewOutput(path: string): boolean {
+  const normalized = normalizeLocalPath(path);
+  return (
+    normalized === DEFAULT_DEBUG_LOG_DIR ||
+    normalized === DEFAULT_DEBUG_LOG_FILENAME ||
+    normalized === `${USAGE_LOG_DIR}/${USAGE_LOG_FILENAME}`
+  );
+}
+
 function isSkippedByContextTools(path: string): boolean {
-  const normalized = path.replace(/\\/g, "/").replace(/^\.?\/+/, "").replace(/\/+$/, "");
+  const normalized = normalizeLocalPath(path);
   if (!normalized) {
     return false;
   }
@@ -144,7 +159,7 @@ export async function assertLocalHeadMatchesCheckout(options: AssertLocalHeadOpt
 
   const ignoredInputs = await exec(["status", "--porcelain=v1", "-z", "--ignored=matching", "--untracked-files=normal"]);
   const reviewVisibleIgnoredInputs = parseStatusPaths(ignoredInputs, "!!").filter(
-    (path) => !isSkippedByContextTools(path)
+    (path) => !isSkippedByContextTools(path) && !isGeneratedLocalReviewOutput(path)
   );
   if (reviewVisibleIgnoredInputs.length > 0) {
     const preview = reviewVisibleIgnoredInputs.slice(0, 3).join(", ");
@@ -168,7 +183,9 @@ export async function resolveLocalDiff(options: ResolveLocalDiffOptions): Promis
   const head = options.head?.trim();
   const exec = options.exec ?? defaultGitExec(options.cwd);
   if (!head) {
-    const untracked = parsePathList(await exec(["ls-files", "--others", "--exclude-standard", "-z"]));
+    const untracked = parsePathList(await exec(["ls-files", "--others", "--exclude-standard", "-z"])).filter(
+      (path) => !isGeneratedLocalReviewOutput(path)
+    );
     if (untracked.length > 0) {
       const preview = untracked.slice(0, 3).join(", ");
       const suffix = untracked.length > 3 ? `, and ${untracked.length - 3} more` : "";
