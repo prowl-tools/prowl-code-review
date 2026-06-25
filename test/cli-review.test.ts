@@ -9,6 +9,8 @@ import {
   loadLearnedPatterns,
   composeGuidelines,
   isForkPullRequestEvent,
+  hasAnyProviderKey,
+  resolveForkReviewDecision,
   resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
@@ -280,6 +282,65 @@ describe("review command helpers", () => {
         GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
       } as NodeJS.ProcessEnv)
     ).toBe(false);
+  });
+
+  it("detects whether any provider key is present (generic or scoped, #20)", () => {
+    expect(hasAnyProviderKey({} as NodeJS.ProcessEnv)).toBe(false);
+    expect(hasAnyProviderKey({ PROWL_AI_KEY: "  " } as NodeJS.ProcessEnv)).toBe(false);
+    expect(hasAnyProviderKey({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(hasAnyProviderKey({ PROWL_AI_KEY_ANTHROPIC: "k" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(hasAnyProviderKey({ PROWL_AI_KEY_GEMINI: "k" } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
+  it("decides fork-PR handling: skip a keyless fork, review otherwise (#20)", () => {
+    const dir = tempDir();
+    const forkPath = join(dir, "fork.json");
+    writeFileSync(
+      forkPath,
+      JSON.stringify({ pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } } })
+    );
+    const samePath = join(dir, "same.json");
+    writeFileSync(
+      samePath,
+      JSON.stringify({ pull_request: { head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" } } } })
+    );
+    const base = { GITHUB_REPOSITORY: "prowl-tools/prowl-code-review" };
+
+    // Fork without a key → skip (no secrets shared with fork pull_request runs).
+    const keylessFork = resolveForkReviewDecision({ ...base, GITHUB_EVENT_PATH: forkPath } as NodeJS.ProcessEnv);
+    expect(keylessFork).toMatchObject({ isFork: true, hasKey: false, skip: true });
+
+    // Fork WITH a key (e.g. pull_request_target) → review, but flagged as a fork.
+    const keyedFork = resolveForkReviewDecision({
+      ...base,
+      GITHUB_EVENT_PATH: forkPath,
+      PROWL_AI_KEY: "k"
+    } as NodeJS.ProcessEnv);
+    expect(keyedFork).toMatchObject({ isFork: true, hasKey: true, skip: false });
+
+    // Same-repo PR with no key → not skipped here (a real misconfig fails loudly downstream).
+    const sameRepo = resolveForkReviewDecision({ ...base, GITHUB_EVENT_PATH: samePath } as NodeJS.ProcessEnv);
+    expect(sameRepo).toMatchObject({ isFork: false, skip: false });
+  });
+
+  it("does not auto-discover repo config on a fork PR, but honors an explicit trusted path (#20)", () => {
+    const dir = tempDir();
+    const forkPath = join(dir, "fork.json");
+    writeFileSync(
+      forkPath,
+      JSON.stringify({ pull_request: { head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } } })
+    );
+    const forkEnv = {
+      GITHUB_EVENT_PATH: forkPath,
+      GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+    } as NodeJS.ProcessEnv;
+
+    // No explicit path on a fork → config auto-discovery is disabled (untrusted checkout).
+    expect(resolveConfigLoadOptions({}, "/repo", forkEnv)).toEqual({ cwd: "/repo", disabled: true });
+    // An explicit (maintainer-set) trusted config path is still honored on a fork.
+    expect(
+      resolveConfigLoadOptions({}, "/repo", { ...forkEnv, PROWL_CONFIG_PATH: "/trusted/.prowl-review.yml" })
+    ).toEqual({ cwd: "/repo", configPath: "/trusted/.prowl-review.yml" });
   });
 
   it("resolves the reviewed head SHA from env or the pull request event payload", () => {
