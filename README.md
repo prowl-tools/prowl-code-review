@@ -110,7 +110,9 @@ repo owner/member/collaborator is honored):
 Anything after the mention that isn't a known command is treated as a question:
 `@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
 thread (inline, when asked on a specific review comment). The command workflow
-listens on both `issue_comment` and `pull_request_review_comment`:
+listens on both `issue_comment` and `pull_request_review_comment`; only trusted
+comments that mention `@prowl-review` share the PR review queue, while unrelated
+comment events get isolated groups and are skipped by the job guard:
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
@@ -121,7 +123,19 @@ on:
   pull_request_review_comment:
     types: [created]
 concurrency:
-  group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
+  group: >-
+    ${{
+      (github.event.issue.pull_request || github.event.pull_request) &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review') &&
+      format('prowl-review-{0}', github.event.issue.number || github.event.pull_request.number) ||
+      format('prowl-review-comment-{0}', github.event.comment.id)
+    }}
   queue: max
   cancel-in-progress: false
 permissions:
