@@ -42,6 +42,7 @@ import {
   resolveConfigLoadOptions,
   resolveForkReviewDecisionForRun,
   resolveWorkspace,
+  resolveTrustedConfigBase,
   resolveGuidelinesWorkspace,
   loadGuidelines,
   resolveOrgGuidelinesPath,
@@ -477,7 +478,9 @@ export function buildCommandCommand(): Command {
       const respond = async (question: string): Promise<void> => {
         const root = resolveWorkspace();
         const fork = await resolveForkReviewDecisionForRun(octokit, ref);
-        const { config } = loadConfig(resolveConfigLoadOptions({}, root, process.env, fork.isFork));
+        const { config } = loadConfig(
+          resolveConfigLoadOptions({}, root, process.env, fork.isFork, resolveTrustedConfigBase(process.env))
+        );
         const providerConfig = resolveProviderConfig(process.env, {
           provider: config.provider,
           model: config.model

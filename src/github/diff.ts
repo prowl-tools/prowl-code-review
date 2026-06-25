@@ -1,3 +1,4 @@
+import { z } from "zod";
 import type { OctokitLike } from "./client.js";
 
 /** Repository and pull request number identifying a GitHub PR. */
@@ -46,38 +47,39 @@ export interface FetchedPullRequest {
   diff: string;
 }
 
+const rawRepoSchema = z
+  .object({
+    full_name: z.string().optional(),
+    fork: z.boolean().optional(),
+    name: z.string().optional(),
+    owner: z.object({ login: z.string().nullable().optional() }).passthrough().nullable().optional()
+  })
+  .passthrough()
+  .nullable()
+  .optional();
+
+const rawPullRequestSchema = z
+  .object({
+    number: z.number(),
+    title: z.string(),
+    body: z.string().nullable(),
+    base: z.object({ sha: z.string(), repo: rawRepoSchema }).passthrough(),
+    head: z.object({ sha: z.string(), repo: rawRepoSchema }).passthrough(),
+    draft: z.boolean().optional(),
+    state: z.string(),
+    user: z.object({ login: z.string() }).passthrough().nullable(),
+    changed_files: z.number().optional()
+  })
+  .passthrough();
+
+const rawPullRequestHeadShaSchema = z
+  .object({
+    head: z.object({ sha: z.string() }).passthrough()
+  })
+  .passthrough();
+
 /** Shape of the parts of the PR payload we read. */
-interface RawPullRequest {
-  /** Pull request number. */
-  number: number;
-  /** Pull request title. */
-  title: string;
-  /** Pull request body text, if present. */
-  body: string | null;
-  /** Base branch information. */
-  base: {
-    sha: string;
-    repo?: { full_name?: string; name?: string; owner?: { login?: string | null } | null } | null;
-  };
-  /** Head branch information. */
-  head: {
-    sha: string;
-    repo?: {
-      full_name?: string;
-      fork?: boolean;
-      name?: string;
-      owner?: { login?: string | null } | null;
-    } | null;
-  };
-  /** Whether the pull request is currently a draft. */
-  draft?: boolean;
-  /** GitHub pull request state. */
-  state: string;
-  /** Pull request author, if GitHub returns one. */
-  user: { login: string } | null;
-  /** Number of changed files, omitted by some fixtures/mocks. */
-  changed_files?: number;
-}
+type RawPullRequest = z.infer<typeof rawPullRequestSchema>;
 
 interface RawComparison {
   /** GitHub compare relationship: ahead/behind/diverged/identical. */
@@ -124,6 +126,10 @@ function comparisonStatus(data: unknown): string | undefined {
   return typeof status === "string" ? status : undefined;
 }
 
+function parseRawPullRequest(data: unknown): RawPullRequest {
+  return rawPullRequestSchema.parse(data);
+}
+
 /**
  * Fetch a pull request's metadata and raw unified diff via the GitHub REST API.
  * Two calls: a normal `pulls.get` for metadata and a `format: "diff"` `pulls.get`
@@ -134,7 +140,7 @@ export async function fetchPullRequest(
   ref: PullRequestRef
 ): Promise<FetchedPullRequest> {
   const metaResponse = await octokit.rest.pulls.get({ ...ref });
-  const pr = metaResponse.data as RawPullRequest;
+  const pr = parseRawPullRequest(metaResponse.data);
 
   const diffResponse = await octokit.rest.pulls.get({
     ...ref,
@@ -155,7 +161,7 @@ export async function fetchPullRequestMeta(
   ref: PullRequestRef
 ): Promise<PullRequestMeta> {
   const response = await octokit.rest.pulls.get({ ...ref });
-  return normalizePullRequestMeta(response.data as RawPullRequest);
+  return normalizePullRequestMeta(parseRawPullRequest(response.data));
 }
 
 /**
@@ -172,8 +178,8 @@ export async function fetchPullRequestHeadSha(
 ): Promise<string | undefined> {
   try {
     const response = await octokit.rest.pulls.get({ ...ref });
-    const pr = response.data as RawPullRequest;
-    return pr.head?.sha;
+    const pr = rawPullRequestHeadShaSchema.parse(response.data);
+    return pr.head.sha;
   } catch {
     return undefined;
   }

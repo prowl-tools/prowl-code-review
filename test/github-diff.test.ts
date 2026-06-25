@@ -111,6 +111,24 @@ describe("fetchPullRequestMeta", () => {
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith(expect.not.objectContaining({ mediaType: expect.anything() }));
   });
+
+  it("rejects malformed PR payloads before normalizing metadata", async () => {
+    const { octokit, get } = mockOctokit(
+      {
+        number: 7,
+        title: "Add thing",
+        body: null,
+        base: { sha: "base-sha" },
+        head: { sha: 123 },
+        state: "open",
+        user: null
+      },
+      "RAW DIFF TEXT"
+    );
+
+    await expect(fetchPullRequestMeta(octokit, ref)).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("fetchComparisonDiff (#23)", () => {
@@ -183,6 +201,12 @@ describe("fetchPullRequestHeadSha (#21)", () => {
     const get = vi.fn(async () => {
       throw new Error("502");
     });
+    const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
+    expect(await fetchPullRequestHeadSha(octokit, ref)).toBeUndefined();
+  });
+
+  it("returns undefined tolerantly when the payload is malformed", async () => {
+    const get = vi.fn(async () => ({ data: { head: { sha: 123 } } }));
     const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
     expect(await fetchPullRequestHeadSha(octokit, ref)).toBeUndefined();
   });
