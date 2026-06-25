@@ -228,6 +228,29 @@ new file mode 100644
     expect(resolveDiff).toHaveBeenCalledWith(expect.objectContaining({ base: "develop", head: "feature" }));
   });
 
+  it("uses config debug paths for explicit-head clean checks", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), "debug:\n  enabled: true\n  path: traces/config.jsonl\n");
+    const resolveHead = vi.fn().mockResolvedValue(undefined);
+    const resolveDiff = vi.fn().mockResolvedValue(DIFF);
+    const { deps: d } = deps({ resolveHead, resolveDiff });
+
+    await runLocalReview({ base: "main", head: "feature" }, d);
+
+    expect(resolveHead).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({ head: "feature", skipCleanCheck: true })
+    );
+    expect(resolveHead).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        head: "feature",
+        skipRefCheck: true,
+        generatedOutputPaths: [join(workspace, "traces", "config.jsonl")]
+      })
+    );
+  });
+
   it("checks explicit heads before loading local config", async () => {
     const workspace = isolatedWorkspace();
     writeFileSync(join(workspace, ".prowl-review.yml"), "review: [unclosed\n");
