@@ -74,9 +74,9 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
     - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
 
-42. **npm + Homebrew distribution (CD / release pipeline)** *(pipeline + tooling done — see resolved.md)*
+42. **npm + Homebrew distribution (CD / release pipeline)** *(pipeline + tooling staged)*
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
-    - **Done:** tag-triggered `.github/workflows/publish.yml` (on `v*.*.*`: tag↔version guard → `npm ci` → build → lint → test → `npm publish --provenance --access public` → GitHub Release from the CHANGELOG section via `scripts/changelog-section.mjs`); package made publish-ready (`publishConfig.access: public`); `prowl-review` npm name confirmed **free**; Homebrew formula template (`packaging/homebrew/prowl-review.rb`) + `docs/releasing.md`.
+    - **Done:** tag-triggered `.github/workflows/publish.yml` (on `vX.Y.Z`: tag↔version guard → `npm ci` → build → lint → test → release-note verification → draft GitHub Release → `npm publish --provenance --access public` → publish GitHub Release); package made publish-ready (`publishConfig.access: public`); Homebrew formula template (`packaging/homebrew/prowl-review.rb`) + `docs/releasing.md`.
     - Acceptance (remaining, operational): add the `NPM_TOKEN` repo secret and cut the **first release** (push a `vX.Y.Z` tag) to actually publish; add the filled-in `Formula/prowl-review.rb` (real `url` + `sha256`) to the separate `Prowl-qa/homebrew-tap` repo.
 
 43. **Docs + marketing integration**

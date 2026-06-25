@@ -24,10 +24,18 @@ function escapeRegExp(value) {
 export function extractChangelogSection(changelog, version) {
   const normalized = String(version).trim().replace(/^v/, "");
   const section =
-    findSection(changelog, new RegExp(`^##\\s+\\[?${escapeRegExp(normalized)}\\]?`, "m")) ??
+    (normalized.length > 0
+      ? findSection(
+          changelog,
+          new RegExp(`^##\\s+\\[?${escapeRegExp(normalized)}\\]?(?=\\s+-\\s+|\\s*$)`, "m"),
+        )
+      : null) ??
     findSection(changelog, /^##\s+\[?Unreleased\]?/im);
   const body = section?.trim();
-  return body && body.length > 0 ? body : `Release ${normalized}.`;
+  if (body && body.length > 0) {
+    return body;
+  }
+  return normalized.length > 0 ? `Release ${normalized}.` : "Release.";
 }
 
 /** Return the lines under the first heading matching `headingRe`, up to the next `## ` heading. */
@@ -39,7 +47,7 @@ function findSection(changelog, headingRe) {
   }
   const body = [];
   for (let i = start + 1; i < lines.length; i += 1) {
-    if (/^##\s+/.test(lines[i])) {
+    if (/^##(?:\s+|\[)/.test(lines[i])) {
       break;
     }
     body.push(lines[i]);

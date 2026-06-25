@@ -1,15 +1,18 @@
 name: publish
 
-# Tag-triggered release (#42): on a `v*` tag, build + lint + test, publish to npm
-# with provenance, and create a GitHub Release from the matching CHANGELOG section.
+# Tag-triggered release (#42): on a `vX.Y.Z` tag, build + lint + test, prepare
+# a draft GitHub Release from the matching CHANGELOG section, publish to npm
+# with provenance, then publish the GitHub Release.
 # Requires an `NPM_TOKEN` repository secret (an npm automation token).
 on:
   push:
     tags:
-      - "v*.*.*"
+      - "v[0-9]*.[0-9]*.[0-9]*"
 
 permissions:
-  contents: write   # create the GitHub Release
+  contents: read
+  pull-requests: write
+  checks: write
   id-token: write   # npm publish --provenance (OIDC)
 
 concurrency:
@@ -18,6 +21,11 @@ concurrency:
 
 jobs:
   publish:
+    permissions:
+      contents: write   # create and publish the GitHub Release
+      pull-requests: write
+      checks: write
+      id-token: write   # npm publish --provenance (OIDC)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -34,7 +42,12 @@ jobs:
       - run: npm ci
 
       - name: Verify tag matches package.json version
+        id: version
         run: |
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must be stable SemVer in the form vX.Y.Z; got ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
           tag_version="${GITHUB_REF_NAME#v}"
           pkg_version="$(node -p "require('./package.json').version")"
           if [ "${tag_version}" != "${pkg_version}" ]; then
@@ -42,7 +55,6 @@ jobs:
             exit 1
           fi
           echo "version=${pkg_version}" >> "$GITHUB_OUTPUT"
-        id: version
 
       - name: Build
         run: npm run build
@@ -53,18 +65,64 @@ jobs:
       - name: Test
         run: npm test
 
+      - name: Verify versioned changelog section exists
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! grep -F "## [${RELEASE_VERSION}]" CHANGELOG.md >/dev/null; then
+            echo "::error::CHANGELOG.md must contain ## [${RELEASE_VERSION}] before publishing." >&2
+            exit 1
+          fi
+
+      - name: Extract release notes
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/changelog-section.mjs "${RELEASE_VERSION}" > RELEASE_NOTES.md
+
+      - name: Prepare draft GitHub Release
+        id: github-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          draft_status="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          if [ -n "${draft_status}" ]; then
+            if [ "${draft_status}" = "true" ]; then
+              gh release edit "${GITHUB_REF_NAME}" \
+                --title "${GITHUB_REF_NAME}" \
+                --notes-file RELEASE_NOTES.md \
+                --draft
+            fi
+            echo "draft=${draft_status}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          gh release create "${GITHUB_REF_NAME}" \
+            --title "${GITHUB_REF_NAME}" \
+            --notes-file RELEASE_NOTES.md \
+            --draft \
+            --verify-tag
+          echo "draft=true" >> "$GITHUB_OUTPUT"
+
+      - name: Check whether version is already published
+        id: npm-status
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          pkg_name="$(node -p "require('./package.json').name")"
+          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Publish to npm
+        if: steps.npm-status.outputs.already_published != 'true'
         run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
-      - name: Extract release notes
-        run: node scripts/changelog-section.mjs "${{ steps.version.outputs.version }}" > RELEASE_NOTES.md
-
-      - name: Create GitHub Release
+      - name: Publish GitHub Release
+        if: steps.github-release.outputs.draft == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "${GITHUB_REF_NAME}" \
-            --title "${GITHUB_REF_NAME}" \
-            --notes-file RELEASE_NOTES.md
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
