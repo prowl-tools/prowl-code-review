@@ -41,6 +41,10 @@ inputs:
     description: "Build the review but do not publish it."
     required: false
     default: "false"
+  debug:
+    description: "Write a structured JSONL run trace (prompts, fetched context, findings per stage, cost) under the workspace for diagnosis (#49). Upload it with actions/upload-artifact to inspect after the run."
+    required: false
+    default: "false"
   workspace-path:
     description: "Repository checkout used for context lookup (defaults to GITHUB_WORKSPACE)."
     required: false
@@ -110,6 +114,7 @@ runs:
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
+        PROWL_DEBUG: ${{ inputs.debug }}
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}

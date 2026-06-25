@@ -19,6 +19,18 @@ export {
 export { renderGuardedDiff } from "./review/render-diff.js";
 export { redactSecrets, isSensitiveFile, type RedactionResult } from "./review/redact.js";
 
+// Debug/verbose run tracing (#49): structured, redacted, line-per-event JSONL.
+export {
+  createDebugSink,
+  createDebugRecorder,
+  createJsonlSink,
+  toDebugFindings,
+  type DebugEvent,
+  type DebugSink,
+  type DebugRecord,
+  type DebugFinding
+} from "./debug/trace.js";
+
 // Multi-provider BYOK LLM abstraction (Claude / OpenAI / Gemini) + prompt caching.
 export {
   complete,
