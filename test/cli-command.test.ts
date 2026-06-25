@@ -720,9 +720,8 @@ describe("command workflow metadata", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
     const reviewWorkflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review.yml"), "utf8");
 
-    expect(workflow).toContain(
-      "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
-    );
+    expect(workflow).toContain("format('prowl-review-{0}', github.event.issue.number || github.event.pull_request.number)");
+    expect(workflow).toContain("format('prowl-review-comment-{0}', github.event.comment.id)");
     expect(workflow).toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
     // Triggers on both top-level and inline PR comments (#27).

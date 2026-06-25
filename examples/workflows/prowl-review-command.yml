@@ -9,7 +9,21 @@ on:
     types: [created]
 
 concurrency:
-  group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
+  # Only trusted comments that mention the bot share the PR review queue. Other
+  # comment events get isolated groups, then the job-level guard skips them.
+  group: >-
+    ${{
+      (github.event.issue.pull_request || github.event.pull_request) &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review') &&
+      format('prowl-review-{0}', github.event.issue.number || github.event.pull_request.number) ||
+      format('prowl-review-comment-{0}', github.event.comment.id)
+    }}
   queue: max
   cancel-in-progress: false
 
