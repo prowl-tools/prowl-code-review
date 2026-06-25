@@ -481,6 +481,28 @@ node dist/cli.js eval            # scores ./bench, prints a summary
 
 See [`docs/eval.md`](docs/eval.md) for details and [`bench/README.md`](bench/README.md) for the case format.
 
+## Examples & what a review looks like
+
+Copy-paste starters live in [`examples/`](examples/) (auto-review workflow,
+command workflow, and a `.prowl-review.yml`). For a rendered sample of the
+published walkthrough — summary, findings table, 🤝 consensus, per-model
+sections — see [`docs/example-review.md`](docs/example-review.md).
+
+## Contributing
+
+Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the
+project layout, conventions, and the Definition of Done, and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). The roadmap is in
+[`docs/backlog.md`](docs/backlog.md).
+
+## Security & privacy
+
+Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md)
+(do not open a public issue). prowl-review is BYOK: your key is read from the
+environment only, never stored or proxied, and your code only ever goes to **your**
+chosen provider. **It collects no telemetry or analytics** — the only network
+calls are to your LLM provider and the GitHub API.
+
 ## License
 
 Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

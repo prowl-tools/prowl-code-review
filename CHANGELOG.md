@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Repo hygiene & demo (backlog #41): OSS-credibility scaffolding for the public repo. Added
+  `CONTRIBUTING.md` (setup, project layout, conventions, the Definition of Done, how to extend a
+  provider/specialist/grounding runner), `SECURITY.md` (private vuln reporting + the BYOK/secret/trust model +
+  fork-PR handling), `CODE_OF_CONDUCT.md` (Contributor Covenant), GitHub issue templates (bug/feature +
+  a config that routes security reports to private advisories) and a PR template, and an `examples/` quickstart
+  (ready-to-copy auto-review + command workflows and a starter `.prowl-review.yml`). Documented the
+  **no-telemetry / no-analytics** policy (only network calls are to your provider + the GitHub API; any future
+  telemetry would be opt-in, default off) in SECURITY.md and the README. Added `docs/example-review.md` — a
+  rendered sample walkthrough (summary, findings table, 🤝 consensus, per-model sections) as the canonical
+  "what it looks like" reference; a screen-capture/GIF and a standalone demo repo remain a follow-up.
 - Fork-PR handling / security model (backlog #20): defined, safe behavior when a pull request comes from a
   fork. On a fork PR with **no provider key** — the normal case, since GitHub doesn't share secrets with fork
   `pull_request` runs — prowl-review now **skips with a clear message** (and a tolerant neutral check run)
