@@ -49,7 +49,14 @@ jobs:
             exit 1
           fi
           tag_version="${GITHUB_REF_NAME#v}"
-          pkg_version="$(node -p "require('./package.json').version")"
+          if ! pkg_version="$(node -p "require('./package.json').version" 2>/dev/null)"; then
+            echo "::error::Failed to read version from package.json." >&2
+            exit 1
+          fi
+          if [ -z "${pkg_version}" ] || [ "${pkg_version}" = "undefined" ]; then
+            echo "::error::package.json must define a version." >&2
+            exit 1
+          fi
           if [ "${tag_version}" != "${pkg_version}" ]; then
             echo "::error::Tag ${GITHUB_REF_NAME} (${tag_version}) does not match package.json version ${pkg_version}." >&2
             exit 1
@@ -84,7 +91,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          draft_status="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --jq '.isDraft' 2>/dev/null || true)"
+          draft_status="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --template '{{.isDraft}}' 2>/dev/null || true)"
           if [ -n "${draft_status}" ]; then
             if [ "${draft_status}" = "true" ]; then
               gh release edit "${GITHUB_REF_NAME}" \
@@ -107,7 +114,14 @@ jobs:
         env:
           RELEASE_VERSION: ${{ steps.version.outputs.version }}
         run: |
-          pkg_name="$(node -p "require('./package.json').name")"
+          if ! pkg_name="$(node -p "require('./package.json').name" 2>/dev/null)"; then
+            echo "::error::Failed to read package name from package.json." >&2
+            exit 1
+          fi
+          if [ -z "${pkg_name}" ] || [ "${pkg_name}" = "undefined" ]; then
+            echo "::error::package.json must define a package name." >&2
+            exit 1
+          fi
           if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
           else
