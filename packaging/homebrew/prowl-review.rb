@@ -29,8 +29,8 @@ class ProwlReview < Formula
       raise "Set TARBALL_VERSION and TARBALL_SHA256 before publishing this Homebrew formula."
     end
 
-    system "npm", "install", *std_npm_args
-    bin.install_symlink Dir["#{libexec}/bin/*"]
+    system "npm", "install", *std_npm_args(prefix: libexec)
+    bin.install_symlink libexec.glob("bin/*")
   end
 
   test do

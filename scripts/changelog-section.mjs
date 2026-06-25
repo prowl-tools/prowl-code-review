@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { basename, dirname, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 /**
@@ -27,14 +27,15 @@ function escapeRegExp(value) {
  */
 export function extractChangelogSection(changelog, version) {
   const normalized = String(version).trim().replace(/^v/, "");
+  const lines = String(changelog).split(/\r?\n/);
   const section =
     (normalized.length > 0
       ? findSection(
-          changelog,
+          lines,
           new RegExp(`^##\\s+\\[?${escapeRegExp(normalized)}\\]?(?=\\s+-\\s+|\\s*$)`, "m"),
         )
       : null) ??
-    findSection(changelog, /^##\s+\[?Unreleased\]?/im);
+    findSection(lines, /^##\s+\[?Unreleased\]?/im);
   const body = section?.trim();
   if (body && body.length > 0) {
     return body;
@@ -43,8 +44,7 @@ export function extractChangelogSection(changelog, version) {
 }
 
 /** Return the lines under the first heading matching `headingRe`, up to the next `## ` heading. */
-function findSection(changelog, headingRe) {
-  const lines = String(changelog).split(/\r?\n/);
+function findSection(lines, headingRe) {
   const start = lines.findIndex((line) => headingRe.test(line));
   if (start === -1) {
     return null;
@@ -61,13 +61,26 @@ function findSection(changelog, headingRe) {
 
 function resolveChangelogPath(pathArg) {
   const requested = pathArg ?? "CHANGELOG.md";
-  const base = process.cwd();
-  const candidate = resolve(base, requested);
+  const base = realpathSync(process.cwd());
+  const candidate = canonicalizePath(resolve(base, requested));
   const relativePath = relative(base, candidate);
-  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
+  if (relativePath === "" || relativePath === ".." || relativePath.startsWith(`..${sep}`)) {
     throw new Error(`changelog path must stay within the current working directory: ${requested}`);
   }
   return candidate;
+}
+
+function canonicalizePath(path) {
+  if (existsSync(path)) {
+    return realpathSync(path);
+  }
+
+  const parent = dirname(path);
+  if (existsSync(parent)) {
+    return resolve(realpathSync(parent), basename(path));
+  }
+
+  return path;
 }
 
 // CLI: `node scripts/changelog-section.mjs <version> [path]` -> prints notes to stdout.
