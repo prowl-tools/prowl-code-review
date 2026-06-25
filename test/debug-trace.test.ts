@@ -156,6 +156,18 @@ describe("debug trace", () => {
     expect(existsSync(join(outside, "run.jsonl"))).toBe(false);
   });
 
+  it("does not create nested trace parents through a symlink", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
+    const outside = mkdtempSync(join(tmpdir(), "prowl-debug-outside-"));
+    symlinkSync(outside, join(workspace, "traces"), "dir");
+    const sink = createJsonlSink(join(workspace, "traces", "nested", "run.jsonl"), { workspace });
+
+    expect(() => sink({ type: "run-end", findings: 0, posted: false })).not.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(existsSync(join(outside, "nested"))).toBe(false);
+  });
+
   it("rejects a symlinked final trace file at write time", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
     const outside = mkdtempSync(join(tmpdir(), "prowl-debug-outside-"));

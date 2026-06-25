@@ -368,7 +368,10 @@ export async function runLocalReview(
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;
-  const preConfigDebugLogPath = resolveDebugLogPath(options, {}, root, env);
+  // Keep explicit-head safety checks before repo config loading so a bad local
+  // config cannot mask a checkout/ref mismatch. CLI/env debug paths are enough
+  // here to ignore traces the current invocation may have generated earlier.
+  const preConfigDebugLogPath = head ? resolveDebugLogPath(options, {}, root, env) : null;
   try {
     await resolveHead({
       head,

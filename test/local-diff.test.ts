@@ -120,6 +120,19 @@ describe("resolveLocalDiff", () => {
     ).resolves.toBe("DIFF");
   });
 
+  it("ignores configured generated output paths when checking working-tree untracked files", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("reports/generated.jsonl\0").mockResolvedValueOnce("DIFF");
+
+    await expect(
+      resolveLocalDiff({
+        base: "main",
+        cwd: "/repo",
+        generatedOutputPaths: ["/repo/reports/generated.jsonl"],
+        exec
+      })
+    ).resolves.toBe("DIFF");
+  });
+
   it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "--help", head: "--stat", cwd: "/repo", exec });
@@ -252,6 +265,23 @@ describe("assertLocalHeadMatchesCheckout", () => {
         cwd: "/repo",
         head: "feature",
         generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("allows an explicit head when only a configured generated output path is untracked", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("?? reports/generated.jsonl\n")
+      .mockResolvedValueOnce("");
+    await expect(
+      assertLocalHeadMatchesCheckout({
+        cwd: "/repo",
+        head: "feature",
+        generatedOutputPaths: ["/repo/reports/generated.jsonl"],
         exec
       })
     ).resolves.toBeUndefined();
