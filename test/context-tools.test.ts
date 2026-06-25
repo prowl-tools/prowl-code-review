@@ -21,10 +21,12 @@ beforeAll(() => {
   outsideRoot = mkdtempSync(join(tmpdir(), "prowl-tools-outside-"));
   mkdirSync(join(root, "src"));
   mkdirSync(join(root, "node_modules"));
+  mkdirSync(join(root, ".prowl-review"));
   mkdirSync(join(root, "private"));
   writeFileSync(join(root, "src", "a.ts"), "export function foo() {}\ncallFoo();\n");
   writeFileSync(join(root, "src", "b.ts"), "import { foo } from './a';\nfoo();\n");
   writeFileSync(join(root, "node_modules", "ignored.ts"), "foo();\n");
+  writeFileSync(join(root, ".prowl-review", "debug.jsonl"), "foo();\n");
   writeFileSync(join(root, "private", "secret.txt"), "private\n");
   writeFileSync(join(root, "big.txt"), "x".repeat(1000));
   writeFileSync(join(root, "long-line.txt"), `needle ${"a".repeat(2000)}\n`);
@@ -92,6 +94,7 @@ describe("listRepoFiles", () => {
     expect(files).toContain("src/a.ts");
     expect(files).toContain("src/b.ts");
     expect(files.some((f) => f.includes("node_modules"))).toBe(false);
+    expect(files.some((f) => f.includes(".prowl-review"))).toBe(false);
     expect(files.some((f) => f.includes("leak.txt"))).toBe(false);
   });
 
@@ -118,6 +121,7 @@ describe("searchRepo", () => {
     expect(paths).toContain("src/a.ts");
     expect(paths).toContain("src/b.ts");
     expect(paths.some((p) => p.includes("node_modules"))).toBe(false);
+    expect(paths.some((p) => p.includes(".prowl-review"))).toBe(false);
     const aMatch = result.matches.find((m) => m.path === "src/a.ts");
     expect(aMatch?.line).toBe(1);
   });
