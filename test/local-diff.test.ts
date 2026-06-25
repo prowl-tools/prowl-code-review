@@ -212,13 +212,13 @@ describe("assertLocalHeadMatchesCheckout", () => {
     await assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec });
     expect(exec).toHaveBeenNthCalledWith(1, ["rev-parse", "--verify", "HEAD"]);
     expect(exec).toHaveBeenNthCalledWith(2, ["rev-parse", "--verify", "--end-of-options", "feature^{commit}"]);
-    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=normal"]);
+    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=all"]);
     expect(exec).toHaveBeenNthCalledWith(4, [
       "status",
       "--porcelain=v1",
       "-z",
-      "--ignored=matching",
-      "--untracked-files=normal"
+      "--ignored=traditional",
+      "--untracked-files=all"
     ]);
   });
 
@@ -238,7 +238,7 @@ describe("assertLocalHeadMatchesCheckout", () => {
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
       /does not match the checked-out HEAD/
     );
-    expect(exec).not.toHaveBeenCalledWith(["status", "--porcelain", "--untracked-files=normal"]);
+    expect(exec).not.toHaveBeenCalledWith(["status", "--porcelain", "--untracked-files=all"]);
   });
 
   it("rejects an explicit head when the worktree is dirty", async () => {
@@ -296,7 +296,57 @@ describe("assertLocalHeadMatchesCheckout", () => {
     await expect(assertLocalHeadMatchesCheckout({ cwd: "/repo", head: "feature", exec })).rejects.toThrow(
       /requires a clean worktree/
     );
-    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=normal"]);
+    expect(exec).toHaveBeenNthCalledWith(3, ["status", "--porcelain", "--untracked-files=all"]);
+  });
+
+  it("rejects other untracked files next to a generated output path", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("?? traces/local.jsonl\n?? traces/other.txt\n");
+    await expect(
+      assertLocalHeadMatchesCheckout({
+        cwd: "/repo",
+        head: "feature",
+        generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).rejects.toThrow(/requires a clean worktree/);
+  });
+
+  it("allows an explicit head when only the active custom debug trace is ignored", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("!! traces/local.jsonl\0");
+    await expect(
+      assertLocalHeadMatchesCheckout({
+        cwd: "/repo",
+        head: "feature",
+        generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects other ignored files next to a generated output path", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("")
+      .mockResolvedValueOnce("!! traces/local.jsonl\0!! traces/other.txt\0");
+    await expect(
+      assertLocalHeadMatchesCheckout({
+        cwd: "/repo",
+        head: "feature",
+        generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).rejects.toThrow(/ignored local files/);
   });
 
   it("rejects ignored review-readable files for an explicit head", async () => {
