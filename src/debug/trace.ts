@@ -1,6 +1,7 @@
-import { mkdirSync } from "node:fs";
-import { appendFile } from "node:fs/promises";
+import { constants, mkdirSync } from "node:fs";
+import { appendFile, open } from "node:fs/promises";
 import { dirname } from "node:path";
+import { prepareDebugLogPathForWrite } from "./paths.js";
 import { redactSecrets } from "../review/redact.js";
 import type { Finding } from "../review/findings.js";
 
@@ -184,20 +185,43 @@ export function createDebugRecorder(options: { now?: () => number } = {}): {
 }
 
 /**
+ * Append one JSONL line. When a workspace is provided, validate confinement and
+ * symlink components immediately before the write; `O_NOFOLLOW` protects the
+ * final file on platforms that support it.
+ */
+async function appendJsonlLine(path: string, line: string, workspace?: string): Promise<void> {
+  if (!workspace) {
+    await appendFile(path, line);
+    return;
+  }
+
+  prepareDebugLogPathForWrite(path, workspace);
+  const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
+  const handle = await open(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | noFollow, 0o600);
+  try {
+    await handle.writeFile(line);
+  } finally {
+    await handle.close();
+  }
+}
+
+/**
  * File sink: append each event as one JSON line (#49). Writes are queued in
- * order with async appendFile so debug tracing does not block the review hot
- * path on per-event disk I/O. Parent directories are created best-effort for
+ * order with async filesystem calls so debug tracing does not block the review
+ * hot path on per-event disk I/O. Parent directories are created best-effort for
  * explicit nested paths such as `traces/run.jsonl`.
  */
-export function createJsonlSink(path: string, options: { now?: () => number } = {}): DebugSink {
+export function createJsonlSink(path: string, options: { now?: () => number; workspace?: string } = {}): DebugSink {
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
   let pending: Promise<void> = Promise.resolve();
 
-  try {
-    mkdirSync(dirname(path), { recursive: true });
-  } catch {
-    // write failures are swallowed below; directory creation is best-effort too
+  if (!options.workspace) {
+    try {
+      mkdirSync(dirname(path), { recursive: true });
+    } catch {
+      // write failures are swallowed below; directory creation is best-effort too
+    }
   }
 
   return (event: DebugEvent) => {
@@ -207,7 +231,7 @@ export function createJsonlSink(path: string, options: { now?: () => number } = 
     } catch {
       return;
     }
-    pending = pending.then(() => appendFile(path, line)).catch(() => {});
+    pending = pending.then(() => appendJsonlLine(path, line, options.workspace)).catch(() => {});
     void pending;
   };
 }
