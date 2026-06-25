@@ -60,6 +60,13 @@ function writeConfig(contents: string): string {
   return path;
 }
 
+function clearProviderKeys(): void {
+  delete process.env.PROWL_AI_KEY;
+  delete process.env.PROWL_AI_KEY_ANTHROPIC;
+  delete process.env.PROWL_AI_KEY_OPENAI;
+  delete process.env.PROWL_AI_KEY_GEMINI;
+}
+
 /** Minimal complete pipeline result so reportReviewCommandResult doesn't throw. */
 function reviewResult(over: Partial<ReviewPullRequestResult> = {}): ReviewPullRequestResult {
   return {
@@ -91,6 +98,18 @@ function reviewResult(over: Partial<ReviewPullRequestResult> = {}): ReviewPullRe
   };
 }
 
+function sameRepoEvent(draft = false): unknown {
+  return {
+    repository: { full_name: "prowl-tools/prowl-code-review" },
+    pull_request: {
+      number: 7,
+      draft,
+      head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" }, sha: "head" },
+      base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+    }
+  };
+}
+
 beforeEach(() => {
   process.env = { ...ORIGINAL_ENV, GITHUB_TOKEN: "token" };
   vi.restoreAllMocks();
@@ -110,6 +129,7 @@ afterEach(() => {
 
 describe("runReviewWithOptions pause gate", () => {
   it("skips the review pipeline when auto-review is paused", async () => {
+    writeEvent(sameRepoEvent());
     mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
@@ -126,6 +146,7 @@ describe("runReviewWithOptions pause gate", () => {
   });
 
   it("publishes a neutral check run when paused and checkRun is enabled", async () => {
+    writeEvent(sameRepoEvent());
     const tempDir = mkdtempSync(join(tmpdir(), "prowl-review-pause-"));
     const configPath = join(tempDir, ".prowl-review.yml");
     writeFileSync(configPath, "checkRun:\n  enabled: true\n");
@@ -163,6 +184,7 @@ describe("runReviewWithOptions pause gate", () => {
 
   it("does not fail the skip when neutral check-run submission fails", async () => {
     isolateWorkspace();
+    writeEvent(sameRepoEvent());
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
     mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
     mocks.submitCheckRun.mockRejectedValue(new Error("checks API unavailable"));
@@ -187,7 +209,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("skips a draft PR by default on the auto path", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
@@ -200,7 +222,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -219,7 +241,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: false } });
+    writeEvent(sameRepoEvent(false));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-ready";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -237,7 +259,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("reviews a draft when invoked on demand (respectPause cleared)", async () => {
     isolateWorkspace();
     mocks.reviewPullRequest.mockResolvedValue(reviewResult());
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-demand";
     process.env.PROWL_AI_KEY = "key";
     vi.spyOn(console, "log").mockImplementation(() => {});
@@ -256,7 +278,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("skips on the auto path when review.auto is false (on-demand only)", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: false } });
+    writeEvent(sameRepoEvent(false));
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
     const config = writeConfig("review:\n  auto: false\n");
 
@@ -272,7 +294,7 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
   it("posts a neutral check run when skipping a draft with checkRun enabled", async () => {
     isolateWorkspace();
     mocks.fetchPriorReviewState.mockResolvedValue(null);
-    writeEvent({ pull_request: { number: 7, draft: true } });
+    writeEvent(sameRepoEvent(true));
     process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
     vi.spyOn(console, "log").mockImplementation(() => {});
     const config = writeConfig("checkRun:\n  enabled: true\n");
@@ -291,5 +313,168 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
         plan: expect.objectContaining({ conclusion: "neutral", title: "Draft pull request — review skipped" })
       })
     );
+  });
+});
+
+describe("runReviewWithOptions fork-PR safety (#20)", () => {
+  const forkEvent = {
+    pull_request: { number: 7, draft: false, head: { repo: { fork: true, full_name: "contributor/prowl-code-review" } } }
+  };
+
+  it("does not fetch prior review state when skipping a keyless fork PR", async () => {
+    isolateWorkspace();
+    writeEvent(forkEvent);
+    clearProviderKeys();
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    // Skipped before the pause gate, so prior state is never fetched.
+    expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
+  it("fetches PR repo metadata before deciding fork safety for issue-comment reviews", async () => {
+    isolateWorkspace();
+    writeEvent({ issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: {
+          sha: "head",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
+        draft: false,
+        state: "open",
+        user: { login: "contributor" },
+        changed_files: 1
+      }
+    });
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" });
+
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
+  it("fetches PR repo metadata before deciding fork safety when event head repo is null", async () => {
+    isolateWorkspace();
+    writeEvent({ pull_request: { number: 7, draft: false, head: { repo: null, sha: "head" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: {
+          sha: "head",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
+        draft: false,
+        state: "open",
+        user: { login: "contributor" },
+        changed_files: 1
+      }
+    });
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" });
+
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
+  it("does not fetch PR repo metadata before a paused auto-review exit when event metadata is incomplete", async () => {
+    isolateWorkspace();
+    writeEvent({ issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn();
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.fetchPriorReviewState).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 }
+    );
+    expect(pullsGet).not.toHaveBeenCalled();
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("auto-review paused"));
+  });
+
+  it("uses complete same-repo event metadata without fetching PR repo metadata", async () => {
+    isolateWorkspace();
+    writeEvent({
+      repository: { full_name: "prowl-tools/prowl-code-review" },
+      pull_request: {
+        number: 7,
+        draft: false,
+        head: { repo: { fork: false, full_name: "prowl-tools/prowl-code-review" }, sha: "head" },
+        base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+      }
+    });
+    process.env.PROWL_AI_KEY = "key";
+    const pullsGet = vi.fn();
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    mocks.fetchPriorReviewState.mockResolvedValue(null);
+    mocks.reviewPullRequest.mockResolvedValue(reviewResult());
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(pullsGet).not.toHaveBeenCalled();
+    expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("posts a neutral check run for a skipped fork PR when checkRun is enabled (tolerant)", async () => {
+    isolateWorkspace();
+    writeEvent(forkEvent);
+    clearProviderKeys();
+    process.env.PROWL_REVIEWED_HEAD_SHA = "fork-head";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const config = writeConfig("checkRun:\n  enabled: true\n");
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review", config }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      expect.objectContaining({
+        headSha: "fork-head",
+        plan: expect.objectContaining({ conclusion: "neutral", title: "Fork pull request — review skipped" })
+      })
+    );
+  });
+
+  it("reviews a fork PR that has a key (pull_request_target), warning that the fork is untrusted", async () => {
+    isolateWorkspace();
+    writeEvent(forkEvent);
+    mocks.fetchPriorReviewState.mockResolvedValue(null);
+    mocks.reviewPullRequest.mockResolvedValue(reviewResult());
+    process.env.PROWL_AI_KEY = "key";
+    process.env.PROWL_REVIEWED_HEAD_SHA = "fork-head";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const warnSpy = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).toHaveBeenCalledTimes(1);
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining("reviewing a FORK pull request"));
   });
 });

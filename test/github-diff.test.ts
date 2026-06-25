@@ -22,8 +22,14 @@ describe("fetchPullRequest", () => {
         number: 7,
         title: "Add thing",
         body: "does a thing",
-        base: { sha: "base-sha" },
-        head: { sha: "head-sha", repo: { name: "prowl-code-review", owner: { login: "prowl-tools" } } },
+        base: {
+          sha: "base-sha",
+          repo: { full_name: "prowl-tools/prowl-code-review" }
+        },
+        head: {
+          sha: "head-sha",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
         draft: true,
         state: "open",
         user: { login: "michael" },
@@ -42,6 +48,9 @@ describe("fetchPullRequest", () => {
       body: "does a thing",
       baseSha: "base-sha",
       headSha: "head-sha",
+      baseRepoFullName: "prowl-tools/prowl-code-review",
+      headRepoFullName: "contributor/prowl-code-review",
+      headRepoFork: true,
       draft: true,
       state: "open",
       author: "michael",
@@ -67,6 +76,52 @@ describe("fetchPullRequest", () => {
     expect(result.meta.author).toBeNull();
     expect(result.meta.draft).toBe(false);
     expect(result.meta.changedFiles).toBe(0);
+  });
+
+  it("tolerates null repository payloads without emitting repo metadata", async () => {
+    const { octokit } = mockOctokit(
+      {
+        number: 1,
+        title: "t",
+        body: null,
+        base: { sha: "b", repo: null },
+        head: { sha: "h", repo: null },
+        state: "open",
+        user: null
+      },
+      ""
+    );
+
+    const result = await fetchPullRequest(octokit, ref);
+    expect(result.meta).not.toHaveProperty("baseRepoFullName");
+    expect(result.meta).not.toHaveProperty("headRepoFullName");
+    expect(result.meta).not.toHaveProperty("headRepoFork");
+  });
+
+  it("derives repository full names from owner/name when full_name is absent or blank", async () => {
+    const { octokit } = mockOctokit(
+      {
+        number: 1,
+        title: "t",
+        body: null,
+        base: {
+          sha: "b",
+          repo: { owner: { login: "base-owner" }, name: "base-repo" }
+        },
+        head: {
+          sha: "h",
+          repo: { full_name: "  ", owner: { login: "head-owner" }, name: "head-repo" }
+        },
+        state: "open",
+        user: null
+      },
+      ""
+    );
+
+    const result = await fetchPullRequest(octokit, ref);
+    expect(result.meta.baseRepoFullName).toBe("base-owner/base-repo");
+    expect(result.meta.headRepoFullName).toBe("head-owner/head-repo");
+    expect(result.meta).not.toHaveProperty("headRepoFork");
   });
 });
 
@@ -101,6 +156,24 @@ describe("fetchPullRequestMeta", () => {
     });
     expect(get).toHaveBeenCalledTimes(1);
     expect(get).toHaveBeenCalledWith(expect.not.objectContaining({ mediaType: expect.anything() }));
+  });
+
+  it("rejects malformed PR payloads before normalizing metadata", async () => {
+    const { octokit, get } = mockOctokit(
+      {
+        number: 7,
+        title: "Add thing",
+        body: null,
+        base: { sha: "base-sha" },
+        head: { sha: 123 },
+        state: "open",
+        user: null
+      },
+      "RAW DIFF TEXT"
+    );
+
+    await expect(fetchPullRequestMeta(octokit, ref)).rejects.toThrow();
+    expect(get).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -174,6 +247,12 @@ describe("fetchPullRequestHeadSha (#21)", () => {
     const get = vi.fn(async () => {
       throw new Error("502");
     });
+    const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
+    expect(await fetchPullRequestHeadSha(octokit, ref)).toBeUndefined();
+  });
+
+  it("returns undefined tolerantly when the payload is malformed", async () => {
+    const get = vi.fn(async () => ({ data: { head: { sha: 123 } } }));
     const octokit = { rest: { pulls: { get } } } as unknown as OctokitLike;
     expect(await fetchPullRequestHeadSha(octokit, ref)).toBeUndefined();
   });

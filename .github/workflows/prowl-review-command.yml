@@ -56,6 +56,7 @@ jobs:
           fi
           echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
           echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_repo=${head_repo}" >> "$GITHUB_OUTPUT"
           if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
             echo "trusted_head=true" >> "$GITHUB_OUTPUT"
           else
@@ -104,6 +105,7 @@ jobs:
         uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
         env:
           PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
         with:
           mode: command
           # Claude + Gemini ensemble (#53) — same config as auto reviews, so an
