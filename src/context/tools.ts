@@ -33,6 +33,7 @@ export interface SearchOptions {
 export const DEFAULT_IGNORE = [
   "node_modules",
   ".git",
+  ".prowl-review",
   "dist",
   "build",
   "coverage",
