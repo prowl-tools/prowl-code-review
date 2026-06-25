@@ -16,6 +16,7 @@ import {
   resolveEnsembleConfigs,
   isEnsembleActive,
   providerKeyEnvVar,
+  PROVIDER_NAMES,
   type ProviderConfig,
   type ProviderDefaults,
   type ProviderName,
@@ -227,6 +228,62 @@ export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): bo
   }
 }
 
+/** True when any provider API key is present in the environment (generic or provider-scoped, #20). */
+export function hasAnyProviderKey(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.PROWL_AI_KEY?.trim()) {
+    return true;
+  }
+  return PROVIDER_NAMES.some((provider) => env[providerKeyEnvVar(provider)]?.trim());
+}
+
+/** Fork-PR safety decision (#20): whether to review, and why not when skipped. */
+export interface ForkReviewDecision {
+  /** The PR head is a fork / different repo than the base. */
+  isFork: boolean;
+  /** A provider API key is available to this run. */
+  hasKey: boolean;
+  /** Skip the review entirely (a fork with no provider key can't run). */
+  skip: boolean;
+  /** Human-readable explanation for logs / the skip check run. */
+  reason: string;
+}
+
+/**
+ * Decide how to handle a (possibly fork) PR safely (#20).
+ *
+ * GitHub does not share repository secrets with `pull_request` runs from forks,
+ * so the provider key is typically absent there. Rather than crash on the
+ * missing key (a confusing failure), prowl-review **skips with a clear message**.
+ * A maintainer who wants fork reviews opts in via `pull_request_target` (write
+ * token + secrets, base checkout), where a key *is* present — then we review, but
+ * never trust the fork checkout (repo-local tooling/config stays off via
+ * {@link resolveReviewOptions}) and the key only ever reaches the provider, never
+ * fork code. A missing key on a **non-fork** PR is a real misconfiguration and is
+ * left to fail loudly downstream.
+ */
+export function resolveForkReviewDecision(env: NodeJS.ProcessEnv = process.env): ForkReviewDecision {
+  const isFork = isForkPullRequestEvent(env);
+  const hasKey = hasAnyProviderKey(env);
+  if (isFork && !hasKey) {
+    return {
+      isFork,
+      hasKey,
+      skip: true,
+      reason:
+        "Fork pull request without a provider key — GitHub does not share secrets with fork " +
+        "`pull_request` runs, so there's nothing to review with. Skipped (no failure)."
+    };
+  }
+  return {
+    isFork,
+    hasKey,
+    skip: false,
+    reason: isFork
+      ? "Fork pull request with a provider key (e.g. pull_request_target): reviewing with repo-local tooling untrusted."
+      : "Same-repo pull request."
+  };
+}
+
 /** Resolve the PR head SHA represented by the checked-out Action workspace. */
 export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): string | undefined {
   const explicit = env.PROWL_REVIEWED_HEAD_SHA?.trim();
@@ -345,6 +402,14 @@ export function resolveConfigLoadOptions(
   }
 
   if (truthyEnv(env.PROWL_NO_CONFIG)) {
+    return { cwd, disabled: true };
+  }
+
+  // Fork-PR safety (#20): never auto-discover `.prowl-review.yml` by searching up
+  // from the workspace on a fork PR — that checkout is untrusted and a fork could
+  // commit a config that weakens review policy. Only an explicit (trusted)
+  // config-path is honored on forks; otherwise fall back to built-in defaults.
+  if (isForkPullRequestEvent(env)) {
     return { cwd, disabled: true };
   }
 
@@ -838,6 +903,37 @@ export async function runReviewWithOptions(
   const { config } = loadConfig(resolveConfigLoadOptions(options, root));
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
+
+  // Fork-PR safety (#20): a fork `pull_request` run gets no secrets, so there's
+  // no provider key to review with — skip with a clear message instead of
+  // crashing on the missing key. A fork reviewed via pull_request_target has a
+  // key (and a write token) and proceeds, with the fork checkout never trusted.
+  const fork = resolveForkReviewDecision();
+  if (fork.skip) {
+    const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
+      checkRun: config.checkRun,
+      dryRun,
+      headSha: reviewedHeadSha,
+      title: "Fork pull request — review skipped",
+      summary:
+        "prowl-review skipped this fork pull request: GitHub does not share repository secrets " +
+        "(your `PROWL_AI_KEY`) with fork `pull_request` runs, so there is no key to review with.\n\n" +
+        "To review fork PRs, run prowl-review from a `pull_request_target` workflow (it provides a " +
+        "write token and secrets, checks out the trusted base, and never trusts the fork's code/config). " +
+        "See the README's fork-PR section."
+    });
+    console.log(`prowl-review: skipped fork pull request ${owner}/${repo}#${pullNumber} — ${fork.reason}`);
+    if (conclusion) {
+      console.log(`prowl-review: merge-gate check run → ${conclusion}`);
+    }
+    return;
+  }
+  if (fork.isFork) {
+    console.warn(
+      `prowl-review: reviewing a FORK pull request ${owner}/${repo}#${pullNumber} — repo-local linters/config ` +
+        "are NOT trusted, and your provider key is only ever sent to the provider, never to fork code."
+    );
+  }
 
   // The auto path (pull_request trigger) honors the per-PR pause (#26) and the
   // repo-level draft / on-demand controls (#28). An explicit `@prowl-review
