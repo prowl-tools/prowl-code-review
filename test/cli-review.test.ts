@@ -329,6 +329,22 @@ describe("review command helpers", () => {
     ).toBe(false);
   });
 
+  it("treats PR events with a head repo but no base repo identity as untrusted", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        pull_request: {
+          head: { repo: { full_name: "contributor/prowl-code-review" } },
+          base: { repo: null }
+        }
+      })
+    );
+
+    expect(isForkPullRequestEvent({ GITHUB_EVENT_PATH: eventPath } as NodeJS.ProcessEnv)).toBe(true);
+  });
+
   it("detects whether any provider key is present (generic or scoped, #20)", () => {
     expect(hasAnyProviderKey({} as NodeJS.ProcessEnv)).toBe(false);
     expect(hasAnyProviderKey({ PROWL_AI_KEY: "  " } as NodeJS.ProcessEnv)).toBe(false);

@@ -299,6 +299,9 @@ function isForkRepository(metadata: ForkRepositoryMetadata, env: NodeJS.ProcessE
   if (baseRepository && headRepository) {
     return baseRepository !== headRepository;
   }
+  if (headRepository && !baseRepository) {
+    return true;
+  }
   return metadata.headRepoFork === true;
 }
 
