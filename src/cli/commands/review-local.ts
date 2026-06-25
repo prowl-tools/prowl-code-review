@@ -20,6 +20,7 @@ import { emptyUsage, type TokenUsage } from "../../providers/index.js";
 import type { FailbackEvent, FailbackOptions } from "../../providers/failback.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord } from "../../cost/usage-log.js";
+import { createJsonlSink, type DebugSink } from "../../debug/trace.js";
 import { SEVERITY_ORDER, type Finding, type Severity } from "../../review/findings.js";
 import { formatLocalReport, formatLocalReportJson } from "../../review/format-terminal.js";
 import {
@@ -40,6 +41,7 @@ import {
   resolveOrgGuidelinesPath,
   resolveReviewOptions,
   resolveTrustWorkspace,
+  resolveDebugLogPath,
   resolveUsageLogPath
 } from "./review.js";
 
@@ -71,6 +73,8 @@ export interface LocalReviewCommandOptions {
   trustWorkspace?: boolean;
   /** `--config <path>` → string; `--no-config` → false. */
   config?: string | boolean;
+  /** `--debug [path]` → true or a string path; absent → undefined (#49). */
+  debug?: string | boolean;
   /** Emit machine-readable JSON instead of the human report. */
   json?: boolean;
   /** `--no-color` → false; otherwise honor TTY detection. */
@@ -364,8 +368,15 @@ export async function runLocalReview(
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;
+  // Keep the ref/checkout match before repo config loading so a bad local
+  // config cannot mask a checkout/ref mismatch. The clean check runs after
+  // config loading, when config-only debug trace paths are known.
   try {
-    await resolveHead({ head, cwd: root });
+    await resolveHead({
+      head,
+      cwd: root,
+      skipCleanCheck: true
+    });
   } catch (error) {
     if (error instanceof LocalDiffError) {
       err(`prowl-review: ${error.message}`);
@@ -376,6 +387,21 @@ export async function runLocalReview(
 
   const { config } = loadConfig(resolveLocalConfigLoadOptions(options, root, env));
   const failOn = parseMinSeverity(options.failOn);
+  const debugLogPath = resolveDebugLogPath(options, config, root, env);
+  try {
+    await resolveHead({
+      head,
+      cwd: root,
+      generatedOutputPaths: debugLogPath ? [debugLogPath] : [],
+      skipRefCheck: true
+    });
+  } catch (error) {
+    if (error instanceof LocalDiffError) {
+      err(`prowl-review: ${error.message}`);
+      return { findings: [], notes: [error.message], failed: true };
+    }
+    throw error;
+  }
 
   // Reuse the GitHub command's flag→option resolution. Workspace execution is
   // still opt-in locally because repo config can run code via linters/plugins.
@@ -396,7 +422,12 @@ export async function runLocalReview(
 
   let rawDiff: string;
   try {
-    rawDiff = await resolveDiff({ base, head, cwd: root });
+    rawDiff = await resolveDiff({
+      base,
+      head,
+      cwd: root,
+      generatedOutputPaths: debugLogPath ? [debugLogPath] : []
+    });
   } catch (error) {
     if (error instanceof LocalDiffError) {
       err(`prowl-review: ${error.message}`);
@@ -439,6 +470,7 @@ export async function runLocalReview(
 
   let grounding: ReviewInput["grounding"];
   let directGroundingFindings: Finding[] = [];
+  let groundingTrace = { findings: 0, notes: 0 };
   if (!resolved.skipGrounding && groundingLineFiles.length > 0) {
     try {
       const result = await ground({
@@ -455,6 +487,7 @@ export async function runLocalReview(
       }
       const redacted = redactGroundingFindings(result.findings);
       const groundingFindings = redacted.findings;
+      groundingTrace = { findings: groundingFindings.length, notes: redactedNotes.notes.length };
       directGroundingFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
       const promptGroundingFindings = groundingFindings.filter((finding) => !secretScanPathSet.has(finding.file));
       const redactionCount = redacted.count + redactedNotes.count;
@@ -476,6 +509,7 @@ export async function runLocalReview(
         notes.push(`Redacted ${redacted.count} secret(s) from linter grounding output.`);
       }
       notes.push(`Linter grounding failed; continuing without it: ${redacted.text}`);
+      groundingTrace = { findings: 0, notes: 1 };
     }
   }
 
@@ -508,6 +542,24 @@ export async function runLocalReview(
   notes.push(...riskTierNotes(tierSelection, { specialistKeys: tierSpecialistKeys, contextLimited: tierLimitedContext }));
 
   const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
+
+  // Debug/verbose tracing (#49): local mode has its own orchestration path, so
+  // it creates and feeds the sink directly while keeping stdout clean for --json.
+  let debug: DebugSink | undefined;
+  if (debugLogPath) {
+    debug = createJsonlSink(debugLogPath, { workspace: root });
+    err(`prowl-review: writing debug trace to ${relative(root, debugLogPath) || debugLogPath} (#49).`);
+    debug({
+      type: "run-start",
+      pr: `local:${head ? `${base}...${head}` : `${base}...working-tree`}`,
+      provider: providerConfig.provider,
+      model: providerConfig.model,
+      dryRun: false,
+      incremental: false
+    });
+    debug({ type: "diff", reviewedFiles: reviewFiles.length, skippedFiles: skipped.length });
+    debug({ type: "grounding", findings: groundingTrace.findings, notes: groundingTrace.notes });
+  }
 
   // Per-PR budget (#18): cap context retrieval + verification token spend.
   const budget = resolveTokenBudget(config.budget, providerConfig.provider, providerConfig.model, config.pricing ?? {});
@@ -551,6 +603,12 @@ export async function runLocalReview(
       if (gathered.files.length > 0) {
         context = redactSecrets(gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n")).text;
       }
+      debug?.({
+        type: "context",
+        files: gathered.files.map((file) => ({ path: file.path, truncated: file.truncated })),
+        rounds: gathered.rounds,
+        reachedLimit: gathered.reachedLimit
+      });
     } catch (error) {
       if (error instanceof ContextRetrievalError) {
         usage = addUsage(usage, error.usage);
@@ -580,7 +638,8 @@ export async function runLocalReview(
       verify: resolved.verify,
       verifyConfidence: resolved.verifyConfidence,
       maxTokens: reviewBudgetTokens,
-      ...(failback ? { failback } : {})
+      ...(failback ? { failback } : {}),
+      ...(debug ? { debug } : {})
     }
   );
   usage = addUsage(usage, reviewResult.usage);
@@ -612,6 +671,25 @@ export async function runLocalReview(
   const cost = estimateCost(usage, providerConfig.provider, providerConfig.model, config.pricing ?? {});
   const tierSuffix = ` · risk tier: ${tierSelection.tier}`;
   err(`prowl-review cost: ${formatCostLine(cost)}${tierSuffix}`);
+  debug?.({
+    type: "usage",
+    inputTokens: usage.inputTokens,
+    outputTokens: usage.outputTokens,
+    cachedInputTokens: usage.cachedInputTokens,
+    cacheWriteInputTokens: usage.cacheWriteInputTokens ?? 0
+  });
+  debug?.({
+    type: "cost",
+    estimates: [
+      {
+        provider: cost.provider,
+        model: cost.model,
+        usd: cost.usd,
+        totalTokens: cost.totalTokens
+      }
+    ]
+  });
+  debug?.({ type: "run-end", findings: findings.length, posted: false });
 
   const usageLogPath = resolveLocalUsageLogPath(root, env, head);
   if (usageLogPath) {

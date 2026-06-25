@@ -352,6 +352,54 @@ reviewing … (Ns elapsed)`) and log transient retries across specialist,
 verification, and ensemble passes, so a slow review isn't mistaken for a hung CI
 job.
 
+## Debug / verbose mode (#49)
+
+When a review behaves oddly, turn on a structured **JSONL run trace** to see what
+the run actually did — the assembled prompts, the files context retrieval pulled,
+the findings at each stage (raw → verified → judged), and the token/cost
+breakdown. Secrets are redacted (#15), and the log is appended one line per
+event in order without blocking review work on disk I/O.
+
+```bash
+# Local: write the trace to the default local state file (.prowl-review/debug.jsonl)
+prowl-review review --base origin/main --debug
+
+# …or to an explicit path
+prowl-review review --pr 123 --debug traces/pr-123.jsonl
+```
+
+Equivalent config / env (the flag wins):
+
+```yaml
+# .prowl-review.yml
+debug:
+  enabled: true
+  path: traces/run.jsonl   # optional; defaults to .prowl-review/debug.jsonl
+```
+
+```bash
+PROWL_DEBUG=true PROWL_DEBUG_LOG=traces/run.jsonl prowl-review review --pr 123
+```
+
+In the GitHub Action, set the `debug: true` input and upload the trace with
+`actions/upload-artifact` to inspect it after the run. The trace path is confined
+to the workspace, rejects symlinked path components, and nested parent
+directories are created automatically. Secure workspace-confined writes require
+POSIX `O_NOFOLLOW` support; platforms that do not expose it fail closed rather
+than following a possible symlink. Local review ignores prowl-generated
+`.prowl-review/` outputs during clean-worktree checks so the default trace does
+not block the next local review in repos that have not ignored that directory.
+
+Each line is a `{ seq, t, event }` record (`t` = ms since the run started). Inspect
+it with `jq`:
+
+```bash
+# Just the assembled prompts
+jq 'select(.event.type == "prompt") | .event.pass' .prowl-review/debug.jsonl
+# The post-judge findings + cost
+jq 'select(.event.type == "judge" or .event.type == "cost") | .event' .prowl-review/debug.jsonl
+```
+
 ## Development
 
 ```bash

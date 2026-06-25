@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -22,6 +22,8 @@ import {
   resolveReviewOptions,
   resolveTrustWorkspace,
   resolveUsageLogPath,
+  resolveDebugLogPath,
+  DEFAULT_DEBUG_LOG_FILENAME,
   resolveWorkspace,
   reportReviewCommandResult
 } from "../src/cli/commands/review.js";
@@ -406,6 +408,45 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(
       resolveUsageLogPath("/ws", { GITHUB_ACTIONS: "true", PROWL_USAGE_LOG: "ci/u.jsonl" } as NodeJS.ProcessEnv)
     ).toBe("/ws/ci/u.jsonl");
+  });
+
+  it("resolves the debug trace path: off by default; flag/env/config enable it (#49)", () => {
+    const noEnv = {} as NodeJS.ProcessEnv;
+    // Off unless enabled by flag, env, or config.
+    expect(resolveDebugLogPath({}, {}, "/ws", noEnv)).toBeNull();
+    // `--debug` (boolean) → default file in the workspace.
+    expect(resolveDebugLogPath({ debug: true }, {}, "/ws", noEnv)).toBe(`/ws/${DEFAULT_DEBUG_LOG_FILENAME}`);
+    // `--debug <path>` (string) wins over env + config.
+    expect(
+      resolveDebugLogPath(
+        { debug: "traces/run.jsonl" },
+        { debug: { path: "cfg.jsonl" } },
+        "/ws",
+        { PROWL_DEBUG_LOG: "env.jsonl" } as NodeJS.ProcessEnv
+      )
+    ).toBe("/ws/traces/run.jsonl");
+    // PROWL_DEBUG enables it; PROWL_DEBUG_LOG sets the path.
+    expect(
+      resolveDebugLogPath({}, {}, "/ws", { PROWL_DEBUG: "true", PROWL_DEBUG_LOG: "env.jsonl" } as NodeJS.ProcessEnv)
+    ).toBe("/ws/env.jsonl");
+    // config.debug.enabled + config.debug.path.
+    expect(resolveDebugLogPath({}, { debug: { enabled: true, path: "cfg.jsonl" } }, "/ws", noEnv)).toBe("/ws/cfg.jsonl");
+    // A path escaping the workspace is rejected.
+    expect(resolveDebugLogPath({ debug: "../escape.jsonl" }, {}, "/ws", noEnv)).toBeNull();
+    expect(resolveDebugLogPath({ debug: "/tmp/escape.jsonl" }, {}, "/ws", noEnv)).toBeNull();
+  });
+
+  it("rejects debug trace paths that traverse symlinked components (#49)", () => {
+    const workspace = tempDir();
+    const outside = tempDir();
+
+    symlinkSync(outside, join(workspace, "traces"), "dir");
+    expect(resolveDebugLogPath({ debug: "traces/run.jsonl" }, {}, workspace, {} as NodeJS.ProcessEnv)).toBeNull();
+
+    const target = join(outside, "trace.jsonl");
+    writeFileSync(target, "");
+    symlinkSync(target, join(workspace, "trace.jsonl"), "file");
+    expect(resolveDebugLogPath({ debug: "trace.jsonl" }, {}, workspace, {} as NodeJS.ProcessEnv)).toBeNull();
   });
 
   it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {

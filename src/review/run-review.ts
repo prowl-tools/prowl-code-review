@@ -23,6 +23,7 @@ import {
   buildSharedSystem,
   type Specialist
 } from "./specialists.js";
+import { toDebugFindings, type DebugSink } from "../debug/trace.js";
 
 /**
  * Multi-pass specialized review + judge/dedup (backlog #6) + false-positive
@@ -93,6 +94,12 @@ export interface RunReviewOptions {
    * completion or an injected `complete`). Omitted → no failback.
    */
   failback?: FailbackOptions;
+  /**
+   * Debug/verbose tracing (#49): when set, emit the assembled prompts and the
+   * findings at each stage (per-pass → raw → verified → judged) to this sink.
+   * Omitted → no tracing. Events are redacted at the sink boundary.
+   */
+  debug?: DebugSink;
 }
 
 export interface SpecialistPassReport {
@@ -172,6 +179,7 @@ export async function runReview(
   const base = options.complete ?? retrying(defaultComplete, options.retry);
   const run = options.failback ? withFailback(base, options.failback) : base;
   const baseConfig = options.config ?? resolveProviderConfig();
+  const debug = options.debug;
   const configuredSpecialists = input.specialists ?? DEFAULT_SPECIALISTS;
   const activeRequirements = input.requirements?.trim() ? input.requirements : undefined;
   const activeRequirementsDiff = activeRequirements ? input.requirementsDiff ?? input.diff : undefined;
@@ -197,18 +205,28 @@ export async function runReview(
           specialist.key === REQUIREMENTS_SPECIALIST_KEY && activeRequirementsDiff
             ? activeRequirementsDiff
             : input.diff;
+        const prompt = buildSpecialistPrompt({
+          specialist,
+          diff: specialistDiff,
+          context: input.context,
+          grounding: input.grounding?.summary,
+          // Only the requirements lens receives the linked-issue criteria (#32).
+          requirements: specialist.key === REQUIREMENTS_SPECIALIST_KEY ? activeRequirements : undefined
+        });
+        // Trace the assembled prompt before the call so a crash mid-pass still logs it (#49).
+        debug?.({
+          type: "prompt",
+          provider: config.provider,
+          model: config.model,
+          pass: specialist.key,
+          system,
+          prompt
+        });
         const pass = await runSpecialistPass(
           run,
           {
             system,
-            prompt: buildSpecialistPrompt({
-              specialist,
-              diff: specialistDiff,
-              context: input.context,
-              grounding: input.grounding?.summary,
-              // Only the requirements lens receives the linked-issue criteria (#32).
-              requirements: specialist.key === REQUIREMENTS_SPECIALIST_KEY ? activeRequirements : undefined
-            }),
+            prompt,
             // Native JSON output where the provider supports it (#7).
             responseFormat: "json"
           },
@@ -227,6 +245,15 @@ export async function runReview(
               (finding) => SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[specialist.severityFloor!]
             )
           : mapped;
+        debug?.({
+          type: "pass",
+          provider: config.provider,
+          model: config.model,
+          pass: specialist.key,
+          ok: pass.ok,
+          retried: pass.retried,
+          findings: toDebugFindings(pass.ok ? findings : [])
+        });
         return {
           report: {
             specialist: specialist.key,
@@ -240,6 +267,15 @@ export async function runReview(
           usage: pass.usage
         };
       } catch (error) {
+        debug?.({
+          type: "pass",
+          provider: config.provider,
+          model: config.model,
+          pass: specialist.key,
+          ok: false,
+          retried: false,
+          findings: []
+        });
         return {
           report: {
             specialist: specialist.key,
@@ -257,7 +293,25 @@ export async function runReview(
   // Merge deterministic linter findings (#16) in with the specialists' raw
   // findings; the judge dedups them against any the LLM re-discovered.
   const raw = [...outcomes.flatMap((outcome) => outcome.findings), ...(input.grounding?.findings ?? [])];
+  debug?.({ type: "raw-findings", provider: baseConfig.provider, findings: toDebugFindings(raw) });
   let usage = outcomes.reduce((total, outcome) => addUsage(total, outcome.usage), emptyUsage());
+
+  // Trace the verification pass's prompts too (#49) by wrapping the shared
+  // completion: it captures the skeptical re-check prompt without threading debug
+  // into the verifier. Unwrapped when tracing is off.
+  const verifyRun = debug
+    ? async (request: CompletionRequest, config: ProviderConfig) => {
+        debug({
+          type: "prompt",
+          provider: config.provider,
+          model: config.model,
+          pass: "verification",
+          system: request.system ?? "",
+          prompt: request.prompt
+        });
+        return run(request, config);
+      }
+    : run;
 
   // Skeptical false-positive pass (#8): re-check blocking (inline-posted) and
   // low-confidence findings before the judge so confirmed bugs survive and
@@ -279,9 +333,19 @@ export async function runReview(
     : await verifyFindings(
         raw,
         { diff: activeRequirementsDiff ?? input.diff, context: input.context, requirements: activeRequirements },
-        { config: baseConfig, complete: run, verifyConfidence: options.verifyConfidence }
+        { config: baseConfig, complete: verifyRun, verifyConfidence: options.verifyConfidence }
       );
   usage = addUsage(usage, verification.usage);
+  debug?.({
+    type: "verification",
+    provider: baseConfig.provider,
+    verified: verification.verified,
+    droppedFalsePositive: verification.droppedFalsePositive,
+    demoted: verification.demoted,
+    unverified: verification.unverified,
+    ok: verification.ok,
+    findings: toDebugFindings(verification.findings)
+  });
   const verificationReport = {
     verified: verification.verified,
     droppedFalsePositive: verification.droppedFalsePositive,
@@ -306,6 +370,15 @@ export async function runReview(
         }).findings
       : judged.findings;
   const { findings, ...judge } = judged;
+  debug?.({
+    type: "judge",
+    provider: baseConfig.provider,
+    duplicatesRemoved: judge.duplicatesRemoved,
+    belowThreshold: judge.belowThreshold,
+    belowConfidence: judge.belowConfidence,
+    capped: judge.capped,
+    findings: toDebugFindings(findings)
+  });
 
   return {
     findings,
