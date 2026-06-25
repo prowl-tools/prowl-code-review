@@ -187,7 +187,7 @@ export function createDebugRecorder(options: { now?: () => number } = {}): {
 /**
  * Append one JSONL line. When a workspace is provided, validate confinement and
  * symlink components immediately before the write; `O_NOFOLLOW` protects the
- * final file on platforms that support it.
+ * final file, and platforms without it fail closed.
  */
 async function appendJsonlLine(path: string, line: string, workspace?: string): Promise<void> {
   if (!workspace) {
@@ -195,9 +195,15 @@ async function appendJsonlLine(path: string, line: string, workspace?: string): 
     return;
   }
 
-  prepareDebugLogPathForWrite(path, workspace);
-  const noFollow = typeof constants.O_NOFOLLOW === "number" ? constants.O_NOFOLLOW : 0;
-  const handle = await open(path, constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | noFollow, 0o600);
+  const resolvedPath = prepareDebugLogPathForWrite(path, workspace);
+  if (typeof constants.O_NOFOLLOW !== "number") {
+    throw new Error("Debug trace writes require O_NOFOLLOW support.");
+  }
+  const handle = await open(
+    resolvedPath,
+    constants.O_APPEND | constants.O_CREAT | constants.O_WRONLY | constants.O_NOFOLLOW,
+    0o600
+  );
   try {
     await handle.writeFile(line);
   } finally {

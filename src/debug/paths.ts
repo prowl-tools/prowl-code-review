@@ -38,7 +38,7 @@ export function hasSymlinkComponent(
       if (code === "ENOENT") {
         return options.allowMissingTail !== true;
       }
-      return true;
+      throw new Error("Debug trace path component could not be inspected.");
     }
   }
 
@@ -49,7 +49,7 @@ export function hasSymlinkComponent(
  * Prepare a debug trace path for writing and assert the resolved parent/file
  * remain inside the workspace without symlinked components.
  */
-export function prepareDebugLogPathForWrite(path: string, workspace: string): void {
+export function prepareDebugLogPathForWrite(path: string, workspace: string): string {
   const workspaceRoot = resolve(workspace);
   const resolvedPath = resolve(workspaceRoot, path);
   if (!isWorkspaceConfinedPath(resolvedPath, workspaceRoot)) {
@@ -67,4 +67,5 @@ export function prepareDebugLogPathForWrite(path: string, workspace: string): vo
   if (!isWorkspaceConfinedPath(realParent, realWorkspace)) {
     throw new Error("Debug trace parent escapes the workspace.");
   }
+  return resolvedPath;
 }
