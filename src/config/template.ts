@@ -92,6 +92,17 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   failback:
 #     enabled: true
 
+# --- Debug / verbose tracing --------------------------------------------------
+# Write a structured JSONL run trace (assembled prompts, fetched-context list,
+# findings at each stage, token/cost breakdown) for diagnosing odd reviews (#49).
+# Secrets are redacted; one line per event. The --debug flag and PROWL_DEBUG /
+# PROWL_DEBUG_LOG env take precedence. Off by default. The path is confined to
+# the workspace, rejects symlinked path components, and nested parent directories
+# are created automatically.
+# debug:
+#   enabled: true
+#   path: .prowl-review/debug.jsonl
+
 # --- Review tuning ------------------------------------------------------------
 # review:
 #   minSeverity: minor       # report at/above: critical | major | minor | trivial | info

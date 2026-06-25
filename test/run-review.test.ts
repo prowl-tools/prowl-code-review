@@ -3,6 +3,7 @@ import { runReview } from "../src/review/run-review.js";
 import { resolveSpecialists, BUILTIN_SPECIALIST_KEYS } from "../src/review/specialists.js";
 import { retrying } from "../src/providers/index.js";
 import type { CompletionRequest, CompletionResult, ProviderConfig } from "../src/providers/index.js";
+import { createDebugRecorder, type DebugEvent } from "../src/debug/trace.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
 const USAGE = { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 };
@@ -566,5 +567,74 @@ describe("runReview failback (#17)", () => {
     );
     // No failback → the overloaded passes degrade gracefully (reported, #56).
     expect(result.passes.every((p) => !p.ok)).toBe(true);
+  });
+});
+
+describe("runReview debug tracing (#49)", () => {
+  function byType<T extends DebugEvent["type"]>(events: DebugEvent[], type: T) {
+    return events.filter((event): event is Extract<DebugEvent, { type: T }> => event.type === type);
+  }
+
+  it("emits prompts, per-pass, raw, verification, and judge events tagged with the provider", async () => {
+    const complete = fakeComplete();
+    const { sink, records } = createDebugRecorder();
+    await runReview(
+      { diff: "diff --git a/a.ts b/a.ts\n+bad();" },
+      { config, complete, verify: false, debug: sink }
+    );
+    const events = records.map((record) => record.event);
+
+    // One assembled prompt per specialist pass (the four built-ins), each carrying
+    // the system + prompt text and the provider/model.
+    const prompts = byType(events, "prompt");
+    expect(prompts).toHaveLength(4);
+    expect(prompts.every((p) => p.provider === "anthropic" && p.model === "m")).toBe(true);
+    expect(prompts.map((p) => p.pass).sort()).toEqual(["correctness", "performance", "security", "tests"]);
+    expect(prompts.some((p) => p.prompt.includes("Security reviewer"))).toBe(true);
+
+    // Per-pass findings, including the failed performance pass.
+    const passes = byType(events, "pass");
+    expect(passes.map((p) => p.pass).sort()).toEqual(["correctness", "performance", "security", "tests"]);
+    expect(passes.find((p) => p.pass === "performance")?.ok).toBe(false);
+    expect(passes.find((p) => p.pass === "security")?.findings[0]?.title).toBe("SQLi");
+
+    // Raw (pre-judge) + judge (post-judge) snapshots are emitted exactly once.
+    expect(byType(events, "raw-findings")).toHaveLength(1);
+    const judge = byType(events, "judge");
+    expect(judge).toHaveLength(1);
+    expect(judge[0].provider).toBe("anthropic");
+    expect(judge[0].findings.some((f) => f.title === "SQLi")).toBe(true);
+  });
+
+  it("traces the verification pass prompt and reports its bookkeeping", async () => {
+    // Specialist emits a finding; the verifier confirms it.
+    const complete = vi.fn(async (request: CompletionRequest): Promise<CompletionResult> => {
+      if (request.prompt.includes("Security reviewer")) {
+        return reply(
+          JSON.stringify([
+            { file: "a.ts", line: 5, severity: "critical", category: "security", title: "SQLi", body: "x", confidence: 0.4 }
+          ])
+        );
+      }
+      if (request.prompt.includes("Correctness reviewer") || request.prompt.includes("Performance reviewer") || request.prompt.includes("Tests reviewer")) {
+        return reply("[]");
+      }
+      // Verification verdict pass: keep the finding.
+      return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
+    });
+    const { sink, records } = createDebugRecorder();
+    await runReview({ diff: "diff" }, { config, complete, verify: true, debug: sink });
+    const events = records.map((record) => record.event);
+
+    const prompts = byType(events, "prompt");
+    expect(prompts.some((p) => p.pass === "verification")).toBe(true);
+    expect(byType(events, "verification")).toHaveLength(1);
+  });
+
+  it("does not emit when no sink is provided", async () => {
+    const complete = fakeComplete();
+    // Smoke: a run without debug must behave exactly as before (no throw, normal result).
+    const result = await runReview({ diff: "diff" }, { config, complete, verify: false });
+    expect(result.passes).toHaveLength(4);
   });
 });
