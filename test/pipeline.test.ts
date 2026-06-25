@@ -7,6 +7,7 @@ import type { ReviewResult, RunReviewOptions } from "../src/review/run-review.js
 import type { Finding } from "../src/review/findings.js";
 import { findingFingerprint, type ReviewState } from "../src/review/state.js";
 import { DEFAULT_SPECIALISTS } from "../src/review/specialists.js";
+import { createDebugRecorder, type DebugEvent } from "../src/debug/trace.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "m", apiKey: "k" };
 const ref = { owner: "o", repo: "r", pull_number: 7 };
@@ -3259,5 +3260,31 @@ ${DELTA_DIFF}`;
     };
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
     expect(deps.fetchIssue).not.toHaveBeenCalled();
+  });
+
+  it("emits orchestration debug events and forwards the sink to the review (#49)", async () => {
+    const deps = makeDeps();
+    const { sink, records } = createDebugRecorder();
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, debug: sink });
+    const events = records.map((record) => record.event);
+    const types = events.map((event) => event.type);
+
+    expect(types).toContain("run-start");
+    expect(types).toContain("diff");
+    expect(types).toContain("context");
+    expect(types).toContain("grounding");
+
+    const start = events.find((event) => event.type === "run-start") as Extract<DebugEvent, { type: "run-start" }>;
+    expect(start.pr).toBe("o/r#7");
+    expect(start.provider).toBe("anthropic");
+
+    const ctx = events.find((event) => event.type === "context") as Extract<DebugEvent, { type: "context" }>;
+    expect(ctx.files.map((file) => file.path)).toEqual(["src/a.ts"]);
+
+    // The sink is forwarded down to runReview.
+    expect(deps.runReview).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ debug: sink })
+    );
   });
 });
