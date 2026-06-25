@@ -443,8 +443,8 @@ describe("buildWalkthrough per-model sections (#53)", () => {
     const md = buildWalkthrough({ findings, files, providerCount: 2, providers: ["anthropic", "gemini"] });
 
     expect(md).toContain("### Per-model findings");
-    expect(md).toContain("<summary>🟣 anthropic — 1 finding</summary>");
-    expect(md).toContain("<summary>🔷 gemini — 2 findings</summary>");
+    expect(md).toContain("<summary>🟧 anthropic — 1 finding</summary>");
+    expect(md).toContain("<summary>🟩 gemini — 2 findings</summary>");
     // Each model's own wording + severity is shown.
     expect(md).toContain("Anthropic wording");
     expect(md).toContain("Gemini wording");
