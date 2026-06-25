@@ -62,6 +62,8 @@ export interface RunEnsembleOptions {
   maxTokens?: number;
   /** Retry/backoff config forwarded to each provider's pass (#17). */
   retry?: RunReviewOptions["retry"];
+  /** Cross-generation failback forwarded to each provider's pass (#17). */
+  failback?: RunReviewOptions["failback"];
   /** Injectable single-provider review (defaults to {@link defaultRunReview}). */
   runReview?: typeof defaultRunReview;
 }
@@ -148,7 +150,8 @@ export async function runEnsembleReview(
           verify: options.verify,
           verifyConfidence: options.verifyConfidence,
           maxTokens: perProviderMaxTokens,
-          retry: options.retry
+          retry: options.retry,
+          failback: options.failback
         });
         return { config, result, error: undefined as string | undefined };
       } catch (error) {

@@ -331,6 +331,7 @@ export {
   type EnsembleProviderReport,
   type RunEnsembleOptions
 } from "./review/ensemble.js";
+export { withHeartbeat, type HeartbeatOptions } from "./review/heartbeat.js";
 export {
   DEFAULT_SPECIALISTS,
   BUILTIN_SPECIALIST_KEYS,

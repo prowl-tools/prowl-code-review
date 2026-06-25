@@ -523,3 +523,48 @@ describe("runReview requirements lens (#32)", () => {
     expect(prompts.some((prompt) => prompt.includes("# Untrusted linked issue requirements"))).toBe(false);
   });
 });
+
+describe("runReview failback (#17)", () => {
+  it("falls back to an older same-family model on retryable exhaustion", async () => {
+    const seenModels: string[] = [];
+    const complete = vi.fn(async (_req: CompletionRequest, cfg: ProviderConfig): Promise<CompletionResult> => {
+      seenModels.push(cfg.model);
+      if (cfg.model === "claude-sonnet-4-6") {
+        throw Object.assign(new Error("Anthropic API error (429): overloaded"), { status: 429 });
+      }
+      return reply("[]");
+    });
+
+    const events: Array<{ from: string; to: string }> = [];
+    const result = await runReview(
+      { diff: "diff" },
+      {
+        config: { provider: "anthropic", model: "claude-sonnet-4-6", apiKey: "k" },
+        complete,
+        verify: false,
+        failback: { onFailback: (e) => events.push({ from: e.from, to: e.to }) }
+      }
+    );
+
+    // Every specialist pass retried the newest model then fell back to 4-5.
+    expect(seenModels).toContain("claude-sonnet-4-6");
+    expect(seenModels).toContain("claude-sonnet-4-5");
+    expect(events.some((e) => e.from === "claude-sonnet-4-6" && e.to === "claude-sonnet-4-5")).toBe(true);
+    expect(result.passes.every((p) => p.ok)).toBe(true); // ran on the older model
+  });
+
+  it("does not fall back without the failback option", async () => {
+    const complete = vi.fn(async (_req: CompletionRequest, cfg: ProviderConfig): Promise<CompletionResult> => {
+      if (cfg.model === "claude-sonnet-4-6") {
+        throw Object.assign(new Error("API error (429)"), { status: 429 });
+      }
+      return reply("[]");
+    });
+    const result = await runReview(
+      { diff: "diff" },
+      { config: { provider: "anthropic", model: "claude-sonnet-4-6", apiKey: "k" }, complete, verify: false }
+    );
+    // No failback → the overloaded passes degrade gracefully (reported, #56).
+    expect(result.passes.every((p) => !p.ok)).toBe(true);
+  });
+});

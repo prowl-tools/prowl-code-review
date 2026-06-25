@@ -1,3 +1,4 @@
+import { inspect } from "node:util";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   complete,
@@ -70,11 +71,22 @@ afterEach(() => {
 describe("resolveProviderConfig", () => {
   it("defaults to anthropic with the default model", () => {
     const cfg = resolveProviderConfig({ PROWL_AI_KEY: "k" } as NodeJS.ProcessEnv);
-    expect(cfg).toEqual({
-      provider: "anthropic",
-      model: DEFAULT_MODELS.anthropic,
-      apiKey: "k"
-    });
+    expect(cfg.provider).toBe("anthropic");
+    expect(cfg.model).toBe(DEFAULT_MODELS.anthropic);
+    expect(cfg.apiKey).toBe("k");
+  });
+
+  it("redacts resolved API keys from accidental serialization and inspect output", () => {
+    const cfg = resolveProviderConfig({ PROWL_AI_KEY: "super-secret-key" } as NodeJS.ProcessEnv);
+
+    expect(cfg.apiKey).toBe("super-secret-key");
+    expect(JSON.stringify(cfg)).toContain("<redacted>");
+    expect(JSON.stringify(cfg)).not.toContain("super-secret-key");
+    expect(inspect(cfg)).toContain("<redacted>");
+    expect(inspect(cfg)).not.toContain("super-secret-key");
+    expect(Object.keys(cfg)).not.toContain("apiKey");
+    expect({ ...cfg }).not.toHaveProperty("apiKey");
+    expect(Object.assign({}, cfg)).not.toHaveProperty("apiKey");
   });
 
   it("throws when the API key is missing", () => {
@@ -96,7 +108,9 @@ describe("resolveProviderConfig", () => {
       PROWL_AI_KEY: "k",
       PROWL_AI_MODEL: "custom-model"
     } as NodeJS.ProcessEnv);
-    expect(cfg).toEqual({ provider: "openai", model: "custom-model", apiKey: "k" });
+    expect(cfg.provider).toBe("openai");
+    expect(cfg.model).toBe("custom-model");
+    expect(cfg.apiKey).toBe("k");
   });
 
   it("uses the per-provider default model", () => {

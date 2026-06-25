@@ -19,8 +19,10 @@ import {
   type ProviderConfig,
   type ProviderDefaults,
   type ProviderName,
+  type RetryOptions,
   type TokenUsage
 } from "../../providers/index.js";
+import { withHeartbeat } from "../../review/heartbeat.js";
 import { loadConfig, type LoadConfigOptions } from "../../config/loader.js";
 import type { ProwlReviewConfig } from "../../config/schema.js";
 import { SEVERITIES, type Severity } from "../../review/findings.js";
@@ -305,6 +307,7 @@ type ResolvedReviewOptions = Pick<
   | "approval"
   | "prDescription"
   | "issueValidation"
+  | "failback"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -468,7 +471,9 @@ export function resolveReviewOptions(
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.
     prDescription: config.prDescription,
     // Validate the PR against its linked issue's acceptance criteria (#32); opt-in via config.
-    issueValidation: config.issueValidation
+    issueValidation: config.issueValidation,
+    // Cross-generation failback on persistent overload (#17); opt-in via config.
+    failback: config.resilience?.failback?.enabled === true ? true : undefined
   };
 }
 
@@ -872,6 +877,18 @@ export async function runReviewWithOptions(
     console.warn(`prowl-review: ${note}`);
   }
 
+  // Heartbeat + retry logging (#17): so a long ensemble run / provider "thinking"
+  // isn't mistaken for a hung job, and transient retries are visible in the logs.
+  const retry: RetryOptions = {
+    onRetry: ({ attempt, delayMs, error }) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `prowl-review: transient provider error (attempt ${attempt}); retrying in ` +
+          `${Math.round(delayMs / 1000)}s — ${message.slice(0, 200)}`
+      );
+    }
+  };
+
   const reviewOptions = {
     ...resolved,
     config: providerConfig,
@@ -881,11 +898,17 @@ export async function runReviewWithOptions(
     learnedPatterns,
     budgetTokens: budget.tokens ?? undefined,
     reviewedHeadSha,
+    retry,
     dryRun
   };
 
   try {
-    const result = await reviewPullRequest(octokit, ref, reviewOptions);
+    const result = await withHeartbeat(() => reviewPullRequest(octokit, ref, reviewOptions), {
+      onTick: ({ elapsedMs }) =>
+        console.log(
+          `prowl-review: still reviewing ${owner}/${repo}#${pullNumber}… (${Math.round(elapsedMs / 1000)}s elapsed)`
+        )
+    });
     reportReviewCommandResult(result, { owner, repo, pullNumber, root, providerConfig, pricing: config.pricing ?? {} });
   } catch (error) {
     if (error instanceof ReviewPublishError) {

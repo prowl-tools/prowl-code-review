@@ -249,6 +249,22 @@ const issueValidationSchema = z
   })
   .strict();
 
+/**
+ * LLM resilience tuning (#17). Retry/backoff is always on; cross-generation
+ * failback is opt-in: on sustained overload (retryable errors that survive
+ * retries), retry with an older model of the same family before giving up.
+ */
+const resilienceSchema = z
+  .object({
+    failback: z
+      .object({
+        enabled: z.boolean().optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
 export const configSchema = z
   .object({
     /** Provider selection (API keys always come from environment variables). */
@@ -283,6 +299,8 @@ export const configSchema = z
     prDescription: prDescriptionSchema.optional(),
     /** Validate the PR against its linked issue's acceptance criteria (#32); opt-in. */
     issueValidation: issueValidationSchema.optional(),
+    /** LLM resilience: cross-generation failback (#17); opt-in. */
+    resilience: resilienceSchema.optional(),
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),

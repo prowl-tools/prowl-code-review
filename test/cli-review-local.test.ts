@@ -10,7 +10,7 @@ import {
 } from "../src/cli/commands/review-local.js";
 import { emptyUsage } from "../src/providers/index.js";
 import type { Finding } from "../src/review/findings.js";
-import type { ReviewResult } from "../src/review/run-review.js";
+import type { ReviewResult, RunReviewOptions } from "../src/review/run-review.js";
 
 const ORIGINAL_ENV = process.env;
 let tempDirs: string[] = [];
@@ -487,6 +487,30 @@ new file mode 100644
       outputTokens: 3,
       cachedInputTokens: 4
     });
+  });
+
+  it("threads failback through local reviews and surfaces failback notes", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(join(workspace, ".prowl-review.yml"), "resilience:\n  failback:\n    enabled: true\n");
+    const runReview = vi.fn(async (_input: unknown, options: RunReviewOptions) => {
+      options.failback?.onFailback?.({
+        provider: "anthropic",
+        from: "claude-sonnet-4-6",
+        to: "claude-sonnet-4-5",
+        error: new Error("429")
+      });
+      return reviewResult({ findings: [finding()] });
+    });
+    const { deps: d, out } = deps({ runReview });
+
+    await runLocalReview({ base: "main" }, d);
+
+    expect(runReview.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        failback: expect.objectContaining({ onFailback: expect.any(Function) })
+      })
+    );
+    expect(out.join("\n")).toContain("fell back from `claude-sonnet-4-6` to `claude-sonnet-4-5`");
   });
 
   it("does not create the default usage log for explicit head reviews", async () => {

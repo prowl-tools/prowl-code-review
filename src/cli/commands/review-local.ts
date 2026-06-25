@@ -17,6 +17,7 @@ import { gatherContext, ContextRetrievalError, type RetrievalLimits } from "../.
 import { buildGroundingSummary, gatherGrounding } from "../../grounding/index.js";
 import { runReview, type ReviewInput, type ReviewResult } from "../../review/run-review.js";
 import { emptyUsage, type TokenUsage } from "../../providers/index.js";
+import type { FailbackEvent, FailbackOptions } from "../../providers/failback.js";
 import { estimateCost, formatCostLine, resolveTokenBudget, totalTokens } from "../../cost/pricing.js";
 import { appendUsageRecord, toUsageRecord } from "../../cost/usage-log.js";
 import { SEVERITY_ORDER, type Finding, type Severity } from "../../review/findings.js";
@@ -266,6 +267,26 @@ function riskTierNotes(
   ];
 }
 
+/** Notes for cross-generation failbacks that occurred during a local review (#17). */
+function failbackNotes(events: FailbackEvent[]): string[] {
+  if (events.length === 0) {
+    return [];
+  }
+  const seen = new Set<string>();
+  const notes: string[] = [];
+  for (const event of events) {
+    const key = `${event.provider}:${event.from}->${event.to}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    notes.push(
+      `Provider overload (#17): ${event.provider} fell back from \`${event.from}\` to \`${event.to}\` after retries; review ran on the older model.`
+    );
+  }
+  return notes;
+}
+
 /** Resolve local-mode config without trusting auto-discovered fork checkout files. */
 function resolveLocalConfigLoadOptions(
   options: LocalReviewCommandOptions,
@@ -502,6 +523,10 @@ export async function runLocalReview(
   }
 
   const { guidelines, learnedPatterns } = resolveLocalGuidance(root, env);
+  const failbackEvents: FailbackEvent[] = [];
+  const failback: FailbackOptions | undefined = resolved.failback
+    ? { onFailback: (event) => failbackEvents.push(event) }
+    : undefined;
 
   let usage = emptyUsage();
   let context: string | undefined;
@@ -554,10 +579,13 @@ export async function runLocalReview(
       maxFindings: resolved.maxFindings,
       verify: resolved.verify,
       verifyConfidence: resolved.verifyConfidence,
-      maxTokens: reviewBudgetTokens
+      maxTokens: reviewBudgetTokens,
+      ...(failback ? { failback } : {})
     }
   );
   usage = addUsage(usage, reviewResult.usage);
+
+  notes.push(...failbackNotes(failbackEvents));
 
   // Degraded passes / verification are operational notes, not silent drops (#56).
   for (const pass of reviewResult.passes) {
