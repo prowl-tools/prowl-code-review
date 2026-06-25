@@ -132,6 +132,17 @@ describe("debug trace", () => {
     expect(JSON.parse(lines[0])).toMatchObject({ event: { type: "run-end" } });
   });
 
+  it("writes workspace-relative trace paths inside the workspace", async () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
+    const path = join(workspace, "traces", "relative.jsonl");
+    const sink = createJsonlSink("traces/relative.jsonl", { workspace });
+
+    sink({ type: "run-end", findings: 0, posted: false });
+
+    const lines = await waitForTrace(path, 1);
+    expect(JSON.parse(lines[0])).toMatchObject({ event: { type: "run-end" } });
+  });
+
   it("rejects symlinked workspace paths at write time", async () => {
     const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-workspace-"));
     const outside = mkdtempSync(join(tmpdir(), "prowl-debug-outside-"));

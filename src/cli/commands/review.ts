@@ -448,10 +448,16 @@ export function resolveDebugLogPath(
     config.debug?.path ??
     DEFAULT_DEBUG_LOG_FILENAME;
   const resolvedPath = resolve(workspaceRoot, requested);
-  if (
-    !isWorkspaceConfinedPath(resolvedPath, workspaceRoot) ||
-    hasSymlinkComponent(resolvedPath, workspaceRoot, { allowMissingTail: true })
-  ) {
+  if (!isWorkspaceConfinedPath(resolvedPath, workspaceRoot)) {
+    return null;
+  }
+  let includesSymlink: boolean;
+  try {
+    includesSymlink = hasSymlinkComponent(resolvedPath, workspaceRoot, { allowMissingTail: true });
+  } catch {
+    return null;
+  }
+  if (includesSymlink) {
     return null;
   }
   return resolvedPath;

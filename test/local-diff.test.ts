@@ -107,6 +107,19 @@ describe("resolveLocalDiff", () => {
     ]);
   });
 
+  it("ignores the active custom debug trace when checking working-tree untracked files", async () => {
+    const exec = vi.fn().mockResolvedValueOnce("traces/local.jsonl\0").mockResolvedValueOnce("DIFF");
+
+    await expect(
+      resolveLocalDiff({
+        base: "main",
+        cwd: "/repo",
+        generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).resolves.toBe("DIFF");
+  });
+
   it("passes refs after --end-of-options so ref names cannot be parsed as git options", async () => {
     const exec = vi.fn().mockResolvedValue("");
     await resolveLocalDiff({ base: "--help", head: "--stat", cwd: "/repo", exec });
@@ -225,6 +238,23 @@ describe("assertLocalHeadMatchesCheckout", () => {
       /requires a clean worktree/
     );
     expect(exec).toHaveBeenCalledTimes(3);
+  });
+
+  it("allows an explicit head when only the active custom debug trace is untracked", async () => {
+    const exec = vi
+      .fn()
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("abc123\n")
+      .mockResolvedValueOnce("?? traces/local.jsonl\n")
+      .mockResolvedValueOnce("");
+    await expect(
+      assertLocalHeadMatchesCheckout({
+        cwd: "/repo",
+        head: "feature",
+        generatedOutputPaths: ["/repo/traces/local.jsonl"],
+        exec
+      })
+    ).resolves.toBeUndefined();
   });
 
   it("rejects untracked review-readable files for an explicit head", async () => {

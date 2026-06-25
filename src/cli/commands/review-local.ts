@@ -368,8 +368,13 @@ export async function runLocalReview(
 
   const base = options.base?.trim() || "main";
   const head = options.head?.trim() || undefined;
+  const preConfigDebugLogPath = resolveDebugLogPath(options, {}, root, env);
   try {
-    await resolveHead({ head, cwd: root });
+    await resolveHead({
+      head,
+      cwd: root,
+      generatedOutputPaths: preConfigDebugLogPath ? [preConfigDebugLogPath] : []
+    });
   } catch (error) {
     if (error instanceof LocalDiffError) {
       err(`prowl-review: ${error.message}`);
@@ -380,6 +385,7 @@ export async function runLocalReview(
 
   const { config } = loadConfig(resolveLocalConfigLoadOptions(options, root, env));
   const failOn = parseMinSeverity(options.failOn);
+  const debugLogPath = resolveDebugLogPath(options, config, root, env);
 
   // Reuse the GitHub command's flag→option resolution. Workspace execution is
   // still opt-in locally because repo config can run code via linters/plugins.
@@ -400,7 +406,12 @@ export async function runLocalReview(
 
   let rawDiff: string;
   try {
-    rawDiff = await resolveDiff({ base, head, cwd: root });
+    rawDiff = await resolveDiff({
+      base,
+      head,
+      cwd: root,
+      generatedOutputPaths: debugLogPath ? [debugLogPath] : []
+    });
   } catch (error) {
     if (error instanceof LocalDiffError) {
       err(`prowl-review: ${error.message}`);
@@ -518,7 +529,6 @@ export async function runLocalReview(
 
   // Debug/verbose tracing (#49): local mode has its own orchestration path, so
   // it creates and feeds the sink directly while keeping stdout clean for --json.
-  const debugLogPath = resolveDebugLogPath(options, config, root, env);
   let debug: DebugSink | undefined;
   if (debugLogPath) {
     debug = createJsonlSink(debugLogPath, { workspace: root });
