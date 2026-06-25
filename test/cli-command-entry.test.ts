@@ -100,13 +100,27 @@ describe("command CLI entrypoint", () => {
     tempDirs.length = 0;
   });
 
-  it("uses the workflow head-repository signal for chat config loading without fetching PR metadata", async () => {
+  it("validates the same-repo workflow head-repository signal before chat config loading", async () => {
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Same-repo PR",
+        body: null,
+        base: { sha: "base", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: { sha: "head", repo: { full_name: "prowl-tools/prowl-code-review", fork: false } },
+        draft: false,
+        state: "open",
+        user: { login: "maintainer" },
+        changed_files: 1
+      }
+    });
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
     const command = buildCommandCommand();
 
     await command.parseAsync(["node", "command"]);
 
     const octokit = mocks.createOctokit.mock.results[0].value;
-    expect(octokit.rest.pulls.get).not.toHaveBeenCalled();
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
     expect(mocks.fetchPullRequest).toHaveBeenCalledTimes(1);
     expect(mocks.generateChatReply.mock.calls[0][1].config.provider).toBe("gemini");
     expect(mocks.postPullRequestComment).toHaveBeenCalledWith(
