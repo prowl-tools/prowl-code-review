@@ -435,6 +435,58 @@ describe("review command helpers", () => {
     expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
   });
 
+  it("fetches pull request metadata when event repo metadata is absent", async () => {
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base-sha", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: { sha: "head-sha", repo: { full_name: "contributor/prowl-code-review", fork: true } },
+        state: "open",
+        user: null
+      }
+    });
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: true, hasKey: false, skip: true });
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+  });
+
+  it("uses the reviewed head repository env for comment-triggered fork decisions without fetching", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "comment.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } }
+      })
+    );
+    const pullsGet = vi.fn();
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
+        PROWL_REVIEWED_HEAD_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: false, skip: false });
+    expect(pullsGet).not.toHaveBeenCalled();
+  });
+
   it("treats fork-decision metadata fetch failures as untrusted", async () => {
     const dir = tempDir();
     const eventPath = join(dir, "comment.json");

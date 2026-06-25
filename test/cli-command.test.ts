@@ -743,6 +743,7 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("[.base.sha, .head.sha, .head.repo.full_name] | @tsv");
     expect(workflow).toContain("Failed to resolve complete PR metadata");
     expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
+    expect(workflow).toContain("echo \"head_repo=${head_repo}\"");
     expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
     expect(workflow).toContain("action_file=\"action.yml\"");
     expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
@@ -756,5 +757,6 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
+    expect(workflow).toContain("PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}");
   });
 });
