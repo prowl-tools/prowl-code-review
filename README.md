@@ -230,6 +230,16 @@ jobs:
 > repo's context. prowl-review never executes the fork's code, but you should not
 > add other steps that run untrusted PR code in this workflow.
 
+## Install (CLI)
+
+```bash
+npm install -g prowl-review     # or run ad hoc with: npx prowl-review …
+# Homebrew:
+brew install prowl-tools/tap/prowl-review
+```
+
+Requires Node.js ≥ 20. The GitHub Action (above) needs no install.
+
 ## Local pre-push review (CLI)
 
 Run the **same** review engine against a local git diff before you open a PR —

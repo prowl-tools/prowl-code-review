@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- npm + Homebrew distribution (backlog #42): a tag-triggered release pipeline. New
+  `.github/workflows/publish.yml` fires on a `v*.*.*` tag, verifies the tag matches `package.json`, runs
+  `npm ci` → build → lint → test, publishes to npm with provenance (`npm publish --provenance --access
+  public`, OIDC via `id-token: write`, `NPM_TOKEN` secret), and creates a GitHub Release from the matching
+  `CHANGELOG.md` section. The release notes come from a new, unit-tested `scripts/changelog-section.mjs`
+  (extracts `## [X.Y.Z]`, falls back to `## [Unreleased]`). Made the package publish-ready
+  (`publishConfig.access: public`; the `prowl-review` name is free on npm). Added a Homebrew formula template
+  (`packaging/homebrew/prowl-review.rb`, for the separate `homebrew-tap` repo), a `docs/releasing.md`
+  maintainer guide, and a README **Install (CLI)** section (`npm i -g prowl-review` / `npx` / `brew`).
 - Repo hygiene & demo (backlog #41): OSS-credibility scaffolding for the public repo. Added
   `CONTRIBUTING.md` (setup, project layout, conventions, the Definition of Done, how to extend a
   provider/specialist/grounding runner), `SECURITY.md` (private vuln reporting + the BYOK/secret/trust model +
