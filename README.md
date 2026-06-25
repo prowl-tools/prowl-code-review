@@ -176,6 +176,59 @@ jobs:
           workspace-path: ${{ github.workspace }}/pr-head
 ```
 
+## Fork pull requests (#20)
+
+GitHub does **not** share repository secrets (your `PROWL_AI_KEY`) with workflows
+triggered by `pull_request` from a **fork**, and the auto-provisioned
+`GITHUB_TOKEN` is read-only there. prowl-review handles this safely:
+
+- **Default — skip with a clear message.** On a fork PR with no provider key,
+  prowl-review **skips cleanly** (no failure) instead of crashing on the missing
+  key. The sample workflow's job-level
+  `if: …head.repo.full_name == github.repository` already fences forks out; the
+  tool-level skip is the backstop if that guard is removed.
+- **No trust of fork code.** When prowl-review *does* run on a fork, the fork
+  checkout is never trusted: repo-local linters/config don't execute
+  (`--trust-workspace` is force-disabled), and `.prowl-review.yml` is **not**
+  auto-discovered from the fork checkout — only an explicit, maintainer-set
+  `config-path` (from the trusted base) is honored. Your key is only ever sent to
+  your provider, never to fork code.
+
+To **review fork PRs** anyway, run from a `pull_request_target` workflow, which
+provides a write token and secrets while checking out the trusted base. Check out
+the PR head to a separate path and pass it as `workspace-path` (context/grounding
+only — still untrusted), and load config from the base:
+
+```yaml
+# .github/workflows/prowl-review-forks.yml
+on:
+  pull_request_target:
+    types: [opened, synchronize, ready_for_review, reopened]
+permissions:
+  pull-requests: write
+  issues: write
+  contents: read
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4          # trusted base (config + guidelines)
+      - uses: actions/checkout@v4          # untrusted PR head, for context only
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: pr-head
+          persist-credentials: false
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          config-path: ${{ github.workspace }}/.prowl-review.yml
+          workspace-path: ${{ github.workspace }}/pr-head
+```
+
+> ⚠️ `pull_request_target` runs with secrets and a write token in the **base**
+> repo's context. prowl-review never executes the fork's code, but you should not
+> add other steps that run untrusted PR code in this workflow.
+
 ## Local pre-push review (CLI)
 
 Run the **same** review engine against a local git diff before you open a PR —

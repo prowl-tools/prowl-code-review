@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Fork-PR handling / security model (backlog #20): defined, safe behavior when a pull request comes from a
+  fork. On a fork PR with **no provider key** — the normal case, since GitHub doesn't share secrets with fork
+  `pull_request` runs — prowl-review now **skips with a clear message** (and a tolerant neutral check run)
+  instead of crashing on the missing key; the skip happens before any prior-state fetch. When a fork *is*
+  reviewed (e.g. via `pull_request_target`, where a key + write token are present) it logs that the fork is
+  untrusted and proceeds without trusting fork code. Hardened config loading: `.prowl-review.yml` is **no
+  longer auto-discovered** from a fork checkout (only an explicit, maintainer-set `config-path` is honored on
+  forks), closing a review-policy-tampering vector — complementing the existing `--trust-workspace`
+  force-off on forks. New `resolveForkReviewDecision` + `hasAnyProviderKey` helpers; README "Fork pull
+  requests" section with the `pull_request_target` pattern.
 - Debug/verbose mode (backlog #49): opt-in structured run tracing for diagnosing odd reviews. The `--debug
   [path]` flag (or `PROWL_DEBUG`/`PROWL_DEBUG_LOG` env, `debug.enabled`/`debug.path` config, or the Action
   `debug` input) writes a **line-per-event JSONL trace** of what a run actually did: the assembled prompts
