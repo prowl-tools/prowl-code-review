@@ -1,0 +1,44 @@
+# Example: automatic prowl-review on pull requests (single provider).
+# Copy to .github/workflows/prowl-review.yml in your repository.
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# Serialize auto reviews with bot commands for the same PR; prowl-review re-checks
+# the PR head before publishing and skips superseded runs.
+concurrency:
+  group: prowl-review-${{ github.event.pull_request.number }}
+  queue: max
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: write   # post the review + inline comments
+  issues: write          # create/update the summary comment
+  checks: write          # optional merge-gate check run
+  contents: read
+
+jobs:
+  review:
+    # Fork PRs don't receive secrets; prowl-review also skips a keyless fork run
+    # safely if this guard is removed. See SECURITY.md / README "Fork pull requests".
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Optional: load .prowl-review.yml from the TRUSTED base branch, not PR code.
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: prowl-review-config
+          persist-credentials: false
+
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          # config-path: prowl-review-config/.prowl-review.yml
+          # ai-provider: anthropic   # optional: anthropic | openai | gemini
+          # ai-model: claude-...     # optional model override
+          # min-severity: major      # optional: only surface major+ findings

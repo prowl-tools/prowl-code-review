@@ -1,0 +1,36 @@
+# Example .prowl-review.yml — all keys optional; sensible defaults apply.
+# API keys are NEVER read from this file — only from env (PROWL_AI_KEY /
+# PROWL_AI_KEY_<PROVIDER>). Run `prowl-review init` for the fully-annotated template.
+
+# --- Provider (single-provider reviews) --------------------------------------
+provider: anthropic            # anthropic | openai | gemini (default: anthropic)
+# model: claude-opus-4-8       # optional; provider default otherwise
+
+# --- Multi-provider ensemble (#53) -------------------------------------------
+# Review with several models at once; findings are consolidated + a 🤝 badge
+# marks agreement. Needs a key per provider (PROWL_AI_KEY_ANTHROPIC, …).
+# ensemble:
+#   enabled: true
+#   providers:
+#     - provider: anthropic
+#       model: claude-opus-4-8
+#     - provider: gemini
+#       model: gemini-2.5-pro
+
+# --- Review tuning -----------------------------------------------------------
+# review:
+#   minSeverity: minor         # report at/above: critical | major | minor | trivial | info
+#   reviewDrafts: false        # also auto-review draft PRs
+#   auto: true                 # false = on-demand only (@prowl-review review)
+
+# --- Optional features (all opt-in, default off) -----------------------------
+# prDescription:               # fill an empty PR body from the diff (#33)
+#   enabled: true
+# issueValidation:             # check the PR against a linked issue's criteria (#32)
+#   enabled: true
+# resilience:                  # fall back to an older same-family model on overload (#17)
+#   failback:
+#     enabled: true
+# checkRun:                    # merge-gate check run (needs checks: write)
+#   enabled: true
+#   failOn: major
