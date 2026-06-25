@@ -366,6 +366,10 @@ describe("review command helpers", () => {
       cwd: workspace,
       disabled: true
     });
+    expect(resolveConfigLoadOptions({ config: join(workspace, "nested", ".prowl-review.yml") }, workspace, forkEnv)).toEqual({
+      cwd: workspace,
+      disabled: true
+    });
     expect(
       resolveConfigLoadOptions({}, workspace, { ...forkEnv, PROWL_CONFIG_PATH: join(workspace, ".prowl-review.yml") })
     ).toEqual({ cwd: workspace, disabled: true });
