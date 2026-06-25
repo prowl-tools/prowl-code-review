@@ -5,8 +5,10 @@ name: prowl-review command
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
+
+# This starter handles top-level PR comments only. Adding
+# pull_request_review_comment enables inline questions/ignore replies, but every
+# inline review comment creates a workflow run.
 
 permissions:
   pull-requests: write
@@ -18,7 +20,7 @@ jobs:
   command:
     # Only honor mentions from a trusted commenter (owner/member/collaborator).
     if: |
-      (github.event.issue.pull_request || github.event.pull_request) &&
+      github.event.issue.pull_request &&
       github.event.comment.user.type != 'Bot' &&
       (
         github.event.comment.author_association == 'OWNER' ||
@@ -29,7 +31,7 @@ jobs:
     # Serialize accepted command jobs with auto reviews for the same PR.
     # The guard above filters unrelated comment events before command work runs.
     concurrency:
-      group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
+      group: prowl-review-${{ github.event.issue.number }}
       queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
@@ -38,7 +40,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
+          pr_number="${{ github.event.issue.number }}"
           base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.base.sha')"
           head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
           head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
