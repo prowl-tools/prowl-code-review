@@ -42,7 +42,8 @@ curl -sL "$url" | shasum -a 256
 
 Copy [`packaging/homebrew/prowl-review.rb`](../packaging/homebrew/prowl-review.rb)
 to `Formula/prowl-review.rb` in `Prowl-qa/homebrew-tap` (tap name: `Prowl-qa/tap`),
-set `url` to the tarball URL and `sha256` to the hash above, and open a PR on the tap.
+set `TARBALL_URL` to the tarball URL and `TARBALL_SHA256` to the hash above, and
+open a PR on the tap. The template raises at load time until both constants are set.
 Verify with:
 
 ```bash

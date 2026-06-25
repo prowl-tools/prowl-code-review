@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+
 /**
  * Extract a single version's release notes from CHANGELOG.md (#42).
  *
@@ -55,16 +59,14 @@ function findSection(changelog, headingRe) {
   return body.join("\n");
 }
 
-// CLI: `node scripts/changelog-section.mjs <version> [path]` → prints notes to stdout.
-// Use pathToFileURL so the main-module check is correct on paths with spaces/Windows.
-if (process.argv[1] && import.meta.url === (await import("node:url")).pathToFileURL(process.argv[1]).href) {
+// CLI: `node scripts/changelog-section.mjs <version> [path]` -> prints notes to stdout.
+if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const version = process.argv[2];
   if (!version) {
     console.error("usage: changelog-section.mjs <version> [changelog-path]");
     process.exit(2);
   }
   const path = process.argv[3] ?? "CHANGELOG.md";
-  const { readFileSync } = await import("node:fs");
   let changelog = "";
   try {
     changelog = readFileSync(path, "utf8");
