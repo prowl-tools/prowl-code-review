@@ -285,14 +285,12 @@ function forkMetadataFromEvent(
   env: NodeJS.ProcessEnv = process.env
 ): ForkRepositoryMetadata {
   const pullRequest = event?.pull_request;
-  const headRepoFullName =
-    pullRequest?.head?.repo?.full_name ?? env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim() ?? undefined;
   const baseRepoFullName =
     pullRequest?.base?.repo?.full_name ??
     event?.repository?.full_name ??
-    (event || headRepoFullName ? env.GITHUB_REPOSITORY : undefined);
+    (event ? env.GITHUB_REPOSITORY : undefined);
   return {
-    headRepoFullName,
+    headRepoFullName: pullRequest?.head?.repo?.full_name,
     baseRepoFullName,
     headRepoFork: pullRequest?.head?.repo?.fork
   };
@@ -319,10 +317,10 @@ function needsPullRequestFetchForForkDecision(
   event: GitHubEventPayload | undefined,
   env: NodeJS.ProcessEnv
 ): boolean {
-  if (env.PROWL_REVIEWED_HEAD_REPOSITORY?.trim()) {
-    return false;
-  }
   if (!event) {
+    return true;
+  }
+  if (!event.pull_request && !event.issue?.pull_request && env.GITHUB_EVENT_NAME !== "pull_request_review_comment") {
     return true;
   }
   const eventHeadRepo = event?.pull_request?.head?.repo;
@@ -406,10 +404,17 @@ export function resolveForkReviewDecision(
 
 export function resolveForkReviewDecisionFromEvent(env: NodeJS.ProcessEnv = process.env): ForkReviewDecision | undefined {
   const event = readGitHubEventPayload(env);
+  const metadata = forkMetadataFromEvent(event, env);
   if (needsPullRequestFetchForForkDecision(event, env)) {
+    const baseRepository =
+      normalizeRepositoryName(metadata.baseRepoFullName) ?? normalizeRepositoryName(env.GITHUB_REPOSITORY);
+    const headRepository = normalizeRepositoryName(env.PROWL_REVIEWED_HEAD_REPOSITORY);
+    if (baseRepository && headRepository && baseRepository !== headRepository) {
+      return buildForkReviewDecision(true, env);
+    }
     return undefined;
   }
-  return buildForkReviewDecision(isForkRepository(forkMetadataFromEvent(event, env), env), env);
+  return buildForkReviewDecision(isForkRepository(metadata, env), env);
 }
 
 export async function resolveForkReviewDecisionForRun(

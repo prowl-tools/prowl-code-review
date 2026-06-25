@@ -498,7 +498,37 @@ describe("review command helpers", () => {
     expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
   });
 
-  it("uses the reviewed head repository env for comment-triggered fork decisions without fetching", async () => {
+  it("fetches pull request metadata for non-PR event payloads", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "workflow.json");
+    writeFileSync(eventPath, JSON.stringify({ repository: { full_name: "prowl-tools/prowl-code-review" } }));
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Same-repo PR",
+        body: null,
+        base: { sha: "base-sha", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: { sha: "head-sha", repo: { full_name: "prowl-tools/prowl-code-review", fork: false } },
+        state: "open",
+        user: null
+      }
+    });
+    const octokit = { rest: { pulls: { get: pullsGet } } } as unknown as OctokitLike;
+
+    const decision = await resolveForkReviewDecisionForRun(
+      octokit,
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      {
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
+      } as NodeJS.ProcessEnv
+    );
+
+    expect(decision).toMatchObject({ isFork: false, skip: false });
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+  });
+
+  it("uses a mismatched reviewed head repository env as a fork signal without fetching", async () => {
     const dir = tempDir();
     const eventPath = join(dir, "comment.json");
     writeFileSync(
@@ -516,11 +546,11 @@ describe("review command helpers", () => {
       {
         GITHUB_EVENT_PATH: eventPath,
         GITHUB_REPOSITORY: "prowl-tools/prowl-code-review",
-        PROWL_REVIEWED_HEAD_REPOSITORY: "prowl-tools/prowl-code-review"
+        PROWL_REVIEWED_HEAD_REPOSITORY: "contributor/prowl-code-review"
       } as NodeJS.ProcessEnv
     );
 
-    expect(decision).toMatchObject({ isFork: false, skip: false });
+    expect(decision).toMatchObject({ isFork: true, hasKey: false, skip: true });
     expect(pullsGet).not.toHaveBeenCalled();
   });
 
