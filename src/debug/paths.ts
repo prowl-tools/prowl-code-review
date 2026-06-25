@@ -45,6 +45,47 @@ export function hasSymlinkComponent(
   return false;
 }
 
+function assertDirectoryWithoutSymlink(path: string): void {
+  const stat = lstatSync(path);
+  if (stat.isSymbolicLink()) {
+    throw new Error("Debug trace path includes a symlink.");
+  }
+  if (!stat.isDirectory()) {
+    throw new Error("Debug trace parent is not a directory.");
+  }
+}
+
+function ensureDirectoryWithoutSymlinks(path: string, workspace: string): void {
+  const workspaceRoot = resolve(workspace);
+  const resolvedPath = resolve(workspaceRoot, path);
+  const relativePath = relative(workspaceRoot, resolvedPath);
+  const segments = relativePath.split(/[\\/]+/).filter(Boolean);
+  let current = workspaceRoot;
+
+  for (const segment of segments) {
+    current = join(current, segment);
+    try {
+      assertDirectoryWithoutSymlink(current);
+      continue;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw error;
+      }
+    }
+
+    try {
+      mkdirSync(current, { mode: 0o700 });
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "EEXIST") {
+        throw error;
+      }
+    }
+    assertDirectoryWithoutSymlink(current);
+  }
+}
+
 /**
  * Prepare a debug trace path for writing and assert the resolved parent/file
  * remain inside the workspace without symlinked components.
@@ -56,7 +97,7 @@ export function prepareDebugLogPathForWrite(path: string, workspace: string): st
     throw new Error("Debug trace path escapes the workspace.");
   }
 
-  mkdirSync(dirname(resolvedPath), { recursive: true });
+  ensureDirectoryWithoutSymlinks(dirname(resolvedPath), workspaceRoot);
 
   if (hasSymlinkComponent(resolvedPath, workspaceRoot, { allowMissingTail: true })) {
     throw new Error("Debug trace path includes a symlink.");
