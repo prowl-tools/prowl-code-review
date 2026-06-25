@@ -1,9 +1,10 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { z } from "zod";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
 import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
-import type { PullRequestRef } from "../../github/diff.js";
+import { fetchPullRequestMeta, type PullRequestMeta, type PullRequestRef } from "../../github/diff.js";
 import { fetchPriorReviewState } from "../../github/review.js";
 import {
   ReviewPublishError,
@@ -16,6 +17,7 @@ import {
   resolveEnsembleConfigs,
   isEnsembleActive,
   providerKeyEnvVar,
+  PROVIDER_NAMES,
   type ProviderConfig,
   type ProviderDefaults,
   type ProviderName,
@@ -73,20 +75,10 @@ export function resolvePullNumber(flag?: string): number {
     }
     return parsed;
   }
-  const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (eventPath && existsSync(eventPath)) {
-    try {
-      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-        pull_request?: { number?: number };
-        number?: number;
-      };
-      const number = event.pull_request?.number ?? event.number;
-      if (number) {
-        return number;
-      }
-    } catch {
-      // fall through to the error below
-    }
+  const event = readGitHubEventPayload(process.env);
+  const number = event?.pull_request?.number ?? event?.number;
+  if (number) {
+    return number;
   }
   throw new Error("Pull request number required: pass --pr <n> (or run on a pull_request event).");
 }
@@ -202,28 +194,252 @@ export function resolveProviderDefaults(
   return { provider: selected.provider, model: selected.model };
 }
 
-/** Detect fork PR events where repo-local tooling must not be trusted. */
-export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): boolean {
+const gitHubEventRepoSchema = z
+  .object({
+    fork: z.boolean().optional(),
+    full_name: z.string().optional()
+  })
+  .passthrough();
+
+const gitHubEventPayloadSchema = z
+  .object({
+    pull_request: z
+      .object({
+        head: z
+          .object({
+            repo: gitHubEventRepoSchema.nullable().optional(),
+            sha: z.string().optional()
+          })
+          .passthrough()
+          .optional(),
+        base: z.object({ repo: gitHubEventRepoSchema.nullable().optional() }).passthrough().optional(),
+        draft: z.boolean().optional(),
+        number: z.number().optional()
+      })
+      .passthrough()
+      .optional(),
+    issue: z.object({ pull_request: z.unknown().optional() }).passthrough().optional(),
+    repository: z.object({ full_name: z.string().optional() }).passthrough().optional(),
+    number: z.number().optional()
+  })
+  .passthrough();
+
+type GitHubEventPayload = z.infer<typeof gitHubEventPayloadSchema>;
+
+interface ForkRepositoryMetadata {
+  headRepoFullName?: string;
+  baseRepoFullName?: string;
+  headRepoFork?: boolean;
+}
+
+function normalizeRepositoryName(value: string | undefined): string | undefined {
+  return value?.trim().toLowerCase() || undefined;
+}
+
+function isWorkspacePath(path: string, root: string): boolean {
+  const workspace = resolve(root);
+  const candidate = resolve(path);
+  const rel = relative(workspace, candidate);
+  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
+}
+
+function resolveConfigPath(configPath: string, baseDir: string): string {
+  return isAbsolute(configPath) ? resolve(configPath) : resolve(baseDir, configPath);
+}
+
+/** Resolve the trusted checkout used for action-supplied config paths. */
+export function resolveTrustedConfigBase(env: NodeJS.ProcessEnv = process.env): string {
+  return env.GITHUB_WORKSPACE?.trim() || process.cwd();
+}
+
+function readGitHubEventPayload(env: NodeJS.ProcessEnv = process.env): GitHubEventPayload | undefined {
   const eventPath = env.GITHUB_EVENT_PATH;
   if (!eventPath || !existsSync(eventPath)) {
-    return false;
+    if (env.GITHUB_ACTIONS === "true" && eventPath) {
+      console.warn(`prowl-review: could not read GitHub event payload at ${eventPath}; fork detection may be incomplete.`);
+    }
+    return undefined;
   }
   try {
-    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-      pull_request?: { head?: { repo?: { fork?: boolean; full_name?: string } } };
-    };
-    const headRepo = event.pull_request?.head?.repo;
-    if (!headRepo) {
-      return false;
+    const parsed = JSON.parse(readFileSync(eventPath, "utf8"));
+    const result = gitHubEventPayloadSchema.safeParse(parsed);
+    if (!result.success) {
+      if (env.GITHUB_ACTIONS === "true") {
+        console.warn(
+          `prowl-review: GitHub event payload at ${eventPath} did not match the expected shape; fork detection may be incomplete.`
+        );
+      }
+      return undefined;
     }
-    if (headRepo.fork === true) {
-      return true;
-    }
-    const baseRepository = env.GITHUB_REPOSITORY?.trim().toLowerCase();
-    const headRepository = headRepo.full_name?.trim().toLowerCase();
-    return Boolean(baseRepository && headRepository && baseRepository !== headRepository);
+    return result.data;
   } catch {
+    if (env.GITHUB_ACTIONS === "true") {
+      console.warn(`prowl-review: could not parse GitHub event payload at ${eventPath}; fork detection may be incomplete.`);
+    }
+    return undefined;
+  }
+}
+
+function forkMetadataFromEvent(
+  event: GitHubEventPayload | undefined,
+  env: NodeJS.ProcessEnv = process.env
+): ForkRepositoryMetadata {
+  const pullRequest = event?.pull_request;
+  const baseRepoFullName =
+    pullRequest?.base?.repo?.full_name ??
+    event?.repository?.full_name ??
+    (event ? env.GITHUB_REPOSITORY : undefined);
+  return {
+    headRepoFullName: pullRequest?.head?.repo?.full_name,
+    baseRepoFullName,
+    headRepoFork: pullRequest?.head?.repo?.fork
+  };
+}
+
+function isForkRepository(metadata: ForkRepositoryMetadata, env: NodeJS.ProcessEnv): boolean {
+  const explicitBaseRepository = normalizeRepositoryName(metadata.baseRepoFullName);
+  const baseRepository = explicitBaseRepository ?? normalizeRepositoryName(env.GITHUB_REPOSITORY);
+  const headRepository = normalizeRepositoryName(metadata.headRepoFullName);
+  const hasRepositorySignal =
+    Boolean(explicitBaseRepository || headRepository) || typeof metadata.headRepoFork === "boolean";
+  if (!hasRepositorySignal) {
     return false;
+  }
+  if (baseRepository && headRepository) {
+    return baseRepository !== headRepository;
+  }
+  // Missing repository identities are only trusted when GitHub explicitly
+  // says the head repository is not a fork. Otherwise fail closed.
+  return metadata.headRepoFork !== false;
+}
+
+function needsPullRequestFetchForForkDecision(
+  event: GitHubEventPayload | undefined,
+  env: NodeJS.ProcessEnv
+): boolean {
+  if (!event) {
+    return true;
+  }
+  if (!event.pull_request && !event.issue?.pull_request && env.GITHUB_EVENT_NAME !== "pull_request_review_comment") {
+    return true;
+  }
+  const eventHeadRepo = event?.pull_request?.head?.repo;
+  if (eventHeadRepo) {
+    return false;
+  }
+  if (eventHeadRepo === null) {
+    return true;
+  }
+  return Boolean(event.pull_request) || Boolean(event.issue?.pull_request) || env.GITHUB_EVENT_NAME === "pull_request_review_comment";
+}
+
+/** Detect fork PR events where repo-local tooling must not be trusted. */
+export function isForkPullRequestEvent(env: NodeJS.ProcessEnv = process.env): boolean {
+  const event = readGitHubEventPayload(env);
+  return isForkRepository(forkMetadataFromEvent(event, env), env);
+}
+
+/** True when any provider API key is present in the environment (generic or provider-scoped, #20). */
+export function hasAnyProviderKey(env: NodeJS.ProcessEnv = process.env): boolean {
+  if (env.PROWL_AI_KEY?.trim()) {
+    return true;
+  }
+  return PROVIDER_NAMES.some((provider) => env[providerKeyEnvVar(provider)]?.trim());
+}
+
+/** Fork-PR safety decision (#20): whether to review, and why not when skipped. */
+export interface ForkReviewDecision {
+  /** The PR head is a fork / different repo than the base. */
+  isFork: boolean;
+  /** A provider API key is available to this run. */
+  hasKey: boolean;
+  /** Skip the review entirely (a fork with no provider key can't run). */
+  skip: boolean;
+  /** Human-readable explanation for logs / the skip check run. */
+  reason: string;
+}
+
+/**
+ * Decide how to handle a (possibly fork) PR safely (#20).
+ *
+ * GitHub does not share repository secrets with `pull_request` runs from forks,
+ * so the provider key is typically absent there. Rather than crash on the
+ * missing key (a confusing failure), prowl-review **skips with a clear message**.
+ * A maintainer who wants fork reviews opts in via `pull_request_target` (write
+ * token + secrets, base checkout), where a key *is* present — then we review, but
+ * never trust the fork checkout (repo-local tooling/config stays off via
+ * {@link resolveReviewOptions}) and the key only ever reaches the provider, never
+ * fork code. A missing key on a **non-fork** PR is a real misconfiguration and is
+ * left to fail loudly downstream.
+ */
+function buildForkReviewDecision(isFork: boolean, env: NodeJS.ProcessEnv): ForkReviewDecision {
+  const hasKey = hasAnyProviderKey(env);
+  if (isFork && !hasKey) {
+    return {
+      isFork,
+      hasKey,
+      skip: true,
+      reason:
+        "Fork pull request without a provider key — GitHub does not share secrets with fork " +
+        "`pull_request` runs, so there's nothing to review with. Skipped (no failure)."
+    };
+  }
+  return {
+    isFork,
+    hasKey,
+    skip: false,
+    reason: isFork
+      ? "Fork pull request with a provider key (e.g. pull_request_target): reviewing with repo-local tooling untrusted."
+      : "Same-repo pull request."
+  };
+}
+
+export function resolveForkReviewDecision(
+  env: NodeJS.ProcessEnv = process.env,
+  metadata?: ForkRepositoryMetadata
+): ForkReviewDecision {
+  const isFork = metadata ? isForkRepository(metadata, env) : isForkPullRequestEvent(env);
+  return buildForkReviewDecision(isFork, env);
+}
+
+export function resolveForkReviewDecisionFromEvent(env: NodeJS.ProcessEnv = process.env): ForkReviewDecision | undefined {
+  const event = readGitHubEventPayload(env);
+  const metadata = forkMetadataFromEvent(event, env);
+  if (needsPullRequestFetchForForkDecision(event, env)) {
+    const baseRepository =
+      normalizeRepositoryName(metadata.baseRepoFullName) ?? normalizeRepositoryName(env.GITHUB_REPOSITORY);
+    const headRepository = normalizeRepositoryName(env.PROWL_REVIEWED_HEAD_REPOSITORY);
+    if (baseRepository && headRepository && baseRepository !== headRepository) {
+      return buildForkReviewDecision(true, env);
+    }
+    return undefined;
+  }
+  return buildForkReviewDecision(isForkRepository(metadata, env), env);
+}
+
+export async function resolveForkReviewDecisionForRun(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<ForkReviewDecision> {
+  const eventDecision = resolveForkReviewDecisionFromEvent(env);
+  if (eventDecision) {
+    return eventDecision;
+  }
+
+  try {
+    const meta: PullRequestMeta = await fetchPullRequestMeta(octokit, ref);
+    return resolveForkReviewDecision(env, {
+      baseRepoFullName: meta.baseRepoFullName,
+      headRepoFullName: meta.headRepoFullName,
+      headRepoFork: meta.headRepoFork
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `prowl-review: could not fetch pull request metadata for fork detection; treating ${ref.owner}/${ref.repo}#${ref.pull_number} as untrusted (${message}).`
+    );
+    return buildForkReviewDecision(true, env);
   }
 }
 
@@ -233,18 +449,7 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
   if (explicit) {
     return explicit;
   }
-  const eventPath = env.GITHUB_EVENT_PATH;
-  if (eventPath && existsSync(eventPath)) {
-    try {
-      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-        pull_request?: { head?: { sha?: string } };
-      };
-      return event.pull_request?.head?.sha?.trim() || undefined;
-    } catch {
-      // fall through to undefined
-    }
-  }
-  return undefined;
+  return readGitHubEventPayload(env)?.pull_request?.head?.sha?.trim() || undefined;
 }
 
 /**
@@ -253,18 +458,7 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
  * caller treats "unknown" as not-a-draft and reviews normally.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
-  const eventPath = env.GITHUB_EVENT_PATH;
-  if (!eventPath || !existsSync(eventPath)) {
-    return undefined;
-  }
-  try {
-    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-      pull_request?: { draft?: boolean };
-    };
-    return event.pull_request?.draft;
-  } catch {
-    return undefined;
-  }
+  return readGitHubEventPayload(env)?.pull_request?.draft;
 }
 
 interface ReviewCommandOptions {
@@ -333,7 +527,9 @@ function envString(value: string | undefined): string | undefined {
 export function resolveConfigLoadOptions(
   cli: ReviewCommandOptions,
   cwd: string,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  isFork = isForkPullRequestEvent(env),
+  configPathBase = resolveTrustedConfigBase(env)
 ): LoadConfigOptions {
   if (cli.config === false) {
     return { cwd, disabled: true };
@@ -341,10 +537,23 @@ export function resolveConfigLoadOptions(
 
   const configPath = typeof cli.config === "string" ? cli.config : envString(env.PROWL_CONFIG_PATH);
   if (configPath) {
-    return { cwd, configPath };
+    const resolvedConfigPath = resolveConfigPath(configPath, configPathBase);
+    if (isFork && isWorkspacePath(resolvedConfigPath, cwd)) {
+      return { cwd, disabled: true };
+    }
+    return { cwd, configPath: resolvedConfigPath };
   }
 
   if (truthyEnv(env.PROWL_NO_CONFIG)) {
+    return { cwd, disabled: true };
+  }
+
+  // Fork-PR safety (#20): never auto-discover `.prowl-review.yml` by searching up
+  // from the workspace on a fork PR — that checkout is untrusted and a fork could
+  // commit a config that weakens review policy. Explicit config paths inside the
+  // reviewed workspace are also untrusted; only out-of-workspace trusted inputs
+  // are honored on forks.
+  if (isFork) {
     return { cwd, disabled: true };
   }
 
@@ -475,7 +684,8 @@ export function resolveDebugLogPath(
 export function resolveReviewOptions(
   cli: ReviewCommandOptions,
   config: ProwlReviewConfig,
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  isFork = isForkPullRequestEvent(env)
 ): ResolvedReviewOptions {
   const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
   const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
@@ -499,7 +709,7 @@ export function resolveReviewOptions(
     }),
     skipGrounding:
       cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
-    trustWorkspace: requestedTrustWorkspace && !isForkPullRequestEvent(env),
+    trustWorkspace: requestedTrustWorkspace && !isFork,
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes
@@ -835,10 +1045,56 @@ export async function runReviewWithOptions(
   const ref = { owner, repo, pull_number: pullNumber };
   const octokit = createOctokit(token);
   const root = resolveWorkspace();
-  const { config } = loadConfig(resolveConfigLoadOptions(options, root));
+  const eventFork = resolveForkReviewDecisionFromEvent(process.env);
+  const safeConfigFork = eventFork?.isFork ?? true;
+  let { config } = loadConfig(
+    resolveConfigLoadOptions(options, root, process.env, safeConfigFork, resolveTrustedConfigBase())
+  );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
 
+  let fork = eventFork;
+  const resolveForkForReview = async (): Promise<ForkReviewDecision> => {
+    if (fork) {
+      return fork;
+    }
+    fork = await resolveForkReviewDecisionForRun(octokit, ref);
+    if (!fork.isFork) {
+      ({ config } = loadConfig(resolveConfigLoadOptions(options, root, process.env, false, resolveTrustedConfigBase())));
+    }
+    return fork;
+  };
+
+  const skipForkReview = async (decision: ForkReviewDecision): Promise<boolean> => {
+    if (!decision.skip) {
+      return false;
+    }
+    const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
+      checkRun: config.checkRun,
+      dryRun,
+      headSha: reviewedHeadSha,
+      title: "Fork pull request — review skipped",
+      summary:
+        "prowl-review skipped this fork pull request: GitHub does not share repository secrets " +
+        "(your `PROWL_AI_KEY`) with fork `pull_request` runs, so there is no key to review with.\n\n" +
+        "To review fork PRs, run prowl-review from a `pull_request_target` workflow (it provides a " +
+        "write token and secrets, checks out the trusted base, and never trusts the fork's code/config). " +
+        "See the README's fork-PR section."
+    });
+    console.log(`prowl-review: skipped fork pull request ${owner}/${repo}#${pullNumber} — ${decision.reason}`);
+    if (conclusion) {
+      console.log(`prowl-review: merge-gate check run → ${conclusion}`);
+    }
+    return true;
+  };
+
+  // Fork-PR safety (#20): a fork `pull_request` run gets no secrets, so there's
+  // no provider key to review with — skip with a clear message instead of
+  // crashing on the missing key. A fork reviewed via pull_request_target has a
+  // key (and a write token) and proceeds, with the fork checkout never trusted.
+  if (eventFork && (await skipForkReview(eventFork))) {
+    return;
+  }
   // The auto path (pull_request trigger) honors the per-PR pause (#26) and the
   // repo-level draft / on-demand controls (#28). An explicit `@prowl-review
   // review` clears respectPause, so it always runs — even on a draft.
@@ -863,7 +1119,20 @@ export async function runReviewWithOptions(
       }
       return;
     }
+  }
 
+  const forkDecision = await resolveForkForReview();
+  if (await skipForkReview(forkDecision)) {
+    return;
+  }
+  if (forkDecision.isFork) {
+    console.warn(
+      `prowl-review: reviewing a FORK pull request ${owner}/${repo}#${pullNumber} — repo-local linters/config ` +
+        "are NOT trusted, and your provider key is only ever sent to the provider, never to fork code."
+    );
+  }
+
+  if (runtime.respectPause) {
     // On-demand only (#28): auto-review disabled by config.
     if (config.review?.auto === false) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
@@ -917,7 +1186,7 @@ export async function runReviewWithOptions(
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
 
   const providerConfig = resolveProviderConfig(process.env, resolveProviderDefaults(config, process.env));
-  const resolved = resolveReviewOptions(options, config);
+  const resolved = resolveReviewOptions(options, config, process.env, forkDecision.isFork);
 
   // Multi-provider ensemble (#53): opt-in. Resolve per-provider keys from the env
   // and run the review across every provider that has one; <2 → normal review.
