@@ -77,6 +77,52 @@ describe("fetchPullRequest", () => {
     expect(result.meta.draft).toBe(false);
     expect(result.meta.changedFiles).toBe(0);
   });
+
+  it("tolerates null repository payloads without emitting repo metadata", async () => {
+    const { octokit } = mockOctokit(
+      {
+        number: 1,
+        title: "t",
+        body: null,
+        base: { sha: "b", repo: null },
+        head: { sha: "h", repo: null },
+        state: "open",
+        user: null
+      },
+      ""
+    );
+
+    const result = await fetchPullRequest(octokit, ref);
+    expect(result.meta).not.toHaveProperty("baseRepoFullName");
+    expect(result.meta).not.toHaveProperty("headRepoFullName");
+    expect(result.meta).not.toHaveProperty("headRepoFork");
+  });
+
+  it("derives repository full names from owner/name when full_name is absent or blank", async () => {
+    const { octokit } = mockOctokit(
+      {
+        number: 1,
+        title: "t",
+        body: null,
+        base: {
+          sha: "b",
+          repo: { owner: { login: "base-owner" }, name: "base-repo" }
+        },
+        head: {
+          sha: "h",
+          repo: { full_name: "  ", owner: { login: "head-owner" }, name: "head-repo" }
+        },
+        state: "open",
+        user: null
+      },
+      ""
+    );
+
+    const result = await fetchPullRequest(octokit, ref);
+    expect(result.meta.baseRepoFullName).toBe("base-owner/base-repo");
+    expect(result.meta.headRepoFullName).toBe("head-owner/head-repo");
+    expect(result.meta).not.toHaveProperty("headRepoFork");
+  });
 });
 
 describe("fetchPullRequestMeta", () => {
