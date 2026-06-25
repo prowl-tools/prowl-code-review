@@ -44,6 +44,14 @@ describe("debug path helpers", () => {
     expect(existsSync(join(workspace, "traces", "nested"))).toBe(true);
   });
 
+  it("prepares absolute paths that stay inside the workspace", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
+    const path = join(workspace, "traces", "absolute.jsonl");
+
+    expect(prepareDebugLogPathForWrite(path, workspace)).toBe(path);
+    expect(existsSync(join(workspace, "traces"))).toBe(true);
+  });
+
   it("rejects paths that escape the workspace", () => {
     const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
 
@@ -68,5 +76,12 @@ describe("debug path helpers", () => {
 
     expect(() => prepareDebugLogPathForWrite("trace.jsonl", workspace)).toThrow(/symlink/);
     expect(readFileSync(outsideTrace, "utf8")).toBe("outside");
+  });
+
+  it("rejects an existing non-directory parent component", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
+    writeFileSync(join(workspace, "traces"), "not a directory");
+
+    expect(() => prepareDebugLogPathForWrite("traces/run.jsonl", workspace)).toThrow(/not a directory/);
   });
 });
