@@ -2,19 +2,26 @@
 #
 # This file lives here as the canonical source; copy it to
 # `Formula/prowl-review.rb` in the Prowl-qa/homebrew-tap repo (tap name:
-# `Prowl-qa/tap`) on each release and fill in `url` + `sha256` for the
-# just-published npm tarball:
+# `Prowl-qa/tap`) on each release, then set `TARBALL_URL` and `TARBALL_SHA256`
+# below for the just-published npm tarball:
 #
 #   version=0.1.0
 #   url="https://registry.npmjs.org/prowl-review/-/prowl-review-${version}.tgz"
 #   curl -sL "$url" | shasum -a 256
 #
 # See docs/releasing.md for the full flow.
+TARBALL_URL = nil
+TARBALL_SHA256 = nil
+
+if TARBALL_URL.nil? || TARBALL_SHA256.nil?
+  raise "Set TARBALL_URL and TARBALL_SHA256 before publishing this Homebrew formula."
+end
+
 class ProwlReview < Formula
   desc "BYOK AI code review for pull requests (Claude/OpenAI/Gemini)"
   homepage "https://prowl.tools"
-  url "https://registry.npmjs.org/prowl-review/-/prowl-review-0.1.0.tgz"
-  sha256 "0" * 64 # Placeholder; replace with the npm tarball SHA before tapping.
+  url TARBALL_URL
+  sha256 TARBALL_SHA256
   license "Apache-2.0"
 
   depends_on "node@20"
