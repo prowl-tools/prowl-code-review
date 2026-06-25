@@ -56,6 +56,9 @@ All notable changes to Prowl Review will be documented in this file.
 - Per-model findings in the ensemble walkthrough (#53): below the consolidated table, a **Per-model
   findings** area shows one collapsible section per provider listing that model's own findings (its wording +
   severity), so it's clear which model said what — not just the deduped result.
+- Per-model section glyphs (#53) now use brand-colored **squares** — 🟧 Anthropic, 🟦 OpenAI, 🟩 Gemini —
+  visually distinct from the severity **circles** (🔴/🟠/🟡/🔵/⚪), instead of the previous mixed
+  circle/diamond set.
 
 ### Added
 - Issue/ticket validation (backlog #32): when a PR links a GitHub issue, prowl-review pulls the issue's

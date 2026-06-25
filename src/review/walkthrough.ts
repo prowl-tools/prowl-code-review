@@ -449,11 +449,15 @@ function nitpickSection(findings: Finding[], providerCount?: number): string {
   ].join("\n");
 }
 
-/** A small per-provider glyph for the per-model sections; falls back to 🔹. */
+/**
+ * A small per-provider glyph for the per-model sections; falls back to 🔹.
+ * Squares (distinct from the severity circles) in each provider's brand color:
+ * orange = Anthropic, blue = OpenAI, green = Gemini.
+ */
 const PROVIDER_GLYPH: Record<string, string> = {
-  anthropic: "🟣",
-  openai: "🟢",
-  gemini: "🔷"
+  anthropic: "🟧",
+  openai: "🟦",
+  gemini: "🟩"
 };
 
 /** Order a provider's findings most-severe-first using that provider's own take. */
