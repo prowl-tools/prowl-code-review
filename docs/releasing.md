@@ -23,9 +23,10 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
    git tag vX.Y.Z
    git push origin main --tags
    ```
-4. The **`publish` workflow** runs automatically: it verifies the tag matches
-   `package.json`, builds + lints + tests, runs `npm publish --provenance --access
-   public`, and creates a GitHub Release from the matching CHANGELOG section.
+4. The **`publish` workflow** runs automatically: it verifies the `vX.Y.Z` tag matches
+   `package.json`, builds + lints + tests, verifies the versioned CHANGELOG section,
+   prepares a draft GitHub Release from those notes, runs `npm publish --provenance --access
+   public`, and publishes the GitHub Release after npm succeeds.
    - The version guard fails the run if the tag and `package.json` disagree, so a
      mismatched tag never publishes.
 
@@ -40,8 +41,9 @@ curl -sL "$url" | shasum -a 256
 ```
 
 Copy [`packaging/homebrew/prowl-review.rb`](../packaging/homebrew/prowl-review.rb)
-to `Formula/prowl-review.rb` in `Prowl-qa/homebrew-tap`, set `url` to the tarball
-URL and `sha256` to the hash above, and open a PR on the tap. Verify with:
+to `Formula/prowl-review.rb` in `Prowl-qa/homebrew-tap` (tap name: `Prowl-qa/tap`),
+set `url` to the tarball URL and `sha256` to the hash above, and open a PR on the tap.
+Verify with:
 
 ```bash
 brew install --build-from-source ./Formula/prowl-review.rb
@@ -53,5 +55,5 @@ brew test prowl-review
 ```bash
 npm view prowl-review version          # the new version is live
 npx prowl-review@latest --version      # X.Y.Z
-brew install prowl-tools/tap/prowl-review && prowl-review --version
+brew install Prowl-qa/tap/prowl-review && prowl-review --version
 ```
