@@ -215,6 +215,7 @@ jobs:
       - uses: actions/checkout@v4          # trusted base (config + guidelines)
       - uses: actions/checkout@v4          # untrusted PR head, for context only
         with:
+          repository: ${{ github.event.pull_request.head.repo.full_name }}
           ref: ${{ github.event.pull_request.head.sha }}
           path: pr-head
           persist-credentials: false

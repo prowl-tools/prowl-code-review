@@ -284,6 +284,28 @@ describe("review command helpers", () => {
     ).toBe(false);
   });
 
+  it("does not treat same-repo PRs in a forked repository as fork PRs", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        repository: { full_name: "maintainer/prowl-code-review" },
+        pull_request: {
+          base: { repo: { full_name: "maintainer/prowl-code-review" } },
+          head: { repo: { fork: true, full_name: "maintainer/prowl-code-review" } }
+        }
+      })
+    );
+
+    expect(
+      isForkPullRequestEvent({
+        GITHUB_EVENT_PATH: eventPath,
+        GITHUB_REPOSITORY: "maintainer/prowl-code-review"
+      } as NodeJS.ProcessEnv)
+    ).toBe(false);
+  });
+
   it("detects whether any provider key is present (generic or scoped, #20)", () => {
     expect(hasAnyProviderKey({} as NodeJS.ProcessEnv)).toBe(false);
     expect(hasAnyProviderKey({ PROWL_AI_KEY: "  " } as NodeJS.ProcessEnv)).toBe(false);
@@ -323,8 +345,10 @@ describe("review command helpers", () => {
     expect(sameRepo).toMatchObject({ isFork: false, skip: false });
   });
 
-  it("does not auto-discover repo config on a fork PR, but honors an explicit trusted path (#20)", () => {
+  it("does not load workspace config on a fork PR, but honors an explicit trusted path (#20)", () => {
     const dir = tempDir();
+    const workspace = join(dir, "workspace");
+    mkdirSync(workspace);
     const forkPath = join(dir, "fork.json");
     writeFileSync(
       forkPath,
@@ -336,11 +360,20 @@ describe("review command helpers", () => {
     } as NodeJS.ProcessEnv;
 
     // No explicit path on a fork → config auto-discovery is disabled (untrusted checkout).
-    expect(resolveConfigLoadOptions({}, "/repo", forkEnv)).toEqual({ cwd: "/repo", disabled: true });
-    // An explicit (maintainer-set) trusted config path is still honored on a fork.
+    expect(resolveConfigLoadOptions({}, workspace, forkEnv)).toEqual({ cwd: workspace, disabled: true });
+    // Explicit config paths inside the reviewed checkout are still untrusted.
+    expect(resolveConfigLoadOptions({ config: ".prowl-review.yml" }, workspace, forkEnv)).toEqual({
+      cwd: workspace,
+      disabled: true
+    });
     expect(
-      resolveConfigLoadOptions({}, "/repo", { ...forkEnv, PROWL_CONFIG_PATH: "/trusted/.prowl-review.yml" })
-    ).toEqual({ cwd: "/repo", configPath: "/trusted/.prowl-review.yml" });
+      resolveConfigLoadOptions({}, workspace, { ...forkEnv, PROWL_CONFIG_PATH: join(workspace, ".prowl-review.yml") })
+    ).toEqual({ cwd: workspace, disabled: true });
+    // An out-of-workspace maintainer-set trusted config path is still honored on a fork.
+    const trustedConfig = join(dir, "trusted", ".prowl-review.yml");
+    expect(
+      resolveConfigLoadOptions({}, workspace, { ...forkEnv, PROWL_CONFIG_PATH: trustedConfig })
+    ).toEqual({ cwd: workspace, configPath: trustedConfig });
   });
 
   it("resolves the reviewed head SHA from env or the pull request event payload", () => {

@@ -22,6 +22,12 @@ export interface PullRequestMeta {
   baseSha: string;
   /** Head branch commit SHA. */
   headSha: string;
+  /** Full name of the base repository, when GitHub returns it. */
+  baseRepoFullName?: string;
+  /** Full name of the head repository, when GitHub returns it. */
+  headRepoFullName?: string;
+  /** Whether the head repository itself is marked as a fork. */
+  headRepoFork?: boolean;
   /** Whether the pull request is currently a draft. */
   draft: boolean;
   /** GitHub pull request state. */
@@ -49,11 +55,19 @@ interface RawPullRequest {
   /** Pull request body text, if present. */
   body: string | null;
   /** Base branch information. */
-  base: { sha: string };
+  base: {
+    sha: string;
+    repo?: { full_name?: string; name?: string; owner?: { login?: string | null } | null } | null;
+  };
   /** Head branch information. */
   head: {
     sha: string;
-    repo?: { name?: string; owner?: { login?: string | null } | null } | null;
+    repo?: {
+      full_name?: string;
+      fork?: boolean;
+      name?: string;
+      owner?: { login?: string | null } | null;
+    } | null;
   };
   /** Whether the pull request is currently a draft. */
   draft?: boolean;
@@ -70,14 +84,31 @@ interface RawComparison {
   status?: unknown;
 }
 
+function repoFullName(repo: RawPullRequest["head"]["repo"]): string | undefined {
+  if (!repo) {
+    return undefined;
+  }
+  if (repo.full_name?.trim()) {
+    return repo.full_name.trim();
+  }
+  const owner = repo.owner?.login?.trim();
+  const name = repo.name?.trim();
+  return owner && name ? `${owner}/${name}` : undefined;
+}
+
 /** Normalize the subset of GitHub's raw PR payload used by the review pipeline. */
 function normalizePullRequestMeta(pr: RawPullRequest): PullRequestMeta {
+  const baseRepoFullName = repoFullName(pr.base.repo);
+  const headRepoFullName = repoFullName(pr.head.repo);
   return {
     number: pr.number,
     title: pr.title,
     body: pr.body,
     baseSha: pr.base.sha,
     headSha: pr.head.sha,
+    ...(baseRepoFullName ? { baseRepoFullName } : {}),
+    ...(headRepoFullName ? { headRepoFullName } : {}),
+    ...(typeof pr.head.repo?.fork === "boolean" ? { headRepoFork: pr.head.repo.fork } : {}),
     draft: pr.draft ?? false,
     state: pr.state,
     author: pr.user?.login ?? null,
