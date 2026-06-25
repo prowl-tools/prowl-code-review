@@ -111,8 +111,8 @@ Anything after the mention that isn't a known command is treated as a question:
 `@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
 thread (inline, when asked on a specific review comment). The command workflow
 listens on both `issue_comment` and `pull_request_review_comment`. Put
-concurrency on the guarded job, not the whole workflow, so unrelated comment
-events skip before they can occupy the shared PR review queue:
+concurrency on the guarded job so accepted commands serialize with review
+publishing, while unrelated comment events are filtered before command work runs:
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
