@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
 import {
   buildReviewCommand,
@@ -121,6 +121,9 @@ describe("review command helpers", () => {
     const eventPath = join(dir, "event.json");
     writeFileSync(eventPath, "{not-json");
     process.env.GITHUB_EVENT_PATH = eventPath;
+    expect(() => resolvePullNumber()).toThrow(/Pull request number required/);
+
+    writeFileSync(eventPath, JSON.stringify({ pull_request: { number: "7" } }));
     expect(() => resolvePullNumber()).toThrow(/Pull request number required/);
   });
 
@@ -358,14 +361,16 @@ describe("review command helpers", () => {
       GITHUB_EVENT_PATH: forkPath,
       GITHUB_REPOSITORY: "prowl-tools/prowl-code-review"
     } as NodeJS.ProcessEnv;
+    const trustedBase = join(dir, "trusted");
 
     // No explicit path on a fork → config auto-discovery is disabled (untrusted checkout).
     expect(resolveConfigLoadOptions({}, workspace, forkEnv)).toEqual({ cwd: workspace, disabled: true });
-    // Explicit config paths inside the reviewed checkout are still untrusted.
-    expect(resolveConfigLoadOptions({ config: ".prowl-review.yml" }, workspace, forkEnv)).toEqual({
+    // Relative explicit paths stay anchored to the trusted Action working directory, not the reviewed checkout.
+    expect(resolveConfigLoadOptions({ config: ".prowl-review.yml" }, workspace, forkEnv, true, trustedBase)).toEqual({
       cwd: workspace,
-      disabled: true
+      configPath: resolve(trustedBase, ".prowl-review.yml")
     });
+    // Explicit config paths inside the reviewed checkout are still untrusted.
     expect(resolveConfigLoadOptions({ config: join(workspace, "nested", ".prowl-review.yml") }, workspace, forkEnv)).toEqual({
       cwd: workspace,
       disabled: true

@@ -1,6 +1,7 @@
 import { Command } from "commander";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { z } from "zod";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
 import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
 import { fetchPullRequestMeta, type PullRequestMeta, type PullRequestRef } from "../../github/diff.js";
@@ -74,20 +75,10 @@ export function resolvePullNumber(flag?: string): number {
     }
     return parsed;
   }
-  const eventPath = process.env.GITHUB_EVENT_PATH;
-  if (eventPath && existsSync(eventPath)) {
-    try {
-      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-        pull_request?: { number?: number };
-        number?: number;
-      };
-      const number = event.pull_request?.number ?? event.number;
-      if (number) {
-        return number;
-      }
-    } catch {
-      // fall through to the error below
-    }
+  const event = readGitHubEventPayload(process.env);
+  const number = event?.pull_request?.number ?? event?.number;
+  if (number) {
+    return number;
   }
   throw new Error("Pull request number required: pass --pr <n> (or run on a pull_request event).");
 }
@@ -203,22 +194,37 @@ export function resolveProviderDefaults(
   return { provider: selected.provider, model: selected.model };
 }
 
-interface GitHubEventRepo {
-  fork?: boolean;
-  full_name?: string;
-}
+const gitHubEventRepoSchema = z
+  .object({
+    fork: z.boolean().optional(),
+    full_name: z.string().optional()
+  })
+  .passthrough();
 
-interface GitHubEventPayload {
-  pull_request?: {
-    head?: { repo?: GitHubEventRepo; sha?: string };
-    base?: { repo?: GitHubEventRepo };
-    draft?: boolean;
-    number?: number;
-  };
-  issue?: { pull_request?: unknown };
-  repository?: { full_name?: string };
-  number?: number;
-}
+const gitHubEventPayloadSchema = z
+  .object({
+    pull_request: z
+      .object({
+        head: z
+          .object({
+            repo: gitHubEventRepoSchema.optional(),
+            sha: z.string().optional()
+          })
+          .passthrough()
+          .optional(),
+        base: z.object({ repo: gitHubEventRepoSchema.optional() }).passthrough().optional(),
+        draft: z.boolean().optional(),
+        number: z.number().optional()
+      })
+      .passthrough()
+      .optional(),
+    issue: z.object({ pull_request: z.unknown().optional() }).passthrough().optional(),
+    repository: z.object({ full_name: z.string().optional() }).passthrough().optional(),
+    number: z.number().optional()
+  })
+  .passthrough();
+
+type GitHubEventPayload = z.infer<typeof gitHubEventPayloadSchema>;
 
 interface ForkRepositoryMetadata {
   headRepoFullName?: string;
@@ -237,8 +243,13 @@ function isWorkspacePath(path: string, root: string): boolean {
   return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
-function resolveConfigPath(configPath: string, cwd: string): string {
-  return isAbsolute(configPath) ? resolve(configPath) : resolve(cwd, configPath);
+function resolveConfigPath(configPath: string, baseDir: string): string {
+  return isAbsolute(configPath) ? resolve(configPath) : resolve(baseDir, configPath);
+}
+
+/** Resolve the trusted checkout used for action-supplied config paths. */
+export function resolveTrustedConfigBase(env: NodeJS.ProcessEnv = process.env): string {
+  return env.GITHUB_WORKSPACE?.trim() || process.cwd();
 }
 
 function readGitHubEventPayload(env: NodeJS.ProcessEnv = process.env): GitHubEventPayload | undefined {
@@ -250,7 +261,17 @@ function readGitHubEventPayload(env: NodeJS.ProcessEnv = process.env): GitHubEve
     return undefined;
   }
   try {
-    return JSON.parse(readFileSync(eventPath, "utf8")) as GitHubEventPayload;
+    const parsed = JSON.parse(readFileSync(eventPath, "utf8"));
+    const result = gitHubEventPayloadSchema.safeParse(parsed);
+    if (!result.success) {
+      if (env.GITHUB_ACTIONS === "true") {
+        console.warn(
+          `prowl-review: GitHub event payload at ${eventPath} did not match the expected shape; fork detection may be incomplete.`
+        );
+      }
+      return undefined;
+    }
+    return result.data;
   } catch {
     if (env.GITHUB_ACTIONS === "true") {
       console.warn(`prowl-review: could not parse GitHub event payload at ${eventPath}; fork detection may be incomplete.`);
@@ -389,18 +410,7 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
   if (explicit) {
     return explicit;
   }
-  const eventPath = env.GITHUB_EVENT_PATH;
-  if (eventPath && existsSync(eventPath)) {
-    try {
-      const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-        pull_request?: { head?: { sha?: string } };
-      };
-      return event.pull_request?.head?.sha?.trim() || undefined;
-    } catch {
-      // fall through to undefined
-    }
-  }
-  return undefined;
+  return readGitHubEventPayload(env)?.pull_request?.head?.sha?.trim() || undefined;
 }
 
 /**
@@ -409,18 +419,7 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
  * caller treats "unknown" as not-a-draft and reviews normally.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
-  const eventPath = env.GITHUB_EVENT_PATH;
-  if (!eventPath || !existsSync(eventPath)) {
-    return undefined;
-  }
-  try {
-    const event = JSON.parse(readFileSync(eventPath, "utf8")) as {
-      pull_request?: { draft?: boolean };
-    };
-    return event.pull_request?.draft;
-  } catch {
-    return undefined;
-  }
+  return readGitHubEventPayload(env)?.pull_request?.draft;
 }
 
 interface ReviewCommandOptions {
@@ -490,7 +489,8 @@ export function resolveConfigLoadOptions(
   cli: ReviewCommandOptions,
   cwd: string,
   env: NodeJS.ProcessEnv = process.env,
-  isFork = isForkPullRequestEvent(env)
+  isFork = isForkPullRequestEvent(env),
+  configPathBase = cwd
 ): LoadConfigOptions {
   if (cli.config === false) {
     return { cwd, disabled: true };
@@ -498,7 +498,7 @@ export function resolveConfigLoadOptions(
 
   const configPath = typeof cli.config === "string" ? cli.config : envString(env.PROWL_CONFIG_PATH);
   if (configPath) {
-    const resolvedConfigPath = resolveConfigPath(configPath, cwd);
+    const resolvedConfigPath = resolveConfigPath(configPath, configPathBase);
     if (isFork && isWorkspacePath(resolvedConfigPath, cwd)) {
       return { cwd, disabled: true };
     }
@@ -1007,7 +1007,9 @@ export async function runReviewWithOptions(
   const octokit = createOctokit(token);
   const root = resolveWorkspace();
   const fork = await resolveForkReviewDecisionForRun(octokit, ref);
-  const { config } = loadConfig(resolveConfigLoadOptions(options, root, process.env, fork.isFork));
+  const { config } = loadConfig(
+    resolveConfigLoadOptions(options, root, process.env, fork.isFork, resolveTrustedConfigBase())
+  );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
 
