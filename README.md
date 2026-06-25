@@ -384,7 +384,9 @@ PROWL_DEBUG=true PROWL_DEBUG_LOG=traces/run.jsonl prowl-review review --pr 123
 In the GitHub Action, set the `debug: true` input and upload the trace with
 `actions/upload-artifact` to inspect it after the run. The trace path is confined
 to the workspace, rejects symlinked path components, and nested parent
-directories are created automatically. Local review ignores prowl-generated
+directories are created automatically. Secure workspace-confined writes require
+POSIX `O_NOFOLLOW` support; platforms that do not expose it fail closed rather
+than following a possible symlink. Local review ignores prowl-generated
 `.prowl-review/` outputs during clean-worktree checks so the default trace does
 not block the next local review in repos that have not ignored that directory.
 
