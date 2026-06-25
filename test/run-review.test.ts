@@ -620,7 +620,7 @@ describe("runReview debug tracing (#49)", () => {
         return reply("[]");
       }
       // Verification verdict pass: keep the finding.
-      return reply(JSON.stringify([{ index: 0, verdict: "confirmed", confidence: 0.9 }]));
+      return reply(JSON.stringify([{ index: 0, falsePositive: false, confidence: 0.9 }]));
     });
     const { sink, records } = createDebugRecorder();
     await runReview({ diff: "diff" }, { config, complete, verify: true, debug: sink });
