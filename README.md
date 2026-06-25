@@ -109,8 +109,10 @@ repo owner/member/collaborator is honored):
 
 Anything after the mention that isn't a known command is treated as a question:
 `@prowl-review why is this loop O(n²)?` gets a contextual reply in the same
-thread (inline, when asked on a specific review comment). The command workflow
-listens on both `issue_comment` and `pull_request_review_comment`:
+thread. The starter below listens to top-level PR comments only; inline review
+comments can be supported by also adding `pull_request_review_comment`, but each
+inline comment creates a workflow run, so leave it out unless you need inline
+questions or `ignore` replies.
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
@@ -118,12 +120,6 @@ name: prowl-review command
 on:
   issue_comment:
     types: [created]
-  pull_request_review_comment:
-    types: [created]
-concurrency:
-  group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
-  queue: max
-  cancel-in-progress: false
 permissions:
   pull-requests: write
   checks: write
@@ -132,7 +128,7 @@ permissions:
 jobs:
   command:
     if: |
-      (github.event.issue.pull_request || github.event.pull_request) &&
+      github.event.issue.pull_request &&
       github.event.comment.user.type != 'Bot' &&
       (
         github.event.comment.author_association == 'OWNER' ||
@@ -140,13 +136,17 @@ jobs:
         github.event.comment.author_association == 'COLLABORATOR'
       ) &&
       contains(github.event.comment.body, '@prowl-review')
+    concurrency:
+      group: prowl-review-${{ github.event.issue.number }}
+      queue: max
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:
       - id: pr
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
+          pr_number="${{ github.event.issue.number }}"
           base_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.base.sha')"
           head_sha="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.sha')"
           head_repo="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '.head.repo.full_name')"
@@ -480,6 +480,28 @@ node dist/cli.js eval            # scores ./bench, prints a summary
 ```
 
 See [`docs/eval.md`](docs/eval.md) for details and [`bench/README.md`](bench/README.md) for the case format.
+
+## Examples & what a review looks like
+
+Copy-paste starters live in [`examples/`](examples/) (auto-review workflow,
+command workflow, and a `.prowl-review.yml`). For a rendered sample of the
+published walkthrough — summary, findings table, 🤝 consensus, per-model
+sections — see [`docs/example-review.md`](docs/example-review.md).
+
+## Contributing
+
+Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the
+project layout, conventions, and the Definition of Done, and
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). The roadmap is in
+[`docs/backlog.md`](docs/backlog.md).
+
+## Security & privacy
+
+Found a vulnerability? Please report it privately — see [`SECURITY.md`](SECURITY.md)
+(do not open a public issue). prowl-review is BYOK: your key is read from the
+environment only, never stored or proxied, and your code only ever goes to **your**
+chosen provider. **It collects no telemetry or analytics** — the only network
+calls are to your LLM provider and the GitHub API.
 
 ## License
 
