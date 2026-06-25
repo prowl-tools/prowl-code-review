@@ -60,6 +60,13 @@ function writeConfig(contents: string): string {
   return path;
 }
 
+function clearProviderKeys(): void {
+  delete process.env.PROWL_AI_KEY;
+  delete process.env.PROWL_AI_KEY_ANTHROPIC;
+  delete process.env.PROWL_AI_KEY_OPENAI;
+  delete process.env.PROWL_AI_KEY_GEMINI;
+}
+
 /** Minimal complete pipeline result so reportReviewCommandResult doesn't throw. */
 function reviewResult(over: Partial<ReviewPullRequestResult> = {}): ReviewPullRequestResult {
   return {
@@ -302,7 +309,7 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
   it("skips a fork PR that has no provider key, before touching prior state", async () => {
     isolateWorkspace();
     writeEvent(forkEvent);
-    delete process.env.PROWL_AI_KEY;
+    clearProviderKeys();
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
 
     await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
@@ -313,10 +320,41 @@ describe("runReviewWithOptions fork-PR safety (#20)", () => {
     expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
   });
 
+  it("fetches PR repo metadata before deciding fork safety for issue-comment reviews", async () => {
+    isolateWorkspace();
+    writeEvent({ issue: { number: 7, pull_request: { url: "https://api.github.com/repos/prowl-tools/prowl-code-review/pulls/7" } } });
+    clearProviderKeys();
+    const pullsGet = vi.fn().mockResolvedValue({
+      data: {
+        number: 7,
+        title: "Fork PR",
+        body: null,
+        base: { sha: "base", repo: { full_name: "prowl-tools/prowl-code-review" } },
+        head: {
+          sha: "head",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
+        draft: false,
+        state: "open",
+        user: { login: "contributor" },
+        changed_files: 1
+      }
+    });
+    mocks.createOctokit.mockReturnValue({ rest: { pulls: { get: pullsGet } } });
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(pullsGet).toHaveBeenCalledWith({ owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 });
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.fetchPriorReviewState).not.toHaveBeenCalled();
+    expect(logSpy).toHaveBeenCalledWith(expect.stringContaining("skipped fork pull request"));
+  });
+
   it("posts a neutral check run for a skipped fork PR when checkRun is enabled (tolerant)", async () => {
     isolateWorkspace();
     writeEvent(forkEvent);
-    delete process.env.PROWL_AI_KEY;
+    clearProviderKeys();
     process.env.PROWL_REVIEWED_HEAD_SHA = "fork-head";
     vi.spyOn(console, "log").mockImplementation(() => {});
     const config = writeConfig("checkRun:\n  enabled: true\n");

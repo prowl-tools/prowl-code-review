@@ -22,8 +22,14 @@ describe("fetchPullRequest", () => {
         number: 7,
         title: "Add thing",
         body: "does a thing",
-        base: { sha: "base-sha" },
-        head: { sha: "head-sha", repo: { name: "prowl-code-review", owner: { login: "prowl-tools" } } },
+        base: {
+          sha: "base-sha",
+          repo: { full_name: "prowl-tools/prowl-code-review" }
+        },
+        head: {
+          sha: "head-sha",
+          repo: { full_name: "contributor/prowl-code-review", fork: true }
+        },
         draft: true,
         state: "open",
         user: { login: "michael" },
@@ -42,6 +48,9 @@ describe("fetchPullRequest", () => {
       body: "does a thing",
       baseSha: "base-sha",
       headSha: "head-sha",
+      baseRepoFullName: "prowl-tools/prowl-code-review",
+      headRepoFullName: "contributor/prowl-code-review",
+      headRepoFork: true,
       draft: true,
       state: "open",
       author: "michael",
