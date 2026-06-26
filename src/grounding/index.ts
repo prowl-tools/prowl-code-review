@@ -901,11 +901,22 @@ async function runSemgrep(
   }
 
   // `--metrics=off` + `--disable-version-check` keep the run offline-friendly and
-  // stop any project metadata from being uploaded. The ruleset is the only thing
-  // fetched (cached after the first run).
+  // stop any project metadata from being uploaded. `--disable-nosem` prevents a
+  // PR from hiding a changed-line finding with an inline Semgrep suppression. The
+  // ruleset is the only thing fetched (cached after the first run).
   const result = await params.exec(
     "semgrep",
-    ["scan", "--json", "--quiet", "--metrics=off", "--disable-version-check", `--config=${config}`, "--", ...limited],
+    [
+      "scan",
+      "--json",
+      "--quiet",
+      "--metrics=off",
+      "--disable-version-check",
+      "--disable-nosem",
+      `--config=${config}`,
+      "--",
+      ...limited
+    ],
     params.root,
     { env: SEMGREP_TRUSTED_ENV }
   );

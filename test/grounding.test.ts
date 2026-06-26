@@ -967,6 +967,7 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       "--quiet",
       "--metrics=off",
       "--disable-version-check",
+      "--disable-nosem",
       "--config=p/default",
       "--",
       "src/a.ts"
