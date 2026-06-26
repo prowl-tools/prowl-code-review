@@ -99,6 +99,11 @@ export interface GatherGroundingParams {
    */
   secretScanWholeFilePaths?: string[];
   /**
+   * Semgrep scan paths that are newly introduced without added-line hunks, such
+   * as pure copies. Findings from these paths bypass changed-line filtering.
+   */
+  semgrepWholeFilePaths?: string[];
+  /**
    * New-side changed lines by repo-relative file path. When provided, linter
    * messages outside these lines are dropped so pre-existing lint failures do
    * not become PR findings.
@@ -929,11 +934,18 @@ export function parseSemgrepJson(root: string, stdout: string): Finding[] {
 
 /** Apply changed-line filtering, finding caps, and summary notes to Semgrep findings. */
 function finishSemgrepResult(
-  params: { changedLines?: GatherGroundingParams["changedLines"]; limits: Required<GroundingLimits> },
+  params: {
+    changedLines?: GatherGroundingParams["changedLines"];
+    limits: Required<GroundingLimits>;
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
+  },
   parsed: Finding[],
   notes: string[]
 ): GroundingResult {
-  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
+  const wholeFilePaths = new Set(
+    safeRelativePaths(params.semgrepWholeFilePaths ?? []).map((path) => normalizeRelativePath(path))
+  );
+  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines), wholeFilePaths);
   if (findings.length > params.limits.maxFindings) {
     notes.push(`Semgrep: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`);
     return { findings: findings.slice(0, params.limits.maxFindings), notes };
@@ -950,6 +962,7 @@ async function runSemgrepPerTarget(
     exec: Exec;
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
     trustWorkspace: boolean;
   },
   requestedConfig: string,
@@ -997,6 +1010,7 @@ async function runSemgrep(
     limits: Required<GroundingLimits>;
     changedLines?: GatherGroundingParams["changedLines"];
     secretScanPaths?: GatherGroundingParams["secretScanPaths"];
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
     trustWorkspace: boolean;
     semgrep?: SemgrepOptions;
   }
@@ -1447,6 +1461,7 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
       changedPaths: params.changedPaths,
       secretScanPaths: params.secretScanPaths,
       secretScanWholeFilePaths: params.secretScanWholeFilePaths,
+      semgrepWholeFilePaths: params.semgrepWholeFilePaths,
       changedLines: params.changedLines,
       trustWorkspace: params.trustWorkspace === true,
       semgrep: params.semgrep,

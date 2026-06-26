@@ -346,6 +346,30 @@ new file mode 100644
     );
   });
 
+  it("treats pure copied files as whole-file Semgrep targets", async () => {
+    isolatedWorkspace();
+    const copiedDiff = `diff --git a/src/source.ts b/src/copied.ts
+similarity index 100%
+copy from src/source.ts
+copy to src/copied.ts
+`;
+    const gatherGrounding = vi.fn().mockResolvedValue({ findings: [], notes: [] });
+    const { deps: d } = deps({
+      resolveDiff: vi.fn().mockResolvedValue(copiedDiff),
+      gatherGrounding
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/copied.ts"],
+        semgrepWholeFilePaths: ["src/copied.ts"],
+        changedLines: {}
+      })
+    );
+  });
+
   it("keeps workspace execution untrusted for fork pull request events", async () => {
     const workspace = isolatedWorkspace();
     const eventPath = join(workspace, "event.json");
