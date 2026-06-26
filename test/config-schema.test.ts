@@ -91,6 +91,18 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ suggestions: { nope: true } })).toThrow(); // strict
   });
 
+  it("accepts the grounding.semgrep block and rejects malformed entries (#16b)", () => {
+    expect(configSchema.parse({ grounding: { semgrep: { enabled: true, config: "p/security-audit" } } })).toEqual({
+      grounding: { semgrep: { enabled: true, config: "p/security-audit" } }
+    });
+    expect(configSchema.parse({ grounding: { semgrep: { enabled: false } } })).toEqual({
+      grounding: { semgrep: { enabled: false } }
+    });
+    expect(() => configSchema.parse({ grounding: { semgrep: { config: "" } } })).toThrow(); // min(1)
+    expect(() => configSchema.parse({ grounding: { semgrep: { enabled: "yes" } } })).toThrow();
+    expect(() => configSchema.parse({ grounding: { semgrep: { nope: true } } })).toThrow(); // strict
+  });
+
   it("reserves the requirements category from custom specialists (#32)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "requirements", focus: "x" }] } })
