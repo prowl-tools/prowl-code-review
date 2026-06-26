@@ -1011,6 +1011,8 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       "--metrics=off",
       "--disable-version-check",
       "--disable-nosem",
+      "--no-git-ignore",
+      "--x-ignore-semgrepignore-files",
       "--config=p/default",
       "--",
       "src/a.ts"
@@ -1091,6 +1093,20 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     });
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
     expect(call?.[1]).toContain("--config=p/security-audit");
+  });
+
+  it("does not bypass Semgrep repo ignore files for trusted local scans", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      exec
+    });
+
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call?.[1]).not.toContain("--no-git-ignore");
+    expect(call?.[1]).not.toContain("--x-ignore-semgrepignore-files");
   });
 
   it("skips a repo-path ruleset", async () => {
