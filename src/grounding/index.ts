@@ -727,6 +727,8 @@ const SEMGREP_LANGUAGES = new Set<LanguageId>([
 /** Run Semgrep with metrics disabled (defense-in-depth with the `--metrics=off` flag). */
 const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
 const SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS = ["--no-git-ignore", "--x-ignore-semgrepignore-files"];
+const SEMGREP_TARGET_IO_MAX_CONCURRENCY = 8;
+const SEMGREP_RETRY_MAX_CONCURRENCY = 2;
 
 /** Build Semgrep CLI arguments with the extra target-safety flags for untrusted checkouts. */
 function semgrepArgs(requestedConfig: string, trustWorkspace: boolean, targets: readonly string[]): string[] {
@@ -761,22 +763,20 @@ async function semgrepTargetsForTrust(
   if (trustWorkspace) {
     return { files: [...files], notes: [] };
   }
-  const filtered: string[] = [];
-  let skippedSymlinks = 0;
-  for (const file of files) {
+  const checked = await mapWithConcurrency(files, SEMGREP_TARGET_IO_MAX_CONCURRENCY, async (file) => {
     try {
       if ((await lstat(join(root, file))).isSymbolicLink()) {
-        skippedSymlinks += 1;
-        continue;
+        return { file, skipped: true };
       }
     } catch {
       // Keep missing/deleted paths so the normal Semgrep failure handling can
       // isolate them without hiding findings from the remaining targets.
     }
-    filtered.push(file);
-  }
+    return { file, skipped: false };
+  });
+  const skippedSymlinks = checked.filter((entry) => entry.skipped).length;
   return {
-    files: filtered,
+    files: checked.filter((entry) => !entry.skipped).map((entry) => entry.file),
     notes: skippedSymlinks > 0 ? [`Semgrep: skipped ${skippedSymlinks} symlink target(s) in untrusted checkout.`] : []
   };
 }
@@ -957,8 +957,7 @@ async function runSemgrepPerTarget(
   notes: string[]
 ): Promise<GroundingResult> {
   notes.push(`Semgrep: retried ${files.length} changed files individually after the batch scan hit an invalid target.`);
-  const parsed: Finding[] = [];
-  for (const file of files) {
+  const perFile = await mapWithConcurrency(files, SEMGREP_RETRY_MAX_CONCURRENCY, async (file) => {
     const result = await params.exec(
       "semgrep",
       semgrepArgs(requestedConfig, params.trustWorkspace, [file]),
@@ -966,21 +965,27 @@ async function runSemgrepPerTarget(
       { env: SEMGREP_TRUSTED_ENV }
     );
     if (result.code === null) {
-      notes.push(`Semgrep timed out for ${file}; skipped.`);
-      continue;
+      return { findings: [], notes: [`Semgrep timed out for ${file}; skipped.`] };
     }
     const semgrepReport = parseSemgrepReport(result.stdout);
     const fileFindings = semgrepFindingsFromReport(params.root, semgrepReport);
     const hasJsonReport = Array.isArray(semgrepReport?.results);
-    parsed.push(...fileFindings);
+    const fileNotes: string[] = [];
 
     if (fileFindings.length === 0 && commandUnavailable(result)) {
-      notes.push(`Semgrep not available while scanning ${file}; skipped that file.`);
-      continue;
+      fileNotes.push(`Semgrep not available while scanning ${file}; skipped that file.`);
+      return { findings: fileFindings, notes: fileNotes };
     }
     if (result.code > 1 || (fileFindings.length === 0 && !hasJsonReport)) {
-      notes.push(`Semgrep failed for ${file}: ${toolFailureNote("Semgrep", result)}`);
+      fileNotes.push(`Semgrep failed for ${file}: ${toolFailureNote("Semgrep", result)}`);
     }
+    return { findings: fileFindings, notes: fileNotes };
+  });
+
+  const parsed: Finding[] = [];
+  for (const result of perFile) {
+    parsed.push(...result.findings);
+    notes.push(...result.notes);
   }
   return finishSemgrepResult(params, parsed, notes);
 }

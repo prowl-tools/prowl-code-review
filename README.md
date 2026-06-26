@@ -424,9 +424,9 @@ To use it in CI, make `semgrep` available on the runner (e.g. `pip install
 semgrep` or the setup action). Without it, the rest of the review is unaffected.
 
 **Resource bounds.** Linter/SAST grounding runs at most two tool runners at a
-time, and Gitleaks scans files serially inside its runner. Each runner still
-honors the grounding file/finding caps so large PRs do not fan out unbounded
-external processes.
+time. Gitleaks file scans and Semgrep invalid-target retries are also bounded
+inside their runners, and every runner still honors the grounding file/finding
+caps so large PRs do not fan out unbounded external processes.
 
 ## Dependency CVE / license scanning (#34)
 
