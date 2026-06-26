@@ -68,11 +68,27 @@ const contextSchema = z
   })
   .strict();
 
+/** Semgrep SAST runner controls (#16b). */
+const semgrepSchema = z
+  .object({
+    /** Run Semgrep over changed source files. Default true (skips if not installed). */
+    enabled: z.boolean().optional(),
+    /**
+     * Ruleset to run. Default "p/default" (a curated registry pack). Registry refs
+     * (p/…, r/…, auto, http(s)://) run ungated; a repo path (e.g. .semgrep.yml) is
+     * honored only on a trusted workspace.
+     */
+    config: z.string().min(1).optional()
+  })
+  .strict();
+
 /** Linter/SAST grounding controls (#16). */
 const groundingSchema = z
   .object({
     /** Run repo linters and feed results into the review. Default true. */
-    enabled: z.boolean().optional()
+    enabled: z.boolean().optional(),
+    /** Semgrep SAST runner controls (#16b). */
+    semgrep: semgrepSchema.optional()
   })
   .strict();
 

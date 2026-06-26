@@ -493,6 +493,7 @@ type ResolvedReviewOptions = Pick<
   | "contextLimits"
   | "skipGrounding"
   | "trustWorkspace"
+  | "semgrep"
   | "diffLimits"
   | "agentPrompt"
   | "ignore"
@@ -712,6 +713,8 @@ export function resolveReviewOptions(
     skipGrounding:
       cli.grounding === false || config.grounding?.enabled === false ? true : undefined,
     trustWorkspace: requestedTrustWorkspace && !isFork,
+    // Semgrep SAST runner (#16b); on by default, config-tunable (ruleset/disable).
+    semgrep: config.grounding?.semgrep,
     diffLimits: compact({
       maxFiles: config.diff?.maxFiles,
       maxDiffBytes: config.diff?.maxBytes

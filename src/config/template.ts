@@ -187,8 +187,15 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   maxFiles: 20             # max distinct files the agent may read
 
 # --- Linter / SAST grounding --------------------------------------------------
+# Built-in runners: ESLint (JS/TS, trusted workspace only), Ruff (Python),
+# Gitleaks (secrets), Semgrep (SAST), and osv-scanner (dependencies, below).
 # grounding:
 #   enabled: true            # run repo linters and feed results into the review
+#   semgrep:                 # SAST runner (#16b); on by default, skips if not installed
+#     enabled: true
+#     config: p/default      # ruleset: a registry pack (p/.../r/.../auto/URL) runs
+#                            # ungated; a repo path (e.g. .semgrep.yml) needs a
+#                            # trusted workspace. Metrics are always disabled.
 #
 # Workspace execution trust is intentionally not read from repo config.
 # Use --trust-workspace, PROWL_TRUST_WORKSPACE, or the trust-workspace Action
