@@ -187,6 +187,16 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # Use --trust-workspace, PROWL_TRUST_WORKSPACE, or the trust-workspace Action
 # input only for trusted checkouts.
 
+# --- Dependency-CVE / license scanning ----------------------------------------
+# When a dependency lockfile changes, scan it with osv-scanner for known CVEs
+# (#34). Reads lockfiles only (no repo code), runs by default, and skips
+# gracefully when osv-scanner isn't installed. Set an SPDX allowlist to also flag
+# dependencies whose license falls outside it.
+# dependencyScan:
+#   enabled: true
+#   licenses:
+#     allow: [MIT, Apache-2.0, BSD-3-Clause, ISC]
+
 # --- Diff size guards ---------------------------------------------------------
 # diff:
 #   # Leave maxFiles / maxBytes unset for no cap.

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   gatherGrounding,
   parseEslintJson,
+  parseOsvJson,
+  dependencyScanTargets,
   buildGroundingSummary,
   type Exec,
   type ExecResult
@@ -573,5 +575,283 @@ describe("buildGroundingSummary", () => {
 
   it("is empty when there are no findings", () => {
     expect(buildGroundingSummary([])).toBe("");
+  });
+});
+
+// --- Dependency-CVE / license scanning (#34) -------------------------------
+
+const OSV_JSON = JSON.stringify({
+  results: [
+    {
+      source: { path: "/repo/package-lock.json", type: "lockfile" },
+      packages: [
+        {
+          package: { name: "lodash", version: "4.17.0", ecosystem: "npm" },
+          vulnerabilities: [
+            {
+              id: "GHSA-jf85-cpcp-j695",
+              aliases: ["CVE-2019-10744"],
+              summary: "Prototype pollution in lodash",
+              database_specific: { severity: "HIGH" },
+              affected: [{ ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.12" }] }] }]
+            }
+          ],
+          groups: [{ ids: ["GHSA-jf85-cpcp-j695"], max_severity: "7.5" }],
+          licenses: ["MIT"]
+        },
+        {
+          package: { name: "left-pad", version: "1.0.0", ecosystem: "npm" },
+          vulnerabilities: [],
+          licenses: ["MIT", "WTFPL"]
+        }
+      ]
+    }
+  ]
+});
+
+/** Exec mock that answers osv-scanner; everything else is a clean no-op. */
+function execForOsv(osv: Partial<ExecResult>): Exec {
+  return vi.fn(async (command: string): Promise<ExecResult> => {
+    if (command === "osv-scanner") {
+      return { stdout: "", stderr: "", code: 0, ...osv };
+    }
+    return { stdout: "", stderr: "", code: 0 };
+  });
+}
+
+describe("dependencyScanTargets (#34)", () => {
+  it("selects recognized lockfiles + requirements*.txt, ignoring source and deduping", () => {
+    expect(
+      dependencyScanTargets([
+        "package-lock.json",
+        "frontend/yarn.lock",
+        "requirements-dev.txt",
+        "go.mod",
+        "src/app.ts",
+        "package-lock.json"
+      ])
+    ).toEqual(["package-lock.json", "frontend/yarn.lock", "requirements-dev.txt", "go.mod"]);
+  });
+
+  it("rejects path traversal", () => {
+    expect(dependencyScanTargets(["../evil/package-lock.json", "/abs/yarn.lock"])).toEqual([]);
+  });
+});
+
+describe("parseOsvJson (#34)", () => {
+  it("maps a vulnerability to a dependency finding with a relative path + CVE title", () => {
+    const findings = parseOsvJson(ROOT, OSV_JSON);
+    const vuln = findings.find((f) => f.title === "CVE-2019-10744");
+    expect(vuln).toMatchObject({
+      file: "package-lock.json",
+      severity: "major", // HIGH
+      category: "dependency",
+      confidence: 0.9
+    });
+    expect(vuln?.line).toBeUndefined(); // file-level
+    expect(vuln?.body).toContain("lodash@4.17.0");
+    expect(vuln?.body).toContain("fixed in 4.17.12");
+  });
+
+  it("matches fixed versions to the reported package", () => {
+    const json = JSON.stringify({
+      results: [
+        {
+          source: { path: "/repo/package-lock.json" },
+          packages: [
+            {
+              package: { name: "lodash", version: "4.17.0", ecosystem: "npm" },
+              vulnerabilities: [
+                {
+                  id: "GHSA-shared",
+                  aliases: ["CVE-2020-0001"],
+                  affected: [
+                    {
+                      package: { name: "other", ecosystem: "npm" },
+                      ranges: [{ events: [{ introduced: "0" }, { fixed: "9.9.9" }] }]
+                    },
+                    {
+                      package: { name: "lodash", ecosystem: "npm" },
+                      ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.12" }] }]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    const vuln = parseOsvJson(ROOT, json).find((f) => f.title === "CVE-2020-0001");
+    expect(vuln?.body).toContain("fixed in 4.17.12");
+    expect(vuln?.body).not.toContain("9.9.9");
+  });
+
+  it("does not emit license findings without an allowlist", () => {
+    expect(parseOsvJson(ROOT, OSV_JSON).some((f) => f.title.startsWith("license-policy"))).toBe(false);
+  });
+
+  it("flags licenses outside the allowlist, leaving allowed ones alone", () => {
+    const findings = parseOsvJson(ROOT, OSV_JSON, { allow: ["MIT", "Apache-2.0"] });
+    const license = findings.filter((f) => f.title.startsWith("license-policy"));
+    expect(license).toHaveLength(1);
+    expect(license[0]).toMatchObject({ title: "license-policy: left-pad", severity: "major", category: "dependency" });
+    expect(license[0].body).toContain("uses license WTFPL");
+    expect(license[0].body).not.toContain("uses license MIT");
+  });
+
+  it("uses explicit OSV license violations before falling back to license comparison", () => {
+    const json = JSON.stringify({
+      results: [
+        {
+          source: { path: "/repo/package-lock.json" },
+          packages: [
+            {
+              package: { name: "left-pad", version: "1.0.0", ecosystem: "npm" },
+              vulnerabilities: [],
+              license_violations: [{ license: { id: "GPL-3.0-only" } }]
+            }
+          ]
+        }
+      ]
+    });
+
+    const license = parseOsvJson(ROOT, json, { allow: ["MIT"] }).find((f) =>
+      f.title.startsWith("license-policy")
+    );
+    expect(license?.body).toContain("GPL-3.0-only");
+  });
+
+  it("maps severity from a CVSS score when no GHSA label is present", () => {
+    const json = JSON.stringify({
+      results: [
+        {
+          source: { path: "/repo/go.mod" },
+          packages: [
+            {
+              package: { name: "pkg", version: "1.0.0" },
+              vulnerabilities: [{ id: "OSV-1" }],
+              groups: [{ ids: ["OSV-1"], max_severity: "9.8" }]
+            }
+          ]
+        }
+      ]
+    });
+    expect(parseOsvJson(ROOT, json)[0].severity).toBe("critical");
+  });
+
+  it("tolerates non-JSON output", () => {
+    expect(parseOsvJson(ROOT, "")).toEqual([]);
+    expect(parseOsvJson(ROOT, "command not found")).toEqual([]);
+  });
+});
+
+describe("dependency scanning via gatherGrounding (#34)", () => {
+  it("scans changed lockfiles (from dependencyPaths, even if ignored from line-review)", async () => {
+    const exec = execForOsv({ stdout: OSV_JSON, code: 1 }); // osv exits 1 when vulns found
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [], // lockfile is ignored from line review
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+
+    expect(result.findings.some((f) => f.category === "dependency" && f.title === "CVE-2019-10744")).toBe(true);
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
+    expect(call?.[1]).toContain("-L");
+    expect(call?.[1]).toContain("package-lock.json");
+    expect(result.notes.join(" ")).toContain("dependency finding(s)");
+  });
+
+  it("passes the license flag and surfaces violations when an allowlist is set", async () => {
+    const exec = execForOsv({ stdout: OSV_JSON, code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      dependencyScan: { licenses: { allow: ["MIT", "Apache-2.0"] } },
+      exec
+    });
+    expect(result.findings.some((f) => f.title === "license-policy: left-pad")).toBe(true);
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
+    expect(call?.[1]).toContain("scan");
+    expect(call?.[1].some((a) => a === "--licenses=MIT,Apache-2.0")).toBe(true);
+    expect(call?.[1]).toContain("-L");
+    expect(call?.[1]).toContain("package-lock.json");
+    const configArg = call?.[1].find((a) => a.startsWith("--config="));
+    expect(configArg).toBeDefined();
+    expect(configArg).not.toContain(ROOT);
+  });
+
+  it("skips gracefully when osv-scanner is not installed", async () => {
+    const exec = execForOsv({ stderr: "osv-scanner: command not found", code: 127 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+    expect(result.notes.join(" ")).toContain("osv-scanner not available");
+  });
+
+  it("skips gracefully when osv-scanner times out", async () => {
+    const exec = execForOsv({ code: null });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+    expect(result.notes.join(" ")).toContain("timed out");
+  });
+
+  it("treats osv-scanner v2 no-packages exit as a clean skip", async () => {
+    const exec = execForOsv({ stderr: "No packages found", code: 128 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+    expect(result.notes.join(" ")).toContain("no packages found");
+  });
+
+  it("caps dependency scan targets before invoking osv-scanner", async () => {
+    const exec = execForOsv({ stdout: "{\"results\":[]}", code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["a/package-lock.json", "b/yarn.lock", "c/go.mod"],
+      limits: { maxFiles: 2 },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
+    expect(call?.[1].filter((arg) => arg === "-L")).toHaveLength(2);
+    expect(call?.[1]).toContain("a/package-lock.json");
+    expect(call?.[1]).toContain("b/yarn.lock");
+    expect(call?.[1]).not.toContain("c/go.mod");
+    expect(result.notes.join(" ")).toContain("scanning 2/3 lockfiles");
+  });
+
+  it("does not run osv-scanner when no dependency manifest changed", async () => {
+    const exec = execForOsv({ stdout: OSV_JSON, code: 1 });
+    await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], dependencyPaths: ["src/a.ts"], exec });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner")).toBeUndefined();
+  });
+
+  it("does not run osv-scanner when dependency scanning is disabled", async () => {
+    const exec = execForOsv({ stdout: OSV_JSON, code: 1 });
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      dependencyScan: { enabled: false },
+      exec
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner")).toBeUndefined();
   });
 });

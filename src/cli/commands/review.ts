@@ -506,6 +506,7 @@ type ResolvedReviewOptions = Pick<
   | "prDescription"
   | "issueValidation"
   | "failback"
+  | "dependencyScan"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -731,7 +732,9 @@ export function resolveReviewOptions(
     // Validate the PR against its linked issue's acceptance criteria (#32); opt-in via config.
     issueValidation: config.issueValidation,
     // Cross-generation failback on persistent overload (#17); opt-in via config.
-    failback: config.resilience?.failback?.enabled === true ? true : undefined
+    failback: config.resilience?.failback?.enabled === true ? true : undefined,
+    // Dependency-CVE / license scanning via osv-scanner (#34); on by default, config-tunable.
+    dependencyScan: config.dependencyScan
   };
 }
 
