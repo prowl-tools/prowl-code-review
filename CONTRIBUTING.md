@@ -137,6 +137,14 @@ numbers stable so references stay valid.
 
 Found a vulnerability? Follow [SECURITY.md](SECURITY.md) — do not open a public issue.
 
+## Releasing (maintainers)
+
+Releases are tag-triggered: bump `package.json`, move the `[Unreleased]` notes
+under a `## [X.Y.Z]` heading, then push a `vX.Y.Z` tag — the `publish` workflow
+builds, tests, publishes to npm with provenance, and cuts a GitHub Release. See
+[`docs/releasing.md`](docs/releasing.md) for the full checklist (incl. the
+Homebrew tap update).
+
 ## Questions
 
 Open a [discussion or issue](https://github.com/prowl-tools/prowl-code-review/issues).
