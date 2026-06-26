@@ -782,14 +782,17 @@ async function semgrepTargetsForTrust(
  * True when a ruleset reference resolves to a Semgrep registry pack that does not
  * let untrusted repo config choose an arbitrary remote/internal URL.
  */
+const SEMGREP_REGISTRY_CONFIG_RE =
+  /^(?:p|r)\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)*$/i;
+
 function isRegistrySemgrepConfig(config: string): boolean {
   if (config.toLowerCase() === "auto") {
     return true;
   }
-  if (!/^(?:p|r)\/[a-z0-9._-]+(?:\/[a-z0-9._-]+)*$/i.test(config)) {
+  if (!SEMGREP_REGISTRY_CONFIG_RE.test(config)) {
     return false;
   }
-  return !config.split("/").some((segment) => segment === "." || segment === ".." || segment.includes(".."));
+  return !config.includes("..");
 }
 
 /** Map a Semgrep severity to a prowl-review severity. */
