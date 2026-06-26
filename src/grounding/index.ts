@@ -2,6 +2,7 @@ import { execFile } from "node:child_process";
 import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
+import { z } from "zod";
 import type { Finding, Severity } from "../review/findings.js";
 import { detectLanguage, isJavaScriptFamily, type LanguageId } from "../review/language.js";
 // `relative`/`isAbsolute` are used for normalizing ESLint's absolute paths back
@@ -60,9 +61,9 @@ export interface SemgrepOptions {
   enabled?: boolean;
   /**
    * Ruleset to run. Default {@link DEFAULT_SEMGREP_CONFIG} (a curated registry
-   * pack). Registry refs (`p/...`, `r/...`, `auto`, or an `http(s)://` URL) run
-   * ungated; a repo-relative path (e.g. `.semgrep.yml`) is honored ONLY when the
-   * workspace is trusted, since a PR could ship a malicious/noisy ruleset.
+   * pack). Registry refs (`p/...`, `r/...`, `auto`) run ungated; a repo-relative
+   * path (e.g. `.semgrep.yml`) or remote URL is honored ONLY when the workspace
+   * is trusted, since a PR could ship a malicious/noisy ruleset.
    */
   config?: string;
 }
@@ -726,12 +727,15 @@ const SEMGREP_LANGUAGES = new Set<LanguageId>([
 const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
 
 /**
- * True when a ruleset reference resolves to the Semgrep registry/network (and so
- * carries no repo-supplied code): a `p/...` or `r/...` pack, the `auto` config,
- * or an `http(s)://` URL. Anything else is treated as a repo-relative path.
+ * True when a ruleset reference resolves to a Semgrep registry pack that does not
+ * let untrusted repo config choose an arbitrary remote/internal URL.
  */
 function isRegistrySemgrepConfig(config: string): boolean {
-  return /^(?:p|r)\//i.test(config) || /^https?:\/\//i.test(config) || config.toLowerCase() === "auto";
+  return /^(?:p|r)\//i.test(config) || config.toLowerCase() === "auto";
+}
+
+function isRemoteSemgrepConfig(config: string): boolean {
+  return /^https?:\/\//i.test(config);
 }
 
 /** Map a Semgrep severity to a prowl-review severity. */
@@ -764,17 +768,26 @@ function mapSemgrepCategory(metadataCategory: string | undefined): string {
   }
 }
 
-interface SemgrepResult {
-  check_id?: string;
-  path?: string;
-  start?: { line?: number };
-  end?: { line?: number };
-  extra?: { message?: string; severity?: string; metadata?: { category?: string } };
-}
-
-interface SemgrepJson {
-  results?: SemgrepResult[];
-}
+const semgrepPositionSchema = z.object({ line: z.number().optional() }).passthrough();
+const semgrepResultSchema = z
+  .object({
+    check_id: z.string().optional(),
+    path: z.string().optional(),
+    start: semgrepPositionSchema.optional(),
+    end: semgrepPositionSchema.optional(),
+    extra: z
+      .object({
+        message: z.string().optional(),
+        severity: z.string().optional(),
+        metadata: z.object({ category: z.string().optional() }).passthrough().optional()
+      })
+      .passthrough()
+      .optional()
+  })
+  .passthrough();
+const semgrepJsonSchema = z.object({ results: z.array(semgrepResultSchema).optional() }).passthrough();
+type SemgrepResult = z.infer<typeof semgrepResultSchema>;
+type SemgrepJson = z.infer<typeof semgrepJsonSchema>;
 
 /** Map a Semgrep result to a high-confidence SAST grounding finding. */
 function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefined {
@@ -809,7 +822,8 @@ function parseSemgrepReport(stdout: string): SemgrepJson | undefined {
   }
   try {
     const parsed = JSON.parse(stdout.slice(start));
-    return parsed && typeof parsed === "object" ? (parsed as SemgrepJson) : undefined;
+    const validated = semgrepJsonSchema.safeParse(parsed);
+    return validated.success ? validated.data : undefined;
   } catch {
     return undefined;
   }
@@ -856,8 +870,8 @@ async function runSemgrep(
     return { findings: [], notes: [] };
   }
 
-  // Resolve the ruleset. Registry packs run ungated; a repo-supplied ruleset is
-  // honored only on a trusted workspace (a PR could ship a malicious/noisy one).
+  // Resolve the ruleset. Registry packs run ungated; repo-supplied paths and
+  // arbitrary remote URLs are honored only on a trusted workspace.
   const requestedConfig = params.semgrep?.config?.trim() || DEFAULT_SEMGREP_CONFIG;
   let config = requestedConfig;
   if (!isRegistrySemgrepConfig(requestedConfig)) {
@@ -865,15 +879,19 @@ async function runSemgrep(
       return {
         findings: [],
         notes: [
-          `Semgrep skipped: the configured ruleset "${requestedConfig}" is a repo path, which requires a trusted workspace; use --trust-workspace or a registry pack (e.g. p/default).`
+          `Semgrep skipped: the configured ruleset "${requestedConfig}" is a repo path or remote URL, which requires a trusted workspace; use --trust-workspace or a registry pack (e.g. p/default).`
         ]
       };
     }
-    const [safe] = safeRelativePaths([requestedConfig]);
-    if (!safe) {
-      return { findings: [], notes: ["Semgrep skipped: the configured ruleset path escapes the workspace."] };
+    if (isRemoteSemgrepConfig(requestedConfig)) {
+      config = requestedConfig;
+    } else {
+      const [safe] = safeRelativePaths([requestedConfig]);
+      if (!safe) {
+        return { findings: [], notes: ["Semgrep skipped: the configured ruleset path escapes the workspace."] };
+      }
+      config = safe;
     }
-    config = safe;
   }
 
   const limited = files.slice(0, params.limits.maxFiles);
@@ -905,7 +923,10 @@ async function runSemgrep(
   }
   // Semgrep exits 0 (clean) or 1 (findings) on success; exit > 1 is an error.
   // A non-parseable report on a non-clean exit is surfaced rather than dropped.
-  if (parsed.length === 0 && (!hasJsonReport || result.code > 1)) {
+  if (result.code > 1) {
+    return { findings, notes: [...notes, toolFailureNote("Semgrep", result)] };
+  }
+  if (parsed.length === 0 && !hasJsonReport) {
     return { findings: [], notes: [...notes, toolFailureNote("Semgrep", result)] };
   }
 

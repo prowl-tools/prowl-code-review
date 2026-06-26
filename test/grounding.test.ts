@@ -942,6 +942,10 @@ describe("parseSemgrepJson", () => {
     expect(parseSemgrepJson(ROOT, "not json")).toEqual([]);
     expect(parseSemgrepJson(ROOT, JSON.stringify({ errors: [] }))).toEqual([]);
   });
+
+  it("returns [] for malformed Semgrep result shapes", () => {
+    expect(parseSemgrepJson(ROOT, semgrepOutput([{ ...SEMGREP_RESULT, start: { line: "3" } }]))).toEqual([]);
+  });
 });
 
 describe("gatherGrounding — Semgrep (#16b)", () => {
@@ -1009,6 +1013,18 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.notes.join(" ")).toContain("Semgrep failed (exit 1)");
   });
 
+  it("keeps parsed findings while surfacing a fatal Semgrep exit", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), stderr: "partial report", code: 2 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [3] },
+      exec
+    });
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+    expect(result.notes.join(" ")).toContain("Semgrep failed (exit 2)");
+  });
+
   it("notes when Semgrep times out", async () => {
     const exec = execForSemgrep({ stdout: "", code: null });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
@@ -1045,6 +1061,18 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.notes.join(" ")).toContain("requires a trusted workspace");
   });
 
+  it("skips a remote URL ruleset on an untrusted workspace", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      semgrep: { config: "https://semgrep.example/rules.yml" },
+      exec
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("repo path or remote URL");
+  });
+
   it("uses a repo-path ruleset when the workspace is trusted", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
     await gatherGrounding({
@@ -1056,6 +1084,19 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     });
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
     expect(call?.[1]).toContain("--config=.semgrep.yml");
+  });
+
+  it("uses a remote URL ruleset when the workspace is trusted", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      semgrep: { config: "https://semgrep.example/rules.yml" },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call?.[1]).toContain("--config=https://semgrep.example/rules.yml");
   });
 
   it("caps Semgrep findings and reports truncation", async () => {

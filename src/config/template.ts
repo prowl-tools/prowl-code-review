@@ -193,9 +193,9 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   enabled: true            # run repo linters and feed results into the review
 #   semgrep:                 # SAST runner (#16b); on by default, skips if not installed
 #     enabled: true
-#     config: p/default      # ruleset: a registry pack (p/.../r/.../auto/URL) runs
-#                            # ungated; a repo path (e.g. .semgrep.yml) needs a
-#                            # trusted workspace. Metrics are always disabled.
+#     config: p/default      # ruleset: a registry pack (p/.../r/.../auto) runs
+#                            # ungated; a repo path or remote URL needs a trusted
+#                            # workspace. Metrics are always disabled.
 #
 # Workspace execution trust is intentionally not read from repo config.
 # Use --trust-workspace, PROWL_TRUST_WORKSPACE, or the trust-workspace Action
