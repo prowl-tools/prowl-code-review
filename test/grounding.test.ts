@@ -1075,6 +1075,18 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("keeps Semgrep findings for whole-file targets without changed lines", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: {},
+      semgrepWholeFilePaths: ["src/a.ts"],
+      exec
+    });
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+  });
+
   it("skips gracefully when Semgrep is not installed", async () => {
     const exec = execForSemgrep({ stdout: "", code: 127 });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });

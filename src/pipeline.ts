@@ -1366,6 +1366,9 @@ export async function reviewPullRequest(
   const secretScanWholeFilePaths = secretScanFiles
     .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
     .map((file) => file.path);
+  const semgrepWholeFilePaths = reviewFiles
+    .filter((file) => file.status === "copied" && !hasAddedNewLines(file))
+    .map((file) => file.path);
   // Dependency scan (#34) sources changed manifests/lockfiles from the full diff
   // (pre-ignore) so a lockfile excluded from line-review by the ignore list (#19)
   // is still scanned for known CVEs; gate the grounding stage on those too.
@@ -1379,6 +1382,7 @@ export async function reviewPullRequest(
         dependencyPaths: dependencyManifestPaths,
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
+        semgrepWholeFilePaths,
         changedLines: groundingChangedLines,
         trustWorkspace: options.trustWorkspace === true,
         limits: options.groundingLimits,

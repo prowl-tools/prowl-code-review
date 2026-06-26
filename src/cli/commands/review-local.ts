@@ -139,6 +139,10 @@ function changedLinesByPath(files: DiffFile[]): Record<string, number[]> {
   return changed;
 }
 
+function hasAddedNewLines(file: DiffFile): boolean {
+  return file.hunks.some((hunk) => hunk.lines.some((line) => line.type === "add" && line.newLine));
+}
+
 /** A subset of {@link RetrievalLimits} fields, as carried by config + tier plans. */
 type ContextLimitFields = { maxRounds?: number; maxFiles?: number; maxTokens?: number };
 
@@ -461,6 +465,9 @@ export async function runLocalReview(
   const secretScanWholeFilePaths = secretScanFiles
     .filter((file) => file.status === "renamed" || file.status === "copied")
     .map((file) => file.path);
+  const semgrepWholeFilePaths = reviewFiles
+    .filter((file) => file.status === "copied" && !hasAddedNewLines(file))
+    .map((file) => file.path);
 
   const notes: string[] = [];
   const skippedNote = describeSkipped(skipped);
@@ -479,6 +486,7 @@ export async function runLocalReview(
         changedPaths: reviewFiles.map((file) => file.path),
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
+        semgrepWholeFilePaths,
         changedLines: changedLinesByPath(groundingLineFiles),
         trustWorkspace,
         semgrep: resolved.semgrep
