@@ -728,6 +728,7 @@ const SEMGREP_LANGUAGES = new Set<LanguageId>([
 const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
 const SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS = ["--no-git-ignore", "--x-ignore-semgrepignore-files"];
 
+/** Build Semgrep CLI arguments with the extra target-safety flags for untrusted checkouts. */
 function semgrepArgs(requestedConfig: string, trustWorkspace: boolean, targets: readonly string[]): string[] {
   return [
     "scan",
@@ -743,6 +744,7 @@ function semgrepArgs(requestedConfig: string, trustWorkspace: boolean, targets: 
   ];
 }
 
+/** True when Semgrep failed because one or more target paths could not be scanned. */
 function semgrepTargetFailure(result: ExecResult): boolean {
   if (result.code === null || result.code <= 1) {
     return false;
@@ -750,6 +752,7 @@ function semgrepTargetFailure(result: ExecResult): boolean {
   return /file not found|no such file|symbolic link|symlink|not a regular file/i.test(`${result.stderr}\n${result.stdout}`);
 }
 
+/** Drop symlink targets from untrusted checkouts before Semgrep can follow them. */
 async function semgrepTargetsForTrust(
   root: string,
   files: readonly string[],
@@ -785,6 +788,7 @@ async function semgrepTargetsForTrust(
 const SEMGREP_REGISTRY_CONFIG_RE =
   /^(?:p|r)\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)*$/i;
 
+/** True when the config is a Semgrep registry reference permitted without workspace trust. */
 function isRegistrySemgrepConfig(config: string): boolean {
   if (config.toLowerCase() === "auto") {
     return true;
@@ -848,9 +852,10 @@ const semgrepResultSchema = z
       .optional()
   })
   .passthrough();
-const semgrepJsonSchema = z.object({ results: z.array(semgrepResultSchema).optional() }).passthrough();
+const semgrepJsonEnvelopeSchema = z.object({ results: z.array(z.unknown()).optional() }).passthrough();
 type SemgrepResult = z.infer<typeof semgrepResultSchema>;
-type SemgrepJson = z.infer<typeof semgrepJsonSchema>;
+type SemgrepJsonEnvelope = z.infer<typeof semgrepJsonEnvelopeSchema>;
+type SemgrepJson = Omit<SemgrepJsonEnvelope, "results"> & { results?: SemgrepResult[] };
 
 /** Map a Semgrep result to a high-confidence SAST grounding finding. */
 function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefined {
@@ -887,8 +892,17 @@ function parseSemgrepReport(stdout: string): SemgrepJson | undefined {
   }
   try {
     const parsed = JSON.parse(stdout.slice(start));
-    const validated = semgrepJsonSchema.safeParse(parsed);
-    return validated.success ? validated.data : undefined;
+    const validated = semgrepJsonEnvelopeSchema.safeParse(parsed);
+    if (!validated.success) {
+      return undefined;
+    }
+    return {
+      ...validated.data,
+      results: validated.data.results?.flatMap((result) => {
+        const item = semgrepResultSchema.safeParse(result);
+        return item.success ? [item.data] : [];
+      })
+    };
   } catch {
     return undefined;
   }
@@ -913,6 +927,7 @@ export function parseSemgrepJson(root: string, stdout: string): Finding[] {
   return semgrepFindingsFromReport(root, parseSemgrepReport(stdout));
 }
 
+/** Apply changed-line filtering, finding caps, and summary notes to Semgrep findings. */
 function finishSemgrepResult(
   params: { changedLines?: GatherGroundingParams["changedLines"]; limits: Required<GroundingLimits> },
   parsed: Finding[],
@@ -929,6 +944,7 @@ function finishSemgrepResult(
   return { findings, notes };
 }
 
+/** Retry Semgrep one file at a time after a batch scan fails on an invalid target. */
 async function runSemgrepPerTarget(
   params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
     exec: Exec;

@@ -1017,6 +1017,15 @@ describe("parseSemgrepJson", () => {
   it("returns [] for malformed Semgrep result shapes", () => {
     expect(parseSemgrepJson(ROOT, semgrepOutput([{ ...SEMGREP_RESULT, start: { line: "3" } }]))).toEqual([]);
   });
+
+  it("keeps valid Semgrep results when a sibling result is malformed", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([{ ...SEMGREP_RESULT, start: { line: "3" } }, { ...SEMGREP_RESULT, path: "src/valid.ts" }])
+    );
+
+    expect(findings).toEqual([expect.objectContaining({ file: "src/valid.ts", line: 3 })]);
+  });
 });
 
 describe("gatherGrounding — Semgrep (#16b)", () => {
