@@ -937,16 +937,37 @@ describe("parseSemgrepJson", () => {
     ]);
   });
 
-  it("maps WARNING/INFO severities and non-security categories", () => {
+  it("maps Semgrep severities and non-security categories", () => {
     const findings = parseSemgrepJson(
       ROOT,
       semgrepOutput([
+        { ...SEMGREP_RESULT, extra: { message: "critical", severity: "CRITICAL", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/high.ts", extra: { message: "high", severity: "HIGH", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/medium.ts", extra: { message: "medium", severity: "MEDIUM", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/low.ts", extra: { message: "low", severity: "LOW", metadata: { category: "security" } } },
         { ...SEMGREP_RESULT, extra: { message: "perf", severity: "WARNING", metadata: { category: "performance" } } },
         { ...SEMGREP_RESULT, path: "src/b.ts", extra: { message: "style", severity: "INFO", metadata: { category: "best-practice" } } }
       ])
     );
-    expect(findings[0]).toMatchObject({ severity: "minor", category: "performance" });
-    expect(findings[1]).toMatchObject({ severity: "info", category: "lint" });
+    expect(findings[0]).toMatchObject({ severity: "critical", category: "security" });
+    expect(findings[1]).toMatchObject({ severity: "major", category: "security" });
+    expect(findings[2]).toMatchObject({ severity: "minor", category: "security" });
+    expect(findings[3]).toMatchObject({ severity: "minor", category: "security" });
+    expect(findings[4]).toMatchObject({ severity: "minor", category: "performance" });
+    expect(findings[5]).toMatchObject({ severity: "info", category: "lint" });
+  });
+
+  it("tolerates non-string Semgrep metadata categories", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([
+        { ...SEMGREP_RESULT, extra: { message: "array category", severity: "ERROR", metadata: { category: ["security"] } } },
+        { ...SEMGREP_RESULT, path: "src/b.ts", extra: { message: "normal category", severity: "WARNING", metadata: { category: "performance" } } }
+      ])
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings[0]).toMatchObject({ severity: "major", category: "security" });
+    expect(findings[1]).toMatchObject({ severity: "minor", category: "performance" });
   });
 
   it("normalizes absolute paths and drops results without a line", () => {

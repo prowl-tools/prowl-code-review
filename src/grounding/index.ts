@@ -738,10 +738,16 @@ function isRegistrySemgrepConfig(config: string): boolean {
 /** Map a Semgrep severity to a prowl-review severity. */
 function mapSemgrepSeverity(severity: string | undefined): Severity {
   switch ((severity ?? "").toUpperCase()) {
+    case "CRITICAL":
+      return "critical";
+    case "HIGH":
     case "ERROR":
       return "major";
+    case "MEDIUM":
+    case "LOW":
     case "WARNING":
       return "minor";
+    case "INFO":
     default:
       return "info"; // INFO and anything unknown
   }
@@ -776,7 +782,7 @@ const semgrepResultSchema = z
       .object({
         message: z.string().optional(),
         severity: z.string().optional(),
-        metadata: z.object({ category: z.string().optional() }).passthrough().optional()
+        metadata: z.object({ category: z.unknown().optional() }).passthrough().optional()
       })
       .passthrough()
       .optional()
@@ -799,12 +805,14 @@ function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefi
   const endLine = result.end?.line;
   const ruleId = result.check_id ?? "semgrep";
   const message = (result.extra?.message ?? "Potential issue flagged by Semgrep").replace(/\s+/g, " ").trim();
+  const metadataCategory =
+    typeof result.extra?.metadata?.category === "string" ? result.extra.metadata.category : undefined;
   return {
     file,
     line,
     ...(endLine && endLine > line ? { endLine } : {}),
     severity: mapSemgrepSeverity(result.extra?.severity),
-    category: mapSemgrepCategory(result.extra?.metadata?.category),
+    category: mapSemgrepCategory(metadataCategory),
     title: ruleId,
     body: `${message} (${ruleId})`,
     confidence: 0.9
