@@ -266,6 +266,24 @@ const resilienceSchema = z
   .strict();
 
 /**
+ * Dependency-CVE / license scanning (#34). On by default when a dependency
+ * lockfile changes (scanned with osv-scanner; skips gracefully when it isn't
+ * installed). Set `enabled: false` to disable. `licenses.allow` is an optional
+ * SPDX allowlist — dependencies whose license falls outside it are flagged.
+ */
+const dependencyScanSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    licenses: z
+      .object({
+        allow: z.array(z.string().min(1)).optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
+/**
  * Debug/verbose run tracing (#49). Opt-in, default off. When enabled, the run
  * emits the assembled prompts, fetched-context list, findings at each stage, and
  * the token/cost breakdown to a line-per-event JSONL trace (secrets redacted).
@@ -316,6 +334,8 @@ export const configSchema = z
     issueValidation: issueValidationSchema.optional(),
     /** LLM resilience: cross-generation failback (#17); opt-in. */
     resilience: resilienceSchema.optional(),
+    /** Dependency-CVE / license scanning via osv-scanner (#34); on by default. */
+    dependencyScan: dependencyScanSchema.optional(),
     /** Debug/verbose run tracing to a JSONL trace file (#49); opt-in. */
     debug: debugSchema.optional(),
     review: reviewSchema.optional(),
