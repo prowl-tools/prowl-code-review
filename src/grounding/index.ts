@@ -757,7 +757,13 @@ function semgrepTargetFailure(result: ExecResult): boolean {
  * let untrusted repo config choose an arbitrary remote/internal URL.
  */
 function isRegistrySemgrepConfig(config: string): boolean {
-  return /^(?:p|r)\//i.test(config) || config.toLowerCase() === "auto";
+  if (config.toLowerCase() === "auto") {
+    return true;
+  }
+  if (!/^(?:p|r)\/[a-z0-9._-]+(?:\/[a-z0-9._-]+)*$/i.test(config)) {
+    return false;
+  }
+  return !config.split("/").some((segment) => segment === "." || segment === ".." || segment.includes(".."));
 }
 
 /** Map a Semgrep severity to a prowl-review severity. */
