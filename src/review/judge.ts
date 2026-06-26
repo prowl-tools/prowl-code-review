@@ -90,6 +90,20 @@ function isLintFinding(finding: Finding): boolean {
   return finding.category.toLowerCase() === "lint";
 }
 
+function isDependencyFinding(finding: Finding): boolean {
+  return finding.category.toLowerCase() === "dependency";
+}
+
+/**
+ * Dependency-scan findings (#34) are file-level (no line) — many distinct
+ * advisories share the same lockfile, so `findingKey` (file|0|category) would
+ * collapse them all into one. Dedupe them by file + title instead, so the same
+ * advisory reported twice merges while different CVEs/licenses stay distinct.
+ */
+function dependencyDedupeKey(finding: Finding): string {
+  return `${finding.file}|dependency|${normalizeDedupeText(finding.title)}`;
+}
+
 function normalizeDedupeText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
 }
@@ -130,6 +144,11 @@ function dedupeBucket(finding: Finding, lintEntries: Map<string, LintDedupeEntry
   const loc = lineKey(finding);
   if (loc && isLintFinding(finding)) {
     return lintDedupeKey(loc, finding);
+  }
+  // Dependency advisories are file-level; key them by title so distinct CVEs /
+  // license violations in the same lockfile don't collapse together (#34).
+  if (isDependencyFinding(finding)) {
+    return dependencyDedupeKey(finding);
   }
   if (loc) {
     const key = matchingLintKey(finding, lintEntries.get(loc));
