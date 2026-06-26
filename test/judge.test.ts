@@ -78,6 +78,43 @@ describe("dedupeFindings", () => {
     expect(result).toHaveLength(2);
     expect(result.map((item) => item.title)).toEqual(["no-console", "no-debugger"]);
   });
+
+  it("keeps distinct file-level dependency advisories in the same lockfile (#34)", () => {
+    // No line + same file + same category would collapse under findingKey; the
+    // dependency path keys by title/package so different CVEs stay separate.
+    const dep = (over: Partial<Finding>): Finding =>
+      finding({ file: "package-lock.json", line: undefined, category: "dependency", confidence: 0.9, ...over });
+    const result = dedupeFindings([
+      dep({ title: "CVE-2019-10744", body: "lodash@4.17.0: prototype pollution" }),
+      dep({ title: "CVE-2021-23337", body: "lodash@4.17.0: command injection" }),
+      dep({ title: "CVE-2019-10744", body: "lodash@4.17.0: prototype pollution (dup)" }) // same package/advisory -> merges
+    ]);
+    expect(result).toHaveLength(2);
+    expect(result.map((f) => f.title).sort()).toEqual(["CVE-2019-10744", "CVE-2021-23337"]);
+  });
+
+  it("keeps same dependency advisory for different packages or versions (#34)", () => {
+    const dep = (over: Partial<Finding>): Finding =>
+      finding({
+        file: "package-lock.json",
+        line: undefined,
+        category: "dependency",
+        title: "GHSA-shared",
+        confidence: 0.9,
+        ...over
+      });
+    const result = dedupeFindings([
+      dep({ body: "alpha@1.0.0: shared advisory" }),
+      dep({ body: "beta@2.0.0: shared advisory" }),
+      dep({ body: "alpha@1.0.1: shared advisory" })
+    ]);
+    expect(result).toHaveLength(3);
+    expect(result.map((f) => f.body).sort()).toEqual([
+      "alpha@1.0.0: shared advisory",
+      "alpha@1.0.1: shared advisory",
+      "beta@2.0.0: shared advisory"
+    ]);
+  });
 });
 
 describe("rankFindings", () => {

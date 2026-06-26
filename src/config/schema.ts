@@ -265,6 +265,37 @@ const resilienceSchema = z
   })
   .strict();
 
+const COMMON_SHORT_SPDX_LICENSE_IDS = new Set(["0BSD", "AFL-3.0", "ISC", "MIT", "MPL-2.0", "Unlicense", "WTFPL", "Zlib"]);
+
+function isSpdxLicenseId(value: string): boolean {
+  const trimmed = value.trim();
+  if (COMMON_SHORT_SPDX_LICENSE_IDS.has(trimmed)) {
+    return true;
+  }
+  if (!trimmed.includes("-")) {
+    return /^[A-Za-z]+$/.test(trimmed);
+  }
+  return /^[A-Za-z0-9][A-Za-z0-9.+]*(?:-[A-Za-z0-9][A-Za-z0-9.+]*)+$/.test(trimmed);
+}
+
+/**
+ * Dependency-CVE / license scanning (#34). On by default when a dependency
+ * lockfile changes (scanned with osv-scanner; skips gracefully when it isn't
+ * installed). Set `enabled: false` to disable. `licenses.allow` is an optional
+ * SPDX allowlist — dependencies whose license falls outside it are flagged.
+ */
+const dependencyScanSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    licenses: z
+      .object({
+        allow: z.array(z.string().min(1).refine(isSpdxLicenseId, "must be an SPDX license identifier")).optional()
+      })
+      .strict()
+      .optional()
+  })
+  .strict();
+
 /**
  * Debug/verbose run tracing (#49). Opt-in, default off. When enabled, the run
  * emits the assembled prompts, fetched-context list, findings at each stage, and
@@ -316,6 +347,8 @@ export const configSchema = z
     issueValidation: issueValidationSchema.optional(),
     /** LLM resilience: cross-generation failback (#17); opt-in. */
     resilience: resilienceSchema.optional(),
+    /** Dependency-CVE / license scanning via osv-scanner (#34); on by default. */
+    dependencyScan: dependencyScanSchema.optional(),
     /** Debug/verbose run tracing to a JSONL trace file (#49); opt-in. */
     debug: debugSchema.optional(),
     review: reviewSchema.optional(),

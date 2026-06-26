@@ -48,10 +48,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Done:** auto-generate/update a PR description from the diff (opt-in `prDescription.enabled`) — fills an empty PR body with a marked, self-refreshing summary block; never overwrites a human-authored description.
     - Acceptance (remaining): commands to generate **docstrings** and **unit-test stubs** for changed code (likely `@prowl-review` verbs producing committable suggestions).
 
-34. **Dependency-CVE / license scanning**
-    As a security-conscious developer, I want changed dependencies checked for known CVEs and license issues, so that risky deps are flagged in review.
-    - Acceptance: detect dependency-manifest changes; surface known-vuln advisories and license-policy violations as findings.
-
 37. **Reusable org-level workflow**
     As an org owner, I want one reusable workflow referenced by all repos, so that "across all my projects" needs no YAML copy-paste.
     - Acceptance: documented `workflow_call` workflow (intended for `Prowl-qa/.github`) that any repo invokes in a few lines.

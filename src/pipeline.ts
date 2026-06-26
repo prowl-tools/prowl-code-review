@@ -77,9 +77,11 @@ import {
 import {
   gatherGrounding as defaultGatherGrounding,
   buildGroundingSummary,
+  dependencyScanTargets,
   type GatherGroundingParams,
   type GroundingResult,
-  type GroundingLimits
+  type GroundingLimits,
+  type DependencyScanOptions
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
@@ -287,6 +289,13 @@ export interface ReviewPullRequestOptions {
   trustWorkspace?: boolean;
   /** Limits for the linter/SAST grounding stage (#16). */
   groundingLimits?: GroundingLimits;
+  /**
+   * Dependency-CVE / license scanning policy (#34): scan changed lockfiles with
+   * osv-scanner for known vulnerabilities (and license-policy violations when an
+   * SPDX allowlist is set). Omitted → enabled (vuln scan only); skips gracefully
+   * when osv-scanner isn't installed.
+   */
+  dependencyScan?: DependencyScanOptions;
   /** Build the review but don't publish it. */
   dryRun?: boolean;
   /**
@@ -1324,30 +1333,48 @@ export async function reviewPullRequest(
   const secretScanWholeFilePaths = secretScanFiles
     .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
     .map((file) => file.path);
-  if (!options.skipGrounding && options.toolkitRoot && groundingLineFiles.length > 0) {
+  // Dependency scan (#34) sources changed manifests/lockfiles from the full diff
+  // (pre-ignore) so a lockfile excluded from line-review by the ignore list (#19)
+  // is still scanned for known CVEs; gate the grounding stage on those too.
+  const dependencyManifestPaths = parsed.files.map((file) => file.path);
+  const dependencyTargets = dependencyScanTargets(dependencyManifestPaths);
+  if (!options.skipGrounding && options.toolkitRoot && (groundingLineFiles.length > 0 || dependencyTargets.length > 0)) {
     try {
       const result = await ground({
         root: options.toolkitRoot,
         changedPaths: reviewFiles.map((file) => file.path),
+        dependencyPaths: dependencyManifestPaths,
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
         changedLines: groundingChangedLines,
         trustWorkspace: options.trustWorkspace === true,
-        limits: options.groundingLimits
+        limits: options.groundingLimits,
+        dependencyScan: options.dependencyScan
       });
       const redactedNotes = redactGroundingNotes(result.notes);
       groundingNotes = redactedNotes.notes.map((note) => truncateNote(`Linter grounding: ${note}`));
       const redacted = redactGroundingFindings(result.findings);
       groundingFindings = redacted.findings;
-      directGroundingFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
-      const promptGroundingFindings = groundingFindings.filter((finding) => !secretScanPathSet.has(finding.file));
+      const directSecretFindings = groundingFindings.filter((finding) => secretScanPathSet.has(finding.file));
+      const dependencyFindings = groundingFindings.filter((finding) => finding.category.toLowerCase() === "dependency");
+      directGroundingFindings = groundingFindings.filter(
+        (finding) => secretScanPathSet.has(finding.file) || finding.category.toLowerCase() === "dependency"
+      );
+      const promptGroundingFindings = groundingFindings.filter(
+        (finding) => !secretScanPathSet.has(finding.file) && finding.category.toLowerCase() !== "dependency"
+      );
       const redactionCount = redacted.count + redactedNotes.count;
       if (redactionCount > 0) {
         redactionNotes.push(`Redacted ${redactionCount} secret(s) from linter grounding output.`);
       }
-      if (directGroundingFindings.length > 0 && reviewFiles.length > 0) {
+      if (directSecretFindings.length > 0 && reviewFiles.length > 0) {
         groundingNotes.push(
-          `Linter grounding: kept ${directGroundingFindings.length} sensitive-file secret finding(s) outside provider verification.`
+          `Linter grounding: kept ${directSecretFindings.length} sensitive-file secret finding(s) outside provider verification.`
+        );
+      }
+      if (dependencyFindings.length > 0 && reviewFiles.length > 0) {
+        groundingNotes.push(
+          `Linter grounding: kept ${dependencyFindings.length} dependency finding(s) outside provider verification.`
         );
       }
       if (promptGroundingFindings.length > 0) {

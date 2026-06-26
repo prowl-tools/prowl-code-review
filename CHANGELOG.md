@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Dependency-CVE / license scanning (backlog #34): a new deterministic grounding runner. When a PR changes a
+  dependency lockfile, prowl-review scans it with **osv-scanner** (Google OSV — multi-ecosystem, lockfile-based,
+  reads manifests as data so it never executes repo code) and surfaces **known vulnerabilities** as file-level
+  findings (one per advisory: CVE id, affected `pkg@version`, fixed version, severity mapped from the GHSA
+  label or CVSS score). Runs by default and **skips gracefully when osv-scanner isn't installed**. Lockfiles
+  are scanned from the full diff even though the ignore list (#19) excludes them from line-review, and an
+  optional SPDX **license allowlist** (`dependencyScan.licenses.allow`) additionally flags dependencies whose
+  license is outside the policy. New `runDependencyScan`/`parseOsvJson`/`dependencyScanTargets` in
+  `src/grounding`, a `dependencyScan` config block (strict Zod), and pipeline/CLI wiring. The judge now keys
+  file-level dependency findings by title so distinct advisories in one lockfile don't collapse together.
 - npm + Homebrew distribution (backlog #42): a tag-triggered release pipeline. New
   `.github/workflows/publish.yml` fires on a `vX.Y.Z` tag, verifies the tag matches `package.json`, runs
   `npm ci` → build → lint → test, verifies release notes, prepares a draft GitHub Release, publishes to npm
