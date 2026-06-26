@@ -1048,6 +1048,9 @@ async function runSemgrep(
   if (scanTargets.files.length > limited.length) {
     notes.push(`Semgrep: scanned ${limited.length}/${scanTargets.files.length} changed files (file cap).`);
   }
+  if (limited.length === 0) {
+    return { findings: [], notes };
+  }
 
   // `--metrics=off` + `--disable-version-check` keep the run offline-friendly and
   // stop any project metadata from being uploaded. `--disable-nosem` prevents a

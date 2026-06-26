@@ -1064,6 +1064,15 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
   });
 
+  it("does not invoke Semgrep when the file cap removes every target", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], limits: { maxFiles: 0 }, exec });
+
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep: scanned 0/1 changed files");
+  });
+
   it("drops Semgrep findings outside the changed lines", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
     const result = await gatherGrounding({
