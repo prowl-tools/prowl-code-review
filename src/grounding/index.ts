@@ -730,6 +730,28 @@ const SEMGREP_LANGUAGES = new Set<LanguageId>([
 const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
 const SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS = ["--no-git-ignore", "--x-ignore-semgrepignore-files"];
 
+function semgrepArgs(requestedConfig: string, trustWorkspace: boolean, targets: readonly string[]): string[] {
+  return [
+    "scan",
+    "--json",
+    "--quiet",
+    "--metrics=off",
+    "--disable-version-check",
+    "--disable-nosem",
+    ...(!trustWorkspace ? SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS : []),
+    `--config=${requestedConfig}`,
+    "--",
+    ...targets
+  ];
+}
+
+function semgrepTargetFailure(result: ExecResult): boolean {
+  if (result.code === null || result.code <= 1) {
+    return false;
+  }
+  return /file not found|no such file|symbolic link|symlink|not a regular file/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
 /**
  * True when a ruleset reference resolves to a Semgrep registry pack that does not
  * let untrusted repo config choose an arbitrary remote/internal URL.
@@ -856,6 +878,62 @@ export function parseSemgrepJson(root: string, stdout: string): Finding[] {
   return semgrepFindingsFromReport(root, parseSemgrepReport(stdout));
 }
 
+function finishSemgrepResult(
+  params: { changedLines?: GatherGroundingParams["changedLines"]; limits: Required<GroundingLimits> },
+  parsed: Finding[],
+  notes: string[]
+): GroundingResult {
+  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
+  if (findings.length > params.limits.maxFindings) {
+    notes.push(`Semgrep: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`);
+    return { findings: findings.slice(0, params.limits.maxFindings), notes };
+  }
+  if (findings.length > 0) {
+    notes.push(`Semgrep: ${findings.length} SAST grounding finding(s).`);
+  }
+  return { findings, notes };
+}
+
+async function runSemgrepPerTarget(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    trustWorkspace: boolean;
+  },
+  requestedConfig: string,
+  files: readonly string[],
+  notes: string[]
+): Promise<GroundingResult> {
+  notes.push(`Semgrep: retried ${files.length} changed files individually after the batch scan hit an invalid target.`);
+  const parsed: Finding[] = [];
+  for (const file of files) {
+    const result = await params.exec(
+      "semgrep",
+      semgrepArgs(requestedConfig, params.trustWorkspace, [file]),
+      params.root,
+      { env: SEMGREP_TRUSTED_ENV }
+    );
+    if (result.code === null) {
+      notes.push(`Semgrep timed out for ${file}; skipped.`);
+      continue;
+    }
+    const semgrepReport = parseSemgrepReport(result.stdout);
+    const fileFindings = semgrepFindingsFromReport(params.root, semgrepReport);
+    const hasJsonReport = Array.isArray(semgrepReport?.results);
+    parsed.push(...fileFindings);
+
+    if (fileFindings.length === 0 && commandUnavailable(result)) {
+      notes.push(`Semgrep not available while scanning ${file}; skipped that file.`);
+      continue;
+    }
+    if (result.code > 1 || (fileFindings.length === 0 && !hasJsonReport)) {
+      notes.push(`Semgrep failed for ${file}: ${toolFailureNote("Semgrep", result)}`);
+    }
+  }
+  return finishSemgrepResult(params, parsed, notes);
+}
+
 /** Run Semgrep over the changed source files, or note why it was skipped. */
 async function runSemgrep(
   params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
@@ -902,31 +980,20 @@ async function runSemgrep(
   // PR from hiding a changed-line finding with an inline Semgrep suppression.
   // Untrusted scans also bypass repo ignore files so a PR cannot hide an explicit
   // changed-file target through `.gitignore` or `.semgrepignore`.
-  const result = await params.exec(
-    "semgrep",
-    [
-      "scan",
-      "--json",
-      "--quiet",
-      "--metrics=off",
-      "--disable-version-check",
-      "--disable-nosem",
-      ...(!params.trustWorkspace ? SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS : []),
-      `--config=${requestedConfig}`,
-      "--",
-      ...limited
-    ],
-    params.root,
-    { env: SEMGREP_TRUSTED_ENV }
-  );
+  const result = await params.exec("semgrep", semgrepArgs(requestedConfig, params.trustWorkspace, limited), params.root, {
+    env: SEMGREP_TRUSTED_ENV
+  });
 
   if (result.code === null) {
     return { findings: [], notes: [...notes, "Semgrep: timed out; skipped."] };
   }
   const semgrepReport = parseSemgrepReport(result.stdout);
   const parsed = semgrepFindingsFromReport(params.root, semgrepReport);
-  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
   const hasJsonReport = Array.isArray(semgrepReport?.results);
+
+  if (limited.length > 1 && semgrepTargetFailure(result)) {
+    return runSemgrepPerTarget(params, requestedConfig, limited, notes);
+  }
 
   if (parsed.length === 0 && commandUnavailable(result)) {
     return { findings: [], notes: [...notes, "Semgrep not available in the workspace; skipped SAST grounding."] };
@@ -934,20 +1001,13 @@ async function runSemgrep(
   // Semgrep exits 0 (clean) or 1 (findings) on success; exit > 1 is an error.
   // A non-parseable report on a non-clean exit is surfaced rather than dropped.
   if (result.code > 1) {
-    return { findings, notes: [...notes, toolFailureNote("Semgrep", result)] };
+    return finishSemgrepResult(params, parsed, [...notes, toolFailureNote("Semgrep", result)]);
   }
   if (parsed.length === 0 && !hasJsonReport) {
     return { findings: [], notes: [...notes, toolFailureNote("Semgrep", result)] };
   }
 
-  if (findings.length > params.limits.maxFindings) {
-    notes.push(`Semgrep: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`);
-    return { findings: findings.slice(0, params.limits.maxFindings), notes };
-  }
-  if (findings.length > 0) {
-    notes.push(`Semgrep: ${findings.length} SAST grounding finding(s).`);
-  }
-  return { findings, notes };
+  return finishSemgrepResult(params, parsed, notes);
 }
 
 // ---------------------------------------------------------------------------

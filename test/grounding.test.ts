@@ -1052,6 +1052,35 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.notes.join(" ")).toContain("Semgrep failed (exit 7)");
   });
 
+  it("retries Semgrep targets individually when an invalid target aborts the batch scan", async () => {
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "semgrep") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const separator = args.indexOf("--");
+      const targets = separator === -1 ? [] : args.slice(separator + 1);
+      if (targets.length > 1) {
+        return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+      }
+      if (targets[0] === "src/a.ts") {
+        return { stdout: semgrepOutput([SEMGREP_RESULT]), stderr: "", code: 1 };
+      }
+      return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/link.ts"],
+      changedLines: { "src/a.ts": [3], "src/link.ts": [1] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+    expect(result.notes.join(" ")).toContain("retried 2 changed files individually");
+    expect(result.notes.join(" ")).toContain("src/link.ts");
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(3);
+  });
+
   it("surfaces a failure when Semgrep exits with findings but no parseable report", async () => {
     const exec = execForSemgrep({ stdout: "banner { not json", stderr: "", code: 1 });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
