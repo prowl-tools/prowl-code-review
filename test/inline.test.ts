@@ -114,20 +114,53 @@ describe("buildInlineComments", () => {
     expect(comments[0]).not.toHaveProperty("start_side");
   });
 
-  it("leaves a multi-line suggestion unmapped when the full range cannot anchor", () => {
-    const { comments, unmapped } = buildInlineComments([f({ line: 5, endLine: 8, suggestion: "first\nsecond" })], diff);
+  it("leaves a committable multi-line suggestion unmapped when the full range cannot anchor", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 5, endLine: 8, suggestion: "first\nsecond", confidence: 0.9 })],
+      diff
+    );
 
     expect(comments).toHaveLength(0);
     expect(unmapped).toHaveLength(1);
     expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 5, endLine: 8, suggestion: "first\nsecond" });
   });
 
-  it("leaves a multi-line suggestion unmapped when no range is provided", () => {
-    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\nsecond" })], diff);
+  it("leaves a committable multi-line suggestion unmapped when no range is provided", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 6, suggestion: "first\nsecond", confidence: 0.9 })],
+      diff
+    );
 
     expect(comments).toHaveLength(0);
     expect(unmapped).toHaveLength(1);
     expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 6, suggestion: "first\nsecond" });
+  });
+
+  it("keeps gated multi-line suggestions inline when the finding line can anchor", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\nsecond", confidence: 0.6 })], diff);
+
+    expect(unmapped).toHaveLength(0);
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 6, side: "RIGHT" });
+    expect(comments[0].body).not.toContain("```suggestion");
+  });
+
+  it("keeps invalid multi-line suggestions inline when the finding line can anchor", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\n// ...", confidence: 0.9 })], diff);
+
+    expect(unmapped).toHaveLength(0);
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 6, side: "RIGHT" });
+    expect(comments[0].body).not.toContain("```suggestion");
+  });
+
+  it("uses a custom suggestion confidence floor for anchoring decisions", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 6, suggestion: "first\nsecond", confidence: 0.6 })],
+      diff,
+      { suggestionMinConfidence: 0.5 }
+    );
+
+    expect(comments).toHaveLength(0);
+    expect(unmapped).toHaveLength(1);
   });
 });
 

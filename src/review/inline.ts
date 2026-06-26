@@ -2,7 +2,7 @@ import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { isBlockingFinding } from "./findings.js";
 import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
-import { shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
+import { hasSuggestion, shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
 
 /**
  * Inline comments + committable suggestions (backlog #10).
@@ -314,11 +314,6 @@ function agentPromptBlock(finding: Finding, maxChars?: number): string | undefin
 
   const content = sanitizeForCodeFence(lines.join("\n"));
   return fitAgentPromptBlock(content, maxChars);
-}
-
-/** Return true when a finding includes a non-empty committable suggestion. */
-function hasSuggestion(finding: Finding): boolean {
-  return Boolean(finding.suggestion?.trim());
 }
 
 /** Return true when a suggestion would replace more than one line. */
@@ -677,7 +672,8 @@ export function buildInlineComments(
     const hasRange = endLine !== undefined && endLine > finding.line;
     const canAnchorRange = hasRange ? sameHunkRange(fileLines, finding.line, endLine) : false;
 
-    if (hasSuggestion(finding) && !canAnchorRange && (hasRange || hasMultiLineSuggestion(finding))) {
+    const hasCommittableSuggestion = shouldCommitSuggestion(finding, options.suggestionMinConfidence);
+    if (hasCommittableSuggestion && !canAnchorRange && (hasRange || hasMultiLineSuggestion(finding))) {
       unmapped.push(finding);
       continue;
     }
