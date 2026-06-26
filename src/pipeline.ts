@@ -85,6 +85,7 @@ import {
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
+import { summarizeSuggestionGating, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./review/suggestions.js";
 import {
   emptyUsage,
   resolveProviderConfig,
@@ -213,6 +214,12 @@ export interface ReviewPullRequestOptions {
   maxFindings?: number;
   /** Cap inline comments per review; overflow rolls into the summary (default 20, #25). */
   maxInlineComments?: number;
+  /**
+   * Suggested-fix validation (#39): only render a committable `suggestion` block
+   * for findings at/above `minConfidence` (default 0.8) that pass structural
+   * validation. Lower-confidence fixes stay in the agent prompt, not one-click.
+   */
+  suggestions?: { minConfidence?: number };
   /**
    * Per-review token budget (#18): caps agentic context retrieval and skips the
    * verification pass once spent; the over-budget total is reported. Resolved
@@ -440,6 +447,25 @@ function judgeNotes(reviewResult: ReviewResult): string[] {
   }
   if (capped > 0) {
     notes.push(`${capped} additional lower-ranked finding(s) not shown (findings cap reached).`);
+  }
+  return notes;
+}
+
+/** Surface committable suggestions withheld by validation, so it isn't silent (#39, #5). */
+function suggestionGatingNotes(findings: Finding[], minConfidence: number): string[] {
+  const { withheldLowConfidence, withheldInvalid } = summarizeSuggestionGating(findings, minConfidence);
+  const notes: string[] = [];
+  if (withheldLowConfidence > 0) {
+    notes.push(
+      `Withheld a one-click fix on ${withheldLowConfidence} finding(s) below the suggestion confidence ` +
+        `floor (${minConfidence}); the proposed fix is still in each finding's agent prompt (#39).`
+    );
+  }
+  if (withheldInvalid > 0) {
+    notes.push(
+      `Withheld a one-click fix on ${withheldInvalid} finding(s) whose suggested code didn't pass ` +
+        "validation (empty, truncated, or redacted) (#39)."
+    );
   }
   return notes;
 }
@@ -1635,6 +1661,7 @@ export async function reviewPullRequest(
           : []),
         ...verificationNotes(reviewResult),
         ...judgeNotes(reviewResult),
+        ...suggestionGatingNotes(reviewResult.findings, options.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE),
         ...reviewPassNotes(reviewResult),
         ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note)),
         ...(runRequirementsOnlyReview
@@ -1651,7 +1678,8 @@ export async function reviewPullRequest(
       diff: { files: runRequirementsOnlyReview ? fullGuarded.files : [] },
       summaryBody,
       event: options.event ?? approval.event,
-      agentPrompt: options.agentPrompt
+      agentPrompt: options.agentPrompt,
+      suggestions: options.suggestions
     });
 
     const result: ReviewPullRequestResult = {
@@ -1956,6 +1984,7 @@ export async function reviewPullRequest(
         : []),
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
+      ...suggestionGatingNotes(reviewResult.findings, options.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE),
       ...reviewPassNotes(reviewResult),
       ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note))
     ]
@@ -1968,7 +1997,8 @@ export async function reviewPullRequest(
     event: options.event ?? approval.event,
     agentPrompt: options.agentPrompt,
     maxInlineComments: options.maxInlineComments,
-    providerCount
+    providerCount,
+    suggestions: options.suggestions
   });
 
   const result: ReviewPullRequestResult = {
