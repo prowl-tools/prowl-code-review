@@ -973,11 +973,18 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.notes.join(" ")).toContain("Semgrep not available");
   });
 
-  it("surfaces a failure when a non-error exit yields no parseable report", async () => {
+  it("surfaces a failure when an error exit yields no parseable report", async () => {
     const exec = execForSemgrep({ stdout: "", stderr: "could not fetch ruleset", code: 7 });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
     expect(result.findings).toEqual([]);
     expect(result.notes.join(" ")).toContain("Semgrep failed (exit 7)");
+  });
+
+  it("surfaces a failure when Semgrep exits with findings but no parseable report", async () => {
+    const exec = execForSemgrep({ stdout: "banner { not json", stderr: "", code: 1 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep failed (exit 1)");
   });
 
   it("notes when Semgrep times out", async () => {

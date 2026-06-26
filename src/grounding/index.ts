@@ -750,6 +750,10 @@ interface SemgrepResult {
   extra?: { message?: string; severity?: string; metadata?: { category?: string } };
 }
 
+interface SemgrepJson {
+  results?: SemgrepResult[];
+}
+
 /** Map a Semgrep result to a high-confidence SAST grounding finding. */
 function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefined {
   const line = result.start?.line;
@@ -776,18 +780,21 @@ function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefi
 }
 
 /** Parse `semgrep scan --json` stdout into findings; tolerant of junk/banners. */
-export function parseSemgrepJson(root: string, stdout: string): Finding[] {
+function parseSemgrepReport(stdout: string): SemgrepJson | undefined {
   const start = stdout.indexOf("{");
   if (start === -1) {
-    return [];
+    return undefined;
   }
-  let parsed: { results?: SemgrepResult[] };
   try {
-    parsed = JSON.parse(stdout.slice(start));
+    const parsed = JSON.parse(stdout.slice(start));
+    return parsed && typeof parsed === "object" ? (parsed as SemgrepJson) : undefined;
   } catch {
-    return [];
+    return undefined;
   }
-  if (!Array.isArray(parsed.results)) {
+}
+
+function semgrepFindingsFromReport(root: string, parsed: SemgrepJson | undefined): Finding[] {
+  if (!Array.isArray(parsed?.results)) {
     return [];
   }
   const findings: Finding[] = [];
@@ -798,6 +805,11 @@ export function parseSemgrepJson(root: string, stdout: string): Finding[] {
     }
   }
   return findings;
+}
+
+/** Parse `semgrep scan --json` stdout into findings; tolerant of junk/banners. */
+export function parseSemgrepJson(root: string, stdout: string): Finding[] {
+  return semgrepFindingsFromReport(root, parseSemgrepReport(stdout));
 }
 
 /** Run Semgrep over the changed source files, or note why it was skipped. */
@@ -861,17 +873,17 @@ async function runSemgrep(
   if (result.code === null) {
     return { findings: [], notes: [...notes, "Semgrep: timed out; skipped."] };
   }
-  const parsed = parseSemgrepJson(params.root, result.stdout);
+  const semgrepReport = parseSemgrepReport(result.stdout);
+  const parsed = semgrepFindingsFromReport(params.root, semgrepReport);
   const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines));
-  const hasJson = result.stdout.includes("{");
+  const hasJsonReport = Array.isArray(semgrepReport?.results);
 
   if (parsed.length === 0 && commandUnavailable(result)) {
     return { findings: [], notes: [...notes, "Semgrep not available in the workspace; skipped SAST grounding."] };
   }
-  // Semgrep exits 0 (clean) or 1 (findings) on success; exit >= 2 is an error
-  // (e.g. a ruleset that couldn't be fetched). No parseable report on such an
-  // exit is a real failure, surfaced rather than dropped.
-  if (parsed.length === 0 && (!hasJson || result.code >= 2)) {
+  // Semgrep exits 0 (clean) or 1 (findings) on success; exit > 1 is an error.
+  // A non-parseable report on a non-clean exit is surfaced rather than dropped.
+  if (parsed.length === 0 && (!hasJsonReport || result.code > 1)) {
     return { findings: [], notes: [...notes, toolFailureNote("Semgrep", result)] };
   }
 
