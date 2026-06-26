@@ -404,21 +404,26 @@ installed** — no failure, just a note.
 pack — the rules are fetched from the registry (cached after the first run, the
 same network reach osv-scanner uses for OSV.dev) with **metrics disabled**, so no
 project metadata is ever uploaded. That's why `--config auto`, which phones home,
-is *not* the default. A repository-supplied ruleset (e.g. `.semgrep.yml`) is
-honored **only on a trusted workspace** (`--trust-workspace`), since an untrusted
-PR could ship a malicious or noisy ruleset; registry refs (`p/…`, `r/…`, `auto`)
-run ungated. Remote `http(s)://` configs also require workspace trust.
+is *not* the default. Only Semgrep registry refs (`p/…`, `r/…`, `auto`) are
+supported. Repository-supplied rulesets (e.g. `.semgrep.yml`) and remote
+`http(s)://` configs are skipped even on trusted workspaces, since a PR could
+ship or point at a malicious/noisy ruleset.
 
 ```yaml
 # .prowl-review.yml
 grounding:
   semgrep:
     enabled: true        # default; set false to disable
-    config: p/default    # registry pack, or a repo path/URL on a trusted workspace
+    config: p/default    # registry pack (p/..., r/..., or auto)
 ```
 
 To use it in CI, make `semgrep` available on the runner (e.g. `pip install
 semgrep` or the setup action). Without it, the rest of the review is unaffected.
+
+**Resource bounds.** Linter/SAST grounding runs at most two tool runners at a
+time, and Gitleaks scans files serially inside its runner. Each runner still
+honors the grounding file/finding caps so large PRs do not fan out unbounded
+external processes.
 
 ## Dependency CVE / license scanning (#34)
 

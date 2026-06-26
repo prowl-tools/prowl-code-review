@@ -94,6 +94,28 @@ describe("gatherGrounding", () => {
     expect(result.findings).toEqual([]);
   });
 
+  it("bounds concurrent grounding runner command execution", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const exec: Exec = vi.fn(async (command: string): Promise<ExecResult> => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: command === "semgrep" ? semgrepOutput([]) : "[]", stderr: "", code: 0 };
+    });
+
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/b.py", ".env"],
+      trustWorkspace: true,
+      dependencyScan: { enabled: false },
+      exec
+    });
+
+    expect(maxActive).toBeLessThanOrEqual(2);
+  });
+
   it("skips repo-local ESLint unless the workspace is trusted", async () => {
     const exec = fakeExec({ stdout: eslintOutput([{ ruleId: "no-debugger", severity: 2, message: "no debugger", line: 3 }]) });
     const result = await gatherGrounding({
@@ -496,7 +518,7 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
 
     const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
     expect(gitleaksCalls).toHaveLength(changedPaths.length);
-    expect(maxActive).toBeLessThanOrEqual(4);
+    expect(maxActive).toBeLessThanOrEqual(1);
   });
 
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
@@ -1050,7 +1072,7 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(call?.[1]).toContain("--config=p/security-audit");
   });
 
-  it("skips a repo-path ruleset on an untrusted workspace", async () => {
+  it("skips a repo-path ruleset", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
     const result = await gatherGrounding({
       root: ROOT,
@@ -1059,10 +1081,10 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       exec
     });
     expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
-    expect(result.notes.join(" ")).toContain("requires a trusted workspace");
+    expect(result.notes.join(" ")).toContain("not a registry pack");
   });
 
-  it("skips a remote URL ruleset on an untrusted workspace", async () => {
+  it("skips a remote URL ruleset", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
     const result = await gatherGrounding({
       root: ROOT,
@@ -1071,12 +1093,12 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       exec
     });
     expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
-    expect(result.notes.join(" ")).toContain("repo path or remote URL");
+    expect(result.notes.join(" ")).toContain("not a registry pack");
   });
 
-  it("uses a repo-path ruleset when the workspace is trusted", async () => {
+  it("still skips a repo-path ruleset when the workspace is trusted", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
-    await gatherGrounding({
+    const result = await gatherGrounding({
       root: ROOT,
       changedPaths: ["src/a.ts"],
       trustWorkspace: true,
@@ -1084,12 +1106,13 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       exec
     });
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
-    expect(call?.[1]).toContain("--config=.semgrep.yml");
+    expect(call).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
   });
 
-  it("uses a remote URL ruleset when the workspace is trusted", async () => {
+  it("still skips a remote URL ruleset when the workspace is trusted", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
-    await gatherGrounding({
+    const result = await gatherGrounding({
       root: ROOT,
       changedPaths: ["src/a.ts"],
       trustWorkspace: true,
@@ -1097,7 +1120,8 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
       exec
     });
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
-    expect(call?.[1]).toContain("--config=https://semgrep.example/rules.yml");
+    expect(call).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
   });
 
   it("caps Semgrep findings and reports truncation", async () => {
