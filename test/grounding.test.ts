@@ -1153,6 +1153,48 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(4);
   });
 
+  it("bounds parallel Semgrep retry scans after an invalid batch target", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const changedPaths = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"];
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "semgrep") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const separator = args.indexOf("--");
+      const targets = separator === -1 ? [] : args.slice(separator + 1);
+      if (targets.length > 1) {
+        return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+      }
+
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return {
+        stdout: semgrepOutput([{ ...SEMGREP_RESULT, path: targets[0], start: { line: 1 } }]),
+        stderr: "",
+        code: 1
+      };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths,
+      changedLines: Object.fromEntries(changedPaths.map((path) => [path, [1]])),
+      limits: { maxFiles: changedPaths.length },
+      exec
+    });
+
+    expect(result.findings).toHaveLength(changedPaths.length);
+    expect(result.notes.join(" ")).toContain("retried 5 changed files individually");
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(
+      changedPaths.length + 1
+    );
+  });
+
   it("surfaces a failure when Semgrep exits with findings but no parseable report", async () => {
     const exec = execForSemgrep({ stdout: "banner { not json", stderr: "", code: 1 });
     const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
