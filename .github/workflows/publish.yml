@@ -1,0 +1,146 @@
+name: publish
+
+# Tag-triggered release (#42): on a `vX.Y.Z` tag, build + lint + test, prepare
+# a draft GitHub Release from the matching CHANGELOG section, publish to npm
+# with provenance, then publish the GitHub Release.
+# Requires an `NPM_TOKEN` repository secret (an npm automation token).
+on:
+  push:
+    tags:
+      - "v[0-9]*.[0-9]*.[0-9]*"
+
+permissions:
+  contents: read
+  pull-requests: write
+  checks: write
+  id-token: write   # npm publish --provenance (OIDC)
+
+concurrency:
+  group: publish-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    permissions:
+      contents: write   # create and publish the GitHub Release
+      pull-requests: write
+      checks: write
+      id-token: write   # npm publish --provenance (OIDC)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Use Node.js 20
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: 20
+          cache: npm
+          registry-url: https://registry.npmjs.org
+
+      - run: npm ci
+
+      - name: Verify tag matches package.json version
+        id: version
+        run: |
+          if ! [[ "${GITHUB_REF_NAME}" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::Release tags must be stable SemVer in the form vX.Y.Z; got ${GITHUB_REF_NAME}." >&2
+            exit 1
+          fi
+          tag_version="${GITHUB_REF_NAME#v}"
+          if ! pkg_version="$(node -p "require('./package.json').version" 2>/dev/null)"; then
+            echo "::error::Failed to read version from package.json." >&2
+            exit 1
+          fi
+          if [ -z "${pkg_version}" ] || [ "${pkg_version}" = "undefined" ]; then
+            echo "::error::package.json must define a version." >&2
+            exit 1
+          fi
+          if [ "${tag_version}" != "${pkg_version}" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} (${tag_version}) does not match package.json version ${pkg_version}." >&2
+            exit 1
+          fi
+          echo "version=${pkg_version}" >> "$GITHUB_OUTPUT"
+
+      - name: Build
+        run: npm run build
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Test
+        run: npm test
+
+      - name: Verify versioned changelog section exists
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! grep -F "## [${RELEASE_VERSION}]" CHANGELOG.md >/dev/null; then
+            echo "::error::CHANGELOG.md must contain ## [${RELEASE_VERSION}] before publishing." >&2
+            exit 1
+          fi
+
+      - name: Extract release notes
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: node scripts/changelog-section.mjs "${RELEASE_VERSION}" > RELEASE_NOTES.md
+
+      - name: Prepare draft GitHub Release
+        id: github-release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          release_view_error="$(mktemp)"
+          trap 'rm -f "${release_view_error}"' EXIT
+          if draft_status="$(gh release view "${GITHUB_REF_NAME}" --json isDraft --template '{{.isDraft}}' 2>"${release_view_error}")"; then
+            if [ "${draft_status}" = "true" ]; then
+              gh release edit "${GITHUB_REF_NAME}" \
+                --title "${GITHUB_REF_NAME}" \
+                --notes-file RELEASE_NOTES.md \
+                --draft
+            fi
+            echo "draft=${draft_status}" >> "$GITHUB_OUTPUT"
+          else
+            if ! grep -Eiq "(not found|404)" "${release_view_error}"; then
+              cat "${release_view_error}" >&2
+              exit 1
+            fi
+            gh release create "${GITHUB_REF_NAME}" \
+              --title "${GITHUB_REF_NAME}" \
+              --notes-file RELEASE_NOTES.md \
+              --draft \
+              --verify-tag
+            echo "draft=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check whether version is already published
+        id: npm-status
+        env:
+          RELEASE_VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if ! pkg_name="$(node -p "require('./package.json').name" 2>/dev/null)"; then
+            echo "::error::Failed to read package name from package.json." >&2
+            exit 1
+          fi
+          if [ -z "${pkg_name}" ] || [ "${pkg_name}" = "undefined" ]; then
+            echo "::error::package.json must define a package name." >&2
+            exit 1
+          fi
+          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
+            echo "already_published=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_published=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Publish to npm
+        if: steps.npm-status.outputs.already_published != 'true'
+        run: npm publish --provenance --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Publish GitHub Release
+        if: steps.github-release.outputs.draft == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "${GITHUB_REF_NAME}" --draft=false
