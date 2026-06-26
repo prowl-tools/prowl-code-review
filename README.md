@@ -406,15 +406,15 @@ same network reach osv-scanner uses for OSV.dev) with **metrics disabled**, so n
 project metadata is ever uploaded. That's why `--config auto`, which phones home,
 is *not* the default. A repository-supplied ruleset (e.g. `.semgrep.yml`) is
 honored **only on a trusted workspace** (`--trust-workspace`), since an untrusted
-PR could ship a malicious or noisy ruleset; registry refs (`p/…`, `r/…`, `auto`,
-or an `http(s)://` URL) run ungated.
+PR could ship a malicious or noisy ruleset; registry refs (`p/…`, `r/…`, `auto`)
+run ungated. Remote `http(s)://` configs also require workspace trust.
 
 ```yaml
 # .prowl-review.yml
 grounding:
   semgrep:
     enabled: true        # default; set false to disable
-    config: p/default    # registry pack, or a repo path on a trusted workspace
+    config: p/default    # registry pack, or a repo path/URL on a trusted workspace
 ```
 
 To use it in CI, make `semgrep` available on the runner (e.g. `pip install

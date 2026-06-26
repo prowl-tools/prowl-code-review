@@ -75,8 +75,8 @@ const semgrepSchema = z
     enabled: z.boolean().optional(),
     /**
      * Ruleset to run. Default "p/default" (a curated registry pack). Registry refs
-     * (p/…, r/…, auto, http(s)://) run ungated; a repo path (e.g. .semgrep.yml) is
-     * honored only on a trusted workspace.
+     * (p/…, r/…, auto) run ungated; a repo path or remote URL is honored only on a
+     * trusted workspace.
      */
     config: z.string().min(1).optional()
   })
