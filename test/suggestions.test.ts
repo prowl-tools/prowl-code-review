@@ -43,6 +43,8 @@ describe("validateSuggestion (#39)", () => {
 
   it("rejects a suggestion carrying a leaked redaction marker", () => {
     expect(validateSuggestion('const key = "[REDACTED:llm-key]";').reason).toBe("redacted");
+    expect(validateSuggestion('const key = "[REDACTED:[nested-value]]";').reason).toBe("redacted");
+    expect(validateSuggestion('const key = "[REDACTED:unterminated";').reason).toBe("redacted");
   });
 });
 

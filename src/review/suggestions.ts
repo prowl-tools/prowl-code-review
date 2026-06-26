@@ -53,7 +53,7 @@ export function validateSuggestion(suggestion: string | undefined): SuggestionVa
     return { ok: false, reason: "empty" };
   }
   // A redaction marker means the "fix" would commit a placeholder over a secret.
-  if (/\[REDACTED:[^\]]*\]/.test(text)) {
+  if (/\[REDACTED:/i.test(text)) {
     return { ok: false, reason: "redacted" };
   }
   const lines = text.split("\n");
