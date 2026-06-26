@@ -82,6 +82,15 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ dependencyScan: { nope: true } })).toThrow(); // strict
   });
 
+  it("accepts the suggestions confidence floor and rejects malformed entries (#39)", () => {
+    expect(configSchema.parse({ suggestions: { minConfidence: 0.9 } })).toEqual({
+      suggestions: { minConfidence: 0.9 }
+    });
+    expect(() => configSchema.parse({ suggestions: { minConfidence: 1.5 } })).toThrow(); // >1
+    expect(() => configSchema.parse({ suggestions: { minConfidence: "high" } })).toThrow();
+    expect(() => configSchema.parse({ suggestions: { nope: true } })).toThrow(); // strict
+  });
+
   it("reserves the requirements category from custom specialists (#32)", () => {
     expect(() =>
       configSchema.parse({ specialists: { custom: [{ key: "requirements", focus: "x" }] } })
