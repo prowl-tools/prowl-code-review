@@ -2,6 +2,7 @@ import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { isBlockingFinding } from "./findings.js";
 import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
+import { shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
 
 /**
  * Inline comments + committable suggestions (backlog #10).
@@ -332,6 +333,12 @@ export interface FindingCommentOptions {
   agentPrompt?: boolean;
   /** Ensemble size (#53); ≥2 enables the cross-provider consensus note. */
   providerCount?: number;
+  /**
+   * Minimum finding confidence to render a committable `suggestion` block (#39).
+   * Lower-confidence findings still describe the fix in the agent prompt, but
+   * don't offer a one-click commit. Default {@link DEFAULT_SUGGESTION_MIN_CONFIDENCE}.
+   */
+  suggestionMinConfidence?: number;
 }
 
 /**
@@ -444,7 +451,12 @@ interface FindingCommentRenderOptions extends FindingCommentOptions {
 }
 
 /** Format the visible finding body without the optional agent prompt. */
-function formatFindingCommentBody(finding: Finding, providerCount?: number, maxBodyChars?: number): string {
+function formatFindingCommentBody(
+  finding: Finding,
+  providerCount?: number,
+  maxBodyChars?: number,
+  suggestionMinConfidence: number = DEFAULT_SUGGESTION_MIN_CONFIDENCE
+): string {
   const attribution = attributionLine(finding, providerCount);
   const prefixParts = [
     `${SEVERITY_BADGE[finding.severity]} **[${finding.severity}] ${escapeMarkdownText(finding.title)}**`,
@@ -453,7 +465,10 @@ function formatFindingCommentBody(finding: Finding, providerCount?: number, maxB
     escapeMarkdownParagraphBlock(finding.body)
   ];
   const prefix = prefixParts.join("\n");
-  const suffix = hasSuggestion(finding) ? `\n\n${suggestionBlock(finding.suggestion ?? "")}` : "";
+  // Only high-confidence, structurally-valid fixes get a one-click commit (#39).
+  const suffix = shouldCommitSuggestion(finding, suggestionMinConfidence)
+    ? `\n\n${suggestionBlock(finding.suggestion ?? "")}`
+    : "";
   const maxPerspectiveChars =
     maxBodyChars === undefined ? undefined : maxBodyChars - prefix.length - suffix.length - 2;
   const perspectives =
@@ -489,7 +504,7 @@ function appendAgentPrompt(
 /** Format one finding as an inline comment body (severity badge + optional fix + agent prompt). */
 function formatFindingCommentInternal(finding: Finding, options: FindingCommentRenderOptions = {}): string {
   return appendAgentPrompt(
-    formatFindingCommentBody(finding, options.providerCount, options.maxBodyChars),
+    formatFindingCommentBody(finding, options.providerCount, options.maxBodyChars, options.suggestionMinConfidence),
     finding,
     options
   );
@@ -529,7 +544,7 @@ function formatUnmappedFindings(
   let section = parts.join("\n");
   const visibleEntries = findings.map((finding) => {
     const heading = `### ${escapeMarkdownText(findingLocation(finding))}`;
-    const comment = formatFindingCommentBody(finding, options.providerCount);
+    const comment = formatFindingCommentBody(finding, options.providerCount, undefined, options.suggestionMinConfidence);
     return {
       heading,
       comment,
@@ -552,7 +567,8 @@ function formatUnmappedFindings(
     const visibleComment = formatFindingCommentBody(
       finding,
       options.providerCount,
-      remainingForEntry - commentPrefixLength
+      remainingForEntry - commentPrefixLength,
+      options.suggestionMinConfidence
     );
     const comment = appendAgentPrompt(visibleComment, finding, {
       ...options,
@@ -718,10 +734,13 @@ export function buildReviewPayload(input: {
   maxInlineComments?: number;
   /** Ensemble size (#53); ≥2 enables the cross-provider consensus note on inline comments. */
   providerCount?: number;
+  /** Suggested-fix validation (#39): committable-suggestion confidence floor. */
+  suggestions?: { minConfidence?: number };
 }): ReviewPayload {
   const commentOptions: FindingCommentOptions = {
     agentPrompt: input.agentPrompt,
-    providerCount: input.providerCount
+    providerCount: input.providerCount,
+    suggestionMinConfidence: input.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE
   };
   const cap = input.maxInlineComments ?? DEFAULT_MAX_INLINE_COMMENTS;
   const blocking = input.findings.filter(isBlockingFinding);
