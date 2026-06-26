@@ -391,6 +391,36 @@ consensus too). Fetching is tolerant: a missing or inaccessible issue (or one
 that's actually a PR) is skipped with a note. Cross-tracker support
 (Linear/Jira) is a future extension.
 
+## Dependency CVE / license scanning (#34)
+
+When a pull request changes a dependency lockfile, prowl-review scans it with
+[osv-scanner](https://github.com/google/osv-scanner) and surfaces **known
+vulnerabilities** as findings (one per advisory, with the CVE id, affected
+package@version, and the fixed version when available). It's part of the
+deterministic grounding layer, so it runs by default and **skips gracefully when
+osv-scanner isn't installed** — no failure, just a note. osv-scanner reads
+lockfiles as data (it never executes your code), so it runs even on untrusted
+checkouts.
+
+Lockfiles are scanned even though they're excluded from line-by-line review by
+the ignore list (#19) — the scan sources changed manifests from the full diff.
+Supported ecosystems follow osv-scanner (npm, PyPI, Go, Cargo, Maven, Composer,
+RubyGems, and more).
+
+Set an SPDX **license allowlist** to also flag dependencies whose license falls
+outside your policy:
+
+```yaml
+# .prowl-review.yml
+dependencyScan:
+  enabled: true                                  # default; set false to disable
+  licenses:
+    allow: [MIT, Apache-2.0, BSD-3-Clause, ISC]  # deps outside this list are flagged
+```
+
+To use it in CI, make `osv-scanner` available on the runner (e.g. a setup step
+before the review). Without it, the rest of the review is unaffected.
+
 ## Resilience (#17)
 
 Transient provider blips (a 429, a 5xx, a dropped socket) are **retried with
