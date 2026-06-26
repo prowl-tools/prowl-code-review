@@ -114,20 +114,53 @@ describe("buildInlineComments", () => {
     expect(comments[0]).not.toHaveProperty("start_side");
   });
 
-  it("leaves a multi-line suggestion unmapped when the full range cannot anchor", () => {
-    const { comments, unmapped } = buildInlineComments([f({ line: 5, endLine: 8, suggestion: "first\nsecond" })], diff);
+  it("leaves a committable multi-line suggestion unmapped when the full range cannot anchor", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 5, endLine: 8, suggestion: "first\nsecond", confidence: 0.9 })],
+      diff
+    );
 
     expect(comments).toHaveLength(0);
     expect(unmapped).toHaveLength(1);
     expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 5, endLine: 8, suggestion: "first\nsecond" });
   });
 
-  it("leaves a multi-line suggestion unmapped when no range is provided", () => {
-    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\nsecond" })], diff);
+  it("leaves a committable multi-line suggestion unmapped when no range is provided", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 6, suggestion: "first\nsecond", confidence: 0.9 })],
+      diff
+    );
 
     expect(comments).toHaveLength(0);
     expect(unmapped).toHaveLength(1);
     expect(unmapped[0]).toMatchObject({ file: "src/a.ts", line: 6, suggestion: "first\nsecond" });
+  });
+
+  it("keeps gated multi-line suggestions inline when the finding line can anchor", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\nsecond", confidence: 0.6 })], diff);
+
+    expect(unmapped).toHaveLength(0);
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 6, side: "RIGHT" });
+    expect(comments[0].body).not.toContain("```suggestion");
+  });
+
+  it("keeps invalid multi-line suggestions inline when the finding line can anchor", () => {
+    const { comments, unmapped } = buildInlineComments([f({ line: 6, suggestion: "first\n// ...", confidence: 0.9 })], diff);
+
+    expect(unmapped).toHaveLength(0);
+    expect(comments[0]).toMatchObject({ path: "src/a.ts", line: 6, side: "RIGHT" });
+    expect(comments[0].body).not.toContain("```suggestion");
+  });
+
+  it("uses a custom suggestion confidence floor for anchoring decisions", () => {
+    const { comments, unmapped } = buildInlineComments(
+      [f({ line: 6, suggestion: "first\nsecond", confidence: 0.6 })],
+      diff,
+      { suggestionMinConfidence: 0.5 }
+    );
+
+    expect(comments).toHaveLength(0);
+    expect(unmapped).toHaveLength(1);
   });
 });
 
@@ -229,19 +262,37 @@ describe("formatFindingComment", () => {
     expect(body).not.toContain("First line\\n");
   });
 
-  it("includes a committable suggestion block when a fix exists", () => {
-    const body = formatFindingComment(f({ suggestion: "const x = 1;" }));
+  it("includes a committable suggestion block when a high-confidence fix exists", () => {
+    const body = formatFindingComment(f({ suggestion: "const x = 1;", confidence: 0.9 }));
     expect(body).toContain("```suggestion");
     expect(body).toContain("const x = 1;");
   });
 
   it("widens the suggestion fence when the fix contains a code fence", () => {
-    const body = formatFindingComment(f({ suggestion: "before\n```\nafter" }));
+    const body = formatFindingComment(f({ suggestion: "before\n```\nafter", confidence: 0.9 }));
     expect(body).toContain("````suggestion");
   });
 
   it("omits the suggestion block when there is no fix", () => {
     expect(formatFindingComment(f())).not.toContain("```suggestion");
+  });
+
+  it("withholds the committable suggestion below the confidence floor but keeps it in the agent prompt (#39)", () => {
+    const body = formatFindingComment(f({ suggestion: "const x = 1;", confidence: 0.6 }));
+    expect(body).not.toContain("```suggestion");
+    expect(body).toContain("const x = 1;"); // still offered to the agent prompt
+  });
+
+  it("withholds a committable suggestion that fails structural validation (#39)", () => {
+    const body = formatFindingComment(f({ suggestion: "// ...", confidence: 0.95 }));
+    expect(body).not.toContain("```suggestion");
+  });
+
+  it("honors a custom suggestion confidence floor (#39)", () => {
+    const body = formatFindingComment(f({ suggestion: "const x = 1;", confidence: 0.6 }), {
+      suggestionMinConfidence: 0.5
+    });
+    expect(body).toContain("```suggestion");
   });
 });
 
@@ -483,7 +534,8 @@ describe("buildReviewPayload", () => {
           severity: "major",
           title: "Unmapped issue",
           body: "Needs context outside the diff.",
-          suggestion: "const fixed = true;"
+          suggestion: "const fixed = true;",
+          confidence: 0.9
         })
       ],
       diff,
