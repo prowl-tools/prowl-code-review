@@ -599,7 +599,6 @@ const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
   GITLEAKS_CONFIG: "",
   GITLEAKS_CONFIG_TOML: ""
 };
-const GITLEAKS_MAX_CONCURRENCY = 1;
 const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
 
 /**
@@ -635,28 +634,31 @@ async function runGitleaks(
 
   // Scan files individually so a missing/deleted path cannot suppress findings
   // from other files and a repo-root `.gitleaks.toml` cannot silence leaks.
-  const results = await mapWithConcurrency(limited, GITLEAKS_MAX_CONCURRENCY, (file) =>
-    params.exec(
-      "gitleaks",
-      [
-        "detect",
-        "--no-git",
-        "--source",
-        file,
-        "--report-format",
-        "json",
-        "--report-path",
-        "-",
-        "--redact",
-        "--no-banner",
-        "--ignore-gitleaks-allow",
-        "--gitleaks-ignore-path",
-        GITLEAKS_DISABLED_IGNORE_PATH
-      ],
-      params.root,
-      { env: GITLEAKS_TRUSTED_ENV }
-    )
-  );
+  const results: ExecResult[] = [];
+  for (const file of limited) {
+    results.push(
+      await params.exec(
+        "gitleaks",
+        [
+          "detect",
+          "--no-git",
+          "--source",
+          file,
+          "--report-format",
+          "json",
+          "--report-path",
+          "-",
+          "--redact",
+          "--no-banner",
+          "--ignore-gitleaks-allow",
+          "--gitleaks-ignore-path",
+          GITLEAKS_DISABLED_IGNORE_PATH
+        ],
+        params.root,
+        { env: GITLEAKS_TRUSTED_ENV }
+      )
+    );
+  }
 
   const unavailableCount = results.filter(commandUnavailable).length;
   if (unavailableCount === results.length) {
