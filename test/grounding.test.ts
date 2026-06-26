@@ -653,6 +653,41 @@ describe("parseOsvJson (#34)", () => {
     expect(vuln?.body).toContain("fixed in 4.17.12");
   });
 
+  it("matches fixed versions to the reported package", () => {
+    const json = JSON.stringify({
+      results: [
+        {
+          source: { path: "/repo/package-lock.json" },
+          packages: [
+            {
+              package: { name: "lodash", version: "4.17.0", ecosystem: "npm" },
+              vulnerabilities: [
+                {
+                  id: "GHSA-shared",
+                  aliases: ["CVE-2020-0001"],
+                  affected: [
+                    {
+                      package: { name: "other", ecosystem: "npm" },
+                      ranges: [{ events: [{ introduced: "0" }, { fixed: "9.9.9" }] }]
+                    },
+                    {
+                      package: { name: "lodash", ecosystem: "npm" },
+                      ranges: [{ events: [{ introduced: "0" }, { fixed: "4.17.12" }] }]
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    });
+
+    const vuln = parseOsvJson(ROOT, json).find((f) => f.title === "CVE-2020-0001");
+    expect(vuln?.body).toContain("fixed in 4.17.12");
+    expect(vuln?.body).not.toContain("9.9.9");
+  });
+
   it("does not emit license findings without an allowlist", () => {
     expect(parseOsvJson(ROOT, OSV_JSON).some((f) => f.title.startsWith("license-policy"))).toBe(false);
   });
@@ -664,6 +699,28 @@ describe("parseOsvJson (#34)", () => {
     expect(license[0]).toMatchObject({ title: "license-policy: left-pad", severity: "major", category: "dependency" });
     expect(license[0].body).toContain("uses license WTFPL");
     expect(license[0].body).not.toContain("uses license MIT");
+  });
+
+  it("uses explicit OSV license violations before falling back to license comparison", () => {
+    const json = JSON.stringify({
+      results: [
+        {
+          source: { path: "/repo/package-lock.json" },
+          packages: [
+            {
+              package: { name: "left-pad", version: "1.0.0", ecosystem: "npm" },
+              vulnerabilities: [],
+              license_violations: [{ license: { id: "GPL-3.0-only" } }]
+            }
+          ]
+        }
+      ]
+    });
+
+    const license = parseOsvJson(ROOT, json, { allow: ["MIT"] }).find((f) =>
+      f.title.startsWith("license-policy")
+    );
+    expect(license?.body).toContain("GPL-3.0-only");
   });
 
   it("maps severity from a CVSS score when no GHSA label is present", () => {
