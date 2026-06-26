@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Semgrep SAST grounding (backlog #16b): a new deterministic grounding runner alongside ESLint/Ruff/Gitleaks.
+  prowl-review runs **Semgrep** over changed source files (multi-language, selected via the #5 detector) and
+  feeds its findings into the review so specialists reconcile with real SAST results instead of re-discovering
+  them. Runs by default and **skips gracefully when Semgrep isn't installed**. The ruleset-sourcing decision:
+  the default is Semgrep's curated `p/default` registry pack, fetched with **metrics off** (no project metadata
+  uploaded — so `--config auto`, which phones home, is deliberately not the default) and `--disable-version-check`;
+  a repo-supplied ruleset (e.g. `.semgrep.yml`) is honored **only on a trusted workspace**, while registry refs
+  (`p/…`, `r/…`, `auto`, `http(s)://`) run ungated. Findings are mapped to severity/category, filtered to changed
+  lines, and bounded by the existing grounding caps. New `grounding.semgrep` config block (strict Zod, `enabled`
+  + `config`), `parseSemgrepJson`/`DEFAULT_SEMGREP_CONFIG` exports, and pipeline/CLI wiring.
 - Suggested-fix validation (backlog #39): committable one-click ```suggestion``` blocks are now gated so a wrong
   fix can't break the build. A suggestion is only rendered as committable when its finding clears a **confidence
   floor** (`suggestions.minConfidence`, default 0.8) **and** passes a deterministic, no-execution **structural

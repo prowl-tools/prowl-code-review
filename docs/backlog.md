@@ -17,11 +17,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-16b. **More grounding runners: Semgrep** *(framework + ESLint + Ruff + Gitleaks done — see resolved.md)*
-    As a reviewer, I want SAST fed into the review too, so that grounding isn't lint-only.
-    - **Done:** Ruff (Python) and Gitleaks (secrets) added to the `src/grounding` registry, normalized to the findings schema, per-language-selected via #5's detector, running ungated (own rulesets, no repo code); graceful degradation when a tool is absent.
-    - Acceptance (remaining): add **Semgrep** (SAST, rule-configurable) as a runner — needs a ruleset-sourcing decision (network registry `--config auto`/`p/…` vs. repo `.semgrep.yml` vs. a bundled set) consistent with the no-extra-infra principle.
-
 22. **Update-not-duplicate: resolve fixed threads + respect human replies** *(core + thread tidy-up done — see resolved.md)*
     As a developer, I want re-runs to also tidy up stale threads and honor my replies, so that the PR stays clean and the bot isn't argumentative.
     - **Done (core):** the summary is found by marker and updated in place (now a top-level PR comment, not a stacked review); only net-new inline findings are posted (deduped via the #12 state fingerprints).
