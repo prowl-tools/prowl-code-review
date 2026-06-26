@@ -480,7 +480,8 @@ export async function runLocalReview(
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
         changedLines: changedLinesByPath(groundingLineFiles),
-        trustWorkspace
+        trustWorkspace,
+        semgrep: resolved.semgrep
       });
       const redactedNotes = redactGroundingNotes(result.notes);
       for (const note of redactedNotes.notes) {

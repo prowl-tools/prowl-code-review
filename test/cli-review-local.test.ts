@@ -328,6 +328,24 @@ new file mode 100644
     expect(envRun.deps.gatherGrounding).toHaveBeenCalledWith(expect.objectContaining({ trustWorkspace: true }));
   });
 
+  it("honors Semgrep config during local review grounding", async () => {
+    const workspace = isolatedWorkspace();
+    writeFileSync(
+      join(workspace, ".prowl-review.yml"),
+      "grounding:\n  semgrep:\n    enabled: false\n    config: p/security-audit\n"
+    );
+    const gatherGrounding = vi.fn().mockResolvedValue({ findings: [], notes: [] });
+    const { deps: d } = deps({ gatherGrounding });
+
+    await runLocalReview({ base: "main" }, d);
+
+    expect(gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        semgrep: { enabled: false, config: "p/security-audit" }
+      })
+    );
+  });
+
   it("keeps workspace execution untrusted for fork pull request events", async () => {
     const workspace = isolatedWorkspace();
     const eventPath = join(workspace, "event.json");
