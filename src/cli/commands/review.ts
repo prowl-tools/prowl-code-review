@@ -507,6 +507,7 @@ type ResolvedReviewOptions = Pick<
   | "issueValidation"
   | "failback"
   | "dependencyScan"
+  | "suggestions"
 >;
 
 /** Drop undefined entries so an object of all-undefined collapses to undefined. */
@@ -734,7 +735,9 @@ export function resolveReviewOptions(
     // Cross-generation failback on persistent overload (#17); opt-in via config.
     failback: config.resilience?.failback?.enabled === true ? true : undefined,
     // Dependency-CVE / license scanning via osv-scanner (#34); on by default, config-tunable.
-    dependencyScan: config.dependencyScan
+    dependencyScan: config.dependencyScan,
+    // Suggested-fix validation (#39): committable-suggestion confidence floor.
+    suggestions: config.suggestions
   };
 }
 
