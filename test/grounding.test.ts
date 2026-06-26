@@ -1162,6 +1162,18 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(result.notes.join(" ")).toContain("not a registry pack");
   });
 
+  it("skips registry-looking rulesets with traversal segments", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      semgrep: { config: "p/default../../malicious.yml" },
+      exec
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
+  });
+
   it("still skips a repo-path ruleset when the workspace is trusted", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
     const result = await gatherGrounding({
