@@ -50,6 +50,20 @@ export const DEFAULT_MAX_FILES = 100;
 export const DEFAULT_MAX_FINDINGS = 50;
 export const DEFAULT_TIMEOUT_MS = 60_000;
 
+/** Dependency-CVE / license scanning policy (#34). */
+export interface DependencyScanOptions {
+  /**
+   * Scan changed dependency lockfiles for known vulnerabilities with osv-scanner.
+   * Default on; skips gracefully when osv-scanner isn't installed. Set false to disable.
+   */
+  enabled?: boolean;
+  /**
+   * License policy. When `allow` is set, a dependency whose license is outside the
+   * SPDX allowlist is flagged. Omitted → no license checking (vuln scan only).
+   */
+  licenses?: { allow?: string[] };
+}
+
 export interface GatherGroundingParams {
   /** Repo checkout root the linters run inside. */
   root: string;
@@ -79,6 +93,14 @@ export interface GatherGroundingParams {
   /** Injectable command runner (defaults to a confined execFile). */
   exec?: Exec;
   limits?: GroundingLimits;
+  /** Dependency-CVE / license scanning policy (#34). Omitted → enabled with vuln scan only. */
+  dependencyScan?: DependencyScanOptions;
+  /**
+   * Changed dependency manifest/lockfile paths for the dependency scan (#34),
+   * sourced from the full diff so a lockfile excluded from line-review by the
+   * ignore list (#19) is still scanned. Falls back to {@link changedPaths}.
+   */
+  dependencyPaths?: string[];
 }
 
 export interface GroundingResult {
@@ -628,10 +650,262 @@ async function runGitleaks(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Dependency-CVE / license scanning via osv-scanner — backlog #34.
+//
+// When a dependency lockfile changes, scan it with osv-scanner (Google OSV):
+// multi-ecosystem, lockfile-based (reads manifests as DATA, never executes repo
+// code), JSON output. Like Ruff/Gitleaks it runs ungated and skips gracefully
+// when the binary is absent. Known vulnerabilities become file-level findings;
+// an optional SPDX allowlist additionally flags license-policy violations.
+// ---------------------------------------------------------------------------
+
+/** Lockfiles/manifests osv-scanner can scan, matched by basename (lowercased). */
+const OSV_SCANNABLE_FILES = new Set([
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+  "bun.lock",
+  "poetry.lock",
+  "pipfile.lock",
+  "pdm.lock",
+  "requirements.txt",
+  "go.mod",
+  "cargo.lock",
+  "gemfile.lock",
+  "composer.lock",
+  "pubspec.lock",
+  "gradle.lockfile",
+  "packages.lock.json",
+  "mix.lock",
+  "conan.lock",
+  "pom.xml"
+]);
+
+/** Basename (lowercased, slashes normalized) for a repo-relative path. */
+function baseName(path: string): string {
+  const normalized = normalizeRelativePath(path);
+  return normalized.slice(normalized.lastIndexOf("/") + 1).toLowerCase();
+}
+
+/** Select changed paths osv-scanner can scan (recognized lockfiles + `requirements*.txt`). */
+export function dependencyScanTargets(changedPaths: string[]): string[] {
+  const scannable = safeRelativePaths(changedPaths).filter((path) => {
+    const base = baseName(path);
+    return OSV_SCANNABLE_FILES.has(base) || /^requirements.*\.txt$/.test(base);
+  });
+  return [...new Set(scannable.map(normalizeRelativePath))];
+}
+
+interface OsvVulnerability {
+  id?: string;
+  aliases?: string[];
+  summary?: string;
+  details?: string;
+  database_specific?: { severity?: string };
+  affected?: Array<{ ranges?: Array<{ events?: Array<{ fixed?: string }> }> }>;
+}
+interface OsvGroup {
+  ids?: string[];
+  max_severity?: string;
+}
+interface OsvPackageEntry {
+  package?: { name?: string; version?: string; ecosystem?: string };
+  vulnerabilities?: OsvVulnerability[];
+  groups?: OsvGroup[];
+  licenses?: string[];
+}
+interface OsvResult {
+  source?: { path?: string };
+  packages?: OsvPackageEntry[];
+}
+
+/** Map an OSV advisory to a prowl-review severity (GHSA label first, then CVSS score). */
+function mapOsvSeverity(vuln: OsvVulnerability, group: OsvGroup | undefined): Severity {
+  const label = vuln.database_specific?.severity?.toUpperCase();
+  if (label) {
+    if (label.startsWith("CRIT")) return "critical";
+    if (label === "HIGH") return "major";
+    if (label === "MODERATE" || label === "MEDIUM" || label === "LOW") return "minor";
+  }
+  const score = Number.parseFloat(group?.max_severity ?? "");
+  if (!Number.isNaN(score)) {
+    if (score >= 9) return "critical";
+    if (score >= 7) return "major";
+    if (score > 0) return "minor";
+  }
+  // Default vulnerabilities to major so they stay above the minor floor (#55).
+  return "major";
+}
+
+/** Prefer a CVE alias for the advisory title, falling back to the OSV/GHSA id. */
+function advisoryId(vuln: OsvVulnerability): string {
+  const cve = (vuln.aliases ?? []).find((alias) => /^CVE-/i.test(alias));
+  return cve ?? vuln.id ?? "advisory";
+}
+
+/** Best-effort "fixed in" version from the advisory's affected ranges. */
+function fixedVersion(vuln: OsvVulnerability): string | undefined {
+  for (const affected of vuln.affected ?? []) {
+    for (const range of affected.ranges ?? []) {
+      for (const event of range.events ?? []) {
+        if (event.fixed) {
+          return event.fixed;
+        }
+      }
+    }
+  }
+  return undefined;
+}
+
+/** Parse osv-scanner `--format json` output into vulnerability + license findings. */
+export function parseOsvJson(
+  root: string,
+  stdout: string,
+  options: { allow?: string[] } = {}
+): Finding[] {
+  const start = stdout.indexOf("{");
+  if (start === -1) {
+    return [];
+  }
+  let parsed: { results?: OsvResult[] };
+  try {
+    parsed = JSON.parse(stdout.slice(start));
+  } catch {
+    return [];
+  }
+  const allow = options.allow?.map((license) => license.trim().toLowerCase()).filter(Boolean);
+  const findings: Finding[] = [];
+  const seen = new Set<string>();
+  for (const result of parsed.results ?? []) {
+    const sourcePath = result.source?.path ?? "";
+    const file = (isAbsolute(sourcePath) ? relative(root, sourcePath) : sourcePath).replace(/[\\/]/g, "/");
+    if (!file) {
+      continue;
+    }
+    for (const entry of result.packages ?? []) {
+      const name = entry.package?.name ?? "unknown";
+      const version = entry.package?.version ?? "?";
+      const groupById = new Map<string, OsvGroup>();
+      for (const group of entry.groups ?? []) {
+        for (const id of group.ids ?? []) {
+          groupById.set(id, group);
+        }
+      }
+      for (const vuln of entry.vulnerabilities ?? []) {
+        const id = advisoryId(vuln);
+        const dedupe = `${file}|${name}@${version}|${id}`;
+        if (seen.has(dedupe)) {
+          continue;
+        }
+        seen.add(dedupe);
+        const fixed = fixedVersion(vuln);
+        const summary = (vuln.summary ?? vuln.details ?? "known vulnerability").replace(/\s+/g, " ").trim();
+        findings.push({
+          file,
+          severity: mapOsvSeverity(vuln, groupById.get(vuln.id ?? "")),
+          category: "dependency",
+          title: id,
+          body:
+            `${name}@${version}: ${summary}` +
+            `${fixed ? `; fixed in ${fixed}` : ""} (${id}).`,
+          confidence: 0.9
+        });
+      }
+      // License policy: flag any dependency whose license falls outside the allowlist.
+      if (allow && allow.length > 0 && Array.isArray(entry.licenses) && entry.licenses.length > 0) {
+        const offending = entry.licenses.filter((license) => {
+          const value = license.trim().toLowerCase();
+          return value.length > 0 && value !== "unknown" && !allow.includes(value);
+        });
+        if (offending.length > 0) {
+          const dedupe = `${file}|license|${name}`;
+          if (!seen.has(dedupe)) {
+            seen.add(dedupe);
+            findings.push({
+              file,
+              severity: "major",
+              category: "dependency",
+              title: `license-policy: ${name}`,
+              body:
+                `${name}@${version} uses license ${entry.licenses.join(", ")}, ` +
+                `which is not in the allowed list (${(options.allow ?? []).join(", ")}).`,
+              confidence: 0.9
+            });
+          }
+        }
+      }
+    }
+  }
+  return findings;
+}
+
+/** Scan changed dependency lockfiles with osv-scanner, or note why it was skipped. */
+async function runDependencyScan(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    dependencyScan?: DependencyScanOptions;
+    dependencyPaths?: string[];
+  }
+): Promise<GroundingResult> {
+  if (params.dependencyScan?.enabled === false) {
+    return { findings: [], notes: [] };
+  }
+  const targets = dependencyScanTargets([...(params.dependencyPaths ?? []), ...params.changedPaths]);
+  if (targets.length === 0) {
+    return { findings: [], notes: [] };
+  }
+
+  const allow = params.dependencyScan?.licenses?.allow;
+  const args = ["--format", "json"];
+  if (allow && allow.length > 0) {
+    // osv-scanner emits per-package `licenses` for our own allowlist check.
+    args.push(`--experimental-licenses=${allow.join(",")}`);
+  }
+  for (const target of targets) {
+    args.push("--lockfile", target);
+  }
+
+  const result = await params.exec("osv-scanner", args, params.root);
+  if (result.code === null) {
+    return { findings: [], notes: ["osv-scanner: timed out; skipped dependency scanning."] };
+  }
+  const findings = parseOsvJson(params.root, result.stdout, { allow });
+  const hasJson = result.stdout.includes("{");
+
+  if (findings.length === 0 && commandUnavailable(result)) {
+    return {
+      findings: [],
+      notes: ["osv-scanner not available in the workspace; skipped dependency CVE/license scanning (#34)."]
+    };
+  }
+  // osv-scanner exits 0 (clean) or 1 (vulns/violations found) on success. A
+  // non-zero exit with no parseable report is a real failure, not a clean run.
+  if (findings.length === 0 && (!hasJson || result.code > 1)) {
+    return { findings: [], notes: [toolFailureNote("osv-scanner", result)] };
+  }
+
+  const notes: string[] = [];
+  if (allow && allow.length > 0 && !result.stdout.includes("\"licenses\"")) {
+    notes.push("osv-scanner: license data unavailable (scanner version may not support it); skipped license policy.");
+  }
+  if (findings.length > params.limits.maxFindings) {
+    notes.push(`osv-scanner: kept ${params.limits.maxFindings}/${findings.length} dependency findings (finding cap).`);
+    return { findings: findings.slice(0, params.limits.maxFindings), notes };
+  }
+  if (findings.length > 0) {
+    notes.push(`osv-scanner: ${findings.length} dependency finding(s) on changed lockfiles (#34).`);
+  }
+  return { findings, notes };
+}
+
 /**
  * Run available linters over the changed files and return normalized grounding
  * findings + operational notes. ESLint (JS/TS, trusted-workspace only), Ruff
- * (Python), and Gitleaks (secrets); extend by adding more runners here.
+ * (Python), Gitleaks (secrets), and osv-scanner (dependency CVE/license);
+ * extend by adding more runners here.
  */
 export async function gatherGrounding(params: GatherGroundingParams): Promise<GroundingResult> {
   const limits: Required<GroundingLimits> = {
@@ -662,9 +936,25 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
     )
   );
 
+  // Dependency-CVE / license scanning (#34) runs separately: it scans lockfiles
+  // (data, not code) rather than the changed source files, so it isn't a linter.
+  const dependencyResult = await runDependencyScan({
+    root: params.root,
+    changedPaths: params.changedPaths,
+    dependencyPaths: params.dependencyPaths,
+    dependencyScan: params.dependencyScan,
+    exec,
+    limits
+  }).catch(
+    (error): GroundingResult => ({
+      findings: [],
+      notes: [`Dependency scan error: ${error instanceof Error ? error.message : String(error)}`]
+    })
+  );
+
   return {
-    findings: results.flatMap((r) => r.findings),
-    notes: results.flatMap((r) => r.notes)
+    findings: [...results.flatMap((r) => r.findings), ...dependencyResult.findings],
+    notes: [...results.flatMap((r) => r.notes), ...dependencyResult.notes]
   };
 }
 
