@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Suggested-fix validation (backlog #39): committable one-click ```suggestion``` blocks are now gated so a wrong
+  fix can't break the build. A suggestion is only rendered as committable when its finding clears a **confidence
+  floor** (`suggestions.minConfidence`, default 0.8) **and** passes a deterministic, no-execution **structural
+  check** (rejects empty suggestions, truncation placeholders like `// ...` / `// rest of the code`, and leaked
+  redaction markers; never rejects on bracket balance, since a valid suggestion may replace lines inside a
+  block). Lower-confidence fixes stay available in the finding's agent prompt (#57) rather than as a one-click
+  commit, and withheld suggestions are reported in the review notes (#5: no silent drop). Gating happens at the
+  render layer so #12 fingerprints stay stable. New `src/review/suggestions.ts`
+  (`validateSuggestion`/`shouldCommitSuggestion`/`summarizeSuggestionGating`), a `suggestions` config block
+  (strict Zod), and pipeline/CLI wiring. The heavier "apply-and-typecheck the fix in a sandbox" option is
+  intentionally deferred — it would execute untrusted fix code.
 - Dependency-CVE / license scanning (backlog #34): a new deterministic grounding runner. When a PR changes a
   dependency lockfile, prowl-review scans it with **osv-scanner** (Google OSV — multi-ecosystem, lockfile-based,
   reads manifests as data so it never executes repo code) and surfaces **known vulnerabilities** as file-level

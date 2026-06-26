@@ -422,6 +422,31 @@ dependencyScan:
 To use it in CI, make `osv-scanner` available on the runner (e.g. a setup step
 before the review). Without it, the rest of the review is unaffected.
 
+## Suggested-fix validation (#39)
+
+Findings can carry a committable ```suggestion``` block — a **one-click commit**
+on GitHub. Because a wrong one breaks the build, prowl-review only offers that
+block when it's confident in the fix:
+
+- **Confidence floor** — only findings at/above `suggestions.minConfidence`
+  (default `0.8`) get a committable suggestion. The proposed fix for a
+  lower-confidence finding still appears in its "Resolve with an AI agent" prompt
+  (#57); it just isn't a one-click commit.
+- **Structural validation** — a deterministic, no-execution check drops a
+  suggestion that's empty, a truncation placeholder (e.g. `// ...`,
+  `// rest of the code`), or carries a leaked redaction marker, so a one-click
+  apply never pastes obviously-broken code. (A valid suggestion may have
+  unbalanced brackets — it replaces specific lines inside a block — so balance is
+  never used to reject.)
+
+Withheld suggestions are reported in the review notes (never dropped silently).
+
+```yaml
+# .prowl-review.yml
+suggestions:
+  minConfidence: 0.8   # raise to be stricter; lower to offer more one-click fixes
+```
+
 ## Resilience (#17)
 
 Transient provider blips (a 429, a 5xx, a dropped socket) are **retried with
