@@ -76,6 +76,17 @@ const groundingSchema = z
   })
   .strict();
 
+/** Suggested-fix validation (#39): when a committable suggestion is offered. */
+const suggestionsSchema = z
+  .object({
+    /**
+     * Minimum finding confidence to offer a one-click committable `suggestion`
+     * block (0–1). Default 0.8. Lower-confidence fixes stay in the agent prompt.
+     */
+    minConfidence: z.number().min(0).max(1).optional()
+  })
+  .strict();
+
 /** Diff size guards: cap what is sent to the provider (no silent truncation). */
 const diffSchema = z
   .object({
@@ -354,6 +365,8 @@ export const configSchema = z
     review: reviewSchema.optional(),
     context: contextSchema.optional(),
     grounding: groundingSchema.optional(),
+    /** Suggested-fix validation: committable-suggestion confidence floor (#39). */
+    suggestions: suggestionsSchema.optional(),
     diff: diffSchema.optional()
   })
   .strict()

@@ -251,6 +251,16 @@ export {
   type InlineMapping
 } from "./review/inline.js";
 
+// Suggested-fix validation (#39): gate committable suggestions by confidence + structure.
+export {
+  validateSuggestion,
+  shouldCommitSuggestion,
+  summarizeSuggestionGating,
+  DEFAULT_SUGGESTION_MIN_CONFIDENCE,
+  type SuggestionValidation,
+  type SuggestionGatingSummary
+} from "./review/suggestions.js";
+
 // Unified-diff parsing + size guards.
 export { parseDiff } from "./review/parse-diff.js";
 export { applyDiffLimits, describeSkipped } from "./review/size-guards.js";
