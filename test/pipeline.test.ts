@@ -1787,12 +1787,12 @@ diff --git a/package-lock.json b/package-lock.json
     const deps = makeDeps();
     deps.fetchPullRequest = vi.fn(async () => ({
       meta,
-      diff: `diff --git a/package-lock.json b/package-lock.json
---- a/package-lock.json
-+++ b/package-lock.json
+      diff: `diff --git a/dist/bundle.js b/dist/bundle.js
+--- a/dist/bundle.js
++++ b/dist/bundle.js
 @@ -1,1 +1,2 @@
- {}
-+{"x":1}
+ x
++y
 `
     }));
 
@@ -1803,12 +1803,48 @@ diff --git a/package-lock.json b/package-lock.json
     expect(deps.runReview).not.toHaveBeenCalled();
     expect(deps.submitReview).toHaveBeenCalledTimes(1);
     expect(result.posted).toBe(true);
-    expect(result.skipped).toContainEqual({ path: "package-lock.json", reason: "ignored" });
+    expect(result.skipped).toContainEqual({ path: "dist/bundle.js", reason: "ignored" });
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
     expect(result.payload.body).toContain("Changed files (1)");
     expect(result.payload.body).toContain("No reviewable files remained after filters");
-    expect(result.payload.body).toContain("package-lock.json");
+    expect(result.payload.body).toContain("dist/bundle.js");
     expect(result.payload.comments).toHaveLength(0);
+  });
+
+  it("still dependency-scans an ignored lockfile and surfaces its advisories (#34)", async () => {
+    const deps = makeDeps();
+    deps.fetchPullRequest = vi.fn(async () => ({
+      meta,
+      diff: `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`
+    }));
+    // The lockfile is ignored from line-review, but the dependency scan runs.
+    deps.gatherGrounding = vi.fn(async () => ({
+      findings: [
+        {
+          file: "package-lock.json",
+          severity: "major" as const,
+          category: "dependency",
+          title: "CVE-2019-10744",
+          body: "lodash@4.17.0: prototype pollution; fixed in 4.17.12 (CVE-2019-10744).",
+          confidence: 0.9
+        }
+      ],
+      notes: ["osv-scanner: 1 dependency finding(s) on changed lockfiles (#34)."]
+    }));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledTimes(1);
+    expect(deps.gatherGrounding.mock.calls[0][0]).toMatchObject({ dependencyPaths: ["package-lock.json"] });
+    expect(deps.runReview).not.toHaveBeenCalled(); // no reviewable source files
+    expect(result.review.findings.some((f) => f.title === "CVE-2019-10744")).toBe(true);
+    expect(result.payload.body).toContain("CVE-2019-10744");
   });
 
   it("surfaces a prompt-injection note when an added line targets the reviewer (#14)", async () => {
