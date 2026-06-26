@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
@@ -705,17 +705,30 @@ interface OsvVulnerability {
   summary?: string;
   details?: string;
   database_specific?: { severity?: string };
-  affected?: Array<{ ranges?: Array<{ events?: Array<{ fixed?: string }> }> }>;
+  affected?: Array<{
+    package?: { name?: string; ecosystem?: string };
+    ranges?: Array<{ events?: Array<{ fixed?: string }> }>;
+  }>;
 }
 interface OsvGroup {
   ids?: string[];
   max_severity?: string;
 }
+type OsvLicenseViolation =
+  | string
+  | {
+      id?: string;
+      license?: string | { id?: string; name?: string };
+      license_id?: string;
+      name?: string;
+      spdx_id?: string;
+    };
 interface OsvPackageEntry {
   package?: { name?: string; version?: string; ecosystem?: string };
   vulnerabilities?: OsvVulnerability[];
   groups?: OsvGroup[];
   licenses?: string[];
+  license_violations?: OsvLicenseViolation[];
 }
 interface OsvResult {
   source?: { path?: string };
@@ -746,9 +759,39 @@ function advisoryId(vuln: OsvVulnerability): string {
   return cve ?? vuln.id ?? "advisory";
 }
 
-/** Best-effort "fixed in" version from the advisory's affected ranges. */
-function fixedVersion(vuln: OsvVulnerability): string | undefined {
+function affectedPackageMatches(
+  affectedPackage: { name?: string; ecosystem?: string } | undefined,
+  packageInfo: { name?: string; ecosystem?: string } | undefined
+): boolean {
+  if (!affectedPackage?.name && !affectedPackage?.ecosystem) {
+    return true;
+  }
+  if (
+    affectedPackage.name &&
+    packageInfo?.name &&
+    affectedPackage.name.toLowerCase() !== packageInfo.name.toLowerCase()
+  ) {
+    return false;
+  }
+  if (
+    affectedPackage.ecosystem &&
+    packageInfo?.ecosystem &&
+    affectedPackage.ecosystem.toLowerCase() !== packageInfo.ecosystem.toLowerCase()
+  ) {
+    return false;
+  }
+  return true;
+}
+
+/** Best-effort "fixed in" version from the affected range for the reported package. */
+function fixedVersion(
+  vuln: OsvVulnerability,
+  packageInfo: { name?: string; ecosystem?: string } | undefined
+): string | undefined {
   for (const affected of vuln.affected ?? []) {
+    if (!affectedPackageMatches(affected.package, packageInfo)) {
+      continue;
+    }
     for (const range of affected.ranges ?? []) {
       for (const event of range.events ?? []) {
         if (event.fixed) {
@@ -758,6 +801,48 @@ function fixedVersion(vuln: OsvVulnerability): string | undefined {
     }
   }
   return undefined;
+}
+
+function licenseViolationId(violation: OsvLicenseViolation): string | undefined {
+  if (typeof violation === "string") {
+    return violation.trim() || undefined;
+  }
+  if (typeof violation.license === "string") {
+    return violation.license.trim() || undefined;
+  }
+  return (
+    violation.license?.id?.trim() ||
+    violation.license?.name?.trim() ||
+    violation.license_id?.trim() ||
+    violation.spdx_id?.trim() ||
+    violation.id?.trim() ||
+    violation.name?.trim() ||
+    undefined
+  );
+}
+
+function explicitLicenseViolations(entry: OsvPackageEntry): string[] | undefined {
+  if (!Array.isArray(entry.license_violations)) {
+    return undefined;
+  }
+  const values = new Set<string>();
+  for (const violation of entry.license_violations) {
+    const id = licenseViolationId(violation);
+    if (id) {
+      values.add(id);
+    }
+  }
+  return [...values];
+}
+
+function fallbackLicenseViolations(entry: OsvPackageEntry, allow: string[]): string[] {
+  if (!Array.isArray(entry.licenses) || entry.licenses.length === 0) {
+    return [];
+  }
+  return entry.licenses.filter((license) => {
+    const value = license.trim().toLowerCase();
+    return value.length > 0 && value !== "unknown" && !allow.includes(value);
+  });
 }
 
 /** Parse osv-scanner `--format json` output into vulnerability + license findings. */
@@ -801,7 +886,7 @@ export function parseOsvJson(
           continue;
         }
         seen.add(dedupe);
-        const fixed = fixedVersion(vuln);
+        const fixed = fixedVersion(vuln, entry.package);
         const summary = (vuln.summary ?? vuln.details ?? "known vulnerability").replace(/\s+/g, " ").trim();
         findings.push({
           file,
@@ -815,11 +900,9 @@ export function parseOsvJson(
         });
       }
       // License policy: flag any dependency whose license falls outside the allowlist.
-      if (allow && allow.length > 0 && Array.isArray(entry.licenses) && entry.licenses.length > 0) {
-        const offending = entry.licenses.filter((license) => {
-          const value = license.trim().toLowerCase();
-          return value.length > 0 && value !== "unknown" && !allow.includes(value);
-        });
+      if (allow && allow.length > 0) {
+        const explicitViolations = explicitLicenseViolations(entry);
+        const offending = explicitViolations ?? fallbackLicenseViolations(entry, allow);
         if (offending.length > 0) {
           const dedupe = `${file}|license|${name}`;
           if (!seen.has(dedupe)) {
@@ -878,7 +961,8 @@ async function runDependencyScan(
 
   let result: ExecResult;
   try {
-    await writeFile(configPath, "", { mode: 0o600 });
+    await chmod(configDir, 0o700);
+    await writeFile(configPath, "", { mode: 0o600, flag: "wx" });
     result = await params.exec("osv-scanner", args, params.root);
   } finally {
     await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
@@ -905,7 +989,12 @@ async function runDependencyScan(
     return { findings: [], notes: [toolFailureNote("osv-scanner", result)] };
   }
 
-  if (allow && allow.length > 0 && !result.stdout.includes("\"licenses\"")) {
+  if (
+    allow &&
+    allow.length > 0 &&
+    !result.stdout.includes("\"licenses\"") &&
+    !result.stdout.includes("\"license_violations\"")
+  ) {
     notes.push("osv-scanner: license data unavailable (scanner version may not support it); skipped license policy.");
   }
   if (findings.length > params.limits.maxFindings) {
