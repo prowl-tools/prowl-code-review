@@ -408,6 +408,8 @@ is *not* the default. Only Semgrep registry refs (`p/…`, `r/…`, `auto`) are
 supported. Repository-supplied rulesets (e.g. `.semgrep.yml`) and remote
 `http(s)://` configs are skipped even on trusted workspaces, since a PR could
 ship or point at a malicious/noisy ruleset.
+For untrusted PR scans, repository `.gitignore` and `.semgrepignore` target
+filters are bypassed so explicitly changed files cannot hide from SAST grounding.
 
 ```yaml
 # .prowl-review.yml

@@ -409,8 +409,8 @@ async function runEslint(
 // (DEFAULT_SEMGREP_CONFIG) is fetched from the registry — the same network reach
 // osv-scanner already uses for OSV.dev — with metrics OFF so no project metadata
 // is uploaded (this is why `--config auto`, which phones home, is not the
-// default). A repo-supplied ruleset (e.g. `.semgrep.yml`) is honored only when
-// the workspace is trusted, mirroring the ESLint gate.
+// default). Repo-supplied rulesets and remote URLs are skipped because Semgrep
+// rulesets have a separate trust model from local linter code execution.
 // ---------------------------------------------------------------------------
 
 /** True when a tool failed because its executable isn't installed. */
@@ -726,6 +726,7 @@ const SEMGREP_LANGUAGES = new Set<LanguageId>([
 
 /** Run Semgrep with metrics disabled (defense-in-depth with the `--metrics=off` flag). */
 const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
+const SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS = ["--no-git-ignore", "--x-ignore-semgrepignore-files"];
 
 /**
  * True when a ruleset reference resolves to a Semgrep registry pack that does not
@@ -896,8 +897,9 @@ async function runSemgrep(
 
   // `--metrics=off` + `--disable-version-check` keep the run offline-friendly and
   // stop any project metadata from being uploaded. `--disable-nosem` prevents a
-  // PR from hiding a changed-line finding with an inline Semgrep suppression. The
-  // ruleset is the only thing fetched (cached after the first run).
+  // PR from hiding a changed-line finding with an inline Semgrep suppression.
+  // Untrusted scans also bypass repo ignore files so a PR cannot hide an explicit
+  // changed-file target through `.gitignore` or `.semgrepignore`.
   const result = await params.exec(
     "semgrep",
     [
@@ -907,6 +909,7 @@ async function runSemgrep(
       "--metrics=off",
       "--disable-version-check",
       "--disable-nosem",
+      ...(!params.trustWorkspace ? SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS : []),
       `--config=${requestedConfig}`,
       "--",
       ...limited
