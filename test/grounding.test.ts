@@ -602,7 +602,7 @@ const OSV_JSON = JSON.stringify({
         {
           package: { name: "left-pad", version: "1.0.0", ecosystem: "npm" },
           vulnerabilities: [],
-          licenses: ["WTFPL"]
+          licenses: ["MIT", "WTFPL"]
         }
       ]
     }
@@ -662,7 +662,8 @@ describe("parseOsvJson (#34)", () => {
     const license = findings.filter((f) => f.title.startsWith("license-policy"));
     expect(license).toHaveLength(1);
     expect(license[0]).toMatchObject({ title: "license-policy: left-pad", severity: "major", category: "dependency" });
-    expect(license[0].body).toContain("WTFPL");
+    expect(license[0].body).toContain("uses license WTFPL");
+    expect(license[0].body).not.toContain("uses license MIT");
   });
 
   it("maps severity from a CVSS score when no GHSA label is present", () => {
@@ -701,7 +702,7 @@ describe("dependency scanning via gatherGrounding (#34)", () => {
 
     expect(result.findings.some((f) => f.category === "dependency" && f.title === "CVE-2019-10744")).toBe(true);
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
-    expect(call?.[1]).toContain("--lockfile");
+    expect(call?.[1]).toContain("-L");
     expect(call?.[1]).toContain("package-lock.json");
     expect(result.notes.join(" ")).toContain("dependency finding(s)");
   });
@@ -717,7 +718,13 @@ describe("dependency scanning via gatherGrounding (#34)", () => {
     });
     expect(result.findings.some((f) => f.title === "license-policy: left-pad")).toBe(true);
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
-    expect(call?.[1].some((a) => a.startsWith("--experimental-licenses="))).toBe(true);
+    expect(call?.[1]).toContain("scan");
+    expect(call?.[1].some((a) => a === "--licenses=MIT,Apache-2.0")).toBe(true);
+    expect(call?.[1]).toContain("-L");
+    expect(call?.[1]).toContain("package-lock.json");
+    const configArg = call?.[1].find((a) => a.startsWith("--config="));
+    expect(configArg).toBeDefined();
+    expect(configArg).not.toContain(ROOT);
   });
 
   it("skips gracefully when osv-scanner is not installed", async () => {
@@ -730,6 +737,47 @@ describe("dependency scanning via gatherGrounding (#34)", () => {
     });
     expect(result.findings).toHaveLength(0);
     expect(result.notes.join(" ")).toContain("osv-scanner not available");
+  });
+
+  it("skips gracefully when osv-scanner times out", async () => {
+    const exec = execForOsv({ code: null });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+    expect(result.notes.join(" ")).toContain("timed out");
+  });
+
+  it("treats osv-scanner v2 no-packages exit as a clean skip", async () => {
+    const exec = execForOsv({ stderr: "No packages found", code: 128 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["package-lock.json"],
+      exec
+    });
+    expect(result.findings).toHaveLength(0);
+    expect(result.notes.join(" ")).toContain("no packages found");
+  });
+
+  it("caps dependency scan targets before invoking osv-scanner", async () => {
+    const exec = execForOsv({ stdout: "{\"results\":[]}", code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: [],
+      dependencyPaths: ["a/package-lock.json", "b/yarn.lock", "c/go.mod"],
+      limits: { maxFiles: 2 },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner");
+    expect(call?.[1].filter((arg) => arg === "-L")).toHaveLength(2);
+    expect(call?.[1]).toContain("a/package-lock.json");
+    expect(call?.[1]).toContain("b/yarn.lock");
+    expect(call?.[1]).not.toContain("c/go.mod");
+    expect(result.notes.join(" ")).toContain("scanning 2/3 lockfiles");
   });
 
   it("does not run osv-scanner when no dependency manifest changed", async () => {

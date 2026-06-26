@@ -97,11 +97,17 @@ function isDependencyFinding(finding: Finding): boolean {
 /**
  * Dependency-scan findings (#34) are file-level (no line) — many distinct
  * advisories share the same lockfile, so `findingKey` (file|0|category) would
- * collapse them all into one. Dedupe them by file + title instead, so the same
- * advisory reported twice merges while different CVEs/licenses stay distinct.
+ * collapse them all into one. Vulnerability bodies start with package@version,
+ * so include that discriminator; license-policy titles are already package-level.
  */
 function dependencyDedupeKey(finding: Finding): string {
-  return `${finding.file}|dependency|${normalizeDedupeText(finding.title)}`;
+  const title = normalizeDedupeText(finding.title);
+  if (title.startsWith("license policy")) {
+    return `${finding.file}|dependency|${title}`;
+  }
+  const packageId = finding.body.match(/^([^:\s]+@[^:\s]+):/)?.[1];
+  const packageKey = packageId ? normalizeDedupeText(packageId) : normalizeDedupeText(finding.body);
+  return `${finding.file}|dependency|${title}|${packageKey}`;
 }
 
 function normalizeDedupeText(value: string): string {

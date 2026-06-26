@@ -1972,6 +1972,28 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.payload.body).toContain("ESLint");
   });
 
+  it("publishes dependency grounding findings alongside source review findings (#34)", async () => {
+    const deps = makeDeps();
+    const dependency = finding({
+      file: "package-lock.json",
+      line: undefined,
+      severity: "major",
+      category: "dependency",
+      title: "CVE-2019-10744",
+      body: "lodash@4.17.0: Prototype pollution in lodash (CVE-2019-10744).",
+      confidence: 0.9
+    });
+    deps.gatherGrounding.mockResolvedValue({ findings: [dependency], notes: ["osv-scanner: 1 dependency finding(s)."] });
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.runReview.mock.calls[0][0].grounding).toBeUndefined();
+    expect(result.review.findings).toEqual([dependency]);
+    expect(result.payload.body).toContain("CVE-2019-10744");
+    expect(result.payload.body).toContain("kept 1 dependency finding");
+  });
+
   it("passes the trusted workspace opt-in to grounding", async () => {
     const deps = makeDeps();
     await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps, trustWorkspace: true });

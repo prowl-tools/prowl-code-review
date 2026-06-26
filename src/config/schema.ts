@@ -265,6 +265,19 @@ const resilienceSchema = z
   })
   .strict();
 
+const COMMON_SHORT_SPDX_LICENSE_IDS = new Set(["0BSD", "AFL-3.0", "ISC", "MIT", "MPL-2.0", "Unlicense", "WTFPL", "Zlib"]);
+
+function isSpdxLicenseId(value: string): boolean {
+  const trimmed = value.trim();
+  if (COMMON_SHORT_SPDX_LICENSE_IDS.has(trimmed)) {
+    return true;
+  }
+  if (!trimmed.includes("-")) {
+    return /^[A-Za-z]+$/.test(trimmed);
+  }
+  return /^[A-Za-z0-9][A-Za-z0-9.+]*(?:-[A-Za-z0-9][A-Za-z0-9.+]*)+$/.test(trimmed);
+}
+
 /**
  * Dependency-CVE / license scanning (#34). On by default when a dependency
  * lockfile changes (scanned with osv-scanner; skips gracefully when it isn't
@@ -276,7 +289,7 @@ const dependencyScanSchema = z
     enabled: z.boolean().optional(),
     licenses: z
       .object({
-        allow: z.array(z.string().min(1)).optional()
+        allow: z.array(z.string().min(1).refine(isSpdxLicenseId, "must be an SPDX license identifier")).optional()
       })
       .strict()
       .optional()

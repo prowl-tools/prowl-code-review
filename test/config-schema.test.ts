@@ -76,6 +76,8 @@ describe("configSchema (#29)", () => {
     expect(configSchema.parse({ dependencyScan: { enabled: false } })).toEqual({ dependencyScan: { enabled: false } });
     expect(() => configSchema.parse({ dependencyScan: { enabled: "yes" } })).toThrow();
     expect(() => configSchema.parse({ dependencyScan: { licenses: { allow: [""] } } })).toThrow(); // min(1)
+    expect(() => configSchema.parse({ dependencyScan: { licenses: { allow: ["Apache2"] } } })).toThrow();
+    expect(() => configSchema.parse({ dependencyScan: { licenses: { allow: ["BSD3"] } } })).toThrow();
     expect(() => configSchema.parse({ dependencyScan: { licenses: { deny: ["GPL"] } } })).toThrow(); // strict
     expect(() => configSchema.parse({ dependencyScan: { nope: true } })).toThrow(); // strict
   });

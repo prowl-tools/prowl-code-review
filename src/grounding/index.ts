@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
 import type { Finding, Severity } from "../review/findings.js";
@@ -829,7 +830,7 @@ export function parseOsvJson(
               category: "dependency",
               title: `license-policy: ${name}`,
               body:
-                `${name}@${version} uses license ${entry.licenses.join(", ")}, ` +
+                `${name}@${version} uses license ${offending.join(", ")}, ` +
                 `which is not in the allowed list (${(options.allow ?? []).join(", ")}).`,
               confidence: 0.9
             });
@@ -853,22 +854,35 @@ async function runDependencyScan(
   if (params.dependencyScan?.enabled === false) {
     return { findings: [], notes: [] };
   }
-  const targets = dependencyScanTargets([...(params.dependencyPaths ?? []), ...params.changedPaths]);
+  const allTargets = dependencyScanTargets([...(params.dependencyPaths ?? []), ...params.changedPaths]);
+  const targets = allTargets.slice(0, params.limits.maxFiles);
+  const notes: string[] = [];
+  if (allTargets.length > targets.length) {
+    notes.push(`osv-scanner: scanning ${targets.length}/${allTargets.length} lockfiles (file cap).`);
+  }
   if (targets.length === 0) {
-    return { findings: [], notes: [] };
+    return { findings: [], notes };
   }
 
   const allow = params.dependencyScan?.licenses?.allow;
-  const args = ["--format", "json"];
+  const configDir = await mkdtemp(join(tmpdir(), "prowl-osv-"));
+  const configPath = join(configDir, "osv-scanner.toml");
+  const args = ["scan", "--format", "json", `--config=${configPath}`];
   if (allow && allow.length > 0) {
-    // osv-scanner emits per-package `licenses` for our own allowlist check.
-    args.push(`--experimental-licenses=${allow.join(",")}`);
+    // osv-scanner v2 emits per-package `licenses` for our own allowlist check.
+    args.push(`--licenses=${allow.join(",")}`);
   }
   for (const target of targets) {
-    args.push("--lockfile", target);
+    args.push("-L", target);
   }
 
-  const result = await params.exec("osv-scanner", args, params.root);
+  let result: ExecResult;
+  try {
+    await writeFile(configPath, "", { mode: 0o600 });
+    result = await params.exec("osv-scanner", args, params.root);
+  } finally {
+    await rm(configDir, { recursive: true, force: true }).catch(() => undefined);
+  }
   if (result.code === null) {
     return { findings: [], notes: ["osv-scanner: timed out; skipped dependency scanning."] };
   }
@@ -881,13 +895,16 @@ async function runDependencyScan(
       notes: ["osv-scanner not available in the workspace; skipped dependency CVE/license scanning (#34)."]
     };
   }
+  if (findings.length === 0 && result.code === 128) {
+    return { findings: [], notes: [...notes, "osv-scanner: no packages found in changed dependency files."] };
+  }
   // osv-scanner exits 0 (clean) or 1 (vulns/violations found) on success. A
-  // non-zero exit with no parseable report is a real failure, not a clean run.
+  // non-zero exit with no parseable report is a real failure, except v2's 128
+  // no-packages result handled above.
   if (findings.length === 0 && (!hasJson || result.code > 1)) {
     return { findings: [], notes: [toolFailureNote("osv-scanner", result)] };
   }
 
-  const notes: string[] = [];
   if (allow && allow.length > 0 && !result.stdout.includes("\"licenses\"")) {
     notes.push("osv-scanner: license data unavailable (scanner version may not support it); skipped license policy.");
   }
