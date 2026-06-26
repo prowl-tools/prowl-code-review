@@ -672,8 +672,12 @@ export function buildInlineComments(
     const hasRange = endLine !== undefined && endLine > finding.line;
     const canAnchorRange = hasRange ? sameHunkRange(fileLines, finding.line, endLine) : false;
 
-    const hasCommittableSuggestion = shouldCommitSuggestion(finding, options.suggestionMinConfidence);
-    if (hasCommittableSuggestion && !canAnchorRange && (hasRange || hasMultiLineSuggestion(finding))) {
+    // Only rendered one-click suggestions need GitHub to anchor the full replacement range.
+    // Gated suggestions render as prose + agent prompt, so a valid finding line is enough.
+    const needsSuggestionRange =
+      shouldCommitSuggestion(finding, options.suggestionMinConfidence) &&
+      (hasRange || hasMultiLineSuggestion(finding));
+    if (needsSuggestionRange && !canAnchorRange) {
       unmapped.push(finding);
       continue;
     }
