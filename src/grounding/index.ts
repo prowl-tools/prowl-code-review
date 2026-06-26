@@ -51,6 +51,7 @@ export interface GroundingLimits {
 export const DEFAULT_MAX_FILES = 100;
 export const DEFAULT_MAX_FINDINGS = 50;
 export const DEFAULT_TIMEOUT_MS = 60_000;
+const GROUNDING_RUNNER_MAX_CONCURRENCY = 2;
 
 /** Semgrep SAST grounding policy (#16b). */
 export interface SemgrepOptions {
@@ -61,9 +62,9 @@ export interface SemgrepOptions {
   enabled?: boolean;
   /**
    * Ruleset to run. Default {@link DEFAULT_SEMGREP_CONFIG} (a curated registry
-   * pack). Registry refs (`p/...`, `r/...`, `auto`) run ungated; a repo-relative
-   * path (e.g. `.semgrep.yml`) or remote URL is honored ONLY when the workspace
-   * is trusted, since a PR could ship a malicious/noisy ruleset.
+   * pack). Only registry refs (`p/...`, `r/...`, `auto`) are supported; repo
+   * paths and remote URLs are skipped because a PR could ship or point at a
+   * malicious/noisy ruleset.
    */
   config?: string;
 }
@@ -598,7 +599,7 @@ const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
   GITLEAKS_CONFIG: "",
   GITLEAKS_CONFIG_TOML: ""
 };
-const GITLEAKS_MAX_CONCURRENCY = 4;
+const GITLEAKS_MAX_CONCURRENCY = 1;
 const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
 
 /**
@@ -734,10 +735,6 @@ function isRegistrySemgrepConfig(config: string): boolean {
   return /^(?:p|r)\//i.test(config) || config.toLowerCase() === "auto";
 }
 
-function isRemoteSemgrepConfig(config: string): boolean {
-  return /^https?:\/\//i.test(config);
-}
-
 /** Map a Semgrep severity to a prowl-review severity. */
 function mapSemgrepSeverity(severity: string | undefined): Severity {
   switch ((severity ?? "").toUpperCase()) {
@@ -871,27 +868,16 @@ async function runSemgrep(
   }
 
   // Resolve the ruleset. Registry packs run ungated; repo-supplied paths and
-  // arbitrary remote URLs are honored only on a trusted workspace.
+  // arbitrary remote URLs are skipped even on trusted workspaces because Semgrep
+  // rulesets have their own trust model separate from repo code execution.
   const requestedConfig = params.semgrep?.config?.trim() || DEFAULT_SEMGREP_CONFIG;
-  let config = requestedConfig;
   if (!isRegistrySemgrepConfig(requestedConfig)) {
-    if (!params.trustWorkspace) {
-      return {
-        findings: [],
-        notes: [
-          `Semgrep skipped: the configured ruleset "${requestedConfig}" is a repo path or remote URL, which requires a trusted workspace; use --trust-workspace or a registry pack (e.g. p/default).`
-        ]
-      };
-    }
-    if (isRemoteSemgrepConfig(requestedConfig)) {
-      config = requestedConfig;
-    } else {
-      const [safe] = safeRelativePaths([requestedConfig]);
-      if (!safe) {
-        return { findings: [], notes: ["Semgrep skipped: the configured ruleset path escapes the workspace."] };
-      }
-      config = safe;
-    }
+    return {
+      findings: [],
+      notes: [
+        `Semgrep skipped: the configured ruleset "${requestedConfig}" is not a registry pack; use p/..., r/..., or auto.`
+      ]
+    };
   }
 
   const limited = files.slice(0, params.limits.maxFiles);
@@ -913,7 +899,7 @@ async function runSemgrep(
       "--metrics=off",
       "--disable-version-check",
       "--disable-nosem",
-      `--config=${config}`,
+      `--config=${requestedConfig}`,
       "--",
       ...limited
     ],
@@ -1322,24 +1308,22 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
   const exec = params.exec ?? defaultExec(limits.timeoutMs);
 
   const runners = [runEslint, runRuff, runGitleaks, runSemgrep];
-  const results = await Promise.all(
-    runners.map((runner) =>
-      runner({
-        root: params.root,
-        changedPaths: params.changedPaths,
-        secretScanPaths: params.secretScanPaths,
-        secretScanWholeFilePaths: params.secretScanWholeFilePaths,
-        changedLines: params.changedLines,
-        trustWorkspace: params.trustWorkspace === true,
-        semgrep: params.semgrep,
-        exec,
-        limits
-      }).catch(
-        (error): GroundingResult => ({
-          findings: [],
-          notes: [`Linter grounding error: ${error instanceof Error ? error.message : String(error)}`]
-        })
-      )
+  const results = await mapWithConcurrency(runners, GROUNDING_RUNNER_MAX_CONCURRENCY, (runner) =>
+    runner({
+      root: params.root,
+      changedPaths: params.changedPaths,
+      secretScanPaths: params.secretScanPaths,
+      secretScanWholeFilePaths: params.secretScanWholeFilePaths,
+      changedLines: params.changedLines,
+      trustWorkspace: params.trustWorkspace === true,
+      semgrep: params.semgrep,
+      exec,
+      limits
+    }).catch(
+      (error): GroundingResult => ({
+        findings: [],
+        notes: [`Linter grounding error: ${error instanceof Error ? error.message : String(error)}`]
+      })
     )
   );
 
