@@ -477,6 +477,28 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(result.notes.join(" ")).toContain("scanned 2/3");
   });
 
+  it("limits parallel Gitleaks file scans", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const exec: Exec = vi.fn(async (command: string): Promise<ExecResult> => {
+      if (command !== "gitleaks") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: "[]", stderr: "", code: 0 };
+    });
+    const changedPaths = Array.from({ length: 9 }, (_, index) => `secrets/${index}.env`);
+
+    await gatherGrounding({ root: ROOT, changedPaths, limits: { maxFiles: changedPaths.length }, exec });
+
+    const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
+    expect(gitleaksCalls).toHaveLength(changedPaths.length);
+    expect(maxActive).toBeLessThanOrEqual(4);
+  });
+
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
     const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } });
     const result = await gatherGrounding({ root: ROOT, changedPaths: [], exec });

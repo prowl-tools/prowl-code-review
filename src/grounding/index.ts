@@ -179,6 +179,29 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/^\.\//, "").replace(/\\/g, "/");
 }
 
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        results[index] = await mapper(items[index]);
+      }
+    })
+  );
+  return results;
+}
+
 const ESLINT_DIAGNOSTIC_LIMIT = 500;
 
 interface EslintMessage {
@@ -574,6 +597,7 @@ const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
   GITLEAKS_CONFIG: "",
   GITLEAKS_CONFIG_TOML: ""
 };
+const GITLEAKS_MAX_CONCURRENCY = 4;
 const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
 
 /**
@@ -609,28 +633,26 @@ async function runGitleaks(
 
   // Scan files individually so a missing/deleted path cannot suppress findings
   // from other files and a repo-root `.gitleaks.toml` cannot silence leaks.
-  const results = await Promise.all(
-    limited.map((file) =>
-      params.exec(
-        "gitleaks",
-        [
-          "detect",
-          "--no-git",
-          "--source",
-          file,
-          "--report-format",
-          "json",
-          "--report-path",
-          "-",
-          "--redact",
-          "--no-banner",
-          "--ignore-gitleaks-allow",
-          "--gitleaks-ignore-path",
-          GITLEAKS_DISABLED_IGNORE_PATH
-        ],
-        params.root,
-        { env: GITLEAKS_TRUSTED_ENV }
-      )
+  const results = await mapWithConcurrency(limited, GITLEAKS_MAX_CONCURRENCY, (file) =>
+    params.exec(
+      "gitleaks",
+      [
+        "detect",
+        "--no-git",
+        "--source",
+        file,
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        "--redact",
+        "--no-banner",
+        "--ignore-gitleaks-allow",
+        "--gitleaks-ignore-path",
+        GITLEAKS_DISABLED_IGNORE_PATH
+      ],
+      params.root,
+      { env: GITLEAKS_TRUSTED_ENV }
     )
   );
 
