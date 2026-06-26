@@ -13,8 +13,8 @@ All notable changes to Prowl Review will be documented in this file.
   uploaded — so `--config auto`, which phones home, is deliberately not the default) and `--disable-version-check`.
   Only Semgrep registry refs (`p/…`, `r/…`, `auto`) are supported; repo-supplied rulesets and remote
   `http(s)://` configs are skipped even on trusted workspaces. Untrusted scans bypass repo `.gitignore` /
-  `.semgrepignore` target filters and disable inline `nosemgrep` suppressions so changed files cannot hide from
-  SAST grounding. Findings are mapped to severity/category, filtered to changed lines, and bounded by the existing
+  `.semgrepignore` target filters, skip symlink targets, and disable inline `nosemgrep` suppressions so changed
+  regular files cannot hide from SAST grounding. Findings are mapped to severity/category, filtered to changed lines, and bounded by the existing
   grounding caps. New `grounding.semgrep` config block (strict Zod, `enabled` + `config`),
   `parseSemgrepJson`/`DEFAULT_SEMGREP_CONFIG` exports, and pipeline/CLI wiring.
 - Suggested-fix validation (backlog #39): committable one-click ```suggestion``` blocks are now gated so a wrong

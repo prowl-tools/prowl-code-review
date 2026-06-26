@@ -409,7 +409,8 @@ supported. Repository-supplied rulesets (e.g. `.semgrep.yml`) and remote
 `http(s)://` configs are skipped even on trusted workspaces, since a PR could
 ship or point at a malicious/noisy ruleset.
 For untrusted PR scans, repository `.gitignore` and `.semgrepignore` target
-filters are bypassed so explicitly changed files cannot hide from SAST grounding.
+filters are bypassed, and symlink targets are skipped, so explicitly changed
+regular files cannot hide from SAST grounding.
 
 ```yaml
 # .prowl-review.yml

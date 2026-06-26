@@ -1,6 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   gatherGrounding,
+  mapWithConcurrency,
   parseEslintJson,
   parseOsvJson,
   parseSemgrepJson,
@@ -19,6 +23,28 @@ function eslintOutput(messages: Array<Record<string, unknown>>, filePath = "/rep
 function fakeExec(result: Partial<ExecResult>): Exec {
   return vi.fn(async () => ({ stdout: "", stderr: "", code: 0, ...result }));
 }
+
+describe("mapWithConcurrency", () => {
+  it("returns [] without invoking the mapper for empty input", async () => {
+    const mapper = vi.fn(async (item: number) => item);
+    await expect(mapWithConcurrency([], 3, mapper)).resolves.toEqual([]);
+    expect(mapper).not.toHaveBeenCalled();
+  });
+
+  it("preserves result order while bounding active workers", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const result = await mapWithConcurrency([1, 2, 3, 4], 2, async (item) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return item * 10;
+    });
+    expect(result).toEqual([10, 20, 30, 40]);
+    expect(maxActive).toBe(2);
+  });
+});
 
 describe("parseEslintJson", () => {
   it("maps error→minor and warning→info with relative paths", () => {
@@ -109,6 +135,7 @@ describe("gatherGrounding", () => {
       root: ROOT,
       changedPaths: ["src/a.ts", "src/b.py", ".env"],
       trustWorkspace: true,
+      limits: { maxFiles: 1 },
       dependencyScan: { enabled: false },
       exec
     });
@@ -518,7 +545,8 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
 
     const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
     expect(gitleaksCalls).toHaveLength(changedPaths.length);
-    expect(maxActive).toBeLessThanOrEqual(1);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(2);
   });
 
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
@@ -1124,6 +1152,20 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     expect(call?.[1]).toContain("--config=p/security-audit");
   });
 
+  it("honors auto and nested registry ruleset refs", async () => {
+    for (const config of ["auto", "p/foo/bar", "r/some-rule"]) {
+      const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+      await gatherGrounding({
+        root: ROOT,
+        changedPaths: ["src/a.ts"],
+        semgrep: { config },
+        exec
+      });
+      const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+      expect(call?.[1]).toContain(`--config=${config}`);
+    }
+  });
+
   it("does not bypass Semgrep repo ignore files for trusted local scans", async () => {
     const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
     await gatherGrounding({
@@ -1136,6 +1178,27 @@ describe("gatherGrounding — Semgrep (#16b)", () => {
     const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
     expect(call?.[1]).not.toContain("--no-git-ignore");
     expect(call?.[1]).not.toContain("--x-ignore-semgrepignore-files");
+  });
+
+  it("skips symlink Semgrep targets in untrusted checkouts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "prowl-semgrep-"));
+    try {
+      writeFileSync(join(root, "real.ts"), "const value = 1;\n");
+      symlinkSync(join(root, "real.ts"), join(root, "link.ts"));
+      const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+
+      const result = await gatherGrounding({
+        root,
+        changedPaths: ["link.ts"],
+        changedLines: { "link.ts": [1] },
+        exec
+      });
+
+      expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+      expect(result.notes.join(" ")).toContain("skipped 1 symlink target");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("skips a repo-path ruleset", async () => {
