@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
 import { z } from "zod";
@@ -181,7 +181,7 @@ function normalizeRelativePath(path: string): string {
   return path.replace(/^\.\//, "").replace(/\\/g, "/");
 }
 
-async function mapWithConcurrency<T, R>(
+export async function mapWithConcurrency<T, R>(
   items: readonly T[],
   concurrency: number,
   mapper: (item: T) => Promise<R>
@@ -599,6 +599,7 @@ const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
   GITLEAKS_CONFIG: "",
   GITLEAKS_CONFIG_TOML: ""
 };
+const GITLEAKS_MAX_CONCURRENCY = 2;
 const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
 
 /**
@@ -634,31 +635,28 @@ async function runGitleaks(
 
   // Scan files individually so a missing/deleted path cannot suppress findings
   // from other files and a repo-root `.gitleaks.toml` cannot silence leaks.
-  const results: ExecResult[] = [];
-  for (const file of limited) {
-    results.push(
-      await params.exec(
-        "gitleaks",
-        [
-          "detect",
-          "--no-git",
-          "--source",
-          file,
-          "--report-format",
-          "json",
-          "--report-path",
-          "-",
-          "--redact",
-          "--no-banner",
-          "--ignore-gitleaks-allow",
-          "--gitleaks-ignore-path",
-          GITLEAKS_DISABLED_IGNORE_PATH
-        ],
-        params.root,
-        { env: GITLEAKS_TRUSTED_ENV }
-      )
-    );
-  }
+  const results = await mapWithConcurrency(limited, GITLEAKS_MAX_CONCURRENCY, (file) =>
+    params.exec(
+      "gitleaks",
+      [
+        "detect",
+        "--no-git",
+        "--source",
+        file,
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        "--redact",
+        "--no-banner",
+        "--ignore-gitleaks-allow",
+        "--gitleaks-ignore-path",
+        GITLEAKS_DISABLED_IGNORE_PATH
+      ],
+      params.root,
+      { env: GITLEAKS_TRUSTED_ENV }
+    )
+  );
 
   const unavailableCount = results.filter(commandUnavailable).length;
   if (unavailableCount === results.length) {
@@ -750,6 +748,34 @@ function semgrepTargetFailure(result: ExecResult): boolean {
     return false;
   }
   return /file not found|no such file|symbolic link|symlink|not a regular file/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
+async function semgrepTargetsForTrust(
+  root: string,
+  files: readonly string[],
+  trustWorkspace: boolean
+): Promise<{ files: string[]; notes: string[] }> {
+  if (trustWorkspace) {
+    return { files: [...files], notes: [] };
+  }
+  const filtered: string[] = [];
+  let skippedSymlinks = 0;
+  for (const file of files) {
+    try {
+      if ((await lstat(join(root, file))).isSymbolicLink()) {
+        skippedSymlinks += 1;
+        continue;
+      }
+    } catch {
+      // Keep missing/deleted paths so the normal Semgrep failure handling can
+      // isolate them without hiding findings from the remaining targets.
+    }
+    filtered.push(file);
+  }
+  return {
+    files: filtered,
+    notes: skippedSymlinks > 0 ? [`Semgrep: skipped ${skippedSymlinks} symlink target(s) in untrusted checkout.`] : []
+  };
 }
 
 /**
@@ -961,6 +987,10 @@ async function runSemgrep(
   if (files.length === 0) {
     return { findings: [], notes: [] };
   }
+  const scanTargets = await semgrepTargetsForTrust(params.root, files, params.trustWorkspace);
+  if (scanTargets.files.length === 0) {
+    return { findings: [], notes: scanTargets.notes };
+  }
 
   // Resolve the ruleset. Registry packs run ungated; repo-supplied paths and
   // arbitrary remote URLs are skipped even on trusted workspaces because Semgrep
@@ -975,10 +1005,10 @@ async function runSemgrep(
     };
   }
 
-  const limited = files.slice(0, params.limits.maxFiles);
-  const notes: string[] = [];
-  if (files.length > limited.length) {
-    notes.push(`Semgrep: scanned ${limited.length}/${files.length} changed files (file cap).`);
+  const limited = scanTargets.files.slice(0, params.limits.maxFiles);
+  const notes: string[] = [...scanTargets.notes];
+  if (scanTargets.files.length > limited.length) {
+    notes.push(`Semgrep: scanned ${limited.length}/${scanTargets.files.length} changed files (file cap).`);
   }
 
   // `--metrics=off` + `--disable-version-check` keep the run offline-friendly and
