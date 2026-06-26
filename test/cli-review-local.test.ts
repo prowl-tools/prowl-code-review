@@ -370,6 +370,37 @@ copy to src/copied.ts
     );
   });
 
+  it("treats edited copied files as whole-file Semgrep targets", async () => {
+    isolatedWorkspace();
+    const copiedDiff = `diff --git a/src/source.ts b/src/copied.ts
+similarity index 80%
+copy from src/source.ts
+copy to src/copied.ts
+index 1111111..2222222 100644
+--- a/src/source.ts
++++ b/src/copied.ts
+@@ -1,2 +1,3 @@
+ const a = 1;
++const b = 2;
+ const c = 3;
+`;
+    const gatherGrounding = vi.fn().mockResolvedValue({ findings: [], notes: [] });
+    const { deps: d } = deps({
+      resolveDiff: vi.fn().mockResolvedValue(copiedDiff),
+      gatherGrounding
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    expect(gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/copied.ts"],
+        semgrepWholeFilePaths: ["src/copied.ts"],
+        changedLines: { "src/copied.ts": [2] }
+      })
+    );
+  });
+
   it("keeps workspace execution untrusted for fork pull request events", async () => {
     const workspace = isolatedWorkspace();
     const eventPath = join(workspace, "event.json");
