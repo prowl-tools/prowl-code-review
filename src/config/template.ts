@@ -117,6 +117,13 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   auto: true               # auto-review PR events; set false for on-demand only (@prowl-review review) (#28)
 #   reviewDrafts: false      # also auto-review draft PRs; default skips drafts until "ready for review" (#28)
 
+# --- Suggested-fix validation -------------------------------------------------
+# Committable one-click suggestion blocks are only offered for findings at or
+# above this confidence (and that pass a structural sanity check) (#39).
+# Lower-confidence fixes still appear in each finding's agent prompt.
+# suggestions:
+#   minConfidence: 0.8
+
 # --- Specialist reviewers -----------------------------------------------------
 # The multi-pass review runs built-in lenses (correctness, security, performance,
 # tests). Toggle any of them off, and/or add your own reviewers — each runs as an
