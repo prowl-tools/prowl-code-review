@@ -89,7 +89,7 @@ function mockOctokit(
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
 
 function comment(over: Partial<ReviewComment> = {}): ReviewComment {
-  return { path: "src/a.ts", line: 6, side: "RIGHT", body: "issue", fingerprint: "fp-a", ...over };
+  return { path: "src/a.ts", line: 6, side: "RIGHT", body: "issue", severity: "major", fingerprint: "fp-a", ...over };
 }
 
 function payload(over: Partial<ReviewPayload> = {}): ReviewPayload {
@@ -361,9 +361,11 @@ describe("submitReview", () => {
     };
     expect(review.commit_id).toBe("head");
     expect(review.event).toBe("COMMENT");
-    expect(review.body).toBe(
-      "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
-    );
+    // Self-contained findings summary (no "see the other comment" pointer) so the
+    // review reads as a complete unit with its inline findings nested (CodeRabbit-style).
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("🟠 1 major");
+    expect(review.body).not.toContain("summary comment");
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(review.body).not.toContain("prowl-review:state");
     expect(review.comments).toHaveLength(1);
@@ -654,7 +656,7 @@ describe("submitReview", () => {
         repo: "prowl-code-review",
         pull_number: 12,
         event: "REQUEST_CHANGES",
-        body: expect.stringContaining("summary")
+        body: expect.stringContaining("requested changes")
       })
     );
     expect(createReview.mock.calls[0][0]).not.toHaveProperty("comments");
@@ -675,7 +677,8 @@ describe("submitReview", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
     expect(review.event).toBe("REQUEST_CHANGES");
-    expect(review.body).toContain("summary");
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
     expect(review.comments).toHaveLength(1);
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);

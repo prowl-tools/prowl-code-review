@@ -1,6 +1,7 @@
 import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
-import type { ReviewComment, ReviewEvent, ReviewPayload } from "../review/inline.js";
+import type { ReviewComment, ReviewPayload } from "../review/inline.js";
+import { buildPublishedReviewBody } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
   embedStateWithFittedState,
@@ -357,27 +358,6 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
-/** Build the marker-free review body used when batching inline COMMENT reviews. */
-function inlineBatchReviewBody(commentCount: number): string {
-  const noun = commentCount === 1 ? "finding" : "findings";
-  return `prowl-review posted ${commentCount} new inline ${noun}. The updatable summary comment has the full review context.`;
-}
-
-/**
- * Short body for an APPROVE/REQUEST_CHANGES review event (#52). The full
- * walkthrough lives in the updatable summary comment, so the event review just
- * carries the verdict + a pointer — never a second copy of the walkthrough.
- */
-function eventReviewBody(event: ReviewEvent): string {
-  if (event === "REQUEST_CHANGES") {
-    return "prowl-review requested changes. See the prowl-review summary comment for the full review.";
-  }
-  if (event === "APPROVE") {
-    return "prowl-review approved these changes. See the prowl-review summary comment for the full review.";
-  }
-  return "";
-}
-
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present unless `preservePriorSummary` is requested, and posts only
@@ -424,7 +404,7 @@ export async function submitReview(
         pull_number: ref.pull_number,
         event: "COMMENT",
         ...(options.commitId ? { commit_id: options.commitId } : {}),
-        body: inlineBatchReviewBody(reviewComments.length),
+        body: buildPublishedReviewBody(newInline, "COMMENT"),
         comments: reviewComments
       });
       posted = true;
@@ -442,7 +422,7 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: eventReviewBody(payload.event),
+      body: buildPublishedReviewBody(newInline, payload.event),
       ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     posted = true;

@@ -4,6 +4,18 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Cohesive published review (presentation, #10/#22): the GitHub review that carries the inline findings now
+  leads with a **self-contained findings summary** — `**prowl-review** flagged N findings` plus a severity
+  breakdown (`🔴 1 critical · 🟠 2 major`) — so the review reads as one complete unit with its inline findings
+  nested underneath (CodeRabbit-style). It replaces the previous one-line pointer ("posted N new inline
+  findings. The updatable summary comment has the full review context."), which punted the reader to a
+  separate comment and made the review look empty. This holds on every run, including re-runs (each run's
+  review summarizes the net-new findings it posts). The persistent walkthrough summary comment is unchanged
+  (still the updatable big-picture: impact/effort, changed files, per-model, nitpicks, notes, state marker —
+  #22/#12). Verdict reviews (APPROVE/REQUEST_CHANGES, #52) likewise lead with the verdict + the same findings
+  summary instead of a pointer. `ReviewComment` now carries `severity`; new exported `buildPublishedReviewBody`.
+
 ### Added
 - Semgrep SAST grounding (backlog #16b): a new deterministic grounding runner alongside ESLint/Ruff/Gitleaks.
   prowl-review runs **Semgrep** over changed source files (multi-language, selected via the #5 detector) and
