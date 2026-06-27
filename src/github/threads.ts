@@ -179,6 +179,18 @@ interface ReviewThreadCommentNode {
   author?: { login?: string | null; __typename?: string | null } | null;
 }
 
+const REJUSTIFICATION_REPLY_MARKER = "re-evaluated after your reply (#22)";
+
+function latestRejustificationReplyIndex(comments: Array<ReviewThreadCommentNode | null>, login: string): number {
+  for (let i = comments.length - 1; i >= 0; i -= 1) {
+    const comment = comments[i];
+    if (comment?.author?.login === login && comment.body?.includes(REJUSTIFICATION_REPLY_MARKER)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
 /** GraphQL shape for the review-threads query (only the fields we read). */
 interface ReviewThreadsQueryResult {
   repository?: {
@@ -276,6 +288,7 @@ export async function fetchReviewThreads(
         const fingerprints = new Set<string>();
         let humanIntent: ReplyIntent = "other";
         let humanReplyBody: string | undefined;
+        const newestRejustificationReplyIndex = latestRejustificationReplyIndex(recentComments, login);
         for (const comment of comments) {
           if (!comment) {
             continue;
@@ -309,8 +322,13 @@ export async function fetchReviewThreads(
           }
           const intent = classifyReplyIntent(comment.body ?? undefined);
           if (intent !== "other") {
-            humanIntent = intent;
-            humanReplyBody = comment.body ?? undefined;
+            if (isDisputingIntent(intent) && newestRejustificationReplyIndex > i) {
+              humanIntent = "other";
+              humanReplyBody = undefined;
+            } else {
+              humanIntent = intent;
+              humanReplyBody = comment.body ?? undefined;
+            }
             break;
           }
         }

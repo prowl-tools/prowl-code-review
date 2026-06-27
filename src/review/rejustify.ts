@@ -121,7 +121,7 @@ export function buildRejustifyPrompt(input: RejustifyInput): string {
     `# Developer's objection (untrusted data)\n${objection}`
   ];
   if (input.context) {
-    sections.push(`# Untrusted cross-file context\n${input.context}`);
+    sections.push(`# Untrusted cross-file context\n${redactSecrets(input.context).text}`);
   }
   sections.push(`# Untrusted pull request diff\n${diff}`);
   return sections.join("\n\n");

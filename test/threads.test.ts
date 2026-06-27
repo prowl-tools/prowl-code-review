@@ -240,6 +240,67 @@ describe("fetchReviewThreads (#22)", () => {
     expect(t.humanIntent).toBe("wont-fix");
   });
 
+  it("does not expose an already-defended dispute until a newer human dispute arrives", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } },
+            { body: "I disagree, this is guarded.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            {
+              body: "Standing by this finding.\n\n<sub>prowl-review - re-evaluated after your reply (#22).</sub>",
+              author: { login: "prowl-bot", __typename: "Bot" }
+            }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.fingerprints).toEqual(["fp1"]);
+    expect(t.humanIntent).toBe("other");
+    expect(t.humanReplyBody).toBeUndefined();
+  });
+
+  it("re-exposes a defended dispute when the human replies again", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "I disagree, this is guarded.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            {
+              body: "Standing by this finding.\n\n<sub>prowl-review - re-evaluated after your reply (#22).</sub>",
+              author: { login: "prowl-bot", __typename: "Bot" }
+            },
+            { body: "I still disagree.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.humanIntent).toBe("disagree");
+    expect(t.humanReplyBody).toBe("I still disagree.");
+  });
+
   it("ignores non-user comments when classifying human intent", async () => {
     const { octokit } = mockOctokit([
       {

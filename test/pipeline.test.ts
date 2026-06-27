@@ -1142,7 +1142,8 @@ diff --git a/src/b.ts b/src/b.ts
     });
 
     it("re-justifies and defends a disputed finding in-thread (#22)", async () => {
-      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const disputed = finding({ severity: "critical" });
+      const fp = findingFingerprint(disputed);
       const fetchReviewThreads = vi.fn(async () => [
         thread({ id: "D", fingerprints: [fp], humanIntent: "disagree", humanReplyBody: "I disagree" })
       ]);
@@ -1154,18 +1155,52 @@ diff --git a/src/b.ts b/src/b.ts
         usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
       }));
       const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, replyToReviewThread, rejustifyDisputedFinding };
-      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+      deps.runReview.mockResolvedValue(reviewResult([disputed]));
 
       const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
       expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(1);
       expect(replyToReviewThread).toHaveBeenCalledWith(expect.anything(), "D", expect.stringContaining("Standing by"));
       expect(resolveReviewThread).not.toHaveBeenCalled(); // defended → thread stays open
+      expect(result.review.findings).toEqual([disputed]); // defended → still visible/gating
+      expect(result.usage).toEqual({ inputTokens: 2, outputTokens: 2, cachedInputTokens: 0 });
       expect(result.threads?.defended).toBe(1);
       expect(result.threads?.withdrawn).toBe(0);
-      expect(result.threads?.keptOpenDisputed).toBe(1);
+      expect(result.threads?.withheldDisputed).toBe(0);
+      expect(result.threads?.keptOpenDisputed).toBe(0);
       expect(result.payload.body).toContain("defended");
     });
+
+    it.each(["defend", "withdraw"] as const)(
+      "leaves a disputed finding withheld when the %s reply cannot be posted (#22)",
+      async (decision) => {
+        const disputed = finding({ severity: "critical" });
+        const fp = findingFingerprint(disputed);
+        const fetchReviewThreads = vi.fn(async () => [
+          thread({ id: "D", fingerprints: [fp], humanIntent: "disagree", humanReplyBody: "I disagree" })
+        ]);
+        const resolveReviewThread = vi.fn(async () => true);
+        const replyToReviewThread = vi.fn(async () => false);
+        const rejustifyDisputedFinding = vi.fn(async () => ({
+          ok: true as const,
+          verdict: { decision, reasoning: "reason" },
+          usage: { inputTokens: 3, outputTokens: 2, cachedInputTokens: 1 }
+        }));
+        const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, replyToReviewThread, rejustifyDisputedFinding };
+        deps.runReview.mockResolvedValue(reviewResult([disputed]));
+
+        const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+        expect(replyToReviewThread).toHaveBeenCalledTimes(1);
+        expect(resolveReviewThread).not.toHaveBeenCalled();
+        expect(result.review.findings).toHaveLength(0);
+        expect(result.threads?.defended).toBe(0);
+        expect(result.threads?.withdrawn).toBe(0);
+        expect(result.threads?.withheldDisputed).toBe(1);
+        expect(result.threads?.keptOpenDisputed).toBe(1);
+        expect(result.usage).toEqual({ inputTokens: 4, outputTokens: 3, cachedInputTokens: 1 });
+      }
+    );
 
     it("withdraws a disputed finding and resolves the thread when the judge concedes (#22)", async () => {
       const fp = findingFingerprint(finding({ severity: "critical" }));
