@@ -1,6 +1,7 @@
 import type { OctokitLike } from "./client.js";
 import type { PullRequestRef } from "./diff.js";
-import type { ReviewComment, ReviewEvent, ReviewPayload } from "../review/inline.js";
+import type { ReviewComment, ReviewPayload } from "../review/inline.js";
+import { buildPublishedReviewBody } from "../review/inline.js";
 import { REVIEW_MARKER } from "../review/walkthrough.js";
 import {
   embedStateWithFittedState,
@@ -32,6 +33,7 @@ const MAX_REVIEW_PAGES = 10;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
+const SUMMARY_ONLY_FINDINGS_RE = /(?:^|\n)## (?:Unmapped findings|\d+ more findings? \(inline comment cap:)/;
 
 /** A prior prowl-review summary comment found on the PR. */
 export interface PriorSummaryComment {
@@ -345,7 +347,11 @@ async function listPriorInlineFingerprints(
   return [...new Set(fingerprints)];
 }
 
-/** Strip internal fields before sending an inline comment to GitHub. */
+/**
+ * Strip internal fields before sending an inline comment to GitHub.
+ * `comment.body` is renderer-owned Markdown from `formatFindingComment`; model
+ * finding text is escaped before this publish boundary.
+ */
 function toGitHubComment(comment: ReviewComment) {
   return {
     path: comment.path,
@@ -357,25 +363,16 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
-/** Build the marker-free review body used when batching inline COMMENT reviews. */
-function inlineBatchReviewBody(commentCount: number): string {
-  const noun = commentCount === 1 ? "finding" : "findings";
-  return `prowl-review posted ${commentCount} new inline ${noun}. The updatable summary comment has the full review context.`;
-}
-
-/**
- * Short body for an APPROVE/REQUEST_CHANGES review event (#52). The full
- * walkthrough lives in the updatable summary comment, so the event review just
- * carries the verdict + a pointer — never a second copy of the walkthrough.
- */
-function eventReviewBody(event: ReviewEvent): string {
-  if (event === "REQUEST_CHANGES") {
-    return "prowl-review requested changes. See the prowl-review summary comment for the full review.";
+/** Return true when comments alone would leave a request-changes review without current finding details. */
+function shouldIncludeVerdictDetails(payload: ReviewPayload, newInline: ReviewComment[]): boolean {
+  if (payload.event !== "REQUEST_CHANGES") {
+    return false;
   }
-  if (event === "APPROVE") {
-    return "prowl-review approved these changes. See the prowl-review summary comment for the full review.";
-  }
-  return "";
+  return (
+    payload.comments.length === 0 ||
+    newInline.length < payload.comments.length ||
+    SUMMARY_ONLY_FINDINGS_RE.test(payload.body)
+  );
 }
 
 /**
@@ -424,7 +421,7 @@ export async function submitReview(
         pull_number: ref.pull_number,
         event: "COMMENT",
         ...(options.commitId ? { commit_id: options.commitId } : {}),
-        body: inlineBatchReviewBody(reviewComments.length),
+        body: buildPublishedReviewBody(newInline, "COMMENT"),
         comments: reviewComments
       });
       posted = true;
@@ -432,17 +429,20 @@ export async function submitReview(
     }
   } else {
     // Verdict path (#52): one review carries the REQUEST_CHANGES/APPROVE event
-    // plus the inline findings — a single, meaningful review entry.
+    // plus net-new inline comments. The body summarizes the current payload,
+    // not only net-new comments, so deduped/capped/unmapped findings still make
+    // a request-changes review actionable.
     if (options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
+    const detailsBody = shouldIncludeVerdictDetails(payload, newInline) ? payload.body : undefined;
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: eventReviewBody(payload.event),
+      body: buildPublishedReviewBody(payload.comments, payload.event, { detailsBody }),
       ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     posted = true;

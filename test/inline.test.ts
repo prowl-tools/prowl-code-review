@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { buildInlineComments, buildReviewPayload, formatFindingComment, DEFAULT_MAX_INLINE_COMMENTS } from "../src/review/inline.js";
+import {
+  buildInlineComments,
+  buildPublishedReviewBody,
+  buildReviewPayload,
+  formatFindingComment,
+  DEFAULT_MAX_INLINE_COMMENTS,
+  type ReviewComment
+} from "../src/review/inline.js";
+import { GITHUB_COMMENT_BODY_LIMIT } from "../src/review/state.js";
 import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
@@ -247,6 +255,23 @@ describe("formatFindingComment", () => {
     expect(body).toContain("Ping &#64;team \\*now\\* &amp; later");
     expect(body).toContain("1\\. &#64;team &lt;script&gt; &amp;\\#x3C;img&amp;\\#x3E; \\*bold\\*");
     expect(body).not.toContain("@team");
+  });
+
+  it("defangs dangerous Markdown and raw HTML in inline finding comments", () => {
+    const body = formatFindingComment(
+      f({
+        title: "[bad](javascript:alert(1)) <img src=x onerror=alert(1)>",
+        body: "[bad](javascript:alert(1))\n<img src=x onerror=alert(1)>\n@team"
+      }),
+      { agentPrompt: false }
+    );
+
+    expect(body).not.toContain("[bad](javascript");
+    expect(body).not.toContain("<img");
+    expect(body).not.toContain("@team");
+    expect(body).toContain("\\[bad\\]\\(javascript:alert\\(1\\)\\)");
+    expect(body).toContain("&lt;img src=x onerror=alert\\(1\\)&gt;");
+    expect(body).toContain("&#64;team");
   });
 
   it("treats agentPrompt undefined as default on", () => {
@@ -706,5 +731,119 @@ describe("inline-comment cap (#25)", () => {
     const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 5, agentPrompt: false });
     expect(payload.comments).toHaveLength(2);
     expect(payload.body).not.toContain("inline comment cap");
+  });
+});
+
+describe("buildPublishedReviewBody", () => {
+  const rc = (over: Partial<ReviewComment> = {}): ReviewComment => ({
+    path: "src/a.ts",
+    line: 6,
+    side: "RIGHT",
+    body: "issue",
+    severity: "major",
+    fingerprint: "fp",
+    ...over
+  });
+
+  it("leads with a self-contained findings summary + severity breakdown (no pointer)", () => {
+    const body = buildPublishedReviewBody([rc({ severity: "critical" }), rc({ severity: "major" }), rc({ severity: "major" })]);
+    expect(body).toContain("**prowl-review** flagged 3 findings");
+    expect(body).toContain("🔴 1 critical · 🟠 2 major");
+    // Never punts to another comment.
+    expect(body).not.toMatch(/summary comment|full review context|see the/i);
+  });
+
+  it("uses the singular noun for a single finding", () => {
+    expect(buildPublishedReviewBody([rc()])).toContain("flagged 1 finding");
+  });
+
+  it("renders severity breakdowns in severity order and omits zero-count severities", () => {
+    const criticalInfo = buildPublishedReviewBody([rc({ severity: "info" }), rc({ severity: "critical" })]);
+    expect(criticalInfo).toContain("🔴 1 critical · ⚪ 1 info");
+    expect(criticalInfo).not.toContain("major");
+    expect(criticalInfo).not.toContain("minor");
+
+    const majorMinor = buildPublishedReviewBody([
+      rc({ severity: "major" }),
+      rc({ severity: "minor" }),
+      rc({ severity: "major" })
+    ]);
+    expect(majorMinor).toContain("🟠 2 major · 🟡 1 minor");
+  });
+
+  it("prefixes the verdict on a REQUEST_CHANGES review and still summarizes findings", () => {
+    const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES");
+    expect(body).toContain("🚧 **prowl-review requested changes.**");
+    expect(body).toContain("**prowl-review** flagged 1 finding");
+  });
+
+  it("prefixes the verdict on an APPROVE review and still summarizes findings", () => {
+    const body = buildPublishedReviewBody([rc()], "APPROVE");
+    expect(body).toContain("✅ **prowl-review approved these changes.**");
+    expect(body).toContain("**prowl-review** flagged 1 finding");
+  });
+
+  it("renders an APPROVE verdict with no findings as a clean approval", () => {
+    const body = buildPublishedReviewBody([], "APPROVE");
+    expect(body).toBe("✅ **prowl-review approved these changes.**");
+  });
+
+  it("sanitizes appended request-changes details", () => {
+    const body = buildPublishedReviewBody([], "REQUEST_CHANGES", {
+      detailsBody: [
+        "<!-- prowl-review:summary -->",
+        "## prowl-review",
+        "<img src=x onerror=alert(1)>",
+        "[bad](javascript:alert(1))",
+        "@team &#x3c;script&#x3e;",
+        "<!-- prowl-review:state {\"v\":1,\"postedFindings\":[]} -->"
+      ].join("\n")
+    });
+
+    expect(body).toContain("### Review details");
+    expect(body).not.toContain("<img");
+    expect(body).not.toMatch(/javascript\s*:/i);
+    expect(body).toContain("#blocked-alert");
+    expect(body).toContain("&#64;team");
+    expect(body).toContain("&amp;#x3c;script&amp;#x3e;");
+    expect(body).not.toContain("prowl-review:summary");
+    expect(body).not.toContain("prowl-review:state");
+  });
+
+  it("preserves renderer-owned details blocks and fenced code in appended request-changes details", () => {
+    const body = buildPublishedReviewBody([], "REQUEST_CHANGES", {
+      detailsBody: [
+        "<details>",
+        "<summary><b>Changed files (1)</b></summary>",
+        "",
+        "```suggestion",
+        "if (left < right) {",
+        "  return left;",
+        "}",
+        "```",
+        "",
+        "</details>",
+        "<script>alert(1)</script>",
+        "[bad](javascript:alert(1))"
+      ].join("\n")
+    });
+
+    expect(body).toContain("<details>");
+    expect(body).toContain("<summary><b>Changed files (1)</b></summary>");
+    expect(body).toContain("```suggestion\nif (left < right) {");
+    expect(body).toContain("</details>");
+    expect(body).not.toContain("&lt;details>");
+    expect(body).not.toContain("<script");
+    expect(body).toContain("&lt;script>alert(1)&lt;/script>");
+    expect(body).not.toMatch(/javascript\s*:/i);
+  });
+
+  it("truncates appended request-changes details to fit GitHub's body limit", () => {
+    const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES", {
+      detailsBody: "detail ".repeat(GITHUB_COMMENT_BODY_LIMIT)
+    });
+
+    expect(body.length).toBeLessThanOrEqual(GITHUB_COMMENT_BODY_LIMIT);
+    expect(body).toContain("[review details truncated to keep the GitHub review body within the body size limit]");
   });
 });

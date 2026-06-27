@@ -89,7 +89,7 @@ function mockOctokit(
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 12 };
 
 function comment(over: Partial<ReviewComment> = {}): ReviewComment {
-  return { path: "src/a.ts", line: 6, side: "RIGHT", body: "issue", fingerprint: "fp-a", ...over };
+  return { path: "src/a.ts", line: 6, side: "RIGHT", body: "issue", severity: "major", fingerprint: "fp-a", ...over };
 }
 
 function payload(over: Partial<ReviewPayload> = {}): ReviewPayload {
@@ -361,9 +361,11 @@ describe("submitReview", () => {
     };
     expect(review.commit_id).toBe("head");
     expect(review.event).toBe("COMMENT");
-    expect(review.body).toBe(
-      "prowl-review posted 1 new inline finding. The updatable summary comment has the full review context."
-    );
+    // Self-contained findings summary (no "see the other comment" pointer) so the
+    // review reads as a complete unit with its inline findings nested (CodeRabbit-style).
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("🟠 1 major");
+    expect(review.body).not.toContain("summary comment");
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(review.body).not.toContain("prowl-review:state");
     expect(review.comments).toHaveLength(1);
@@ -654,7 +656,7 @@ describe("submitReview", () => {
         repo: "prowl-code-review",
         pull_number: 12,
         event: "REQUEST_CHANGES",
-        body: expect.stringContaining("summary")
+        body: expect.stringContaining("requested changes")
       })
     );
     expect(createReview.mock.calls[0][0]).not.toHaveProperty("comments");
@@ -675,10 +677,89 @@ describe("submitReview", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
     expect(review.event).toBe("REQUEST_CHANGES");
-    expect(review.body).toContain("summary");
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
     expect(review.comments).toHaveLength(1);
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);
+  });
+
+  it("summarizes current findings on a verdict review when some inline findings are already posted", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, createReview } = mockOctokit([prior]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({
+        event: "REQUEST_CHANGES",
+        comments: [comment(), comment({ fingerprint: "fp-b", severity: "critical" })]
+      }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("**prowl-review** flagged 2 findings");
+    expect(review.body).toContain("### Review details");
+    expect(review.comments).toHaveLength(1);
+    expect(JSON.stringify(review.comments?.[0])).toContain("fp-b");
+  });
+
+  it("includes summary details on request-changes reviews with no inline comments", async () => {
+    const { octokit, createReview } = mockOctokit([]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({
+        event: "REQUEST_CHANGES",
+        comments: [],
+        body:
+          `${REVIEW_MARKER}\n## prowl-review\n\n### Findings\n\n` +
+          "| Severity | Location | Finding |\n" +
+          "| :-- | :-- | :-- |\n" +
+          "| 🟠 major | package-lock.json | **Known vulnerable dependency** |\n\n" +
+          serializeState({ v: 1, postedFindings: [] })
+      }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("### Review details");
+    expect(review.body).toContain("Known vulnerable dependency");
+    expect(review.body).not.toContain("prowl-review:summary");
+    expect(review.body).not.toContain("prowl-review:state");
+    expect(review.comments).toBeUndefined();
+  });
+
+  it("includes summary details when exactly one finding overflows the inline cap", async () => {
+    const { octokit, createReview } = mockOctokit([]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({
+        event: "REQUEST_CHANGES",
+        comments: [comment()],
+        body: `${REVIEW_MARKER}\n## prowl-review\n\n## 1 more finding (inline comment cap: 1)\n\nsrc/b.ts:8 — Overflow`
+      }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("### Review details");
+    expect(review.body).toContain("1 more finding (inline comment cap: 1)");
+    expect(review.comments).toHaveLength(1);
   });
 
   it("paginates when looking for the prior summary comment", async () => {
