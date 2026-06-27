@@ -7,6 +7,7 @@ import {
   loadChatGuidelines,
   resolveCommentEvent,
   respondToComment,
+  generateForComment,
   handleIgnore,
   type CommandDispatchDeps,
   type CommentEvent
@@ -109,6 +110,23 @@ describe("dispatchCommand (#26)", () => {
   it("falls back to help for an unknown verb when no chat responder is wired", async () => {
     const d = deps(); // no respond
     await dispatchCommand({ verb: "unknown", argument: "hello?" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
+  });
+
+  it("generates docstrings/tests via the generator (#33)", async () => {
+    for (const verb of ["docstrings", "tests"] as const) {
+      const generate = vi.fn(async () => {});
+      const d = deps({ generate });
+      const outcome = await dispatchCommand({ verb, argument: "" }, { octokit, ref, deps: d });
+      expect(generate).toHaveBeenCalledWith(verb);
+      expect(outcome.generated).toBe(verb);
+      expect(d.postComment).not.toHaveBeenCalled();
+    }
+  });
+
+  it("falls back to help for a generation verb when no generator is wired (#33)", async () => {
+    const d = deps(); // no generate
+    await dispatchCommand({ verb: "docstrings", argument: "" }, { octokit, ref, deps: d });
     expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
   });
 });
@@ -758,5 +776,115 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}");
+  });
+});
+
+describe("generateForComment (#33)", () => {
+  const config = { provider: "anthropic" as const, model: "m", apiKey: "k" };
+  const baseEvent = {
+    body: "@prowl-review docstrings",
+    association: "OWNER",
+    login: "dev",
+    pullNumber: 7,
+    isReviewComment: false
+  };
+
+  function genDeps(diff = `diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n+export const f = () => 1;\n`) {
+    return {
+      fetchPr: vi.fn(async () => ({
+        meta: { title: "T", body: "desc", headSha: "h", baseSha: "b" },
+        diff
+      })),
+      generate: vi.fn(async () => ({
+        content: "## Docstrings\n```ts\n/** Returns 1. */\nexport const f = () => 1;\n```",
+        usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+      })),
+      postIssueComment: vi.fn(async () => {}),
+      postReviewReply: vi.fn(async () => {}),
+      fetchReviewCommentBody: vi.fn(async () => "Parent finding body")
+    };
+  }
+
+  it("posts a top-level comment with the generated assist, grounded in the diff", async () => {
+    const deps = genDeps();
+    await generateForComment({ octokit, ref, event: { ...baseEvent }, kind: "docstrings", config, deps });
+
+    expect(deps.fetchPr).toHaveBeenCalled();
+    expect(deps.generate.mock.calls[0][0].kind).toBe("docstrings");
+    expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("Returns 1."));
+    expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("generated docstrings"));
+    expect(deps.postReviewReply).not.toHaveBeenCalled();
+  });
+
+  it("replies in-thread when invoked on an inline review comment", async () => {
+    const deps = genDeps();
+    await generateForComment({
+      octokit,
+      ref,
+      event: { ...baseEvent, isReviewComment: true, commentId: 42, thread: { path: "x.ts", line: 1 } },
+      kind: "tests",
+      config,
+      deps
+    });
+
+    expect(deps.generate.mock.calls[0][0].kind).toBe("tests");
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 42, expect.stringContaining("generated unit-test stubs"));
+    expect(deps.postIssueComment).not.toHaveBeenCalled();
+  });
+
+  it("redacts secrets from the diff before generating", async () => {
+    const deps = genDeps(
+      `diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1 +1 @@\n+const k = "${AWS_ACCESS_KEY}";\n`
+    );
+    await generateForComment({ octokit, ref, event: { ...baseEvent }, kind: "docstrings", config, deps });
+    expect(deps.generate.mock.calls[0][0].diff).not.toContain(AWS_ACCESS_KEY);
+  });
+
+  it("includes the parent review comment body for inline reply assists", async () => {
+    const deps = genDeps();
+    await generateForComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 42,
+        parentCommentId: 42,
+        thread: { path: "x.ts", line: 1, diffHunk: "@@ -1 +1 @@\n+export const f = () => 1;" }
+      },
+      kind: "tests",
+      config,
+      deps
+    });
+
+    expect(deps.fetchReviewCommentBody).toHaveBeenCalledWith(octokit, ref, 42);
+    expect(deps.generate.mock.calls[0][0].thread).toEqual({
+      path: "x.ts",
+      line: 1,
+      parentCommentBody: "Parent finding body",
+      diffHunk: "@@ -1 +1 @@\n+export const f = () => 1;"
+    });
+  });
+
+  it("sanitizes generated assists at the posting boundary while preserving fenced code", async () => {
+    const deps = genDeps();
+    deps.generate.mockResolvedValueOnce({
+      content: [
+        "@team <script>alert(1)</script>",
+        "```tsx",
+        "import { render } from '@testing-library/react';",
+        "const ok = a < b;",
+        "```"
+      ].join("\n"),
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    });
+
+    await generateForComment({ octokit, ref, event: { ...baseEvent }, kind: "docstrings", config, deps });
+
+    const body = deps.postIssueComment.mock.calls[0][2];
+    expect(body).toContain("&#64;team &lt;script>alert(1)&lt;/script>");
+    expect(body).toContain("import { render } from '@testing-library/react';");
+    expect(body).toContain("const ok = a < b;");
+    expect(body).not.toContain("<script>");
   });
 });
