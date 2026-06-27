@@ -7,6 +7,7 @@ import {
   DEFAULT_MAX_INLINE_COMMENTS,
   type ReviewComment
 } from "../src/review/inline.js";
+import { GITHUB_COMMENT_BODY_LIMIT } from "../src/review/state.js";
 import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
@@ -739,6 +740,20 @@ describe("buildPublishedReviewBody", () => {
     expect(buildPublishedReviewBody([rc()])).toContain("flagged 1 finding");
   });
 
+  it("renders severity breakdowns in severity order and omits zero-count severities", () => {
+    const criticalInfo = buildPublishedReviewBody([rc({ severity: "info" }), rc({ severity: "critical" })]);
+    expect(criticalInfo).toContain("🔴 1 critical · ⚪ 1 info");
+    expect(criticalInfo).not.toContain("major");
+    expect(criticalInfo).not.toContain("minor");
+
+    const majorMinor = buildPublishedReviewBody([
+      rc({ severity: "major" }),
+      rc({ severity: "minor" }),
+      rc({ severity: "major" })
+    ]);
+    expect(majorMinor).toContain("🟠 2 major · 🟡 1 minor");
+  });
+
   it("prefixes the verdict on a REQUEST_CHANGES review and still summarizes findings", () => {
     const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES");
     expect(body).toContain("🚧 **prowl-review requested changes.**");
@@ -754,5 +769,36 @@ describe("buildPublishedReviewBody", () => {
   it("renders an APPROVE verdict with no findings as a clean approval", () => {
     const body = buildPublishedReviewBody([], "APPROVE");
     expect(body).toBe("✅ **prowl-review approved these changes.**");
+  });
+
+  it("sanitizes appended request-changes details", () => {
+    const body = buildPublishedReviewBody([], "REQUEST_CHANGES", {
+      detailsBody: [
+        "<!-- prowl-review:summary -->",
+        "## prowl-review",
+        "<img src=x onerror=alert(1)>",
+        "[bad](javascript:alert(1))",
+        "@team &#x3c;script&#x3e;",
+        "<!-- prowl-review:state {\"v\":1,\"postedFindings\":[]} -->"
+      ].join("\n")
+    });
+
+    expect(body).toContain("### Review details");
+    expect(body).not.toContain("<img");
+    expect(body).not.toMatch(/javascript\s*:/i);
+    expect(body).toContain("#blocked-alert");
+    expect(body).toContain("&#64;team");
+    expect(body).toContain("&amp;#x3c;script&amp;#x3e;");
+    expect(body).not.toContain("prowl-review:summary");
+    expect(body).not.toContain("prowl-review:state");
+  });
+
+  it("truncates appended request-changes details to fit GitHub's body limit", () => {
+    const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES", {
+      detailsBody: "detail ".repeat(GITHUB_COMMENT_BODY_LIMIT)
+    });
+
+    expect(body.length).toBeLessThanOrEqual(GITHUB_COMMENT_BODY_LIMIT);
+    expect(body).toContain("[review details truncated to keep the GitHub review body within the body size limit]");
   });
 });

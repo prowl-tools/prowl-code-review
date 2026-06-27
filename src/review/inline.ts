@@ -1,6 +1,7 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { isBlockingFinding } from "./findings.js";
+import { sanitizeGitHubMarkdown } from "./markdown-sanitize.js";
 import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
 import { hasSuggestion, shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
 
@@ -95,10 +96,11 @@ function cleanPublishedReviewDetails(body: string | undefined): string {
   if (!body?.trim()) {
     return "";
   }
-  return body
+  const details = body
     .replace(PROWL_REVIEW_SUMMARY_MARKER_RE, "")
     .replace(PROWL_REVIEW_STATE_MARKER_RE, "")
     .trim();
+  return sanitizeGitHubMarkdown(details).trim();
 }
 
 /** Append optional summary details without exceeding GitHub's review body limit. */

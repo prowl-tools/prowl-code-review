@@ -684,7 +684,7 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
-  it("summarizes current findings on a verdict review when inline findings are already posted", async () => {
+  it("summarizes current findings on a verdict review when some inline findings are already posted", async () => {
     const prior = {
       id: 77,
       body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
@@ -695,16 +695,20 @@ describe("submitReview", () => {
     await submitReview(
       octokit,
       ref,
-      payload({ event: "REQUEST_CHANGES", comments: [comment()] }),
+      payload({
+        event: "REQUEST_CHANGES",
+        comments: [comment(), comment({ fingerprint: "fp-b", severity: "critical" })]
+      }),
       { commitId: "head", headSha: "head" }
     );
 
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**prowl-review** flagged 2 findings");
     expect(review.body).toContain("### Review details");
-    expect(review.comments).toBeUndefined();
+    expect(review.comments).toHaveLength(1);
+    expect(JSON.stringify(review.comments?.[0])).toContain("fp-b");
   });
 
   it("includes summary details on request-changes reviews with no inline comments", async () => {
