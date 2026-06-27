@@ -17,8 +17,8 @@ export const PROVIDER_NAMES: readonly ProviderName[] = ["anthropic", "openai", "
  */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
   // Haiku is the default to keep out-of-box reviews cheap and fast. This is a
-  // cost/latency trade-off; pin a per-provider `model` (e.g. claude-sonnet-4-6)
-  // for maximum-fidelity or eval-gated deployments.
+  // cost/latency/context-window trade-off; pin a per-provider `model` (e.g.
+  // claude-sonnet-4-6) for maximum-fidelity, large-PR, or eval-gated deployments.
   anthropic: "claude-haiku-4-5",
   openai: "gpt-5.2",
   gemini: "gemini-2.5-pro"
