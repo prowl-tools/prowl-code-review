@@ -461,6 +461,7 @@ export async function runLocalReview(
   const secretScanWholeFilePaths = secretScanFiles
     .filter((file) => file.status === "renamed" || file.status === "copied")
     .map((file) => file.path);
+  const semgrepWholeFilePaths = reviewFiles.filter((file) => file.status === "copied").map((file) => file.path);
 
   const notes: string[] = [];
   const skippedNote = describeSkipped(skipped);
@@ -479,8 +480,10 @@ export async function runLocalReview(
         changedPaths: reviewFiles.map((file) => file.path),
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
+        semgrepWholeFilePaths,
         changedLines: changedLinesByPath(groundingLineFiles),
-        trustWorkspace
+        trustWorkspace,
+        semgrep: resolved.semgrep
       });
       const redactedNotes = redactGroundingNotes(result.notes);
       for (const note of redactedNotes.notes) {
