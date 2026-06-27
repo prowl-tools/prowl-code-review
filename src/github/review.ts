@@ -347,7 +347,11 @@ async function listPriorInlineFingerprints(
   return [...new Set(fingerprints)];
 }
 
-/** Strip internal fields before sending an inline comment to GitHub. */
+/**
+ * Strip internal fields before sending an inline comment to GitHub.
+ * `comment.body` is renderer-owned Markdown from `formatFindingComment`; model
+ * finding text is escaped before this publish boundary.
+ */
 function toGitHubComment(comment: ReviewComment) {
   return {
     path: comment.path,
