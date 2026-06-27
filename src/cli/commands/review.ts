@@ -502,6 +502,7 @@ type ResolvedReviewOptions = Pick<
   | "riskTiering"
   | "incremental"
   | "resolveThreads"
+  | "rejustifyDisputed"
   | "checkRun"
   | "approval"
   | "prDescription"
@@ -704,6 +705,8 @@ export function resolveReviewOptions(
     incremental: cli.incremental === false ? false : config.review?.incremental,
     // CLI --no-resolve-threads (or config) leaves prior threads untouched (#22).
     resolveThreads: cli.resolveThreads === false ? false : config.review?.resolveThreads,
+    // Re-justify disputed findings on "I disagree" (#22); on by default, config-tunable.
+    rejustifyDisputed: config.review?.rejustifyDisputed,
     skipContext:
       cli.context === false || config.context?.enabled === false ? true : undefined,
     contextLimits: compact({
