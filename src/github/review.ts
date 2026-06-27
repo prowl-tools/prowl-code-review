@@ -33,6 +33,7 @@ const MAX_REVIEW_PAGES = 10;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
+const SUMMARY_ONLY_FINDINGS_RE = /(?:^|\n)## (?:Unmapped findings|\d+ more findings \(inline comment cap:)/;
 
 /** A prior prowl-review summary comment found on the PR. */
 export interface PriorSummaryComment {
@@ -358,6 +359,17 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
+function shouldIncludeVerdictDetails(payload: ReviewPayload, newInline: ReviewComment[]): boolean {
+  if (payload.event !== "REQUEST_CHANGES") {
+    return false;
+  }
+  return (
+    payload.comments.length === 0 ||
+    newInline.length < payload.comments.length ||
+    SUMMARY_ONLY_FINDINGS_RE.test(payload.body)
+  );
+}
+
 /**
  * Publish (or update) the review on the PR. Edits the prior summary comment in
  * place when present unless `preservePriorSummary` is requested, and posts only
@@ -412,17 +424,20 @@ export async function submitReview(
     }
   } else {
     // Verdict path (#52): one review carries the REQUEST_CHANGES/APPROVE event
-    // plus the inline findings — a single, meaningful review entry.
+    // plus net-new inline comments. The body summarizes the current payload,
+    // not only net-new comments, so deduped/capped/unmapped findings still make
+    // a request-changes review actionable.
     if (options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
+    const detailsBody = shouldIncludeVerdictDetails(payload, newInline) ? payload.body : undefined;
     await octokit.rest.pulls.createReview({
       owner: ref.owner,
       repo: ref.repo,
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: buildPublishedReviewBody(newInline, payload.event),
+      body: buildPublishedReviewBody(payload.comments, payload.event, { detailsBody }),
       ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     posted = true;

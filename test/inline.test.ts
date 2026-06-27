@@ -745,6 +745,12 @@ describe("buildPublishedReviewBody", () => {
     expect(body).toContain("**prowl-review** flagged 1 finding");
   });
 
+  it("prefixes the verdict on an APPROVE review and still summarizes findings", () => {
+    const body = buildPublishedReviewBody([rc()], "APPROVE");
+    expect(body).toContain("✅ **prowl-review approved these changes.**");
+    expect(body).toContain("**prowl-review** flagged 1 finding");
+  });
+
   it("renders an APPROVE verdict with no findings as a clean approval", () => {
     const body = buildPublishedReviewBody([], "APPROVE");
     expect(body).toBe("✅ **prowl-review approved these changes.**");
