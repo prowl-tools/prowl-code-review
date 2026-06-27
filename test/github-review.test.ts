@@ -684,6 +684,58 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
+  it("summarizes current findings on a verdict review when inline findings are already posted", async () => {
+    const prior = {
+      id: 77,
+      body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
+      user: { login: "github-actions[bot]" }
+    };
+    const { octokit, createReview } = mockOctokit([prior]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({ event: "REQUEST_CHANGES", comments: [comment()] }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("### Review details");
+    expect(review.comments).toBeUndefined();
+  });
+
+  it("includes summary details on request-changes reviews with no inline comments", async () => {
+    const { octokit, createReview } = mockOctokit([]);
+
+    await submitReview(
+      octokit,
+      ref,
+      payload({
+        event: "REQUEST_CHANGES",
+        comments: [],
+        body:
+          `${REVIEW_MARKER}\n## prowl-review\n\n### Findings\n\n` +
+          "| Severity | Location | Finding |\n" +
+          "| :-- | :-- | :-- |\n" +
+          "| 🟠 major | package-lock.json | **Known vulnerable dependency** |\n\n" +
+          serializeState({ v: 1, postedFindings: [] })
+      }),
+      { commitId: "head", headSha: "head" }
+    );
+
+    expect(createReview).toHaveBeenCalledTimes(1);
+    const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
+    expect(review.body).toContain("requested changes");
+    expect(review.body).toContain("### Review details");
+    expect(review.body).toContain("Known vulnerable dependency");
+    expect(review.body).not.toContain("prowl-review:summary");
+    expect(review.body).not.toContain("prowl-review:state");
+    expect(review.comments).toBeUndefined();
+  });
+
   it("paginates when looking for the prior summary comment", async () => {
     const filler = Array.from({ length: 100 }, (_, index) => ({ id: index + 1, body: "noise" }));
     const prior = {
