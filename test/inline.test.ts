@@ -810,6 +810,34 @@ describe("buildPublishedReviewBody", () => {
     expect(body).not.toContain("prowl-review:state");
   });
 
+  it("preserves renderer-owned details blocks and fenced code in appended request-changes details", () => {
+    const body = buildPublishedReviewBody([], "REQUEST_CHANGES", {
+      detailsBody: [
+        "<details>",
+        "<summary><b>Changed files (1)</b></summary>",
+        "",
+        "```suggestion",
+        "if (left < right) {",
+        "  return left;",
+        "}",
+        "```",
+        "",
+        "</details>",
+        "<script>alert(1)</script>",
+        "[bad](javascript:alert(1))"
+      ].join("\n")
+    });
+
+    expect(body).toContain("<details>");
+    expect(body).toContain("<summary><b>Changed files (1)</b></summary>");
+    expect(body).toContain("```suggestion\nif (left < right) {");
+    expect(body).toContain("</details>");
+    expect(body).not.toContain("&lt;details>");
+    expect(body).not.toContain("<script");
+    expect(body).toContain("&lt;script>alert(1)&lt;/script>");
+    expect(body).not.toMatch(/javascript\s*:/i);
+  });
+
   it("truncates appended request-changes details to fit GitHub's body limit", () => {
     const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES", {
       detailsBody: "detail ".repeat(GITHUB_COMMENT_BODY_LIMIT)
