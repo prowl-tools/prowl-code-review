@@ -1,6 +1,7 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
 import { isBlockingFinding } from "./findings.js";
+import { sanitizeGitHubMarkdown } from "./markdown-sanitize.js";
 import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
 import { hasSuggestion, shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
 
@@ -33,6 +34,8 @@ export interface ReviewComment {
   start_side?: ReviewSide;
   /** Markdown body for the inline review comment. */
   body: string;
+  /** Severity of the source finding, for the published review's summary header. */
+  severity: Severity;
   /** Stable fingerprint of the source finding, for update-not-duplicate dedup (#12/#22). */
   fingerprint: string;
 }
@@ -68,9 +71,121 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   info: "⚪"
 };
 
+/** Severity order, most severe first — for the published review's breakdown. */
+const SEVERITY_ORDER: Severity[] = ["critical", "major", "minor", "trivial", "info"];
+
+const PROWL_REVIEW_SUMMARY_MARKER_RE = /<\s*!\s*--\s*prowl-review:summary\s*--\s*>/gi;
+const PROWL_REVIEW_STATE_MARKER_RE = /<\s*!\s*--\s*prowl-review:state\b[\s\S]*?--\s*>/gi;
+const PUBLISHED_REVIEW_DETAIL_PREFIX = "\n\n---\n\n### Review details\n\n";
+const PUBLISHED_REVIEW_BODY_LIMIT = GITHUB_COMMENT_BODY_LIMIT;
+const PUBLISHED_REVIEW_TRUNCATION_NOTICE =
+  "\n\n[review details truncated to keep the GitHub review body within the body size limit]";
+const TRUSTED_PUBLISHED_REVIEW_TAG_RE = /<\/?(?:details|summary|b)>/gi;
+const FENCED_CODE_BLOCK_RE = /(^|\n)(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g;
+
+/** Preserve renderer-owned Markdown structures while sanitizing generated detail text around them. */
+function preservePublishedReviewMarkdown(body: string): { body: string; restore: (sanitized: string) => string } {
+  const preserved: Array<{ token: string; value: string }> = [];
+  const preserve = (value: string) => {
+    const token = `\0PROWL_REVIEW_PRESERVED_MARKDOWN_${preserved.length}_TOKEN\0`;
+    preserved.push({ token, value });
+    return token;
+  };
+
+  const withPreservedCode = body.replace(FENCED_CODE_BLOCK_RE, (match) => preserve(match));
+  const withPreservedTags = withPreservedCode.replace(TRUSTED_PUBLISHED_REVIEW_TAG_RE, (match) => preserve(match));
+
+  return {
+    body: withPreservedTags,
+    restore: (sanitized: string) => {
+      let restored = sanitized;
+      for (const { token, value } of preserved) {
+        restored = restored.replaceAll(token, value);
+      }
+      return restored;
+    }
+  };
+}
+
+/** Render a `🔴 1 critical · 🟠 2 major` breakdown for the inline comments posted. */
+function severityBreakdown(comments: ReviewComment[]): string {
+  const counts = new Map<Severity, number>();
+  for (const comment of comments) {
+    counts.set(comment.severity, (counts.get(comment.severity) ?? 0) + 1);
+  }
+  return SEVERITY_ORDER.filter((severity) => counts.get(severity))
+    .map((severity) => `${SEVERITY_BADGE[severity]} ${counts.get(severity)} ${severity}`)
+    .join(" · ");
+}
+
+/** Remove hidden prowl-review markers before embedding summary details in a review body. */
+function cleanPublishedReviewDetails(body: string | undefined): string {
+  if (!body?.trim()) {
+    return "";
+  }
+  const details = body
+    .replace(PROWL_REVIEW_SUMMARY_MARKER_RE, "")
+    .replace(PROWL_REVIEW_STATE_MARKER_RE, "")
+    .trim();
+  const preserved = preservePublishedReviewMarkdown(details);
+  return preserved.restore(sanitizeGitHubMarkdown(preserved.body)).trim();
+}
+
+/** Append optional summary details without exceeding GitHub's review body limit. */
+function appendPublishedReviewDetails(body: string, detailsBody: string | undefined): string {
+  const details = cleanPublishedReviewDetails(detailsBody);
+  if (!details) {
+    return body;
+  }
+
+  const full = `${body}${PUBLISHED_REVIEW_DETAIL_PREFIX}${details}`;
+  if (full.length <= PUBLISHED_REVIEW_BODY_LIMIT) {
+    return full;
+  }
+
+  const detailBudget =
+    PUBLISHED_REVIEW_BODY_LIMIT -
+    body.length -
+    PUBLISHED_REVIEW_DETAIL_PREFIX.length -
+    PUBLISHED_REVIEW_TRUNCATION_NOTICE.length;
+  if (detailBudget <= 0) {
+    return body;
+  }
+  return `${body}${PUBLISHED_REVIEW_DETAIL_PREFIX}${details.slice(0, detailBudget).trimEnd()}${PUBLISHED_REVIEW_TRUNCATION_NOTICE}`;
+}
+
+/**
+ * Body for the published GitHub review (the `createReview` event) — distinct from
+ * the persistent walkthrough summary comment. It leads with a self-contained
+ * findings summary (count + severity breakdown) so the review reads as a complete
+ * unit with its inline findings nested underneath, rather than a "see the other
+ * comment" pointer. The full walkthrough (impact/effort, changed files,
+ * per-model, nitpicks, notes) stays in the updatable summary comment (#22/#12).
+ */
+export function buildPublishedReviewBody(
+  comments: ReviewComment[],
+  event: ReviewEvent = "COMMENT",
+  options: { detailsBody?: string } = {}
+): string {
+  const count = comments.length;
+  const noun = count === 1 ? "finding" : "findings";
+  const breakdown = severityBreakdown(comments);
+  const findingSummary = count > 0 ? `**prowl-review** flagged ${count} ${noun}${breakdown ? `\n\n${breakdown}` : ""}` : "";
+
+  if (event === "REQUEST_CHANGES") {
+    const verdict = "🚧 **prowl-review requested changes.**";
+    return appendPublishedReviewDetails(findingSummary ? `${verdict}\n\n${findingSummary}` : verdict, options.detailsBody);
+  }
+  if (event === "APPROVE") {
+    const verdict = "✅ **prowl-review approved these changes.**";
+    return appendPublishedReviewDetails(findingSummary ? `${verdict}\n\n${findingSummary}` : verdict, options.detailsBody);
+  }
+  // COMMENT reviews are only published when there are inline findings to carry.
+  return findingSummary || "**prowl-review** reviewed these changes.";
+}
+
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
-const PROWL_REVIEW_STATE_MARKER_RE = /<\s*!\s*--\s*prowl-review:state\b[\s\S]*?--\s*>/gi;
 const PROWL_REVIEW_INLINE_FINGERPRINT_MARKER_RE = /<\s*!\s*--\s*prowl-review:finding\b[\s\S]*?--\s*>/gi;
 const INLINE_FINGERPRINT_MARKER_HEADROOM = 128;
 const SUMMARY_STATE_MARKER_HEADROOM = 4_096;
@@ -694,6 +809,7 @@ export function buildInlineComments(
       line: finding.line,
       side: "RIGHT",
       body: formatFindingComment(finding, options),
+      severity: finding.severity,
       fingerprint: findingFingerprint(finding)
     };
 

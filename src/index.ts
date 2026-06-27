@@ -244,6 +244,7 @@ export {
 export {
   buildInlineComments,
   buildReviewPayload,
+  buildPublishedReviewBody,
   formatFindingComment,
   DEFAULT_MAX_INLINE_COMMENTS,
   type FindingCommentOptions,
