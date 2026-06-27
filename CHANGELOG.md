@@ -5,13 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Changed
-- Default Anthropic model is now **`claude-haiku-4-5`** (was `claude-sonnet-4-6`). prowl-review's bug-catching
-  comes from the differentiators (multi-pass specialists, judge/dedup, false-positive verification, agentic
-  cross-file context, linter/SAST grounding) more than raw model size, so the cheaper, faster model keeps
-  per-review cost in cents out of the box — the suite's "quality from the pipeline, cost-managed" stance. Pin a
-  per-provider `model` (e.g. `claude-sonnet-4-6`) in `.prowl-review.yml` for a higher-fidelity review; the
-  same-family failback chain already covers Haiku (→ `claude-haiku-3-5`). Only the built-in default changed —
-  any explicit `model` / `PROWL_AI_MODEL` / `ai-model` setting is unaffected.
+- Default Anthropic model is now **`claude-haiku-4-5`** (was `claude-sonnet-4-6`). This moves the out-of-box
+  default toward lower cost and latency while keeping prowl-review's multi-pass specialists, judge/dedup,
+  false-positive verification, agentic cross-file context, and linter/SAST grounding in place. It is an
+  intentional cost/speed trade-off, not a claim of measured parity with Sonnet; teams that prioritize maximum
+  fidelity or eval-gated rollouts should pin a per-provider `model` (e.g. `claude-sonnet-4-6`) in
+  `.prowl-review.yml` or compare models with `prowl-review eval` first. Haiku 4.5 has no older live same-family
+  failback target on the Anthropic API, so `resilience.failback` now treats it as terminal. Only the built-in
+  default changed — any explicit `model` / `PROWL_AI_MODEL` / `ai-model` setting is unaffected.
 
 ### Added
 - Docstring + unit-test generation commands (backlog #33): two new `@prowl-review` bot verbs that close out

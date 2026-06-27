@@ -11,17 +11,16 @@ import { protectProviderConfig, type ProviderConfig, type ProviderName } from ".
  * pass. It never crosses providers (that's the ensemble's job, #53) and never
  * falls back on a non-retryable error (bad request/auth fail fast).
  *
- * Ladders are best-effort: a model not on a ladder simply has no fallback (the
- * call fails as before). BYOK users on a pinned custom model just won't fail
- * back, which is the safe default.
+ * Ladders are best-effort and include only known live targets: a model not on a
+ * ladder simply has no fallback (the call fails as before). BYOK users on a
+ * pinned custom model just won't fail back, which is the safe default.
  */
 
 /** Per-provider model ladders, newest → oldest within each family. */
 const FAILBACK_LADDERS: Record<ProviderName, string[][]> = {
   anthropic: [
     ["claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-opus-4-5", "claude-opus-4-1"],
-    ["claude-sonnet-4-6", "claude-sonnet-4-5"],
-    ["claude-haiku-4-5", "claude-haiku-3-5"]
+    ["claude-sonnet-4-6", "claude-sonnet-4-5"]
   ],
   openai: [
     ["gpt-5.5", "gpt-5.4", "gpt-5.2"],
