@@ -200,10 +200,11 @@ function latestRejustificationReply(
 ): { index: number; outcome: "defended" | "withdrawn" } | undefined {
   for (let i = comments.length - 1; i >= 0; i -= 1) {
     const comment = comments[i];
-    if (comment?.author?.login === login && comment.body?.includes(REJUSTIFICATION_REPLY_MARKER)) {
+    const body = comment?.body ?? "";
+    if (comment?.author?.login === login && body.includes(REJUSTIFICATION_REPLY_MARKER)) {
       return {
         index: i,
-        outcome: comment.body.includes(REJUSTIFICATION_WITHDRAW_REPLY_PREFIX) ? "withdrawn" : "defended"
+        outcome: body.trimStart().startsWith(REJUSTIFICATION_WITHDRAW_REPLY_PREFIX) ? "withdrawn" : "defended"
       };
     }
   }

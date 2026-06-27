@@ -54,6 +54,21 @@ describe("buildRejustifyPrompt (#22)", () => {
     expect(buildRejustifyPrompt(input({ disputeReply: undefined }))).toContain("no specific reason given");
   });
 
+  it("handles empty context inputs and includes a context availability note", () => {
+    const prompt = buildRejustifyPrompt(
+      input({
+        disputeReply: "",
+        diff: "",
+        context: undefined,
+        contextNote: "Cross-file context retrieval was skipped."
+      })
+    );
+    expect(prompt).toContain("no specific reason given");
+    expect(prompt).toContain("Context availability");
+    expect(prompt).toContain("Cross-file context retrieval was skipped.");
+    expect(prompt).toContain("# Untrusted pull request diff");
+  });
+
   it("redacts secrets from the finding, objection, and diff", () => {
     const prompt = buildRejustifyPrompt(
       input({

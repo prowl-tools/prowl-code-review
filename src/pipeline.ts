@@ -343,6 +343,12 @@ export interface ReviewPullRequestOptions {
 }
 
 const THREAD_RESOLUTION_CONCURRENCY = 4;
+/**
+ * Each disputed thread can consume one provider call plus one or two GraphQL
+ * mutations. Keep re-justification sequential and capped so a noisy PR does not
+ * create an unbounded N+1 fan-out.
+ */
+const MAX_REJUSTIFICATION_THREADS = 10;
 
 export interface ReviewPullRequestResult {
   meta: PullRequestMeta;
@@ -807,6 +813,41 @@ interface RejustificationOutcome {
   usage: TokenUsage;
 }
 
+function buildRejustificationContextNote(params: {
+  context?: string;
+  contextNotes: string[];
+  contextDegraded: boolean;
+  contextSkippedForBudget: boolean;
+  skipContext: boolean;
+  hasToolkitRoot: boolean;
+  reviewFileCount: number;
+}): string | undefined {
+  const caution =
+    "Re-justify only from the available evidence; withdraw if missing context would be needed to defend the finding.";
+  if (params.context !== undefined && params.contextNotes.length === 0) {
+    return undefined;
+  }
+  if (params.context !== undefined) {
+    return `Cross-file context may be partial. ${params.contextNotes.join(" ")} ${caution}`;
+  }
+  if (params.contextDegraded) {
+    return `Cross-file context retrieval failed, so no extra context is available. ${caution}`;
+  }
+  if (params.contextSkippedForBudget) {
+    return `Cross-file context was gathered but omitted because context retrieval exhausted the token budget. ${caution}`;
+  }
+  if (params.skipContext) {
+    return `Cross-file context retrieval was skipped by configuration. ${caution}`;
+  }
+  if (!params.hasToolkitRoot) {
+    return `No local checkout root was configured for cross-file context retrieval. ${caution}`;
+  }
+  if (params.reviewFileCount === 0) {
+    return `No reviewable changed files were available for cross-file context retrieval. ${caution}`;
+  }
+  return `No cross-file context was available. ${caution}`;
+}
+
 async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
   resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
@@ -984,7 +1025,10 @@ async function tidyReviewThreads(params: {
   let withdrawn = 0;
   const defendedFingerprints = new Set<string>();
   const withdrawnFingerprints = new Set<string>();
-  if (params.rejustify && !params.dryRun && plan.disputedThreads.length > 0) {
+  const rejustificationQueue = plan.disputedThreads.slice(0, MAX_REJUSTIFICATION_THREADS);
+  const deferredRejustifications =
+    params.rejustify && !params.dryRun ? Math.max(0, plan.disputedThreads.length - rejustificationQueue.length) : 0;
+  if (params.rejustify && !params.dryRun && rejustificationQueue.length > 0) {
     const findingByFingerprint = new Map<string, Finding>();
     for (const finding of candidateFindings) {
       const fingerprint = fingerprintByCandidate.get(finding)!;
@@ -992,7 +1036,7 @@ async function tidyReviewThreads(params: {
         findingByFingerprint.set(fingerprint, finding);
       }
     }
-    for (const thread of plan.disputedThreads) {
+    for (const thread of rejustificationQueue) {
       if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
         break;
       }
@@ -1082,6 +1126,11 @@ async function tidyReviewThreads(params: {
   if (unrejustifiedOpen > 0) {
     notes.push(
       `Withheld ${unrejustifiedOpen} disputed finding(s) (you replied "disagree") and left the thread open for re-review (#22).`
+    );
+  }
+  if (deferredRejustifications > 0) {
+    notes.push(
+      `Deferred ${deferredRejustifications} additional disputed finding re-justification(s) to avoid excessive provider/API calls (#22).`
     );
   }
 
@@ -1355,12 +1404,20 @@ export async function reviewPullRequest(
   // diff/context (#22). Undefined when disabled → tidy falls back to withholding.
   const makeRejustifier = (
     diff: string,
-    context?: string
+    context?: string,
+    contextNote?: string
   ): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustificationOutcome | null>) | undefined =>
     rejustifyDisputedEnabled
       ? async (input) => {
+          const rejustifyInput: RejustifyInput = {
+            finding: input.finding,
+            diff,
+            ...(contextNote !== undefined ? { contextNote } : {}),
+            ...(context !== undefined ? { context } : {}),
+            ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {})
+          };
           const result = await rejustifyFn(
-            { finding: input.finding, diff, ...(context !== undefined ? { context } : {}), ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {}) },
+            rejustifyInput,
             { config }
           );
           return { ...(result.ok && result.verdict ? { verdict: result.verdict } : {}), usage: result.usage };
@@ -1682,6 +1739,14 @@ export async function reviewPullRequest(
   const failback: FailbackOptions | undefined = options.failback
     ? { onFailback: (event) => failbackEvents.push(event) }
     : undefined;
+  const noReviewFilesRejustificationContextNote = buildRejustificationContextNote({
+    contextNotes: [],
+    contextDegraded: false,
+    contextSkippedForBudget: false,
+    skipContext: options.skipContext === true,
+    hasToolkitRoot: Boolean(options.toolkitRoot),
+    reviewFileCount: reviewFiles.length
+  });
 
   if (reviewFiles.length === 0) {
     const runRequirementsOnlyReview = issueValidation.requirements !== undefined && fullGuarded.files.length > 0;
@@ -1762,7 +1827,7 @@ export async function reviewPullRequest(
           enabled: tidyThreadsEnabled,
           dryRun: options.dryRun === true,
           shouldResolveThread,
-          rejustify: makeRejustifier(diffText),
+          rejustify: makeRejustifier(diffText, undefined, noReviewFilesRejustificationContextNote),
           replyToThread
         });
     const totalUsage = addUsage(usageBeforeTidy, tidied.usage);
@@ -1980,6 +2045,15 @@ export async function reviewPullRequest(
       : Math.max(0, options.budgetTokens - totalTokens(contextUsage));
   const contextSkippedForBudget = reviewBudgetTokens === 0 && context !== undefined;
   const reviewContext = contextSkippedForBudget ? undefined : context;
+  const rejustificationContextNote = buildRejustificationContextNote({
+    ...(reviewContext !== undefined ? { context: reviewContext } : {}),
+    contextNotes,
+    contextDegraded,
+    contextSkippedForBudget,
+    skipContext: options.skipContext === true,
+    hasToolkitRoot: Boolean(options.toolkitRoot),
+    reviewFileCount: reviewFiles.length
+  });
   // Shared input: context (#4) + grounding (#16) run once and feed every provider.
   const reviewInput: ReviewInput = {
     diff: diffText,
@@ -2083,7 +2157,7 @@ export async function reviewPullRequest(
         enabled: tidyThreadsEnabled,
         dryRun: options.dryRun === true,
         shouldResolveThread,
-        rejustify: makeRejustifier(diffText, reviewContext),
+        rejustify: makeRejustifier(diffText, reviewContext, rejustificationContextNote),
         replyToThread
       });
   const totalUsage = addUsage(usageBeforeTidy, tidied.usage);

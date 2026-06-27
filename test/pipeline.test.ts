@@ -1366,6 +1366,69 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.headAdvanced).toBe(true);
     });
 
+    it("tells re-justification when cross-file context retrieval failed (#22)", async () => {
+      const disputed = finding({ severity: "critical" });
+      const fp = findingFingerprint(disputed);
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree", humanReplyBody: "I disagree" })
+      ]);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: false as const,
+        usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+      }));
+      const deps = {
+        ...makeDeps(),
+        fetchReviewThreads,
+        rejustifyDisputedFinding
+      };
+      deps.gatherContext.mockRejectedValue(new Error("provider timeout"));
+      deps.runReview.mockResolvedValue(reviewResult([disputed]));
+
+      await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(1);
+      const input = rejustifyDisputedFinding.mock.calls[0][0];
+      expect(input).toEqual(
+        expect.objectContaining({
+          contextNote: expect.stringContaining("Cross-file context retrieval failed")
+        })
+      );
+      expect(input).not.toHaveProperty("context");
+      expect(input.contextNote ?? "").toContain("missing context");
+    });
+
+    it("caps disputed re-justification fan-out (#22)", async () => {
+      const disputedFindings = Array.from({ length: 12 }, (_, index) =>
+        finding({ line: index + 2, title: `Bug ${index}`, body: `body ${index}`, severity: "critical" })
+      );
+      const fetchReviewThreads = vi.fn(async () =>
+        disputedFindings.map((item, index) =>
+          thread({
+            id: `D${index}`,
+            fingerprints: [findingFingerprint(item)],
+            humanIntent: "disagree",
+            humanReplyBody: "I disagree"
+          })
+        )
+      );
+      const replyToReviewThread = vi.fn(async () => true);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "defend" as const, reasoning: "The code still exhibits the issue." },
+        usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+      }));
+      const deps = { ...makeDeps(), fetchReviewThreads, replyToReviewThread, rejustifyDisputedFinding };
+      deps.runReview.mockResolvedValue(reviewResult(disputedFindings));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(10);
+      expect(replyToReviewThread).toHaveBeenCalledTimes(10);
+      expect(result.review.findings).toHaveLength(10);
+      expect(result.threads?.keptOpenDisputed).toBe(2);
+      expect(result.payload.body).toContain("Deferred 2 additional disputed finding re-justification");
+    });
+
     it("falls back to withholding when re-justification is disabled (#22)", async () => {
       const fp = findingFingerprint(finding({ severity: "critical" }));
       const fetchReviewThreads = vi.fn(async () => [
