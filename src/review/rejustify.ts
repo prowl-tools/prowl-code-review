@@ -141,15 +141,48 @@ export function buildRejustifyPrompt(input: RejustifyInput): string {
 /** Pull a JSON object out of a model response, tolerant of fences/prose. */
 function extractVerdict(text: string): RejustifyVerdict | undefined {
   const stripped = text.replace(/```(?:json)?/gi, "").trim();
-  const candidates: string[] = [];
+  const candidates = new Set<string>();
   if (stripped.startsWith("{")) {
-    candidates.push(stripped);
+    candidates.add(stripped);
   }
-  const start = stripped.indexOf("{");
-  const end = stripped.lastIndexOf("}");
-  if (start !== -1 && end > start) {
-    candidates.push(stripped.slice(start, end + 1));
+
+  let start = stripped.indexOf("{");
+  while (start !== -1) {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < stripped.length; i += 1) {
+      const char = stripped[i];
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === "\"") {
+        inString = !inString;
+        continue;
+      }
+      if (inString) {
+        continue;
+      }
+      if (char === "{") {
+        depth += 1;
+      } else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) {
+          candidates.add(stripped.slice(start, i + 1));
+          break;
+        }
+      }
+    }
+
+    start = stripped.indexOf("{", start + 1);
   }
+
   for (const candidate of candidates) {
     try {
       const parsed = RejustifyVerdictSchema.safeParse(JSON.parse(candidate));

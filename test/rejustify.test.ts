@@ -103,6 +103,16 @@ describe("parseRejustifyVerdict (#22)", () => {
     expect(verdict).toEqual({ decision: "withdraw", reasoning: "you are right" });
   });
 
+  it("finds a valid verdict after unrelated brace pairs", () => {
+    const verdict = parseRejustifyVerdict('"reasoning": "{old: true}" {"decision":"defend","reasoning":"ok"}');
+    expect(verdict).toEqual({ decision: "defend", reasoning: "ok" });
+  });
+
+  it("ignores braces inside verdict string values", () => {
+    const verdict = parseRejustifyVerdict('{"decision":"withdraw","reasoning":"literal { brace } inside"}');
+    expect(verdict).toEqual({ decision: "withdraw", reasoning: "literal { brace } inside" });
+  });
+
   it("returns undefined for a missing/invalid decision or non-JSON", () => {
     expect(parseRejustifyVerdict("not json")).toBeUndefined();
     expect(parseRejustifyVerdict('{"decision":"maybe","reasoning":"x"}')).toBeUndefined();
