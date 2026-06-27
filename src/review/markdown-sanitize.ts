@@ -23,6 +23,7 @@ function neutralizeMentions(value: string): string {
   return value.replaceAll("@", "&#64;");
 }
 
+/** Decode HTML entities that can hide dangerous Markdown-link protocols. */
 function decodeProtocolHtmlEntity(match: string, decimal: string, hex: string, named: string): string {
   const codePoint = decimal ? Number.parseInt(decimal, 10) : hex ? Number.parseInt(hex, 16) : Number.NaN;
   if (Number.isFinite(codePoint)) {
@@ -35,12 +36,14 @@ function decodeProtocolHtmlEntity(match: string, decimal: string, hex: string, n
   return NAMED_PROTOCOL_ENTITIES[named?.toLowerCase()] ?? match;
 }
 
+/** Decode percent-encoded bytes before protocol comparison. */
 function decodeProtocolPercentEncoding(value: string): string {
   return value.replace(/%([0-9a-f]{2})/gi, (match, hex: string) =>
     String.fromCharCode(Number.parseInt(hex, 16))
   );
 }
 
+/** Normalize a Markdown link destination so obfuscated protocols compare consistently. */
 function normalizedLinkDestination(value: string): string {
   let normalized = value.trimStart().slice(0, 256);
   for (let index = 0; index < 3; index += 1) {
@@ -64,6 +67,7 @@ function normalizedLinkDestination(value: string): string {
     .toLowerCase();
 }
 
+/** Return true when a link destination uses a protocol GitHub comments should not receive. */
 function hasDangerousLinkProtocol(destination: string): boolean {
   const normalized = normalizedLinkDestination(destination);
   return DANGEROUS_LINK_PROTOCOLS.some((protocol) => normalized.startsWith(`${protocol}:`));

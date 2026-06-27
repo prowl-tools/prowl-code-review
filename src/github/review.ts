@@ -33,7 +33,7 @@ const MAX_REVIEW_PAGES = 10;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
-const SUMMARY_ONLY_FINDINGS_RE = /(?:^|\n)## (?:Unmapped findings|\d+ more findings \(inline comment cap:)/;
+const SUMMARY_ONLY_FINDINGS_RE = /(?:^|\n)## (?:Unmapped findings|\d+ more findings? \(inline comment cap:)/;
 
 /** A prior prowl-review summary comment found on the PR. */
 export interface PriorSummaryComment {
