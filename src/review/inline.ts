@@ -33,6 +33,8 @@ export interface ReviewComment {
   start_side?: ReviewSide;
   /** Markdown body for the inline review comment. */
   body: string;
+  /** Severity of the source finding, for the published review's summary header. */
+  severity: Severity;
   /** Stable fingerprint of the source finding, for update-not-duplicate dedup (#12/#22). */
   fingerprint: string;
 }
@@ -67,6 +69,46 @@ const SEVERITY_BADGE: Record<Severity, string> = {
   trivial: "🔵",
   info: "⚪"
 };
+
+/** Severity order, most severe first — for the published review's breakdown. */
+const SEVERITY_ORDER: Severity[] = ["critical", "major", "minor", "trivial", "info"];
+
+/** Render a `🔴 1 critical · 🟠 2 major` breakdown for the inline comments posted. */
+function severityBreakdown(comments: ReviewComment[]): string {
+  const counts = new Map<Severity, number>();
+  for (const comment of comments) {
+    counts.set(comment.severity, (counts.get(comment.severity) ?? 0) + 1);
+  }
+  return SEVERITY_ORDER.filter((severity) => counts.get(severity))
+    .map((severity) => `${SEVERITY_BADGE[severity]} ${counts.get(severity)} ${severity}`)
+    .join(" · ");
+}
+
+/**
+ * Body for the published GitHub review (the `createReview` event) — distinct from
+ * the persistent walkthrough summary comment. It leads with a self-contained
+ * findings summary (count + severity breakdown) so the review reads as a complete
+ * unit with its inline findings nested underneath, rather than a "see the other
+ * comment" pointer. The full walkthrough (impact/effort, changed files,
+ * per-model, nitpicks, notes) stays in the updatable summary comment (#22/#12).
+ */
+export function buildPublishedReviewBody(comments: ReviewComment[], event: ReviewEvent = "COMMENT"): string {
+  const count = comments.length;
+  const noun = count === 1 ? "finding" : "findings";
+  const breakdown = severityBreakdown(comments);
+  const findingSummary = count > 0 ? `**prowl-review** flagged ${count} ${noun}${breakdown ? `\n\n${breakdown}` : ""}` : "";
+
+  if (event === "REQUEST_CHANGES") {
+    const verdict = "🚧 **prowl-review requested changes.**";
+    return findingSummary ? `${verdict}\n\n${findingSummary}` : verdict;
+  }
+  if (event === "APPROVE") {
+    const verdict = "✅ **prowl-review approved these changes.**";
+    return findingSummary ? `${verdict}\n\n${findingSummary}` : verdict;
+  }
+  // COMMENT reviews are only published when there are inline findings to carry.
+  return findingSummary || "**prowl-review** reviewed these changes.";
+}
 
 const MARKDOWN_TEXT_ESCAPES = new Set("\\`*_{}[]()#+-.!|><@&".split(""));
 const MARKDOWN_PARAGRAPH_ESCAPES = new Set("\\`*_{}[]()#+!|><@&".split(""));
@@ -694,6 +736,7 @@ export function buildInlineComments(
       line: finding.line,
       side: "RIGHT",
       body: formatFindingComment(finding, options),
+      severity: finding.severity,
       fingerprint: findingFingerprint(finding)
     };
 

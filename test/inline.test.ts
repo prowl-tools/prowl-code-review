@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { buildInlineComments, buildReviewPayload, formatFindingComment, DEFAULT_MAX_INLINE_COMMENTS } from "../src/review/inline.js";
+import {
+  buildInlineComments,
+  buildPublishedReviewBody,
+  buildReviewPayload,
+  formatFindingComment,
+  DEFAULT_MAX_INLINE_COMMENTS,
+  type ReviewComment
+} from "../src/review/inline.js";
 import { buildWalkthrough } from "../src/review/walkthrough.js";
 import type { ParsedDiff } from "../src/review/diff-types.js";
 import type { Finding } from "../src/review/findings.js";
@@ -706,5 +713,40 @@ describe("inline-comment cap (#25)", () => {
     const payload = buildReviewPayload({ findings, diff: wideDiff, summaryBody: "## w", maxInlineComments: 5, agentPrompt: false });
     expect(payload.comments).toHaveLength(2);
     expect(payload.body).not.toContain("inline comment cap");
+  });
+});
+
+describe("buildPublishedReviewBody", () => {
+  const rc = (over: Partial<ReviewComment> = {}): ReviewComment => ({
+    path: "src/a.ts",
+    line: 6,
+    side: "RIGHT",
+    body: "issue",
+    severity: "major",
+    fingerprint: "fp",
+    ...over
+  });
+
+  it("leads with a self-contained findings summary + severity breakdown (no pointer)", () => {
+    const body = buildPublishedReviewBody([rc({ severity: "critical" }), rc({ severity: "major" }), rc({ severity: "major" })]);
+    expect(body).toContain("**prowl-review** flagged 3 findings");
+    expect(body).toContain("🔴 1 critical · 🟠 2 major");
+    // Never punts to another comment.
+    expect(body).not.toMatch(/summary comment|full review context|see the/i);
+  });
+
+  it("uses the singular noun for a single finding", () => {
+    expect(buildPublishedReviewBody([rc()])).toContain("flagged 1 finding");
+  });
+
+  it("prefixes the verdict on a REQUEST_CHANGES review and still summarizes findings", () => {
+    const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES");
+    expect(body).toContain("🚧 **prowl-review requested changes.**");
+    expect(body).toContain("**prowl-review** flagged 1 finding");
+  });
+
+  it("renders an APPROVE verdict with no findings as a clean approval", () => {
+    const body = buildPublishedReviewBody([], "APPROVE");
+    expect(body).toBe("✅ **prowl-review approved these changes.**");
   });
 });
