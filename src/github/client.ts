@@ -140,7 +140,7 @@ export interface OctokitLike {
         repo: string;
         issue_number: number;
         body: string;
-      }): Promise<{ data: unknown }>;
+      }): Promise<{ data: { id: number } }>;
       /** Update an existing PR/issue comment in place (update-not-duplicate). */
       updateComment(params: {
         owner: string;
