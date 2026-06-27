@@ -1049,17 +1049,20 @@ async function tidyReviewThreads(params: {
   let withdrawn = 0;
   const defendedFingerprints = new Set<string>();
   const withdrawnFingerprints = new Set<string>();
-  const rejustificationQueue = plan.disputedThreads.slice(0, MAX_REJUSTIFICATION_THREADS);
-  const deferredRejustifications =
-    params.rejustify && !params.dryRun ? Math.max(0, plan.disputedThreads.length - rejustificationQueue.length) : 0;
-  if (params.rejustify && !params.dryRun && rejustificationQueue.length > 0) {
-    const findingByFingerprint = new Map<string, Finding>();
-    for (const finding of candidateFindings) {
-      const fingerprint = fingerprintByCandidate.get(finding)!;
-      if (!findingByFingerprint.has(fingerprint)) {
-        findingByFingerprint.set(fingerprint, finding);
-      }
+  const findingByFingerprint = new Map<string, Finding>();
+  for (const finding of candidateFindings) {
+    const fingerprint = fingerprintByCandidate.get(finding)!;
+    if (!findingByFingerprint.has(fingerprint)) {
+      findingByFingerprint.set(fingerprint, finding);
     }
+  }
+  const currentDisputedThreads = plan.disputedThreads.filter((thread) =>
+    thread.fingerprints.some((fp) => findingByFingerprint.has(fp))
+  );
+  const rejustificationQueue = currentDisputedThreads.slice(0, MAX_REJUSTIFICATION_THREADS);
+  const deferredRejustifications =
+    params.rejustify && !params.dryRun ? Math.max(0, currentDisputedThreads.length - rejustificationQueue.length) : 0;
+  if (params.rejustify && !params.dryRun && rejustificationQueue.length > 0) {
     for (const thread of rejustificationQueue) {
       if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
         break;
@@ -1813,6 +1816,7 @@ export async function reviewPullRequest(
       requirementsCoverage !== undefined &&
       (requirementsCoverage.passed < requirementsCoverage.total || !reviewResult.verification.ok);
     const approvalCoverageIncomplete = requirementsDegraded || fullSkipped.length > 0;
+    const noReviewFilesRejustificationDiff = runRequirementsOnlyReview ? (requirementsDiff ?? diffText) : diffText;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
     const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
@@ -1832,7 +1836,7 @@ export async function reviewPullRequest(
             enabled: rejustifyDisputedEnabled,
             rejustifyFn,
             config,
-            diff: diffText,
+            diff: noReviewFilesRejustificationDiff,
             contextNote: noReviewFilesRejustificationContextNote
           }),
           replyToThread

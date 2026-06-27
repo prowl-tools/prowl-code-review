@@ -87,6 +87,9 @@ export const REJUSTIFICATION_REPLY_MARKER = "re-evaluated after your reply (#22)
 /** Stable public prefix used to distinguish withdrawal replies from defended replies. */
 export const REJUSTIFICATION_WITHDRAW_REPLY_PREFIX = "**Withdrawing this finding.**";
 
+const MAX_VERDICT_RESPONSE_CHARS = 16_384;
+const MAX_VERDICT_CANDIDATES = 64;
+
 /** Build the shared (trusted) re-justification system block. */
 export function buildRejustifySystem(): string {
   return [
@@ -140,47 +143,42 @@ export function buildRejustifyPrompt(input: RejustifyInput): string {
 
 /** Pull a JSON object out of a model response, tolerant of fences/prose. */
 function extractVerdict(text: string): RejustifyVerdict | undefined {
-  const stripped = text.replace(/```(?:json)?/gi, "").trim();
-  const candidates = new Set<string>();
-  if (stripped.startsWith("{")) {
-    candidates.add(stripped);
-  }
+  const stripped = text.replace(/```(?:json)?/gi, "").trim().slice(0, MAX_VERDICT_RESPONSE_CHARS);
+  const candidates: string[] = [];
+  let start = -1;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
 
-  let start = stripped.indexOf("{");
-  while (start !== -1) {
-    let depth = 0;
-    let inString = false;
-    let escaped = false;
-
-    for (let i = start; i < stripped.length; i += 1) {
-      const char = stripped[i];
-      if (escaped) {
-        escaped = false;
-        continue;
+  for (let i = 0; i < stripped.length && candidates.length < MAX_VERDICT_CANDIDATES; i += 1) {
+    const char = stripped[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (char === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (char === "\"") {
+      inString = !inString;
+      continue;
+    }
+    if (inString) {
+      continue;
+    }
+    if (char === "{") {
+      if (depth === 0) {
+        start = i;
       }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === "\"") {
-        inString = !inString;
-        continue;
-      }
-      if (inString) {
-        continue;
-      }
-      if (char === "{") {
-        depth += 1;
-      } else if (char === "}") {
-        depth -= 1;
-        if (depth === 0) {
-          candidates.add(stripped.slice(start, i + 1));
-          break;
-        }
+      depth += 1;
+    } else if (char === "}" && depth > 0) {
+      depth -= 1;
+      if (depth === 0 && start !== -1) {
+        candidates.push(stripped.slice(start, i + 1));
+        start = -1;
       }
     }
-
-    start = stripped.indexOf("{", start + 1);
   }
 
   for (const candidate of candidates) {

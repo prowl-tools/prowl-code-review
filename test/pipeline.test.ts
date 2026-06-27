@@ -1429,6 +1429,43 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.body).toContain("Deferred 2 additional disputed finding re-justification");
     });
 
+    it("filters stale disputed threads before applying the re-justification cap (#22)", async () => {
+      const current = finding({ title: "Current bug", body: "current", severity: "critical" });
+      const currentFingerprint = findingFingerprint(current);
+      const fetchReviewThreads = vi.fn(async () => [
+        ...Array.from({ length: 10 }, (_, index) =>
+          thread({
+            id: `S${index}`,
+            fingerprints: [`stale-${index}`],
+            humanIntent: "disagree",
+            humanReplyBody: "I disagree"
+          })
+        ),
+        thread({
+          id: "current",
+          fingerprints: [currentFingerprint],
+          humanIntent: "disagree",
+          humanReplyBody: "I disagree"
+        })
+      ]);
+      const replyToReviewThread = vi.fn(async () => true);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "defend" as const, reasoning: "The finding is still valid." },
+        usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+      }));
+      const deps = { ...makeDeps(), fetchReviewThreads, replyToReviewThread, rejustifyDisputedFinding };
+      deps.runReview.mockResolvedValue(reviewResult([current]));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(1);
+      expect(rejustifyDisputedFinding.mock.calls[0][0].finding).toEqual(current);
+      expect(replyToReviewThread).toHaveBeenCalledWith(expect.anything(), "current", expect.stringContaining("Standing by"));
+      expect(result.threads?.defended).toBe(1);
+      expect(result.payload.body).not.toContain("Deferred 1 additional disputed finding re-justification");
+    });
+
     it("stops the re-justification queue when the head advances between disputed threads (#22)", async () => {
       const disputedFindings = [
         finding({ line: 2, title: "Bug 1", body: "body 1", severity: "critical" }),
@@ -3628,6 +3665,58 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(result.payload.body).toContain("claude-sonnet-4-6");
     expect(result.payload.body).toContain("claude-sonnet-4-5");
     expect(result.payload.body).toContain("ran linked-issue requirements validation against the full PR diff");
+  });
+
+  it("passes the requirements diff into requirements-only re-justification", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const ignoredDelta = `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`;
+    const current = finding({ severity: "critical" });
+    const currentFingerprint = findingFingerprint(current);
+    const fetchReviewThreads = vi.fn(async () => [
+      {
+        id: "D",
+        isResolved: false,
+        isOutdated: false,
+        fingerprints: [currentFingerprint],
+        humanIntent: "disagree" as const,
+        humanReplyBody: "I disagree"
+      }
+    ]);
+    const rejustifyDisputedFinding = vi.fn(async () => ({
+      ok: false as const,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    }));
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ignoredDelta),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: `${DIFF}\n${ignoredDelta}` })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      })),
+      fetchReviewThreads,
+      rejustifyDisputedFinding
+    };
+    deps.runReview.mockResolvedValue(reviewResult([current]));
+
+    await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      deps
+    });
+
+    const rejustifyInput = rejustifyDisputedFinding.mock.calls[0][0];
+    expect(rejustifyInput.diff).toContain("src/a.ts");
+    expect(rejustifyInput.diff).not.toContain("package-lock.json");
   });
 
   it("redacts secrets from requirementsDiff during incremental issue validation", async () => {
