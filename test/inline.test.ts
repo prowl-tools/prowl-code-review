@@ -257,6 +257,23 @@ describe("formatFindingComment", () => {
     expect(body).not.toContain("@team");
   });
 
+  it("defangs dangerous Markdown and raw HTML in inline finding comments", () => {
+    const body = formatFindingComment(
+      f({
+        title: "[bad](javascript:alert(1)) <img src=x onerror=alert(1)>",
+        body: "[bad](javascript:alert(1))\n<img src=x onerror=alert(1)>\n@team"
+      }),
+      { agentPrompt: false }
+    );
+
+    expect(body).not.toContain("[bad](javascript");
+    expect(body).not.toContain("<img");
+    expect(body).not.toContain("@team");
+    expect(body).toContain("\\[bad\\]\\(javascript:alert\\(1\\)\\)");
+    expect(body).toContain("&lt;img src=x onerror=alert\\(1\\)&gt;");
+    expect(body).toContain("&#64;team");
+  });
+
   it("treats agentPrompt undefined as default on", () => {
     const body = formatFindingComment(f({ title: "Default prompt" }), { agentPrompt: undefined });
 
