@@ -125,6 +125,15 @@ copy-paste-ready fenced code blocks — in-thread when invoked on an inline
 comment, otherwise as a PR comment. They're suggestions to review before
 committing, not auto-applied. Singular/`doc`/`docs` aliases are accepted.
 
+**Replying to findings (#22).** Reply on a finding's thread and prowl-review
+honors it on the next review: "won't fix" / "acknowledged" resolves the thread
+and stops re-raising it. Reply **"I disagree"** (or "false positive", "not a
+bug", …) and the judge actively **re-evaluates** the finding rather than silently
+dropping it — it either **defends** it with reasoning in the thread (kept open,
+still gates merge) or **withdraws** it, conceding and resolving the thread. Only
+a repo owner/member/collaborator's reply is honored. Turn it off with
+`review.rejustifyDisputed: false` (then a disputed finding is just withheld).
+
 ```yaml
 # .github/workflows/prowl-review-command.yml
 name: prowl-review command

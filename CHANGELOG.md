@@ -5,6 +5,16 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Disputed-finding re-justification (backlog #22): when a developer replies "I disagree" (or "false positive",
+  "not a bug", …) on a finding thread, the judge now **actively re-evaluates** the finding instead of silently
+  withholding it. A new `src/review/rejustify.ts` pass takes the finding + the human's objection + the
+  diff/context (all framed as untrusted DATA, secret-redacted) and decides to **defend** it — posting reasoned,
+  sanitized in-thread reasoning that engages the objection, keeping the thread open and still gating merge — or
+  **withdraw** it, conceding in-thread and resolving the thread (so it no longer blocks the approval gate). Wired
+  into the #22 thread tidy-up via a GraphQL `replyToReviewThread` helper and the captured dispute reply; a
+  failed/absent re-justifier falls back to the prior withhold-and-keep-open behavior, and dry runs never post.
+  New `review.rejustifyDisputed` config toggle (default on), `ThreadTidyResult` gains `defended`/`withdrawn`
+  counts surfaced in the review notes, and public exports for the rejustify + thread-reply surface.
 - Docstring + unit-test generation commands (backlog #33): two new `@prowl-review` bot verbs that close out
   the item's CodeRabbit-style assists. `@prowl-review docstrings` drafts docstrings/doc-comments for the
   functions/classes/methods changed in the PR (each file's language convention); `@prowl-review tests` drafts
