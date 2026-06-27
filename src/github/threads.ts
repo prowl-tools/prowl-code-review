@@ -8,6 +8,10 @@ import {
   isResolvingIntent,
   type ReplyIntent
 } from "../review/reply-intent.js";
+import {
+  REJUSTIFICATION_REPLY_MARKER,
+  REJUSTIFICATION_WITHDRAW_REPLY_PREFIX
+} from "../review/rejustify.js";
 
 /**
  * Review-thread tidy-up (backlog #22 remainder): resolve fixed/settled finding
@@ -47,10 +51,24 @@ export interface ReviewThread {
   fingerprints: string[];
   /** Classified intent of the newest decisive trusted human reply, if any. */
   humanIntent: ReplyIntent;
+  /** Body of the decisive human reply, kept for re-justification context (#22). */
+  humanReplyBody?: string;
+  /** Latest bot withdrawal reply after a human dispute, if any. */
+  botRejustification?: "withdrawn";
 }
 
 /** Why a thread is being resolved (for the audit note). */
-export type ThreadResolveReason = "fixed" | "acknowledged" | "wont-fix";
+export type ThreadResolveReason = "fixed" | "acknowledged" | "wont-fix" | "withdrawn";
+
+/** An open disputed thread the re-justification pass may act on (#22). */
+export interface DisputedThread {
+  /** GraphQL node id (for replying / resolving). */
+  id: string;
+  /** Finding fingerprints on the thread. */
+  fingerprints: string[];
+  /** The human's dispute reply body, if captured. */
+  humanReplyBody?: string;
+}
 
 /** The pure decision over the PR's prowl-review threads. */
 export interface ThreadActionPlan {
@@ -58,10 +76,12 @@ export interface ThreadActionPlan {
   resolve: Array<{ id: string; reason: ThreadResolveReason; fingerprints: string[] }>;
   /**
    * Fingerprints to withhold from this run's findings: ones the human settled
-   * (won't-fix/acknowledged) or disputed (disagree), so the reviewer stops
-   * re-raising them.
+   * (won't-fix/acknowledged), disputed (disagree), or that the bot already
+   * withdrew after re-justification, so the reviewer stops re-raising them.
    */
-  suppress: { acknowledged: string[]; disputed: string[] };
+  suppress: { acknowledged: string[]; disputed: string[]; withdrawn: string[] };
+  /** Open disputed threads the re-justification pass may defend or withdraw (#22). */
+  disputedThreads: DisputedThread[];
   /** Count of disputed threads left open for the human (kept, not resolved). */
   keptOpenDisputed: number;
   /** Fingerprints whose old resolved thread should not suppress a future inline comment. */
@@ -91,6 +111,8 @@ export function planThreadActions(input: {
   const resolve: ThreadActionPlan["resolve"] = [];
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
+  const withdrawn = new Set<string>();
+  const disputedThreads: DisputedThread[] = [];
   const repostable = new Set<string>();
   const openThreadFingerprints = new Set<string>();
   let keptOpenDisputed = 0;
@@ -106,10 +128,23 @@ export function planThreadActions(input: {
       continue;
     }
 
+    if (thread.botRejustification === "withdrawn") {
+      thread.fingerprints.forEach((fp) => withdrawn.add(fp));
+      if (!thread.isResolved) {
+        resolve.push({ id: thread.id, reason: "withdrawn", fingerprints: [...thread.fingerprints] });
+      }
+      continue;
+    }
+
     if (isDisputingIntent(thread.humanIntent)) {
       thread.fingerprints.forEach((fp) => disputed.add(fp));
       if (!thread.isResolved) {
         keptOpenDisputed += 1;
+        disputedThreads.push({
+          id: thread.id,
+          fingerprints: [...thread.fingerprints],
+          ...(thread.humanReplyBody !== undefined ? { humanReplyBody: thread.humanReplyBody } : {})
+        });
       }
       continue;
     }
@@ -146,7 +181,8 @@ export function planThreadActions(input: {
 
   return {
     resolve,
-    suppress: { acknowledged: [...acknowledged], disputed: [...disputed] },
+    suppress: { acknowledged: [...acknowledged], disputed: [...disputed], withdrawn: [...withdrawn] },
+    disputedThreads,
     keptOpenDisputed,
     repostable: [...repostable]
   };
@@ -156,6 +192,23 @@ interface ReviewThreadCommentNode {
   body?: string | null;
   authorAssociation?: string | null;
   author?: { login?: string | null; __typename?: string | null } | null;
+}
+
+function latestRejustificationReply(
+  comments: Array<ReviewThreadCommentNode | null>,
+  login: string
+): { index: number; outcome: "defended" | "withdrawn" } | undefined {
+  for (let i = comments.length - 1; i >= 0; i -= 1) {
+    const comment = comments[i];
+    const body = comment?.body ?? "";
+    if (comment?.author?.login === login && body.includes(REJUSTIFICATION_REPLY_MARKER)) {
+      return {
+        index: i,
+        outcome: body.trimStart().startsWith(REJUSTIFICATION_WITHDRAW_REPLY_PREFIX) ? "withdrawn" : "defended"
+      };
+    }
+  }
+  return undefined;
 }
 
 /** GraphQL shape for the review-threads query (only the fields we read). */
@@ -209,6 +262,13 @@ mutation ResolveThread($threadId: ID!) {
   }
 }`;
 
+const REPLY_TO_THREAD_MUTATION = `
+mutation ReplyToThread($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+    comment { id }
+  }
+}`;
+
 /**
  * Fetch prowl-review's review threads on the PR, mapped to {@link ReviewThread}.
  * A thread's fingerprints come from comments authored by the bot; its
@@ -247,6 +307,9 @@ export async function fetchReviewThreads(
         const recentComments = node.recentComments?.nodes ?? [];
         const fingerprints = new Set<string>();
         let humanIntent: ReplyIntent = "other";
+        let humanReplyBody: string | undefined;
+        const newestRejustification = latestRejustificationReply(recentComments, login);
+        let botRejustification: ReviewThread["botRejustification"];
         for (const comment of comments) {
           if (!comment) {
             continue;
@@ -280,7 +343,16 @@ export async function fetchReviewThreads(
           }
           const intent = classifyReplyIntent(comment.body ?? undefined);
           if (intent !== "other") {
-            humanIntent = intent;
+            if (isDisputingIntent(intent) && (newestRejustification?.index ?? -1) > i) {
+              humanIntent = "other";
+              humanReplyBody = undefined;
+              if (newestRejustification?.outcome === "withdrawn") {
+                botRejustification = "withdrawn";
+              }
+            } else {
+              humanIntent = intent;
+              humanReplyBody = comment.body ?? undefined;
+            }
             break;
           }
         }
@@ -289,7 +361,9 @@ export async function fetchReviewThreads(
           isResolved: node.isResolved === true,
           isOutdated: node.isOutdated === true,
           fingerprints: [...fingerprints],
-          humanIntent
+          humanIntent,
+          ...(humanReplyBody !== undefined ? { humanReplyBody } : {}),
+          ...(botRejustification !== undefined ? { botRejustification } : {})
         });
       }
 
@@ -311,6 +385,16 @@ export async function fetchReviewThreads(
 export async function resolveReviewThread(octokit: OctokitLike, threadId: string): Promise<boolean> {
   try {
     await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Post a reply on a review thread via GraphQL (#22). Tolerant — false on any failure. */
+export async function replyToReviewThread(octokit: OctokitLike, threadId: string, body: string): Promise<boolean> {
+  try {
+    await octokit.graphql(REPLY_TO_THREAD_MUTATION, { threadId, body });
     return true;
   } catch {
     return false;
