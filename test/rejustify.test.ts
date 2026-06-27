@@ -113,6 +113,11 @@ describe("parseRejustifyVerdict (#22)", () => {
     expect(verdict).toEqual({ decision: "withdraw", reasoning: "literal { brace } inside" });
   });
 
+  it("bounds malformed brace-heavy responses", () => {
+    const verdict = parseRejustifyVerdict(`${"{}".repeat(80)} {"decision":"defend","reasoning":"late"}`);
+    expect(verdict).toBeUndefined();
+  });
+
   it("returns undefined for a missing/invalid decision or non-JSON", () => {
     expect(parseRejustifyVerdict("not json")).toBeUndefined();
     expect(parseRejustifyVerdict('{"decision":"maybe","reasoning":"x"}')).toBeUndefined();
