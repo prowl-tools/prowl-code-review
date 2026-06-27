@@ -616,7 +616,7 @@ index 1111111..2222222 100644
     expect(JSON.parse(log)).toMatchObject({
       ts: "2026-06-20T12:00:00.000Z",
       provider: "anthropic",
-      model: "claude-sonnet-4-6",
+      model: "claude-haiku-4-5", // the resolved provider default (DEFAULT_MODELS.anthropic)
       inputTokens: 12,
       outputTokens: 3,
       cachedInputTokens: 4

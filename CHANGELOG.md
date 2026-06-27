@@ -4,6 +4,19 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Default Anthropic model is now **`claude-haiku-4-5`** (was `claude-sonnet-4-6`). This moves the out-of-box
+  default toward lower cost and latency while keeping prowl-review's multi-pass specialists, judge/dedup,
+  false-positive verification, agentic cross-file context, and linter/SAST grounding in place. It is an
+  intentional cost/speed trade-off, not a claim of measured parity with Sonnet; teams that prioritize maximum
+  fidelity, large-PR handling, or eval-gated rollouts should pin a per-provider `model` (e.g.
+  `claude-sonnet-4-6`) in `.prowl-review.yml` or compare models with `prowl-review eval` first. Haiku 4.5 has a
+  smaller context window than Sonnet 4.6 and no older live same-family fallback target on the Anthropic API, so
+  `resilience.failback` now treats it as terminal; after retry/backoff, sustained Haiku 4.5 overloads fail
+  rather than downgrade. Large-PR or resilience-sensitive teams should pin Sonnet or configure diff/budget caps
+  before switching. Only the built-in default changed — any explicit `model` / `PROWL_AI_MODEL` / `ai-model`
+  setting is unaffected.
+
 ### Added
 - Disputed-finding re-justification (backlog #22): when a developer replies "I disagree" (or "false positive",
   "not a bug", …) on a finding thread, the judge now **actively re-evaluates** the finding instead of silently

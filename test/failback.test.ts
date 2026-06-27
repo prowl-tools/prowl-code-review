@@ -22,6 +22,7 @@ describe("modelFailbackChain", () => {
 
   it("returns [] for the oldest model or an unknown one", () => {
     expect(modelFailbackChain("anthropic", "claude-opus-4-1")).toEqual([]);
+    expect(modelFailbackChain("anthropic", "claude-haiku-4-5")).toEqual([]);
     expect(modelFailbackChain("anthropic", "claude-custom-tuned")).toEqual([]);
     expect(modelFailbackChain("openai", "gpt-4o")).toEqual([]);
   });
