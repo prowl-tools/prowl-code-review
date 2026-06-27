@@ -80,7 +80,14 @@ function makeDeps() {
     })),
     gatherGrounding: vi.fn(async () => ({ findings: [], notes: [] })),
     runReview: vi.fn(async () => reviewResult([finding()])),
-    submitReview: vi.fn(async () => {})
+    submitReview: vi.fn(async () => {}),
+    // Default disputed re-justification (#22) to a no-op (fallback = withhold) so
+    // tests never hit the provider; rejustify-specific tests override this.
+    rejustifyDisputedFinding: vi.fn(async () => ({
+      ok: false as const,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+    })),
+    replyToReviewThread: vi.fn(async () => true)
   };
 }
 
@@ -1132,6 +1139,89 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.threads?.withheldDisputed).toBe(1);
       expect(result.threads?.keptOpenDisputed).toBe(1);
       expect(result.payload.body).toContain("disputed");
+    });
+
+    it("re-justifies and defends a disputed finding in-thread (#22)", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree", humanReplyBody: "I disagree" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const replyToReviewThread = vi.fn(async () => true);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "defend" as const, reasoning: "The caller does not guard the new branch." },
+        usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+      }));
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, replyToReviewThread, rejustifyDisputedFinding };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(1);
+      expect(replyToReviewThread).toHaveBeenCalledWith(expect.anything(), "D", expect.stringContaining("Standing by"));
+      expect(resolveReviewThread).not.toHaveBeenCalled(); // defended → thread stays open
+      expect(result.threads?.defended).toBe(1);
+      expect(result.threads?.withdrawn).toBe(0);
+      expect(result.threads?.keptOpenDisputed).toBe(1);
+      expect(result.payload.body).toContain("defended");
+    });
+
+    it("withdraws a disputed finding and resolves the thread when the judge concedes (#22)", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree", humanReplyBody: "this is guarded upstream" })
+      ]);
+      const resolveReviewThread = vi.fn(async () => true);
+      const replyToReviewThread = vi.fn(async () => true);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "withdraw" as const, reasoning: "You're right — the caller guards it." },
+        usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+      }));
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread, replyToReviewThread, rejustifyDisputedFinding };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        approval: { enabled: true, approveWhenClean: true }
+      });
+
+      expect(replyToReviewThread).toHaveBeenCalledWith(expect.anything(), "D", expect.stringContaining("Withdrawing"));
+      expect(resolveReviewThread).toHaveBeenCalledWith(expect.anything(), "D"); // conceded → resolved
+      expect(result.threads?.withdrawn).toBe(1);
+      expect(result.threads?.keptOpenDisputed).toBe(0); // no longer in contention
+      expect(result.payload.body).toContain("Withdrew");
+      // A withdrawn dispute no longer blocks the approval gate.
+      expect(result.approval?.threadApprovalBlocked).not.toBe(true);
+    });
+
+    it("falls back to withholding when re-justification is disabled (#22)", async () => {
+      const fp = findingFingerprint(finding({ severity: "critical" }));
+      const fetchReviewThreads = vi.fn(async () => [
+        thread({ id: "D", fingerprints: [fp], humanIntent: "disagree" })
+      ]);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "defend" as const, reasoning: "x" },
+        usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+      }));
+      const deps = { ...makeDeps(), fetchReviewThreads, resolveReviewThread: vi.fn(async () => true), rejustifyDisputedFinding };
+      deps.runReview.mockResolvedValue(reviewResult([finding({ severity: "critical" })]));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        rejustifyDisputed: false
+      });
+
+      expect(rejustifyDisputedFinding).not.toHaveBeenCalled();
+      expect(result.threads?.withheldDisputed).toBe(1);
+      expect(result.threads?.keptOpenDisputed).toBe(1);
+      expect(result.threads?.defended).toBe(0);
     });
 
     it("a disputed finding does not drive the approval gate to request changes (#52 interplay)", async () => {

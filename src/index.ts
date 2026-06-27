@@ -204,11 +204,25 @@ export {
 export {
   fetchReviewThreads,
   resolveReviewThread,
+  replyToReviewThread,
   planThreadActions,
   type ReviewThread,
   type ThreadActionPlan,
-  type ThreadResolveReason
+  type ThreadResolveReason,
+  type DisputedThread
 } from "./github/threads.js";
+export {
+  rejustifyFinding,
+  parseRejustifyVerdict,
+  buildRejustifySystem,
+  buildRejustifyPrompt,
+  buildRejustifyReply,
+  RejustifyVerdictSchema,
+  type RejustifyInput,
+  type RejustifyOptions,
+  type RejustifyResult,
+  type RejustifyVerdict
+} from "./review/rejustify.js";
 export {
   classifyReplyIntent,
   isResolvingIntent,

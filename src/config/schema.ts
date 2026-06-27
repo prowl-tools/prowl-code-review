@@ -43,6 +43,8 @@ const reviewSchema = z
     incremental: z.boolean().optional(),
     /** On a re-run, resolve fixed/settled threads and honor human replies. Default true (#22). */
     resolveThreads: z.boolean().optional(),
+    /** On "I disagree", re-justify the finding (defend in-thread or withdraw). Default true (#22). */
+    rejustifyDisputed: z.boolean().optional(),
     /**
      * Auto-review pull-request events. Default true. Set false for on-demand
      * only: the bot reviews only when asked with `@prowl-review review` (#28).

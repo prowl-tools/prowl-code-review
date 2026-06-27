@@ -34,10 +34,19 @@ import { detectBreakGlass as defaultDetectBreakGlass } from "./github/break-glas
 import {
   fetchReviewThreads as defaultFetchReviewThreads,
   resolveReviewThread as defaultResolveReviewThread,
+  replyToReviewThread as defaultReplyToReviewThread,
   planThreadActions,
   type ReviewThread,
   type ThreadActionPlan
 } from "./github/threads.js";
+import {
+  rejustifyFinding as defaultRejustifyFinding,
+  buildRejustifyReply,
+  type RejustifyInput,
+  type RejustifyOptions,
+  type RejustifyResult,
+  type RejustifyVerdict
+} from "./review/rejustify.js";
 import { findingFingerprint } from "./review/state.js";
 import {
   planApprovalDecision,
@@ -156,6 +165,10 @@ export interface PipelineDeps {
   fetchReviewThreads?: (octokit: OctokitLike, ref: PullRequestRef, botLogin?: string) => Promise<ReviewThread[]>;
   /** Resolve a single review thread via GraphQL (#22). */
   resolveReviewThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
+  /** Post a reply on a review thread via GraphQL (#22, re-justification). */
+  replyToReviewThread?: (octokit: OctokitLike, threadId: string, body: string) => Promise<boolean>;
+  /** Re-evaluate a disputed finding — defend or withdraw (#22). */
+  rejustifyDisputedFinding?: (input: RejustifyInput, options: RejustifyOptions) => Promise<RejustifyResult>;
   /** Re-fetch the PR's current head SHA for the stale-publish guard (#21). */
   fetchHeadSha?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<string | undefined>;
   /** Generate a PR description from the diff (#33). */
@@ -272,6 +285,13 @@ export interface ReviewPullRequestOptions {
    * never sink the review.
    */
   resolveThreads?: boolean;
+  /**
+   * On a disputed finding thread ("I disagree"), re-evaluate the finding and either
+   * defend it (reasoned in-thread reply) or withdraw it (concede + resolve), instead
+   * of silently withholding it (#22). Default on; needs thread tidy-up enabled and a
+   * provider key. Tolerant — a failed re-justification falls back to withholding.
+   */
+  rejustifyDisputed?: boolean;
   /**
    * Skip publishing when the PR head advanced past the reviewed SHA (#21). Closes
    * the brief overlap window left by the workflow's `concurrency:
@@ -772,6 +792,10 @@ export interface ThreadTidyResult {
   withheldDisputed: number;
   /** Disputed threads left open for the human (not resolved). */
   keptOpenDisputed: number;
+  /** Disputed findings the judge re-justified and defended in-thread (#22). */
+  defended: number;
+  /** Disputed findings the judge withdrew (conceded + thread resolved) (#22). */
+  withdrawn: number;
   /** Prior inline fingerprints that may be posted again because the old thread was fixed. */
   repostableFindings: string[];
 }
@@ -894,6 +918,10 @@ async function tidyReviewThreads(params: {
   enabled: boolean;
   dryRun: boolean;
   shouldResolveThread?: () => Promise<boolean>;
+  /** Re-evaluate a disputed finding — defend/withdraw (#22). Omitted → withhold (prior behavior). */
+  rejustify?: (input: { finding: Finding; disputeReply?: string }) => Promise<RejustifyVerdict | null>;
+  /** Post a reply on a review thread (#22). Required for the re-justification reply. */
+  replyToThread?: (octokit: OctokitLike, threadId: string, body: string) => Promise<boolean>;
 }): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
   if (!params.enabled) {
     return { findings: params.findings, notes: [] };
@@ -944,6 +972,57 @@ async function tidyReviewThreads(params: {
     }));
   }
 
+  // Re-justify disputed findings (#22): for each open disputed thread whose finding
+  // this run still produced, the judge defends it (reasoned reply) or withdraws it
+  // (concede + resolve) — instead of silently withholding. A failed/absent
+  // re-justifier falls back to the prior behavior (withhold, leave open).
+  let defended = 0;
+  let withdrawn = 0;
+  if (params.rejustify && !params.dryRun && plan.disputedThreads.length > 0) {
+    const findingByFingerprint = new Map<string, Finding>();
+    for (const finding of candidateFindings) {
+      const fingerprint = fingerprintByCandidate.get(finding)!;
+      if (!findingByFingerprint.has(fingerprint)) {
+        findingByFingerprint.set(fingerprint, finding);
+      }
+    }
+    for (const thread of plan.disputedThreads) {
+      if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
+        break;
+      }
+      const fingerprint = thread.fingerprints.find((fp) => findingByFingerprint.has(fp));
+      if (!fingerprint) {
+        continue; // the finding is no longer current — nothing to defend
+      }
+      const verdict = await params.rejustify({
+        finding: findingByFingerprint.get(fingerprint)!,
+        ...(thread.humanReplyBody !== undefined ? { disputeReply: thread.humanReplyBody } : {})
+      });
+      if (!verdict) {
+        continue; // re-justification failed — leave the thread open (fallback)
+      }
+      const replyBody = buildRejustifyReply(verdict);
+      if (verdict.decision === "withdraw") {
+        if (params.replyToThread) {
+          await params.replyToThread(params.octokit, thread.id, replyBody);
+        }
+        if (await params.resolveThread(params.octokit, thread.id)) {
+          withdrawn += 1;
+        }
+      } else {
+        if (params.replyToThread) {
+          await params.replyToThread(params.octokit, thread.id, replyBody);
+        }
+        defended += 1;
+      }
+    }
+  }
+  // Withdrawn disputes are conceded — drop them from the still-in-contention counts
+  // so they no longer block the approval gate.
+  const keptOpenDisputed = Math.max(0, plan.keptOpenDisputed - withdrawn);
+  const contestedDisputed = Math.max(0, withheldDisputed - withdrawn);
+  const unrejustifiedOpen = Math.max(0, keptOpenDisputed - defended);
+
   const notes: string[] = [];
   const resolvedTotal = resolvedFixed + resolvedSettled;
   if (resolvedTotal > 0) {
@@ -961,12 +1040,16 @@ async function tidyReviewThreads(params: {
       `Withheld ${withheldSettled} finding(s) you marked acknowledged/won't-fix so they aren't re-raised (#22).`
     );
   }
-  if (withheldDisputed > 0) {
+  if (defended > 0) {
+    notes.push(`Re-justified and defended ${defended} disputed finding(s) in-thread after your "disagree" reply (#22).`);
+  }
+  if (withdrawn > 0) {
+    notes.push(`Withdrew ${withdrawn} disputed finding(s) on re-evaluation and resolved the thread(s) (#22).`);
+  }
+  if (unrejustifiedOpen > 0) {
     notes.push(
-      `Withheld ${withheldDisputed} disputed finding(s) (you replied "disagree"); left the thread open for re-review rather than re-raising (#22).`
+      `Withheld ${unrejustifiedOpen} disputed finding(s) (you replied "disagree") and left the thread open for re-review (#22).`
     );
-  } else if (plan.keptOpenDisputed > 0) {
-    notes.push(`Left ${plan.keptOpenDisputed} disputed thread(s) open for re-review (#22).`);
   }
 
   const tidy: ThreadTidyResult = {
@@ -974,8 +1057,10 @@ async function tidyReviewThreads(params: {
     resolvedSettled,
     approvalBlockingSettled,
     withheldSettled,
-    withheldDisputed,
-    keptOpenDisputed: plan.keptOpenDisputed,
+    withheldDisputed: contestedDisputed,
+    keptOpenDisputed,
+    defended,
+    withdrawn,
     repostableFindings: [...new Set([...plan.repostable, ...resolvedFixedFingerprints])]
   };
   return { findings: refilled, notes, tidy, capped };
@@ -1228,8 +1313,26 @@ export async function reviewPullRequest(
   const detectPriorRequestChanges = deps.detectPriorRequestChanges ?? defaultHasActiveRequestChanges;
   const fetchThreads = deps.fetchReviewThreads ?? defaultFetchReviewThreads;
   const resolveThread = deps.resolveReviewThread ?? defaultResolveReviewThread;
+  const replyToThread = deps.replyToReviewThread ?? defaultReplyToReviewThread;
+  const rejustifyFn = deps.rejustifyDisputedFinding ?? defaultRejustifyFinding;
   const fetchHeadSha = deps.fetchHeadSha ?? defaultFetchPullRequestHeadSha;
   const tidyThreadsEnabled = options.resolveThreads !== false;
+  const rejustifyDisputedEnabled = options.rejustifyDisputed !== false;
+  // Build the disputed-finding re-justifier bound to this run's provider config +
+  // diff/context (#22). Undefined when disabled → tidy falls back to withholding.
+  const makeRejustifier = (
+    diff: string,
+    context?: string
+  ): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustifyVerdict | null>) | undefined =>
+    rejustifyDisputedEnabled
+      ? async (input) => {
+          const result = await rejustifyFn(
+            { finding: input.finding, diff, ...(context !== undefined ? { context } : {}), ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {}) },
+            { config }
+          );
+          return result.ok && result.verdict ? result.verdict : null;
+        }
+      : undefined;
   const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
@@ -1625,7 +1728,9 @@ export async function reviewPullRequest(
           resolveStaleThreads: incrementalBaseSha === undefined && !approvalCoverageIncomplete,
           enabled: tidyThreadsEnabled,
           dryRun: options.dryRun === true,
-          shouldResolveThread
+          shouldResolveThread,
+          rejustify: makeRejustifier(diffText),
+          replyToThread
         });
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
@@ -1943,7 +2048,9 @@ export async function reviewPullRequest(
           incrementalBaseSha === undefined && !approvalCoverageIncomplete && reviewResult.judge.capped === 0,
         enabled: tidyThreadsEnabled,
         dryRun: options.dryRun === true,
-        shouldResolveThread
+        shouldResolveThread,
+        rejustify: makeRejustifier(diffText, reviewContext),
+        replyToThread
       });
   reviewResult.findings = tidied.findings;
   if (tidied.capped !== undefined) {
