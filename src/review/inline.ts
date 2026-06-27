@@ -80,6 +80,32 @@ const PUBLISHED_REVIEW_DETAIL_PREFIX = "\n\n---\n\n### Review details\n\n";
 const PUBLISHED_REVIEW_BODY_LIMIT = GITHUB_COMMENT_BODY_LIMIT;
 const PUBLISHED_REVIEW_TRUNCATION_NOTICE =
   "\n\n[review details truncated to keep the GitHub review body within the body size limit]";
+const TRUSTED_PUBLISHED_REVIEW_TAG_RE = /<\/?(?:details|summary|b)>/gi;
+const FENCED_CODE_BLOCK_RE = /(^|\n)(`{3,}|~{3,})[^\n]*\n[\s\S]*?\n\2(?=\n|$)/g;
+
+/** Preserve renderer-owned Markdown structures while sanitizing generated detail text around them. */
+function preservePublishedReviewMarkdown(body: string): { body: string; restore: (sanitized: string) => string } {
+  const preserved: Array<{ token: string; value: string }> = [];
+  const preserve = (value: string) => {
+    const token = `\0PROWL_REVIEW_PRESERVED_MARKDOWN_${preserved.length}_TOKEN\0`;
+    preserved.push({ token, value });
+    return token;
+  };
+
+  const withPreservedCode = body.replace(FENCED_CODE_BLOCK_RE, (match) => preserve(match));
+  const withPreservedTags = withPreservedCode.replace(TRUSTED_PUBLISHED_REVIEW_TAG_RE, (match) => preserve(match));
+
+  return {
+    body: withPreservedTags,
+    restore: (sanitized: string) => {
+      let restored = sanitized;
+      for (const { token, value } of preserved) {
+        restored = restored.replaceAll(token, value);
+      }
+      return restored;
+    }
+  };
+}
 
 /** Render a `🔴 1 critical · 🟠 2 major` breakdown for the inline comments posted. */
 function severityBreakdown(comments: ReviewComment[]): string {
@@ -101,7 +127,8 @@ function cleanPublishedReviewDetails(body: string | undefined): string {
     .replace(PROWL_REVIEW_SUMMARY_MARKER_RE, "")
     .replace(PROWL_REVIEW_STATE_MARKER_RE, "")
     .trim();
-  return sanitizeGitHubMarkdown(details).trim();
+  const preserved = preservePublishedReviewMarkdown(details);
+  return preserved.restore(sanitizeGitHubMarkdown(preserved.body)).trim();
 }
 
 /** Append optional summary details without exceeding GitHub's review body limit. */
