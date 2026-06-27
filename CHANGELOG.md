@@ -4,6 +4,20 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Docstring + unit-test generation commands (backlog #33): two new `@prowl-review` bot verbs that close out
+  the item's CodeRabbit-style assists. `@prowl-review docstrings` drafts docstrings/doc-comments for the
+  functions/classes/methods changed in the PR (each file's language convention); `@prowl-review tests` drafts
+  unit-test stubs covering the changed behavior, inferring the project's test framework from the diff. Both are
+  grounded in the size-guarded, secret-redacted PR diff (sensitive/ignored files filtered, same as chat #27),
+  reply with copy-paste-ready fenced code blocks (in-thread when invoked on an inline comment, otherwise a PR
+  comment), and treat all PR content as untrusted DATA. Output is markdown-sanitized + re-redacted before
+  posting and labeled "review before committing." New `src/review/generate.ts`
+  (`generateAssist`/`buildAssistSystem`/`buildAssistPrompt`/`assistLabel`), verbs wired through the parser +
+  dispatcher with a `generateForComment` orchestrator, README bot-command entries, and public exports.
+  Singular/`doc`/`docs` aliases accepted. True inline committable ```suggestion``` anchoring is a deferred
+  enhancement (the assists post as copy-paste blocks for now).
+
 ### Changed
 - Cohesive published review (presentation, #10/#22): the GitHub review that carries the inline findings now
   leads with a **self-contained findings summary** — `**prowl-review** flagged N findings` plus a severity
