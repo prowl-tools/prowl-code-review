@@ -3,6 +3,7 @@ import {
   planThreadActions,
   fetchReviewThreads,
   resolveReviewThread,
+  replyToReviewThread,
   type ReviewThread
 } from "../src/github/threads.js";
 import type { OctokitLike } from "../src/github/client.js";
@@ -103,12 +104,24 @@ describe("planThreadActions (#22)", () => {
 
   it("keeps a disputed thread open and suppresses its finding (not blindly re-raised)", () => {
     const plan = planThreadActions({
-      threads: [thread({ id: "D", fingerprints: ["dis"], humanIntent: "disagree" })],
+      threads: [thread({ id: "D", fingerprints: ["dis"], humanIntent: "disagree", humanReplyBody: "I disagree, it's guarded" })],
       currentFingerprints: ["dis"]
     });
     expect(plan.resolve).toEqual([]); // never resolved against the human's wish
     expect(plan.suppress.disputed).toEqual(["dis"]);
     expect(plan.keptOpenDisputed).toBe(1);
+    // Exposes the open disputed thread (id + fingerprints + reply) for re-justification (#22).
+    expect(plan.disputedThreads).toEqual([
+      { id: "D", fingerprints: ["dis"], humanReplyBody: "I disagree, it's guarded" }
+    ]);
+  });
+
+  it("does not expose an already-resolved disputed thread for re-justification", () => {
+    const plan = planThreadActions({
+      threads: [thread({ id: "D", isResolved: true, fingerprints: ["dis"], humanIntent: "disagree" })],
+      currentFingerprints: ["dis"]
+    });
+    expect(plan.disputedThreads).toEqual([]);
   });
 
   it("can skip fixed resolution when the current finding set is incomplete", () => {
@@ -163,7 +176,14 @@ describe("fetchReviewThreads (#22)", () => {
     ]);
     const threads = await fetchReviewThreads(octokit, ref, "prowl-bot");
     expect(threads).toEqual([
-      { id: "T1", isResolved: false, isOutdated: false, fingerprints: ["fp1"], humanIntent: "wont-fix" }
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        fingerprints: ["fp1"],
+        humanIntent: "wont-fix",
+        humanReplyBody: "won't fix this"
+      }
     ]);
   });
 
@@ -190,6 +210,7 @@ describe("fetchReviewThreads (#22)", () => {
     const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
     expect(t.fingerprints).toEqual(["fp1"]);
     expect(t.humanIntent).toBe("acknowledged"); // latest human reply wins
+    expect(t.humanReplyBody).toBe("actually, acknowledged"); // captured for re-justification (#22)
   });
 
   it("keeps the newest decisive human intent when later trusted replies are non-decisive", async () => {
@@ -318,5 +339,25 @@ describe("resolveReviewThread (#22)", () => {
     });
     const octokit = { graphql } as unknown as OctokitLike;
     expect(await resolveReviewThread(octokit, "T1")).toBe(false);
+  });
+});
+
+describe("replyToReviewThread (#22)", () => {
+  it("calls the reply mutation with the thread id and body", async () => {
+    const graphql = vi.fn(async () => ({ addPullRequestReviewThreadReply: { comment: { id: "c1" } } }));
+    const octokit = { graphql } as unknown as OctokitLike;
+    expect(await replyToReviewThread(octokit, "T1", "Standing by this.")).toBe(true);
+    expect(graphql).toHaveBeenCalledWith(expect.stringContaining("addPullRequestReviewThreadReply"), {
+      threadId: "T1",
+      body: "Standing by this."
+    });
+  });
+
+  it("reports false tolerantly on failure", async () => {
+    const graphql = vi.fn(async () => {
+      throw new Error("no permission");
+    });
+    const octokit = { graphql } as unknown as OctokitLike;
+    expect(await replyToReviewThread(octokit, "T1", "x")).toBe(false);
   });
 });

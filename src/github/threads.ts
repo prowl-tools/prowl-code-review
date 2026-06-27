@@ -47,10 +47,22 @@ export interface ReviewThread {
   fingerprints: string[];
   /** Classified intent of the newest decisive trusted human reply, if any. */
   humanIntent: ReplyIntent;
+  /** Body of the decisive human reply, kept for re-justification context (#22). */
+  humanReplyBody?: string;
 }
 
 /** Why a thread is being resolved (for the audit note). */
-export type ThreadResolveReason = "fixed" | "acknowledged" | "wont-fix";
+export type ThreadResolveReason = "fixed" | "acknowledged" | "wont-fix" | "withdrawn";
+
+/** An open disputed thread the re-justification pass may act on (#22). */
+export interface DisputedThread {
+  /** GraphQL node id (for replying / resolving). */
+  id: string;
+  /** Finding fingerprints on the thread. */
+  fingerprints: string[];
+  /** The human's dispute reply body, if captured. */
+  humanReplyBody?: string;
+}
 
 /** The pure decision over the PR's prowl-review threads. */
 export interface ThreadActionPlan {
@@ -62,6 +74,8 @@ export interface ThreadActionPlan {
    * re-raising them.
    */
   suppress: { acknowledged: string[]; disputed: string[] };
+  /** Open disputed threads the re-justification pass may defend or withdraw (#22). */
+  disputedThreads: DisputedThread[];
   /** Count of disputed threads left open for the human (kept, not resolved). */
   keptOpenDisputed: number;
   /** Fingerprints whose old resolved thread should not suppress a future inline comment. */
@@ -91,6 +105,7 @@ export function planThreadActions(input: {
   const resolve: ThreadActionPlan["resolve"] = [];
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
+  const disputedThreads: DisputedThread[] = [];
   const repostable = new Set<string>();
   const openThreadFingerprints = new Set<string>();
   let keptOpenDisputed = 0;
@@ -110,6 +125,11 @@ export function planThreadActions(input: {
       thread.fingerprints.forEach((fp) => disputed.add(fp));
       if (!thread.isResolved) {
         keptOpenDisputed += 1;
+        disputedThreads.push({
+          id: thread.id,
+          fingerprints: [...thread.fingerprints],
+          ...(thread.humanReplyBody !== undefined ? { humanReplyBody: thread.humanReplyBody } : {})
+        });
       }
       continue;
     }
@@ -147,6 +167,7 @@ export function planThreadActions(input: {
   return {
     resolve,
     suppress: { acknowledged: [...acknowledged], disputed: [...disputed] },
+    disputedThreads,
     keptOpenDisputed,
     repostable: [...repostable]
   };
@@ -209,6 +230,13 @@ mutation ResolveThread($threadId: ID!) {
   }
 }`;
 
+const REPLY_TO_THREAD_MUTATION = `
+mutation ReplyToThread($threadId: ID!, $body: String!) {
+  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {
+    comment { id }
+  }
+}`;
+
 /**
  * Fetch prowl-review's review threads on the PR, mapped to {@link ReviewThread}.
  * A thread's fingerprints come from comments authored by the bot; its
@@ -247,6 +275,7 @@ export async function fetchReviewThreads(
         const recentComments = node.recentComments?.nodes ?? [];
         const fingerprints = new Set<string>();
         let humanIntent: ReplyIntent = "other";
+        let humanReplyBody: string | undefined;
         for (const comment of comments) {
           if (!comment) {
             continue;
@@ -281,6 +310,7 @@ export async function fetchReviewThreads(
           const intent = classifyReplyIntent(comment.body ?? undefined);
           if (intent !== "other") {
             humanIntent = intent;
+            humanReplyBody = comment.body ?? undefined;
             break;
           }
         }
@@ -289,7 +319,8 @@ export async function fetchReviewThreads(
           isResolved: node.isResolved === true,
           isOutdated: node.isOutdated === true,
           fingerprints: [...fingerprints],
-          humanIntent
+          humanIntent,
+          ...(humanReplyBody !== undefined ? { humanReplyBody } : {})
         });
       }
 
@@ -311,6 +342,16 @@ export async function fetchReviewThreads(
 export async function resolveReviewThread(octokit: OctokitLike, threadId: string): Promise<boolean> {
   try {
     await octokit.graphql(RESOLVE_THREAD_MUTATION, { threadId });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** Post a reply on a review thread via GraphQL (#22). Tolerant — false on any failure. */
+export async function replyToReviewThread(octokit: OctokitLike, threadId: string, body: string): Promise<boolean> {
+  try {
+    await octokit.graphql(REPLY_TO_THREAD_MUTATION, { threadId, body });
     return true;
   } catch {
     return false;
