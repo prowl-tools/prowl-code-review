@@ -4,6 +4,17 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- Published-review ordering (presentation, #10/#22): on a PR's first review, the **walkthrough summary comment
+  now appears above the flagged-findings review** in the conversation timeline, instead of below it. GitHub
+  orders the timeline by creation time, and prowl-review previously created the review before the summary
+  comment, so the findings landed on top. `submitReview` now **seeds the summary comment first** (with an empty
+  #12 fingerprint marker), then posts the review, then updates the summary with the real posted-fingerprint
+  marker — preserving retry-safety (a failed review submission never persists fingerprints for inline comments
+  that don't exist; the inline markers remain the recovery source). Re-runs are unchanged (the existing summary
+  is updated in place and stays above later reviews), so this is a first-run-only reorder. `OctokitLike`'s
+  `issues.createComment` now returns the created comment id.
+
 ### Changed
 - Default Anthropic model is now **`claude-haiku-4-5`** (was `claude-sonnet-4-6`). This moves the out-of-box
   default toward lower cost and latency while keeping prowl-review's multi-pass specialists, judge/dedup,
