@@ -29,6 +29,7 @@ import {
 import {
   generateAssist as defaultGenerateAssist,
   assistLabel,
+  sanitizeAssistMarkdown,
   type AssistInput,
   type AssistKind
 } from "../../review/generate.js";
@@ -397,6 +398,7 @@ export interface GenerateHandlerDeps {
   ) => Promise<{ content: string; usage: TokenUsage }>;
   postIssueComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
   postReviewReply?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number, body: string) => Promise<void>;
+  fetchReviewCommentBody?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number) => Promise<string | undefined>;
 }
 
 /**
@@ -420,6 +422,7 @@ export async function generateForComment(params: {
   const generate = params.deps?.generate ?? defaultGenerateAssist;
   const postIssueComment = params.deps?.postIssueComment ?? postPullRequestComment;
   const postReviewReply = params.deps?.postReviewReply ?? replyToReviewComment;
+  const fetchReviewCommentBody = params.deps?.fetchReviewCommentBody ?? defaultFetchReviewCommentBody;
 
   const { meta, diff } = await fetchPr(params.octokit, params.ref);
   const parsed = parseDiff(diff);
@@ -431,17 +434,26 @@ export async function generateForComment(params: {
   const redactedDiff = redactSecrets(rendered).text;
   const diffNote = guarded.truncated ? "\n\n(diff truncated to fit the context)" : "";
 
+  const parentCommentBody =
+    params.event.parentCommentId !== undefined
+      ? await fetchReviewCommentBody(params.octokit, params.ref, params.event.parentCommentId)
+      : undefined;
+  const thread =
+    params.event.thread && parentCommentBody
+      ? { ...params.event.thread, parentCommentBody }
+      : params.event.thread;
+
   const input: AssistInput = {
     kind: params.kind,
     prTitle: meta.title,
     prBody: meta.body,
     diff: `${redactedDiff}${diffNote}`,
     guidelines: params.guidelines,
-    thread: safeThreadContext(params.event.thread, parsed.files)
+    thread: safeThreadContext(thread, parsed.files)
   };
   const { content } = await generate(input, { config: params.config, maxTokens: params.maxTokens });
-  // The output is our bot's own; redact defensively in case the model echoed a secret.
-  const safeContent = redactSecrets(content).text;
+  // The output is our bot's own; sanitize + redact defensively at the post boundary.
+  const safeContent = sanitizeAssistMarkdown(redactSecrets(content).text);
   const body = `${safeContent}\n\n<sub>🦝 prowl-review — generated ${assistLabel(params.kind)} for your \`&#64;prowl-review ${params.kind}\` request. Review before committing.</sub>`;
 
   if (params.event.isReviewComment && params.event.commentId !== undefined) {

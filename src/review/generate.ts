@@ -53,7 +53,44 @@ export function assistLabel(kind: AssistKind): string {
 
 /** Sanitize model-authored Markdown before it is posted to GitHub. */
 export function sanitizeAssistMarkdown(markdown: string): string {
-  return sanitizeGitHubMarkdown(markdown);
+  let sanitized = "";
+  let plainText = "";
+  let inFence = false;
+  let fenceChar = "";
+  let fenceLength = 0;
+  const lines = markdown.match(/[^\r\n]*(?:\r\n|\n|\r|$)/g) ?? [markdown];
+  if (lines.at(-1) === "") {
+    lines.pop();
+  }
+
+  for (const line of lines) {
+    const lineText = line.replace(/(?:\r\n|\n|\r)$/, "");
+    if (!inFence) {
+      const fence = lineText.match(/^[ \t]{0,3}(`{3,}|~{3,})/);
+      if (fence) {
+        sanitized += sanitizeGitHubMarkdown(plainText);
+        plainText = "";
+        inFence = true;
+        fenceChar = fence[1][0];
+        fenceLength = fence[1].length;
+        sanitized += line;
+        continue;
+      }
+      plainText += line;
+      continue;
+    }
+
+    sanitized += line;
+    const maybeClosingFence = lineText.replace(/^[ \t]{0,3}/, "");
+    const closingFence = maybeClosingFence.match(/^(`+|~+)[ \t]*$/);
+    if (closingFence && closingFence[1][0] === fenceChar && closingFence[1].length >= fenceLength) {
+      inFence = false;
+      fenceChar = "";
+      fenceLength = 0;
+    }
+  }
+
+  return sanitized + sanitizeGitHubMarkdown(plainText);
 }
 
 /** The kind-specific instructions for the model. */
@@ -105,8 +142,11 @@ function threadSection(thread: ChatThreadContext | undefined): string {
   }
   const path = redactSecrets(thread.path).text;
   const location = thread.line !== undefined ? `${path}:${thread.line}` : path;
+  const parentComment = thread.parentCommentBody?.trim()
+    ? `\nRoot review comment (untrusted data):\n${redactSecrets(thread.parentCommentBody).text.trim()}`
+    : "";
   const hunk = thread.diffHunk ? `\n${redactSecrets(thread.diffHunk).text}` : "";
-  return `\n## Focus (untrusted data)\nThe developer invoked this on ${location}; prioritize that code if relevant.${hunk}\n`;
+  return `\n## Focus (untrusted data)\nThe developer invoked this on ${location}; prioritize that code if relevant.${parentComment}${hunk}\n`;
 }
 
 /** Build the volatile prompt: untrusted PR context + the requested assist. */

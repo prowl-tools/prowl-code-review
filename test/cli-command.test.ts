@@ -800,7 +800,8 @@ describe("generateForComment (#33)", () => {
         usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
       })),
       postIssueComment: vi.fn(async () => {}),
-      postReviewReply: vi.fn(async () => {})
+      postReviewReply: vi.fn(async () => {}),
+      fetchReviewCommentBody: vi.fn(async () => "Parent finding body")
     };
   }
 
@@ -837,5 +838,53 @@ describe("generateForComment (#33)", () => {
     );
     await generateForComment({ octokit, ref, event: { ...baseEvent }, kind: "docstrings", config, deps });
     expect(deps.generate.mock.calls[0][0].diff).not.toContain(AWS_ACCESS_KEY);
+  });
+
+  it("includes the parent review comment body for inline reply assists", async () => {
+    const deps = genDeps();
+    await generateForComment({
+      octokit,
+      ref,
+      event: {
+        ...baseEvent,
+        isReviewComment: true,
+        commentId: 42,
+        parentCommentId: 42,
+        thread: { path: "x.ts", line: 1, diffHunk: "@@ -1 +1 @@\n+export const f = () => 1;" }
+      },
+      kind: "tests",
+      config,
+      deps
+    });
+
+    expect(deps.fetchReviewCommentBody).toHaveBeenCalledWith(octokit, ref, 42);
+    expect(deps.generate.mock.calls[0][0].thread).toEqual({
+      path: "x.ts",
+      line: 1,
+      parentCommentBody: "Parent finding body",
+      diffHunk: "@@ -1 +1 @@\n+export const f = () => 1;"
+    });
+  });
+
+  it("sanitizes generated assists at the posting boundary while preserving fenced code", async () => {
+    const deps = genDeps();
+    deps.generate.mockResolvedValueOnce({
+      content: [
+        "@team <script>alert(1)</script>",
+        "```tsx",
+        "import { render } from '@testing-library/react';",
+        "const ok = a < b;",
+        "```"
+      ].join("\n"),
+      usage: { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 }
+    });
+
+    await generateForComment({ octokit, ref, event: { ...baseEvent }, kind: "docstrings", config, deps });
+
+    const body = deps.postIssueComment.mock.calls[0][2];
+    expect(body).toContain("&#64;team &lt;script>alert(1)&lt;/script>");
+    expect(body).toContain("import { render } from '@testing-library/react';");
+    expect(body).toContain("const ok = a < b;");
+    expect(body).not.toContain("<script>");
   });
 });
