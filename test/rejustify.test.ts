@@ -144,7 +144,7 @@ describe("buildRejustifyReply (#22)", () => {
   it("frames a withdrawal", () => {
     const body = buildRejustifyReply({ decision: "withdraw", reasoning: "You're right, the caller guards it." });
     expect(body).toContain("Withdrawing this finding");
-    expect(body).toContain("resolved the thread");
+    expect(body).toContain("Thanks for the correction");
   });
 
   it("redacts a secret echoed into the reasoning", () => {

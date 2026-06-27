@@ -794,7 +794,7 @@ export interface ThreadTidyResult {
   keptOpenDisputed: number;
   /** Disputed findings the judge re-justified and defended in-thread (#22). */
   defended: number;
-  /** Disputed findings the judge withdrew (conceded + thread resolved) (#22). */
+  /** Disputed findings the judge withdrew after posting a concession reply (#22). */
   withdrawn: number;
   /** Prior inline fingerprints that may be posted again because the old thread was fixed. */
   repostableFindings: string[];
@@ -947,6 +947,7 @@ async function tidyReviewThreads(params: {
 
   const acknowledged = new Set(plan.suppress.acknowledged);
   const disputed = new Set(plan.suppress.disputed);
+  const rejustificationWithdrawn = new Set(plan.suppress.withdrawn);
   const approvalBlockingSettled = params.resolveStaleThreads ? 0 : acknowledged.size;
   let withheldSettled = 0;
   let withheldDisputed = 0;
@@ -955,6 +956,8 @@ async function tidyReviewThreads(params: {
     const fingerprint = fingerprintByCandidate.get(finding)!;
     if (acknowledged.has(fingerprint)) {
       withheldSettled += 1;
+    } else if (rejustificationWithdrawn.has(fingerprint)) {
+      // Already withdrawn by a prior bot concession; suppress without blocking approval.
     } else if (disputed.has(fingerprint)) {
       withheldDisputed += 1;
     }
@@ -1010,6 +1013,9 @@ async function tidyReviewThreads(params: {
       }
       const verdict = outcome.verdict;
       const replyBody = buildRejustifyReply(verdict);
+      if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
+        break;
+      }
       const replied = params.replyToThread
         ? await params.replyToThread(params.octokit, thread.id, replyBody)
         : false;
@@ -1017,9 +1023,13 @@ async function tidyReviewThreads(params: {
         continue; // no visible reply — do not act on the verdict
       }
       if (verdict.decision === "withdraw") {
+        withdrawn += 1;
+        withdrawnFingerprints.add(fingerprint);
+        if (params.shouldResolveThread && !(await params.shouldResolveThread())) {
+          break;
+        }
         if (await params.resolveThread(params.octokit, thread.id)) {
-          withdrawn += 1;
-          withdrawnFingerprints.add(fingerprint);
+          // Resolution is best-effort; the posted withdrawal is enough to suppress the finding.
         }
       } else {
         defended += 1;
@@ -1031,6 +1041,7 @@ async function tidyReviewThreads(params: {
     const fingerprint = fingerprintByCandidate.get(finding)!;
     return (
       !acknowledged.has(fingerprint) &&
+      !rejustificationWithdrawn.has(fingerprint) &&
       !withdrawnFingerprints.has(fingerprint) &&
       (!disputed.has(fingerprint) || defendedFingerprints.has(fingerprint))
     );
@@ -1066,7 +1077,7 @@ async function tidyReviewThreads(params: {
     notes.push(`Re-justified and defended ${defended} disputed finding(s) in-thread after your "disagree" reply (#22).`);
   }
   if (withdrawn > 0) {
-    notes.push(`Withdrew ${withdrawn} disputed finding(s) on re-evaluation and resolved the thread(s) (#22).`);
+    notes.push(`Withdrew ${withdrawn} disputed finding(s) on re-evaluation (#22).`);
   }
   if (unrejustifiedOpen > 0) {
     notes.push(

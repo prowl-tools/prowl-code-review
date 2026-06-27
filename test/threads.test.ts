@@ -7,6 +7,7 @@ import {
   type ReviewThread
 } from "../src/github/threads.js";
 import type { OctokitLike } from "../src/github/client.js";
+import { buildRejustifyReply } from "../src/review/rejustify.js";
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 
@@ -25,7 +26,7 @@ describe("planThreadActions (#22)", () => {
   it("resolves a thread whose finding is gone from this run (fixed)", () => {
     const plan = planThreadActions({ threads: [thread({ fingerprints: ["gone"] })], currentFingerprints: ["fp1"] });
     expect(plan.resolve).toEqual([{ id: "T1", reason: "fixed", fingerprints: ["gone"] }]);
-    expect(plan.suppress).toEqual({ acknowledged: [], disputed: [] });
+    expect(plan.suppress).toEqual({ acknowledged: [], disputed: [], withdrawn: [] });
     expect(plan.repostable).toEqual([]);
   });
 
@@ -100,6 +101,7 @@ describe("planThreadActions (#22)", () => {
     ]);
     expect(plan.suppress.acknowledged.sort()).toEqual(["ack", "wf"]);
     expect(plan.suppress.disputed).toEqual([]);
+    expect(plan.suppress.withdrawn).toEqual([]);
   });
 
   it("keeps a disputed thread open and suppresses its finding (not blindly re-raised)", () => {
@@ -114,6 +116,18 @@ describe("planThreadActions (#22)", () => {
     expect(plan.disputedThreads).toEqual([
       { id: "D", fingerprints: ["dis"], humanReplyBody: "I disagree, it's guarded" }
     ]);
+  });
+
+  it("suppresses a bot-withdrawn dispute and retries thread resolution without blocking approval", () => {
+    const plan = planThreadActions({
+      threads: [thread({ id: "D", fingerprints: ["dis"], botRejustification: "withdrawn" })],
+      currentFingerprints: ["dis"]
+    });
+    expect(plan.resolve).toEqual([{ id: "D", reason: "withdrawn", fingerprints: ["dis"] }]);
+    expect(plan.suppress.withdrawn).toEqual(["dis"]);
+    expect(plan.suppress.disputed).toEqual([]);
+    expect(plan.keptOpenDisputed).toBe(0);
+    expect(plan.disputedThreads).toEqual([]);
   });
 
   it("does not expose an already-resolved disputed thread for re-justification", () => {
@@ -269,6 +283,37 @@ describe("fetchReviewThreads (#22)", () => {
     expect(t.fingerprints).toEqual(["fp1"]);
     expect(t.humanIntent).toBe("other");
     expect(t.humanReplyBody).toBeUndefined();
+  });
+
+  it("suppresses an already-withdrawn dispute until a newer human dispute arrives", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "I disagree, this is guarded.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            {
+              body: buildRejustifyReply({ decision: "withdraw", reasoning: "The objection is correct." }),
+              author: { login: "prowl-bot", __typename: "Bot" }
+            }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.fingerprints).toEqual(["fp1"]);
+    expect(t.humanIntent).toBe("other");
+    expect(t.humanReplyBody).toBeUndefined();
+    expect(t.botRejustification).toBe("withdrawn");
   });
 
   it("re-exposes a defended dispute when the human replies again", async () => {

@@ -217,6 +217,8 @@ export {
   buildRejustifySystem,
   buildRejustifyPrompt,
   buildRejustifyReply,
+  REJUSTIFICATION_REPLY_MARKER,
+  REJUSTIFICATION_WITHDRAW_REPLY_PREFIX,
   RejustifyVerdictSchema,
   type RejustifyInput,
   type RejustifyOptions,
