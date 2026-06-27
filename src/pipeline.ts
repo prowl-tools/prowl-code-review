@@ -848,6 +848,30 @@ function buildRejustificationContextNote(params: {
   return `No cross-file context was available. ${caution}`;
 }
 
+function makeRejustifier(params: {
+  enabled: boolean;
+  rejustifyFn: NonNullable<PipelineDeps["rejustifyDisputedFinding"]>;
+  config: ProviderConfig;
+  diff: string;
+  context?: string;
+  contextNote?: string;
+}): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustificationOutcome | null>) | undefined {
+  if (!params.enabled) {
+    return undefined;
+  }
+  return async (input) => {
+    const rejustifyInput: RejustifyInput = {
+      finding: input.finding,
+      diff: params.diff,
+      ...(params.contextNote !== undefined ? { contextNote: params.contextNote } : {}),
+      ...(params.context !== undefined ? { context: params.context } : {}),
+      ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {})
+    };
+    const result = await params.rejustifyFn(rejustifyInput, { config: params.config });
+    return { ...(result.ok && result.verdict ? { verdict: result.verdict } : {}), usage: result.usage };
+  };
+}
+
 async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
   resolveThread: NonNullable<PipelineDeps["resolveReviewThread"]>;
@@ -1400,29 +1424,6 @@ export async function reviewPullRequest(
   const fetchHeadSha = deps.fetchHeadSha ?? defaultFetchPullRequestHeadSha;
   const tidyThreadsEnabled = options.resolveThreads !== false;
   const rejustifyDisputedEnabled = options.rejustifyDisputed !== false;
-  // Build the disputed-finding re-justifier bound to this run's provider config +
-  // diff/context (#22). Undefined when disabled → tidy falls back to withholding.
-  const makeRejustifier = (
-    diff: string,
-    context?: string,
-    contextNote?: string
-  ): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustificationOutcome | null>) | undefined =>
-    rejustifyDisputedEnabled
-      ? async (input) => {
-          const rejustifyInput: RejustifyInput = {
-            finding: input.finding,
-            diff,
-            ...(contextNote !== undefined ? { contextNote } : {}),
-            ...(context !== undefined ? { context } : {}),
-            ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {})
-          };
-          const result = await rejustifyFn(
-            rejustifyInput,
-            { config }
-          );
-          return { ...(result.ok && result.verdict ? { verdict: result.verdict } : {}), usage: result.usage };
-        }
-      : undefined;
   const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
@@ -1827,7 +1828,13 @@ export async function reviewPullRequest(
           enabled: tidyThreadsEnabled,
           dryRun: options.dryRun === true,
           shouldResolveThread,
-          rejustify: makeRejustifier(diffText, undefined, noReviewFilesRejustificationContextNote),
+          rejustify: makeRejustifier({
+            enabled: rejustifyDisputedEnabled,
+            rejustifyFn,
+            config,
+            diff: diffText,
+            contextNote: noReviewFilesRejustificationContextNote
+          }),
           replyToThread
         });
     const totalUsage = addUsage(usageBeforeTidy, tidied.usage);
@@ -2157,7 +2164,14 @@ export async function reviewPullRequest(
         enabled: tidyThreadsEnabled,
         dryRun: options.dryRun === true,
         shouldResolveThread,
-        rejustify: makeRejustifier(diffText, reviewContext, rejustificationContextNote),
+        rejustify: makeRejustifier({
+          enabled: rejustifyDisputedEnabled,
+          rejustifyFn,
+          config,
+          diff: diffText,
+          ...(reviewContext !== undefined ? { context: reviewContext } : {}),
+          ...(rejustificationContextNote !== undefined ? { contextNote: rejustificationContextNote } : {})
+        }),
         replyToThread
       });
   const totalUsage = addUsage(usageBeforeTidy, tidied.usage);

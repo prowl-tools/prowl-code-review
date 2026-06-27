@@ -386,6 +386,37 @@ describe("fetchReviewThreads (#22)", () => {
     expect(t.humanReplyBody).toBe("I still disagree.");
   });
 
+  it("lets a newer human dispute override an earlier withdrawal marker", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "I disagree, this is guarded.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            {
+              body: buildRejustifyReply({ decision: "withdraw", reasoning: "The objection is correct." }),
+              author: { login: "prowl-bot", __typename: "Bot" }
+            },
+            { body: "I still disagree after another run.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.humanIntent).toBe("disagree");
+    expect(t.humanReplyBody).toBe("I still disagree after another run.");
+    expect(t.botRejustification).toBeUndefined();
+  });
+
   it("ignores non-user comments when classifying human intent", async () => {
     const { octokit } = mockOctokit([
       {

@@ -1429,6 +1429,50 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.payload.body).toContain("Deferred 2 additional disputed finding re-justification");
     });
 
+    it("stops the re-justification queue when the head advances between disputed threads (#22)", async () => {
+      const disputedFindings = [
+        finding({ line: 2, title: "Bug 1", body: "body 1", severity: "critical" }),
+        finding({ line: 3, title: "Bug 2", body: "body 2", severity: "critical" })
+      ];
+      const fetchReviewThreads = vi.fn(async () =>
+        disputedFindings.map((item, index) =>
+          thread({
+            id: `D${index}`,
+            fingerprints: [findingFingerprint(item)],
+            humanIntent: "disagree",
+            humanReplyBody: "I disagree"
+          })
+        )
+      );
+      const fetchHeadSha = vi.fn()
+        .mockResolvedValueOnce("head")
+        .mockResolvedValueOnce("head")
+        .mockResolvedValueOnce("head")
+        .mockResolvedValue("new-head");
+      const replyToReviewThread = vi.fn(async () => true);
+      const rejustifyDisputedFinding = vi.fn(async () => ({
+        ok: true as const,
+        verdict: { decision: "defend" as const, reasoning: "The code still exhibits the issue." },
+        usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 }
+      }));
+      const deps = {
+        ...makeDeps(),
+        fetchReviewThreads,
+        fetchHeadSha,
+        replyToReviewThread,
+        rejustifyDisputedFinding
+      };
+      deps.runReview.mockResolvedValue(reviewResult(disputedFindings));
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(rejustifyDisputedFinding).toHaveBeenCalledTimes(1);
+      expect(replyToReviewThread).toHaveBeenCalledTimes(1);
+      expect(result.threads?.defended).toBe(1);
+      expect(result.threads?.keptOpenDisputed).toBe(1);
+      expect(result.headAdvanced).toBe(true);
+    });
+
     it("falls back to withholding when re-justification is disabled (#22)", async () => {
       const fp = findingFingerprint(finding({ severity: "critical" }));
       const fetchReviewThreads = vi.fn(async () => [
