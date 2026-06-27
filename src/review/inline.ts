@@ -77,6 +77,7 @@ const SEVERITY_ORDER: Severity[] = ["critical", "major", "minor", "trivial", "in
 const PROWL_REVIEW_SUMMARY_MARKER_RE = /<\s*!\s*--\s*prowl-review:summary\s*--\s*>/gi;
 const PROWL_REVIEW_STATE_MARKER_RE = /<\s*!\s*--\s*prowl-review:state\b[\s\S]*?--\s*>/gi;
 const PUBLISHED_REVIEW_DETAIL_PREFIX = "\n\n---\n\n### Review details\n\n";
+const PUBLISHED_REVIEW_BODY_LIMIT = GITHUB_COMMENT_BODY_LIMIT;
 const PUBLISHED_REVIEW_TRUNCATION_NOTICE =
   "\n\n[review details truncated to keep the GitHub review body within the body size limit]";
 
@@ -111,12 +112,12 @@ function appendPublishedReviewDetails(body: string, detailsBody: string | undefi
   }
 
   const full = `${body}${PUBLISHED_REVIEW_DETAIL_PREFIX}${details}`;
-  if (full.length <= GITHUB_COMMENT_BODY_LIMIT) {
+  if (full.length <= PUBLISHED_REVIEW_BODY_LIMIT) {
     return full;
   }
 
   const detailBudget =
-    GITHUB_COMMENT_BODY_LIMIT -
+    PUBLISHED_REVIEW_BODY_LIMIT -
     body.length -
     PUBLISHED_REVIEW_DETAIL_PREFIX.length -
     PUBLISHED_REVIEW_TRUNCATION_NOTICE.length;
