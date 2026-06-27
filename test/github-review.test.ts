@@ -53,7 +53,8 @@ function mockOctokit(
       return { data: priorReviews.slice(start, start + perPage) };
     }
   );
-  const createComment = vi.fn(async () => ({ data: {} }));
+  let nextCommentId = 9000;
+  const createComment = vi.fn(async () => ({ data: { id: (nextCommentId += 1) } }));
   const updateComment = vi.fn(async () => ({ data: {} }));
   const createReview = vi.fn(async () => ({ data: {} }));
   const createReplyForReviewComment = vi.fn(async () => ({ data: {} }));
@@ -347,12 +348,18 @@ describe("fetchReviewCommentBody", () => {
 });
 
 describe("submitReview", () => {
-  it("creates the summary comment and posts inline findings as one review on a first run", async () => {
+  it("seeds the summary before the review on a first run so it sits above the findings", async () => {
     const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
-    expect(updateComment).not.toHaveBeenCalled();
+    // Order: seed summary (earlier timestamp → above the review) → post review →
+    // update the summary with the posted fingerprints (#22 ordering / #12 marker).
+    expect(createComment).toHaveBeenCalledTimes(1);
     expect(createReview).toHaveBeenCalledTimes(1);
+    expect(updateComment).toHaveBeenCalledTimes(1);
+    expect(createComment.mock.invocationCallOrder[0]).toBeLessThan(createReview.mock.invocationCallOrder[0]);
+    expect(createReview.mock.invocationCallOrder[0]).toBeLessThan(updateComment.mock.invocationCallOrder[0]);
+
     const review = createReview.mock.calls[0][0] as {
       commit_id?: string;
       event?: string;
@@ -371,11 +378,22 @@ describe("submitReview", () => {
     expect(review.comments).toHaveLength(1);
     expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
     expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
-    expect(createComment).toHaveBeenCalledTimes(1);
-    const created = createComment.mock.calls[0][0] as { body: string; issue_number: number };
-    expect(created.issue_number).toBe(12);
-    expect(created.body).toContain("prowl-review:state"); // state embedded
-    expect(parseState(created.body)?.postedFindings).toEqual(["fp-a"]);
+
+    // The seed records no reviewed SHA or posted fingerprints yet; the post-review
+    // update writes the real marker.
+    const seeded = createComment.mock.calls[0][0] as { body: string; issue_number: number };
+    expect(seeded.issue_number).toBe(12);
+    expect(seeded.body).toContain("prowl-review:state");
+    const seedState = parseState(seeded.body);
+    expect(seedState?.lastReviewedSha).toBeUndefined();
+    expect(seedState?.postedFindings).toEqual([]);
+    const updated = updateComment.mock.calls[0][0] as { comment_id: number; body: string };
+    expect(updated.comment_id).toBe(9001); // the seeded comment's id (from mock createComment)
+    expect(parseState(updated.body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head",
+      postedFindings: ["fp-a"]
+    });
   });
 
   it("updates the prior summary in place and skips already-posted inline findings", async () => {
@@ -412,7 +430,7 @@ describe("submitReview", () => {
       { commitId: "head2", headSha: "head2", preservePriorSummary: true }
     );
 
-    expect(updateComment).not.toHaveBeenCalled();
+    // A fresh summary is seeded + updated; the prior summary (id 77) is left untouched.
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { comments?: Array<{ body?: string }> };
     expect(review.comments).toHaveLength(1);
@@ -420,10 +438,29 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string };
     expect(created.body).toContain("new delta summary");
-    expect(parseState(created.body)).toEqual({
+    expect(parseState(created.body)?.lastReviewedSha).toBeUndefined();
+    expect(updateComment).toHaveBeenCalledTimes(1);
+    const updated = updateComment.mock.calls[0][0] as { comment_id: number; body: string };
+    expect(updated.comment_id).not.toBe(77); // the seeded fresh comment, not the preserved prior
+    expect(parseState(updated.body)).toEqual({
       v: 1,
       lastReviewedSha: "head2",
       postedFindings: ["fp-a", "fp-b"]
+    });
+  });
+
+  it("creates the final summary directly on a first comment run with no inline findings", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+
+    await submitReview(octokit, ref, payload({ comments: [] }), { headSha: "head-empty" });
+
+    expect(createReview).not.toHaveBeenCalled();
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-empty",
+      postedFindings: []
     });
   });
 
@@ -523,7 +560,14 @@ describe("submitReview", () => {
       "github unavailable"
     );
 
-    expect(createComment).not.toHaveBeenCalled();
+    // The summary is seeded before the review, but with NO posted fingerprints, so a
+    // failed review never persists a reviewed SHA or fingerprints for comments that
+    // don't exist (#12).
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      postedFindings: []
+    });
     expect(updateComment).not.toHaveBeenCalled();
   });
 
@@ -546,7 +590,12 @@ describe("submitReview", () => {
 
   it("re-checks the publish guard after the summary re-read", async () => {
     const { octokit, listComments, createComment, updateComment, createReview } = mockOctokit([]);
-    const shouldPublish = vi.fn().mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+    // Three guard passes now: seed summary, post review, then the final summary write.
+    const shouldPublish = vi
+      .fn()
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(true)
+      .mockResolvedValueOnce(false);
 
     const result = await submitReview(octokit, ref, payload(), {
       commitId: "head",
@@ -555,12 +604,13 @@ describe("submitReview", () => {
     });
 
     expect(result).toEqual({ posted: true, cancelled: true });
-    expect(shouldPublish).toHaveBeenCalledTimes(2);
+    expect(shouldPublish).toHaveBeenCalledTimes(3);
     expect(listComments).toHaveBeenCalledTimes(2);
-    expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[1]);
-    // Inline finding posted on the first guard pass; summary write cancelled on the second.
+    expect(listComments.mock.invocationCallOrder[1]).toBeLessThan(shouldPublish.mock.invocationCallOrder[2]);
+    // Summary seeded + review posted on the first two guard passes; the final summary
+    // write (update) is cancelled on the third.
     expect(createReview).toHaveBeenCalledTimes(1);
-    expect(createComment).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1); // the seed
     expect(updateComment).not.toHaveBeenCalled();
   });
 
@@ -844,7 +894,7 @@ describe("submitReview", () => {
       body: "noise",
       user: { login: "github-actions[bot]" }
     }));
-    const { octokit, createComment, createReview, listReviewComments } = mockOctokit(
+    const { octokit, createComment, updateComment, createReview, listReviewComments } = mockOctokit(
       [],
       [...filler, { body: "old inline\n\n<!-- prowl-review:finding fp-a -->", user: { login: "github-actions[bot]" } }]
     );
@@ -852,10 +902,12 @@ describe("submitReview", () => {
     await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
 
     expect(listReviewComments).toHaveBeenCalledTimes(10);
-    // Recovery caps before reaching fp-a (page 11), so it posts as net-new.
+    // Recovery caps before reaching fp-a (page 11), so it posts as net-new: the
+    // summary is seeded (empty marker), the review posts, then the marker is updated.
     expect(createReview).toHaveBeenCalledTimes(1);
     expect(createComment).toHaveBeenCalledTimes(1);
-    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
+    expect(updateComment).toHaveBeenCalledTimes(1);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([
       "fp-a"
     ]);
   });
