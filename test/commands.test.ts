@@ -32,6 +32,15 @@ describe("parseCommand (#26)", () => {
     expect(parseCommand("@prowl-review breakglass abc123")).toEqual({ verb: "break-glass", argument: "abc123" });
   });
 
+  it("parses the docstrings/tests generation verbs and their aliases (#33)", () => {
+    expect(parseCommand("@prowl-review docstrings")).toEqual({ verb: "docstrings", argument: "" });
+    expect(parseCommand("@prowl-review docstring")).toEqual({ verb: "docstrings", argument: "" });
+    expect(parseCommand("@prowl-review docs")).toEqual({ verb: "docstrings", argument: "" });
+    expect(parseCommand("@prowl-review doc")).toEqual({ verb: "docstrings", argument: "" });
+    expect(parseCommand("@prowl-review tests")).toEqual({ verb: "tests", argument: "" });
+    expect(parseCommand("@prowl-review test")).toEqual({ verb: "tests", argument: "" });
+  });
+
   it("maps a bare mention to help", () => {
     expect(parseCommand("@prowl-review")).toEqual({ verb: "help", argument: "" });
   });
