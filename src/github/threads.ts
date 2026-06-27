@@ -8,6 +8,10 @@ import {
   isResolvingIntent,
   type ReplyIntent
 } from "../review/reply-intent.js";
+import {
+  REJUSTIFICATION_REPLY_MARKER,
+  REJUSTIFICATION_WITHDRAW_REPLY_PREFIX
+} from "../review/rejustify.js";
 
 /**
  * Review-thread tidy-up (backlog #22 remainder): resolve fixed/settled finding
@@ -49,6 +53,8 @@ export interface ReviewThread {
   humanIntent: ReplyIntent;
   /** Body of the decisive human reply, kept for re-justification context (#22). */
   humanReplyBody?: string;
+  /** Latest bot withdrawal reply after a human dispute, if any. */
+  botRejustification?: "withdrawn";
 }
 
 /** Why a thread is being resolved (for the audit note). */
@@ -70,10 +76,10 @@ export interface ThreadActionPlan {
   resolve: Array<{ id: string; reason: ThreadResolveReason; fingerprints: string[] }>;
   /**
    * Fingerprints to withhold from this run's findings: ones the human settled
-   * (won't-fix/acknowledged) or disputed (disagree), so the reviewer stops
-   * re-raising them.
+   * (won't-fix/acknowledged), disputed (disagree), or that the bot already
+   * withdrew after re-justification, so the reviewer stops re-raising them.
    */
-  suppress: { acknowledged: string[]; disputed: string[] };
+  suppress: { acknowledged: string[]; disputed: string[]; withdrawn: string[] };
   /** Open disputed threads the re-justification pass may defend or withdraw (#22). */
   disputedThreads: DisputedThread[];
   /** Count of disputed threads left open for the human (kept, not resolved). */
@@ -105,6 +111,7 @@ export function planThreadActions(input: {
   const resolve: ThreadActionPlan["resolve"] = [];
   const acknowledged = new Set<string>();
   const disputed = new Set<string>();
+  const withdrawn = new Set<string>();
   const disputedThreads: DisputedThread[] = [];
   const repostable = new Set<string>();
   const openThreadFingerprints = new Set<string>();
@@ -118,6 +125,14 @@ export function planThreadActions(input: {
 
   for (const thread of input.threads) {
     if (thread.fingerprints.length === 0) {
+      continue;
+    }
+
+    if (thread.botRejustification === "withdrawn") {
+      thread.fingerprints.forEach((fp) => withdrawn.add(fp));
+      if (!thread.isResolved) {
+        resolve.push({ id: thread.id, reason: "withdrawn", fingerprints: [...thread.fingerprints] });
+      }
       continue;
     }
 
@@ -166,7 +181,7 @@ export function planThreadActions(input: {
 
   return {
     resolve,
-    suppress: { acknowledged: [...acknowledged], disputed: [...disputed] },
+    suppress: { acknowledged: [...acknowledged], disputed: [...disputed], withdrawn: [...withdrawn] },
     disputedThreads,
     keptOpenDisputed,
     repostable: [...repostable]
@@ -179,16 +194,20 @@ interface ReviewThreadCommentNode {
   author?: { login?: string | null; __typename?: string | null } | null;
 }
 
-const REJUSTIFICATION_REPLY_MARKER = "re-evaluated after your reply (#22)";
-
-function latestRejustificationReplyIndex(comments: Array<ReviewThreadCommentNode | null>, login: string): number {
+function latestRejustificationReply(
+  comments: Array<ReviewThreadCommentNode | null>,
+  login: string
+): { index: number; outcome: "defended" | "withdrawn" } | undefined {
   for (let i = comments.length - 1; i >= 0; i -= 1) {
     const comment = comments[i];
     if (comment?.author?.login === login && comment.body?.includes(REJUSTIFICATION_REPLY_MARKER)) {
-      return i;
+      return {
+        index: i,
+        outcome: comment.body.includes(REJUSTIFICATION_WITHDRAW_REPLY_PREFIX) ? "withdrawn" : "defended"
+      };
     }
   }
-  return -1;
+  return undefined;
 }
 
 /** GraphQL shape for the review-threads query (only the fields we read). */
@@ -288,7 +307,8 @@ export async function fetchReviewThreads(
         const fingerprints = new Set<string>();
         let humanIntent: ReplyIntent = "other";
         let humanReplyBody: string | undefined;
-        const newestRejustificationReplyIndex = latestRejustificationReplyIndex(recentComments, login);
+        const newestRejustification = latestRejustificationReply(recentComments, login);
+        let botRejustification: ReviewThread["botRejustification"];
         for (const comment of comments) {
           if (!comment) {
             continue;
@@ -322,9 +342,12 @@ export async function fetchReviewThreads(
           }
           const intent = classifyReplyIntent(comment.body ?? undefined);
           if (intent !== "other") {
-            if (isDisputingIntent(intent) && newestRejustificationReplyIndex > i) {
+            if (isDisputingIntent(intent) && (newestRejustification?.index ?? -1) > i) {
               humanIntent = "other";
               humanReplyBody = undefined;
+              if (newestRejustification?.outcome === "withdrawn") {
+                botRejustification = "withdrawn";
+              }
             } else {
               humanIntent = intent;
               humanReplyBody = comment.body ?? undefined;
@@ -338,7 +361,8 @@ export async function fetchReviewThreads(
           isOutdated: node.isOutdated === true,
           fingerprints: [...fingerprints],
           humanIntent,
-          ...(humanReplyBody !== undefined ? { humanReplyBody } : {})
+          ...(humanReplyBody !== undefined ? { humanReplyBody } : {}),
+          ...(botRejustification !== undefined ? { botRejustification } : {})
         });
       }
 

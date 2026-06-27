@@ -79,6 +79,12 @@ const OUTPUT_SPEC = [
   "plainly and briefly. Be respectful and concrete; this reasoning is posted as a public reply."
 ].join("\n");
 
+/** Stable marker used by thread fetchers to identify prior re-justification replies. */
+export const REJUSTIFICATION_REPLY_MARKER = "re-evaluated after your reply (#22)";
+
+/** Stable public prefix used to distinguish withdrawal replies from defended replies. */
+export const REJUSTIFICATION_WITHDRAW_REPLY_PREFIX = "**Withdrawing this finding.**";
+
 /** Build the shared (trusted) re-justification system block. */
 export function buildRejustifySystem(): string {
   return [
@@ -189,7 +195,7 @@ export function buildRejustifyReply(verdict: RejustifyVerdict): string {
   const safeReasoning = sanitizeGitHubMarkdown(redactSecrets(verdict.reasoning.trim()).text);
   const header =
     verdict.decision === "withdraw"
-      ? "**Withdrawing this finding.** Thanks for the correction — I've resolved the thread."
+      ? `${REJUSTIFICATION_WITHDRAW_REPLY_PREFIX} Thanks for the correction.`
       : "**Standing by this finding.** Here's why, on reflection:";
-  return `${header}\n\n${safeReasoning}\n\n<sub>🦝 prowl-review — re-evaluated after your reply (#22). Reply again to keep the discussion going.</sub>`;
+  return `${header}\n\n${safeReasoning}\n\n<sub>🦝 prowl-review — ${REJUSTIFICATION_REPLY_MARKER}. Reply again to keep the discussion going.</sub>`;
 }
