@@ -359,6 +359,7 @@ function toGitHubComment(comment: ReviewComment) {
   };
 }
 
+/** Return true when comments alone would leave a request-changes review without current finding details. */
 function shouldIncludeVerdictDetails(payload: ReviewPayload, newInline: ReviewComment[]): boolean {
   if (payload.event !== "REQUEST_CHANGES") {
     return false;
