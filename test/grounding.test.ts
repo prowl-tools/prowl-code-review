@@ -1,8 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   gatherGrounding,
+  mapWithConcurrency,
   parseEslintJson,
   parseOsvJson,
+  parseSemgrepJson,
   dependencyScanTargets,
   buildGroundingSummary,
   type Exec,
@@ -18,6 +23,28 @@ function eslintOutput(messages: Array<Record<string, unknown>>, filePath = "/rep
 function fakeExec(result: Partial<ExecResult>): Exec {
   return vi.fn(async () => ({ stdout: "", stderr: "", code: 0, ...result }));
 }
+
+describe("mapWithConcurrency", () => {
+  it("returns [] without invoking the mapper for empty input", async () => {
+    const mapper = vi.fn(async (item: number) => item);
+    await expect(mapWithConcurrency([], 3, mapper)).resolves.toEqual([]);
+    expect(mapper).not.toHaveBeenCalled();
+  });
+
+  it("preserves result order while bounding active workers", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const result = await mapWithConcurrency([1, 2, 3, 4], 2, async (item) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return item * 10;
+    });
+    expect(result).toEqual([10, 20, 30, 40]);
+    expect(maxActive).toBe(2);
+  });
+});
 
 describe("parseEslintJson", () => {
   it("maps error→minor and warning→info with relative paths", () => {
@@ -91,6 +118,29 @@ describe("gatherGrounding", () => {
     const eslintCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((c) => c[0] === process.execPath);
     expect(eslintCalls).toHaveLength(0);
     expect(result.findings).toEqual([]);
+  });
+
+  it("bounds concurrent grounding runner command execution", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const exec: Exec = vi.fn(async (command: string): Promise<ExecResult> => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: command === "semgrep" ? semgrepOutput([]) : "[]", stderr: "", code: 0 };
+    });
+
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/b.py", ".env"],
+      trustWorkspace: true,
+      limits: { maxFiles: 1 },
+      dependencyScan: { enabled: false },
+      exec
+    });
+
+    expect(maxActive).toBeLessThanOrEqual(2);
   });
 
   it("skips repo-local ESLint unless the workspace is trusted", async () => {
@@ -476,6 +526,29 @@ describe("gatherGrounding — Gitleaks (#16b)", () => {
     expect(result.notes.join(" ")).toContain("scanned 2/3");
   });
 
+  it("limits parallel Gitleaks file scans", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const exec: Exec = vi.fn(async (command: string): Promise<ExecResult> => {
+      if (command !== "gitleaks") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return { stdout: "[]", stderr: "", code: 0 };
+    });
+    const changedPaths = Array.from({ length: 9 }, (_, index) => `secrets/${index}.env`);
+
+    await gatherGrounding({ root: ROOT, changedPaths, limits: { maxFiles: changedPaths.length }, exec });
+
+    const gitleaksCalls = (exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "gitleaks");
+    expect(gitleaksCalls).toHaveLength(changedPaths.length);
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(2);
+  });
+
   it("does not invoke Gitleaks when there are no safe changed paths", async () => {
     const exec = execByTool({ gitleaks: { stdout: gitleaksJson, code: 1 } });
     const result = await gatherGrounding({ root: ROOT, changedPaths: [], exec });
@@ -853,5 +926,465 @@ describe("dependency scanning via gatherGrounding (#34)", () => {
       exec
     });
     expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "osv-scanner")).toBeUndefined();
+  });
+});
+
+/** Semgrep `--json` output with one result. */
+function semgrepOutput(results: Array<Record<string, unknown>>): string {
+  return JSON.stringify({ results, errors: [], paths: { scanned: [] } });
+}
+
+/** Arg-aware exec that answers the semgrep command (everything else: no findings). */
+function execForSemgrep(result: Partial<ExecResult>): Exec {
+  return vi.fn(async (command: string): Promise<ExecResult> => {
+    const base = { stdout: command === "semgrep" ? "" : "[]", stderr: "", code: 0 };
+    return command === "semgrep" ? { ...base, ...result } : base;
+  });
+}
+
+const SEMGREP_RESULT = {
+  check_id: "javascript.lang.security.audit.xss",
+  path: "src/a.ts",
+  start: { line: 3 },
+  end: { line: 3 },
+  extra: { message: "Possible XSS sink", severity: "ERROR", metadata: { category: "security" } }
+};
+
+describe("parseSemgrepJson", () => {
+  it("maps a result to a security finding with severity/category", () => {
+    const findings = parseSemgrepJson(ROOT, semgrepOutput([SEMGREP_RESULT]));
+    expect(findings).toEqual([
+      expect.objectContaining({
+        file: "src/a.ts",
+        line: 3,
+        severity: "major",
+        category: "security",
+        title: "javascript.lang.security.audit.xss",
+        confidence: 0.9
+      })
+    ]);
+  });
+
+  it("maps Semgrep severities and non-security categories", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([
+        { ...SEMGREP_RESULT, extra: { message: "critical", severity: "CRITICAL", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/high.ts", extra: { message: "high", severity: "HIGH", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/medium.ts", extra: { message: "medium", severity: "MEDIUM", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, path: "src/low.ts", extra: { message: "low", severity: "LOW", metadata: { category: "security" } } },
+        { ...SEMGREP_RESULT, extra: { message: "perf", severity: "WARNING", metadata: { category: "performance" } } },
+        { ...SEMGREP_RESULT, path: "src/b.ts", extra: { message: "style", severity: "INFO", metadata: { category: "best-practice" } } }
+      ])
+    );
+    expect(findings[0]).toMatchObject({ severity: "critical", category: "security" });
+    expect(findings[1]).toMatchObject({ severity: "major", category: "security" });
+    expect(findings[2]).toMatchObject({ severity: "minor", category: "security" });
+    expect(findings[3]).toMatchObject({ severity: "minor", category: "security" });
+    expect(findings[4]).toMatchObject({ severity: "minor", category: "performance" });
+    expect(findings[5]).toMatchObject({ severity: "info", category: "lint" });
+  });
+
+  it("tolerates non-string Semgrep metadata categories", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([
+        { ...SEMGREP_RESULT, extra: { message: "array category", severity: "ERROR", metadata: { category: ["security"] } } },
+        { ...SEMGREP_RESULT, path: "src/b.ts", extra: { message: "normal category", severity: "WARNING", metadata: { category: "performance" } } }
+      ])
+    );
+    expect(findings).toHaveLength(2);
+    expect(findings[0]).toMatchObject({ severity: "major", category: "security" });
+    expect(findings[1]).toMatchObject({ severity: "minor", category: "performance" });
+  });
+
+  it("normalizes absolute paths and drops results without a line", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([
+        { ...SEMGREP_RESULT, path: "/repo/src/c.ts" },
+        { ...SEMGREP_RESULT, path: "src/d.ts", start: {} }
+      ])
+    );
+    expect(findings).toEqual([expect.objectContaining({ file: "src/c.ts", line: 3 })]);
+  });
+
+  it("returns [] for non-JSON or a missing results array", () => {
+    expect(parseSemgrepJson(ROOT, "not json")).toEqual([]);
+    expect(parseSemgrepJson(ROOT, JSON.stringify({ errors: [] }))).toEqual([]);
+  });
+
+  it("returns [] for malformed Semgrep result shapes", () => {
+    expect(parseSemgrepJson(ROOT, semgrepOutput([{ ...SEMGREP_RESULT, start: { line: "3" } }]))).toEqual([]);
+  });
+
+  it("keeps valid Semgrep results when a sibling result is malformed", () => {
+    const findings = parseSemgrepJson(
+      ROOT,
+      semgrepOutput([{ ...SEMGREP_RESULT, start: { line: "3" } }, { ...SEMGREP_RESULT, path: "src/valid.ts" }])
+    );
+
+    expect(findings).toEqual([expect.objectContaining({ file: "src/valid.ts", line: 3 })]);
+  });
+});
+
+describe("gatherGrounding — Semgrep (#16b)", () => {
+  it("scans changed source files ungated with the default registry pack", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "README.md"],
+      changedLines: { "src/a.ts": [3] },
+      exec // no trustWorkspace — registry ruleset runs ungated
+    });
+    expect(result.findings).toContainEqual(
+      expect.objectContaining({ file: "src/a.ts", line: 3, category: "security", title: SEMGREP_RESULT.check_id })
+    );
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call?.[1]).toEqual([
+      "scan",
+      "--json",
+      "--quiet",
+      "--metrics=off",
+      "--disable-version-check",
+      "--disable-nosem",
+      "--no-git-ignore",
+      "--x-ignore-semgrepignore-files",
+      "--config=p/default",
+      "--",
+      "src/a.ts"
+    ]);
+    expect(call?.[3]).toMatchObject({ env: { SEMGREP_SEND_METRICS: "off" } });
+    expect(result.notes.join(" ")).toContain("Semgrep: 1 SAST grounding finding");
+  });
+
+  it("does not invoke Semgrep when no supported source files changed", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    await gatherGrounding({ root: ROOT, changedPaths: ["docs/readme.md", "styles/x.css"], exec });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+  });
+
+  it("does not invoke Semgrep when the file cap removes every target", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], limits: { maxFiles: 0 }, exec });
+
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep: scanned 0/1 changed files");
+  });
+
+  it("drops Semgrep findings outside the changed lines", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [99] },
+      exec
+    });
+    expect(result.findings).toEqual([]);
+  });
+
+  it("keeps Semgrep findings for whole-file targets without changed lines", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: {},
+      semgrepWholeFilePaths: ["src/a.ts"],
+      exec
+    });
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+  });
+
+  it("skips gracefully when Semgrep is not installed", async () => {
+    const exec = execForSemgrep({ stdout: "", code: 127 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep not available");
+  });
+
+  it("surfaces a failure when an error exit yields no parseable report", async () => {
+    const exec = execForSemgrep({ stdout: "", stderr: "could not fetch ruleset", code: 7 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep failed (exit 7)");
+  });
+
+  it("retries Semgrep targets individually when an invalid target aborts the batch scan", async () => {
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "semgrep") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const separator = args.indexOf("--");
+      const targets = separator === -1 ? [] : args.slice(separator + 1);
+      if (targets.length > 1) {
+        return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+      }
+      if (targets[0] === "src/a.ts") {
+        return { stdout: semgrepOutput([SEMGREP_RESULT]), stderr: "", code: 1 };
+      }
+      return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "src/link.ts"],
+      changedLines: { "src/a.ts": [3], "src/link.ts": [1] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+    expect(result.notes.join(" ")).toContain("retried 2 changed files individually");
+    expect(result.notes.join(" ")).toContain("src/link.ts");
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(3);
+  });
+
+  it("notes failed individual Semgrep retry scans without dropping valid findings", async () => {
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "semgrep") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const separator = args.indexOf("--");
+      const targets = separator === -1 ? [] : args.slice(separator + 1);
+      if (targets.length > 1) {
+        return { stdout: "", stderr: "File not found: missing.ts", code: 2 };
+      }
+      switch (targets[0]) {
+        case "src/a.ts":
+          return { stdout: semgrepOutput([SEMGREP_RESULT]), stderr: "", code: 1 };
+        case "missing.ts":
+          return { stdout: "", stderr: "semgrep: command not found", code: 127 };
+        case "slow.ts":
+          return { stdout: "", stderr: "", code: null };
+        default:
+          return { stdout: semgrepOutput([]), stderr: "", code: 0 };
+      }
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts", "missing.ts", "slow.ts"],
+      changedLines: { "src/a.ts": [3], "missing.ts": [1], "slow.ts": [1] },
+      exec
+    });
+
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+    expect(result.notes.join(" ")).toContain("Semgrep not available while scanning missing.ts");
+    expect(result.notes.join(" ")).toContain("Semgrep timed out for slow.ts");
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(4);
+  });
+
+  it("bounds parallel Semgrep retry scans after an invalid batch target", async () => {
+    let active = 0;
+    let maxActive = 0;
+    const changedPaths = ["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/e.ts"];
+    const exec: Exec = vi.fn(async (command: string, args: string[]): Promise<ExecResult> => {
+      if (command !== "semgrep") {
+        return { stdout: "[]", stderr: "", code: 0 };
+      }
+      const separator = args.indexOf("--");
+      const targets = separator === -1 ? [] : args.slice(separator + 1);
+      if (targets.length > 1) {
+        return { stdout: "", stderr: "File not found: src/link.ts", code: 2 };
+      }
+
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return {
+        stdout: semgrepOutput([{ ...SEMGREP_RESULT, path: targets[0], start: { line: 1 } }]),
+        stderr: "",
+        code: 1
+      };
+    });
+
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths,
+      changedLines: Object.fromEntries(changedPaths.map((path) => [path, [1]])),
+      limits: { maxFiles: changedPaths.length },
+      exec
+    });
+
+    expect(result.findings).toHaveLength(changedPaths.length);
+    expect(result.notes.join(" ")).toContain("retried 5 changed files individually");
+    expect(maxActive).toBeGreaterThan(1);
+    expect(maxActive).toBeLessThanOrEqual(2);
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.filter((call) => call[0] === "semgrep")).toHaveLength(
+      changedPaths.length + 1
+    );
+  });
+
+  it("surfaces a failure when Semgrep exits with findings but no parseable report", async () => {
+    const exec = execForSemgrep({ stdout: "banner { not json", stderr: "", code: 1 });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    expect(result.findings).toEqual([]);
+    expect(result.notes.join(" ")).toContain("Semgrep failed (exit 1)");
+  });
+
+  it("keeps parsed findings while surfacing a fatal Semgrep exit", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), stderr: "partial report", code: 2 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [3] },
+      exec
+    });
+    expect(result.findings).toContainEqual(expect.objectContaining({ file: "src/a.ts", line: 3 }));
+    expect(result.notes.join(" ")).toContain("Semgrep failed (exit 2)");
+  });
+
+  it("notes when Semgrep times out", async () => {
+    const exec = execForSemgrep({ stdout: "", code: null });
+    const result = await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], exec });
+    expect(result.notes.join(" ")).toContain("Semgrep: timed out; skipped.");
+  });
+
+  it("does not run Semgrep when disabled", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    await gatherGrounding({ root: ROOT, changedPaths: ["src/a.ts"], semgrep: { enabled: false }, exec });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+  });
+
+  it("honors a registry ruleset override ungated", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      semgrep: { config: "p/security-audit" },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call?.[1]).toContain("--config=p/security-audit");
+  });
+
+  it("honors auto and nested registry ruleset refs", async () => {
+    for (const config of ["auto", "p/foo/bar", "r/some-rule"]) {
+      const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+      await gatherGrounding({
+        root: ROOT,
+        changedPaths: ["src/a.ts"],
+        semgrep: { config },
+        exec
+      });
+      const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+      expect(call?.[1]).toContain(`--config=${config}`);
+    }
+  });
+
+  it("does not bypass Semgrep repo ignore files for trusted local scans", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      exec
+    });
+
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call?.[1]).not.toContain("--no-git-ignore");
+    expect(call?.[1]).not.toContain("--x-ignore-semgrepignore-files");
+  });
+
+  it("skips symlink Semgrep targets in untrusted checkouts", async () => {
+    const root = mkdtempSync(join(tmpdir(), "prowl-semgrep-"));
+    try {
+      writeFileSync(join(root, "real.ts"), "const value = 1;\n");
+      symlinkSync(join(root, "real.ts"), join(root, "link.ts"));
+      const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+
+      const result = await gatherGrounding({
+        root,
+        changedPaths: ["link.ts"],
+        changedLines: { "link.ts": [1] },
+        exec
+      });
+
+      expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+      expect(result.notes.join(" ")).toContain("skipped 1 symlink target");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("skips a repo-path ruleset", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([SEMGREP_RESULT]), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      semgrep: { config: ".semgrep.yml" },
+      exec
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
+  });
+
+  it("skips a remote URL ruleset", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      semgrep: { config: "https://semgrep.example/rules.yml" },
+      exec
+    });
+    expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
+  });
+
+  it("skips registry-looking rulesets with traversal or dot segments", async () => {
+    for (const config of ["p/default../../malicious.yml", "p/.", "r/.", "p/foo/."]) {
+      const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+      const result = await gatherGrounding({
+        root: ROOT,
+        changedPaths: ["src/a.ts"],
+        semgrep: { config },
+        exec
+      });
+      expect((exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep")).toBeUndefined();
+      expect(result.notes.join(" ")).toContain("not a registry pack");
+    }
+  });
+
+  it("still skips a repo-path ruleset when the workspace is trusted", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      semgrep: { config: ".semgrep.yml" },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
+  });
+
+  it("still skips a remote URL ruleset when the workspace is trusted", async () => {
+    const exec = execForSemgrep({ stdout: semgrepOutput([]), code: 0 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      trustWorkspace: true,
+      semgrep: { config: "https://semgrep.example/rules.yml" },
+      exec
+    });
+    const call = (exec as ReturnType<typeof vi.fn>).mock.calls.find((c) => c[0] === "semgrep");
+    expect(call).toBeUndefined();
+    expect(result.notes.join(" ")).toContain("not a registry pack");
+  });
+
+  it("caps Semgrep findings and reports truncation", async () => {
+    const many = Array.from({ length: 2 }, (_, i) => ({ ...SEMGREP_RESULT, path: "src/a.ts", start: { line: i + 1 } }));
+    const exec = execForSemgrep({ stdout: semgrepOutput(many), code: 1 });
+    const result = await gatherGrounding({
+      root: ROOT,
+      changedPaths: ["src/a.ts"],
+      changedLines: { "src/a.ts": [1, 2] },
+      limits: { maxFindings: 1 },
+      exec
+    });
+    expect(result.findings).toHaveLength(1);
+    expect(result.notes.join(" ")).toContain("Semgrep: kept 1/2 findings (finding cap).");
   });
 });

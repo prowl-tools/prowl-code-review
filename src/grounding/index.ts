@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative, isAbsolute } from "node:path";
+import { z } from "zod";
 import type { Finding, Severity } from "../review/findings.js";
-import { detectLanguage, isJavaScriptFamily } from "../review/language.js";
+import { detectLanguage, isJavaScriptFamily, type LanguageId } from "../review/language.js";
 // `relative`/`isAbsolute` are used for normalizing ESLint's absolute paths back
 // to repo-relative; changed-path safety is checked structurally below.
 
@@ -50,6 +51,23 @@ export interface GroundingLimits {
 export const DEFAULT_MAX_FILES = 100;
 export const DEFAULT_MAX_FINDINGS = 50;
 export const DEFAULT_TIMEOUT_MS = 60_000;
+const GROUNDING_RUNNER_MAX_CONCURRENCY = 2;
+
+/** Semgrep SAST grounding policy (#16b). */
+export interface SemgrepOptions {
+  /**
+   * Run Semgrep over changed source files and feed its findings into the review.
+   * Default on; skips gracefully when semgrep isn't installed. Set false to disable.
+   */
+  enabled?: boolean;
+  /**
+   * Ruleset to run. Default {@link DEFAULT_SEMGREP_CONFIG} (a curated registry
+   * pack). Only registry refs (`p/...`, `r/...`, `auto`) are supported; repo
+   * paths and remote URLs are skipped because a PR could ship or point at a
+   * malicious/noisy ruleset.
+   */
+  config?: string;
+}
 
 /** Dependency-CVE / license scanning policy (#34). */
 export interface DependencyScanOptions {
@@ -81,6 +99,11 @@ export interface GatherGroundingParams {
    */
   secretScanWholeFilePaths?: string[];
   /**
+   * Semgrep scan paths that are newly introduced without added-line hunks, such
+   * as pure copies. Findings from these paths bypass changed-line filtering.
+   */
+  semgrepWholeFilePaths?: string[];
+  /**
    * New-side changed lines by repo-relative file path. When provided, linter
    * messages outside these lines are dropped so pre-existing lint failures do
    * not become PR findings.
@@ -94,6 +117,8 @@ export interface GatherGroundingParams {
   /** Injectable command runner (defaults to a confined execFile). */
   exec?: Exec;
   limits?: GroundingLimits;
+  /** Semgrep SAST grounding policy (#16b). Omitted → enabled with the default ruleset. */
+  semgrep?: SemgrepOptions;
   /** Dependency-CVE / license scanning policy (#34). Omitted → enabled with vuln scan only. */
   dependencyScan?: DependencyScanOptions;
   /**
@@ -159,6 +184,29 @@ function safeRelativePaths(paths: string[]): string[] {
 
 function normalizeRelativePath(path: string): string {
   return path.replace(/^\.\//, "").replace(/\\/g, "/");
+}
+
+export async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  mapper: (item: T) => Promise<R>
+): Promise<R[]> {
+  if (items.length === 0) {
+    return [];
+  }
+  const results: R[] = new Array(items.length);
+  let next = 0;
+  const workerCount = Math.max(1, Math.min(concurrency, items.length));
+  await Promise.all(
+    Array.from({ length: workerCount }, async () => {
+      while (next < items.length) {
+        const index = next;
+        next += 1;
+        results[index] = await mapper(items[index]);
+      }
+    })
+  );
+  return results;
 }
 
 const ESLINT_DIAGNOSTIC_LIMIT = 500;
@@ -355,13 +403,19 @@ async function runEslint(
 }
 
 // ---------------------------------------------------------------------------
-// Ruff (Python lint) and Gitleaks (secret scan) — backlog #16b.
+// Ruff (Python lint), Gitleaks (secret scan), and Semgrep (SAST) — backlog #16b.
 //
 // Unlike ESLint, these run with trusted built-in rules and no repo-discovered
 // config/plugin code, so they run ungated even on untrusted PR checkouts — that's
 // the point for secret scanning. They are selected per-language via the #5
-// detector; absent tools skip gracefully. (Semgrep is deferred: its rulesets
-// need a network registry or repo rules — a separate sourcing decision.)
+// detector; absent tools skip gracefully.
+//
+// Ruleset sourcing for Semgrep (the #16b decision): a curated registry pack
+// (DEFAULT_SEMGREP_CONFIG) is fetched from the registry — the same network reach
+// osv-scanner already uses for OSV.dev — with metrics OFF so no project metadata
+// is uploaded (this is why `--config auto`, which phones home, is not the
+// default). Repo-supplied rulesets and remote URLs are skipped because Semgrep
+// rulesets have a separate trust model from local linter code execution.
 // ---------------------------------------------------------------------------
 
 /** True when a tool failed because its executable isn't installed. */
@@ -550,6 +604,7 @@ const GITLEAKS_TRUSTED_ENV: NodeJS.ProcessEnv = {
   GITLEAKS_CONFIG: "",
   GITLEAKS_CONFIG_TOML: ""
 };
+const GITLEAKS_MAX_CONCURRENCY = 2;
 const GITLEAKS_DISABLED_IGNORE_PATH = join(tmpdir(), "prowl-review-gitleaks-ignore-disabled");
 
 /**
@@ -585,28 +640,26 @@ async function runGitleaks(
 
   // Scan files individually so a missing/deleted path cannot suppress findings
   // from other files and a repo-root `.gitleaks.toml` cannot silence leaks.
-  const results = await Promise.all(
-    limited.map((file) =>
-      params.exec(
-        "gitleaks",
-        [
-          "detect",
-          "--no-git",
-          "--source",
-          file,
-          "--report-format",
-          "json",
-          "--report-path",
-          "-",
-          "--redact",
-          "--no-banner",
-          "--ignore-gitleaks-allow",
-          "--gitleaks-ignore-path",
-          GITLEAKS_DISABLED_IGNORE_PATH
-        ],
-        params.root,
-        { env: GITLEAKS_TRUSTED_ENV }
-      )
+  const results = await mapWithConcurrency(limited, GITLEAKS_MAX_CONCURRENCY, (file) =>
+    params.exec(
+      "gitleaks",
+      [
+        "detect",
+        "--no-git",
+        "--source",
+        file,
+        "--report-format",
+        "json",
+        "--report-path",
+        "-",
+        "--redact",
+        "--no-banner",
+        "--ignore-gitleaks-allow",
+        "--gitleaks-ignore-path",
+        GITLEAKS_DISABLED_IGNORE_PATH
+      ],
+      params.root,
+      { env: GITLEAKS_TRUSTED_ENV }
     )
   );
 
@@ -649,6 +702,389 @@ async function runGitleaks(
     findings,
     notes: findings.length > 0 ? [...notes, `Gitleaks: ${findings.length} potential secret(s) on changed lines.`] : notes
   };
+}
+
+/** Default Semgrep ruleset: a curated registry pack (audited, low-noise). */
+export const DEFAULT_SEMGREP_CONFIG = "p/default";
+
+/** Languages Semgrep is run on (selected via the #5 detector). */
+const SEMGREP_LANGUAGES = new Set<LanguageId>([
+  "typescript",
+  "javascript",
+  "python",
+  "go",
+  "ruby",
+  "java",
+  "kotlin",
+  "rust",
+  "c",
+  "cpp",
+  "csharp",
+  "php",
+  "swift",
+  "scala",
+  "shell",
+  "yaml",
+  "json",
+  "docker"
+]);
+
+/** Run Semgrep with metrics disabled (defense-in-depth with the `--metrics=off` flag). */
+const SEMGREP_TRUSTED_ENV: NodeJS.ProcessEnv = { SEMGREP_SEND_METRICS: "off" };
+const SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS = ["--no-git-ignore", "--x-ignore-semgrepignore-files"];
+const SEMGREP_TARGET_IO_MAX_CONCURRENCY = 8;
+const SEMGREP_RETRY_MAX_CONCURRENCY = 2;
+
+/** Build Semgrep CLI arguments with the extra target-safety flags for untrusted checkouts. */
+function semgrepArgs(requestedConfig: string, trustWorkspace: boolean, targets: readonly string[]): string[] {
+  return [
+    "scan",
+    "--json",
+    "--quiet",
+    "--metrics=off",
+    "--disable-version-check",
+    "--disable-nosem",
+    ...(!trustWorkspace ? SEMGREP_UNTRUSTED_TARGET_FILTER_ARGS : []),
+    `--config=${requestedConfig}`,
+    "--",
+    ...targets
+  ];
+}
+
+/** True when Semgrep failed because one or more target paths could not be scanned. */
+function semgrepTargetFailure(result: ExecResult): boolean {
+  if (result.code === null || result.code <= 1) {
+    return false;
+  }
+  return /file not found|no such file|symbolic link|symlink|not a regular file/i.test(`${result.stderr}\n${result.stdout}`);
+}
+
+/** Drop symlink targets from untrusted checkouts before Semgrep can follow them. */
+async function semgrepTargetsForTrust(
+  root: string,
+  files: readonly string[],
+  trustWorkspace: boolean
+): Promise<{ files: string[]; notes: string[] }> {
+  if (trustWorkspace) {
+    return { files: [...files], notes: [] };
+  }
+  const checked = await mapWithConcurrency(files, SEMGREP_TARGET_IO_MAX_CONCURRENCY, async (file) => {
+    try {
+      if ((await lstat(join(root, file))).isSymbolicLink()) {
+        return { file, skipped: true };
+      }
+    } catch {
+      // Keep missing/deleted paths so the normal Semgrep failure handling can
+      // isolate them without hiding findings from the remaining targets.
+    }
+    return { file, skipped: false };
+  });
+  const skippedSymlinks = checked.filter((entry) => entry.skipped).length;
+  return {
+    files: checked.filter((entry) => !entry.skipped).map((entry) => entry.file),
+    notes: skippedSymlinks > 0 ? [`Semgrep: skipped ${skippedSymlinks} symlink target(s) in untrusted checkout.`] : []
+  };
+}
+
+/**
+ * True when a ruleset reference resolves to a Semgrep registry pack that does not
+ * let untrusted repo config choose an arbitrary remote/internal URL.
+ */
+const SEMGREP_REGISTRY_CONFIG_RE =
+  /^(?:p|r)\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?(?:\/[a-z0-9](?:[a-z0-9._-]*[a-z0-9_-])?)*$/i;
+
+/** True when the config is a Semgrep registry reference permitted without workspace trust. */
+function isRegistrySemgrepConfig(config: string): boolean {
+  if (config.toLowerCase() === "auto") {
+    return true;
+  }
+  if (!SEMGREP_REGISTRY_CONFIG_RE.test(config)) {
+    return false;
+  }
+  return !config.includes("..");
+}
+
+/** Map a Semgrep severity to a prowl-review severity. */
+function mapSemgrepSeverity(severity: string | undefined): Severity {
+  switch ((severity ?? "").toUpperCase()) {
+    case "CRITICAL":
+      return "critical";
+    case "HIGH":
+    case "ERROR":
+      return "major";
+    case "MEDIUM":
+    case "LOW":
+    case "WARNING":
+      return "minor";
+    case "INFO":
+    default:
+      return "info"; // INFO and anything unknown
+  }
+}
+
+/** Map Semgrep's rule category metadata to a prowl-review finding category. */
+function mapSemgrepCategory(metadataCategory: string | undefined): string {
+  switch ((metadataCategory ?? "").toLowerCase()) {
+    case "performance":
+      return "performance";
+    case "correctness":
+      return "correctness";
+    case "best-practice":
+    case "maintainability":
+    case "portability":
+    case "compatibility":
+      return "lint";
+    case "security":
+    default:
+      return "security"; // Semgrep's headline value is SAST; default unknown to security
+  }
+}
+
+const semgrepPositionSchema = z.object({ line: z.number().optional() }).passthrough();
+const semgrepResultSchema = z
+  .object({
+    check_id: z.string().optional(),
+    path: z.string().optional(),
+    start: semgrepPositionSchema.optional(),
+    end: semgrepPositionSchema.optional(),
+    extra: z
+      .object({
+        message: z.string().optional(),
+        severity: z.string().optional(),
+        metadata: z.object({ category: z.unknown().optional() }).passthrough().optional()
+      })
+      .passthrough()
+      .optional()
+  })
+  .passthrough();
+const semgrepJsonEnvelopeSchema = z.object({ results: z.array(z.unknown()).optional() }).passthrough();
+type SemgrepResult = z.infer<typeof semgrepResultSchema>;
+type SemgrepJsonEnvelope = z.infer<typeof semgrepJsonEnvelopeSchema>;
+type SemgrepJson = Omit<SemgrepJsonEnvelope, "results"> & { results?: SemgrepResult[] };
+
+/** Map a Semgrep result to a high-confidence SAST grounding finding. */
+function semgrepToFinding(root: string, result: SemgrepResult): Finding | undefined {
+  const line = result.start?.line;
+  if (!result.path || !line || line <= 0) {
+    return undefined;
+  }
+  const file = (isAbsolute(result.path) ? relative(root, result.path) : result.path).replace(/[\\/]/g, "/");
+  if (!file) {
+    return undefined;
+  }
+  const endLine = result.end?.line;
+  const ruleId = result.check_id ?? "semgrep";
+  const message = (result.extra?.message ?? "Potential issue flagged by Semgrep").replace(/\s+/g, " ").trim();
+  const metadataCategory =
+    typeof result.extra?.metadata?.category === "string" ? result.extra.metadata.category : undefined;
+  return {
+    file,
+    line,
+    ...(endLine && endLine > line ? { endLine } : {}),
+    severity: mapSemgrepSeverity(result.extra?.severity),
+    category: mapSemgrepCategory(metadataCategory),
+    title: ruleId,
+    body: `${message} (${ruleId})`,
+    confidence: 0.9
+  };
+}
+
+/** Parse `semgrep scan --json` stdout into findings; tolerant of junk/banners. */
+function parseSemgrepReport(stdout: string): SemgrepJson | undefined {
+  const start = stdout.indexOf("{");
+  if (start === -1) {
+    return undefined;
+  }
+  try {
+    const parsed = JSON.parse(stdout.slice(start));
+    const validated = semgrepJsonEnvelopeSchema.safeParse(parsed);
+    if (!validated.success) {
+      return undefined;
+    }
+    return {
+      ...validated.data,
+      results: validated.data.results?.flatMap((result) => {
+        const item = semgrepResultSchema.safeParse(result);
+        return item.success ? [item.data] : [];
+      })
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function semgrepFindingsFromReport(root: string, parsed: SemgrepJson | undefined): Finding[] {
+  if (!Array.isArray(parsed?.results)) {
+    return [];
+  }
+  const findings: Finding[] = [];
+  for (const entry of parsed.results) {
+    const finding = entry && typeof entry === "object" ? semgrepToFinding(root, entry) : undefined;
+    if (finding) {
+      findings.push(finding);
+    }
+  }
+  return findings;
+}
+
+/** Parse `semgrep scan --json` stdout into findings; tolerant of junk/banners. */
+export function parseSemgrepJson(root: string, stdout: string): Finding[] {
+  return semgrepFindingsFromReport(root, parseSemgrepReport(stdout));
+}
+
+/** Apply changed-line filtering, finding caps, and summary notes to Semgrep findings. */
+function finishSemgrepResult(
+  params: {
+    changedLines?: GatherGroundingParams["changedLines"];
+    limits: Required<GroundingLimits>;
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
+  },
+  parsed: Finding[],
+  notes: string[]
+): GroundingResult {
+  const wholeFilePaths = new Set(
+    safeRelativePaths(params.semgrepWholeFilePaths ?? []).map((path) => normalizeRelativePath(path))
+  );
+  const findings = filterToChangedLines(parsed, changedLineLookup(params.changedLines), wholeFilePaths);
+  if (findings.length > params.limits.maxFindings) {
+    notes.push(`Semgrep: kept ${params.limits.maxFindings}/${findings.length} findings (finding cap).`);
+    return { findings: findings.slice(0, params.limits.maxFindings), notes };
+  }
+  if (findings.length > 0) {
+    notes.push(`Semgrep: ${findings.length} SAST grounding finding(s).`);
+  }
+  return { findings, notes };
+}
+
+/** Retry Semgrep one file at a time after a batch scan fails on an invalid target. */
+async function runSemgrepPerTarget(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
+    trustWorkspace: boolean;
+  },
+  requestedConfig: string,
+  files: readonly string[],
+  notes: string[]
+): Promise<GroundingResult> {
+  notes.push(`Semgrep: retried ${files.length} changed files individually after the batch scan hit an invalid target.`);
+  const perFile = await mapWithConcurrency(files, SEMGREP_RETRY_MAX_CONCURRENCY, async (file) => {
+    const result = await params.exec(
+      "semgrep",
+      semgrepArgs(requestedConfig, params.trustWorkspace, [file]),
+      params.root,
+      { env: SEMGREP_TRUSTED_ENV }
+    );
+    if (result.code === null) {
+      return { findings: [], notes: [`Semgrep timed out for ${file}; skipped.`] };
+    }
+    const semgrepReport = parseSemgrepReport(result.stdout);
+    const fileFindings = semgrepFindingsFromReport(params.root, semgrepReport);
+    const hasJsonReport = Array.isArray(semgrepReport?.results);
+    const fileNotes: string[] = [];
+
+    if (fileFindings.length === 0 && commandUnavailable(result)) {
+      fileNotes.push(`Semgrep not available while scanning ${file}; skipped that file.`);
+      return { findings: fileFindings, notes: fileNotes };
+    }
+    if (result.code > 1 || (fileFindings.length === 0 && !hasJsonReport)) {
+      fileNotes.push(`Semgrep failed for ${file}: ${toolFailureNote("Semgrep", result)}`);
+    }
+    return { findings: fileFindings, notes: fileNotes };
+  });
+
+  const parsed: Finding[] = [];
+  for (const result of perFile) {
+    parsed.push(...result.findings);
+    notes.push(...result.notes);
+  }
+  return finishSemgrepResult(params, parsed, notes);
+}
+
+/** Run Semgrep over the changed source files, or note why it was skipped. */
+async function runSemgrep(
+  params: Required<Pick<GatherGroundingParams, "root" | "changedPaths">> & {
+    exec: Exec;
+    limits: Required<GroundingLimits>;
+    changedLines?: GatherGroundingParams["changedLines"];
+    secretScanPaths?: GatherGroundingParams["secretScanPaths"];
+    semgrepWholeFilePaths?: GatherGroundingParams["semgrepWholeFilePaths"];
+    trustWorkspace: boolean;
+    semgrep?: SemgrepOptions;
+  }
+): Promise<GroundingResult> {
+  if (params.semgrep?.enabled === false) {
+    return { findings: [], notes: [] };
+  }
+  const files = safeRelativePaths(params.changedPaths).filter((path) => {
+    const language = detectLanguage(path);
+    return language !== undefined && SEMGREP_LANGUAGES.has(language);
+  });
+  if (files.length === 0) {
+    return { findings: [], notes: [] };
+  }
+  const scanTargets = await semgrepTargetsForTrust(params.root, files, params.trustWorkspace);
+  if (scanTargets.files.length === 0) {
+    return { findings: [], notes: scanTargets.notes };
+  }
+
+  // Resolve the ruleset. Registry packs run ungated; repo-supplied paths and
+  // arbitrary remote URLs are skipped even on trusted workspaces because Semgrep
+  // rulesets have their own trust model separate from repo code execution.
+  const requestedConfig = params.semgrep?.config?.trim() || DEFAULT_SEMGREP_CONFIG;
+  if (!isRegistrySemgrepConfig(requestedConfig)) {
+    return {
+      findings: [],
+      notes: [
+        `Semgrep skipped: the configured ruleset "${requestedConfig}" is not a registry pack; use p/..., r/..., or auto.`
+      ]
+    };
+  }
+
+  const limited = scanTargets.files.slice(0, params.limits.maxFiles);
+  const notes: string[] = [...scanTargets.notes];
+  if (scanTargets.files.length > limited.length) {
+    notes.push(`Semgrep: scanned ${limited.length}/${scanTargets.files.length} changed files (file cap).`);
+  }
+  if (limited.length === 0) {
+    return { findings: [], notes };
+  }
+
+  // `--metrics=off` + `--disable-version-check` keep the run offline-friendly and
+  // stop any project metadata from being uploaded. `--disable-nosem` prevents a
+  // PR from hiding a changed-line finding with an inline Semgrep suppression.
+  // Untrusted scans also bypass repo ignore files so a PR cannot hide an explicit
+  // changed-file target through `.gitignore` or `.semgrepignore`.
+  const result = await params.exec("semgrep", semgrepArgs(requestedConfig, params.trustWorkspace, limited), params.root, {
+    env: SEMGREP_TRUSTED_ENV
+  });
+
+  if (result.code === null) {
+    return { findings: [], notes: [...notes, "Semgrep: timed out; skipped."] };
+  }
+  const semgrepReport = parseSemgrepReport(result.stdout);
+  const parsed = semgrepFindingsFromReport(params.root, semgrepReport);
+  const hasJsonReport = Array.isArray(semgrepReport?.results);
+
+  if (limited.length > 1 && semgrepTargetFailure(result)) {
+    return runSemgrepPerTarget(params, requestedConfig, limited, notes);
+  }
+
+  if (parsed.length === 0 && commandUnavailable(result)) {
+    return { findings: [], notes: [...notes, "Semgrep not available in the workspace; skipped SAST grounding."] };
+  }
+  // Semgrep exits 0 (clean) or 1 (findings) on success; exit > 1 is an error.
+  // A non-parseable report on a non-clean exit is surfaced rather than dropped.
+  if (result.code > 1) {
+    return finishSemgrepResult(params, parsed, [...notes, toolFailureNote("Semgrep", result)]);
+  }
+  if (parsed.length === 0 && !hasJsonReport) {
+    return { findings: [], notes: [...notes, toolFailureNote("Semgrep", result)] };
+  }
+
+  return finishSemgrepResult(params, parsed, notes);
 }
 
 // ---------------------------------------------------------------------------
@@ -1010,8 +1446,8 @@ async function runDependencyScan(
 /**
  * Run available linters over the changed files and return normalized grounding
  * findings + operational notes. ESLint (JS/TS, trusted-workspace only), Ruff
- * (Python), Gitleaks (secrets), and osv-scanner (dependency CVE/license);
- * extend by adding more runners here.
+ * (Python), Gitleaks (secrets), Semgrep (SAST), and osv-scanner (dependency
+ * CVE/license); extend by adding more runners here.
  */
 export async function gatherGrounding(params: GatherGroundingParams): Promise<GroundingResult> {
   const limits: Required<GroundingLimits> = {
@@ -1021,24 +1457,24 @@ export async function gatherGrounding(params: GatherGroundingParams): Promise<Gr
   };
   const exec = params.exec ?? defaultExec(limits.timeoutMs);
 
-  const runners = [runEslint, runRuff, runGitleaks];
-  const results = await Promise.all(
-    runners.map((runner) =>
-      runner({
-        root: params.root,
-        changedPaths: params.changedPaths,
-        secretScanPaths: params.secretScanPaths,
-        secretScanWholeFilePaths: params.secretScanWholeFilePaths,
-        changedLines: params.changedLines,
-        trustWorkspace: params.trustWorkspace === true,
-        exec,
-        limits
-      }).catch(
-        (error): GroundingResult => ({
-          findings: [],
-          notes: [`Linter grounding error: ${error instanceof Error ? error.message : String(error)}`]
-        })
-      )
+  const runners = [runEslint, runRuff, runGitleaks, runSemgrep];
+  const results = await mapWithConcurrency(runners, GROUNDING_RUNNER_MAX_CONCURRENCY, (runner) =>
+    runner({
+      root: params.root,
+      changedPaths: params.changedPaths,
+      secretScanPaths: params.secretScanPaths,
+      secretScanWholeFilePaths: params.secretScanWholeFilePaths,
+      semgrepWholeFilePaths: params.semgrepWholeFilePaths,
+      changedLines: params.changedLines,
+      trustWorkspace: params.trustWorkspace === true,
+      semgrep: params.semgrep,
+      exec,
+      limits
+    }).catch(
+      (error): GroundingResult => ({
+        findings: [],
+        notes: [`Linter grounding error: ${error instanceof Error ? error.message : String(error)}`]
+      })
     )
   );
 

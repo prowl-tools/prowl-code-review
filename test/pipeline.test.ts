@@ -2405,6 +2405,34 @@ diff --git a/src/a.ts b/src/a.ts
     );
   });
 
+  it("treats edited copied files as whole-file Semgrep targets", async () => {
+    const deps = makeDeps();
+    const copyDiff = `diff --git a/src/source.ts b/src/copied.ts
+similarity index 80%
+copy from src/source.ts
+copy to src/copied.ts
+index 1111111..2222222 100644
+--- a/src/source.ts
++++ b/src/copied.ts
+@@ -1,2 +1,3 @@
+ const a = 1;
++const b = 2;
+ const c = 3;
+`;
+    deps.fetchPullRequest.mockResolvedValue({ meta, diff: copyDiff });
+    deps.runReview.mockResolvedValue(reviewResult([]));
+
+    await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(deps.gatherGrounding).toHaveBeenCalledWith(
+      expect.objectContaining({
+        changedPaths: ["src/copied.ts"],
+        semgrepWholeFilePaths: ["src/copied.ts"],
+        changedLines: { "src/copied.ts": [2] }
+      })
+    );
+  });
+
   it("runs secret grounding when only sensitive files remain after filters", async () => {
     const deps = makeDeps();
     const secretDiff = `diff --git a/.env b/.env

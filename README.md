@@ -391,6 +391,43 @@ consensus too). Fetching is tolerant: a missing or inaccessible issue (or one
 that's actually a PR) is skipped with a note. Cross-tracker support
 (Linear/Jira) is a future extension.
 
+## Semgrep SAST grounding (#16b)
+
+Alongside ESLint (JS/TS), Ruff (Python), and Gitleaks (secrets), prowl-review
+runs [Semgrep](https://semgrep.dev) over changed source files and feeds its
+findings into the review as grounding — so the specialists reconcile with real
+SAST results instead of re-discovering (or hallucinating) them. It's
+multi-language and on by default, and **skips gracefully when Semgrep isn't
+installed** — no failure, just a note.
+
+**Ruleset sourcing.** By default it runs Semgrep's curated `p/default` registry
+pack — the rules are fetched from the registry (cached after the first run, the
+same network reach osv-scanner uses for OSV.dev) with **metrics disabled**, so no
+project metadata is ever uploaded. That's why `--config auto`, which phones home,
+is *not* the default. Only Semgrep registry refs (`p/…`, `r/…`, `auto`) are
+supported. Repository-supplied rulesets (e.g. `.semgrep.yml`) and remote
+`http(s)://` configs are skipped even on trusted workspaces, since a PR could
+ship or point at a malicious/noisy ruleset.
+For untrusted PR scans, repository `.gitignore` and `.semgrepignore` target
+filters are bypassed, and symlink targets are skipped, so explicitly changed
+regular files cannot hide from SAST grounding.
+
+```yaml
+# .prowl-review.yml
+grounding:
+  semgrep:
+    enabled: true        # default; set false to disable
+    config: p/default    # registry pack (p/..., r/..., or auto)
+```
+
+To use it in CI, make `semgrep` available on the runner (e.g. `pip install
+semgrep` or the setup action). Without it, the rest of the review is unaffected.
+
+**Resource bounds.** Linter/SAST grounding runs at most two tool runners at a
+time. Gitleaks file scans and Semgrep invalid-target retries are also bounded
+inside their runners, and every runner still honors the grounding file/finding
+caps so large PRs do not fan out unbounded external processes.
+
 ## Dependency CVE / license scanning (#34)
 
 When a pull request changes a dependency lockfile, prowl-review scans it with

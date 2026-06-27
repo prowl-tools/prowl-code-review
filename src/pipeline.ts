@@ -81,7 +81,8 @@ import {
   type GatherGroundingParams,
   type GroundingResult,
   type GroundingLimits,
-  type DependencyScanOptions
+  type DependencyScanOptions,
+  type SemgrepOptions
 } from "./grounding/index.js";
 import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
@@ -296,6 +297,12 @@ export interface ReviewPullRequestOptions {
   trustWorkspace?: boolean;
   /** Limits for the linter/SAST grounding stage (#16). */
   groundingLimits?: GroundingLimits;
+  /**
+   * Semgrep SAST grounding policy (#16b): run Semgrep over changed source files
+   * and feed its findings into the review. Omitted → enabled with the default
+   * registry ruleset; skips gracefully when Semgrep isn't installed.
+   */
+  semgrep?: SemgrepOptions;
   /**
    * Dependency-CVE / license scanning policy (#34): scan changed lockfiles with
    * osv-scanner for known vulnerabilities (and license-policy violations when an
@@ -1359,6 +1366,7 @@ export async function reviewPullRequest(
   const secretScanWholeFilePaths = secretScanFiles
     .filter((file) => (file.status === "renamed" || file.status === "copied") && !hasAddedNewLines(file))
     .map((file) => file.path);
+  const semgrepWholeFilePaths = reviewFiles.filter((file) => file.status === "copied").map((file) => file.path);
   // Dependency scan (#34) sources changed manifests/lockfiles from the full diff
   // (pre-ignore) so a lockfile excluded from line-review by the ignore list (#19)
   // is still scanned for known CVEs; gate the grounding stage on those too.
@@ -1372,9 +1380,11 @@ export async function reviewPullRequest(
         dependencyPaths: dependencyManifestPaths,
         secretScanPaths: secretScanFiles.map((file) => file.path),
         secretScanWholeFilePaths,
+        semgrepWholeFilePaths,
         changedLines: groundingChangedLines,
         trustWorkspace: options.trustWorkspace === true,
         limits: options.groundingLimits,
+        semgrep: options.semgrep,
         dependencyScan: options.dependencyScan
       });
       const redactedNotes = redactGroundingNotes(result.notes);
