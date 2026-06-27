@@ -379,15 +379,21 @@ describe("submitReview", () => {
     expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
     expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
 
-    // The seed records NO posted fingerprints yet (retry-safety if the review fails);
-    // the post-review update writes the real marker.
+    // The seed records no reviewed SHA or posted fingerprints yet; the post-review
+    // update writes the real marker.
     const seeded = createComment.mock.calls[0][0] as { body: string; issue_number: number };
     expect(seeded.issue_number).toBe(12);
     expect(seeded.body).toContain("prowl-review:state");
-    expect(parseState(seeded.body)?.postedFindings).toEqual([]);
+    const seedState = parseState(seeded.body);
+    expect(seedState?.lastReviewedSha).toBeUndefined();
+    expect(seedState?.postedFindings).toEqual([]);
     const updated = updateComment.mock.calls[0][0] as { comment_id: number; body: string };
     expect(updated.comment_id).toBe(9001); // the seeded comment's id (from mock createComment)
-    expect(parseState(updated.body)?.postedFindings).toEqual(["fp-a"]);
+    expect(parseState(updated.body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head",
+      postedFindings: ["fp-a"]
+    });
   });
 
   it("updates the prior summary in place and skips already-posted inline findings", async () => {
@@ -432,6 +438,7 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
     const created = createComment.mock.calls[0][0] as { body: string };
     expect(created.body).toContain("new delta summary");
+    expect(parseState(created.body)?.lastReviewedSha).toBeUndefined();
     expect(updateComment).toHaveBeenCalledTimes(1);
     const updated = updateComment.mock.calls[0][0] as { comment_id: number; body: string };
     expect(updated.comment_id).not.toBe(77); // the seeded fresh comment, not the preserved prior
@@ -439,6 +446,21 @@ describe("submitReview", () => {
       v: 1,
       lastReviewedSha: "head2",
       postedFindings: ["fp-a", "fp-b"]
+    });
+  });
+
+  it("creates the final summary directly on a first comment run with no inline findings", async () => {
+    const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
+
+    await submitReview(octokit, ref, payload({ comments: [] }), { headSha: "head-empty" });
+
+    expect(createReview).not.toHaveBeenCalled();
+    expect(updateComment).not.toHaveBeenCalled();
+    expect(createComment).toHaveBeenCalledTimes(1);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      lastReviewedSha: "head-empty",
+      postedFindings: []
     });
   });
 
@@ -539,9 +561,13 @@ describe("submitReview", () => {
     );
 
     // The summary is seeded before the review, but with NO posted fingerprints, so a
-    // failed review never persists fingerprints for comments that don't exist (#12).
+    // failed review never persists a reviewed SHA or fingerprints for comments that
+    // don't exist (#12).
     expect(createComment).toHaveBeenCalledTimes(1);
-    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)?.postedFindings).toEqual([]);
+    expect(parseState((createComment.mock.calls[0][0] as { body: string }).body)).toEqual({
+      v: 1,
+      postedFindings: []
+    });
     expect(updateComment).not.toHaveBeenCalled();
   });
 
