@@ -4,6 +4,7 @@ import {
   buildAssistPrompt,
   generateAssist,
   assistLabel,
+  sanitizeAssistMarkdown,
   type AssistInput,
   type AssistKind
 } from "../src/review/generate.js";
@@ -64,8 +65,19 @@ describe("buildAssistPrompt (#33)", () => {
   });
 
   it("renders the focus section when invoked on a thread", () => {
-    const prompt = buildAssistPrompt(input({ thread: { path: "src/a.ts", line: 42, diffHunk: "@@ hunk @@" } }));
+    const prompt = buildAssistPrompt(
+      input({
+        thread: {
+          path: "src/a.ts",
+          line: 42,
+          parentCommentBody: "Potential issue: this needs coverage.",
+          diffHunk: "@@ hunk @@"
+        }
+      })
+    );
     expect(prompt).toContain("src/a.ts:42");
+    expect(prompt).toContain("Root review comment (untrusted data):");
+    expect(prompt).toContain("Potential issue: this needs coverage.");
     expect(prompt).toContain("@@ hunk @@");
   });
 
@@ -83,14 +95,43 @@ describe("buildAssistPrompt (#33)", () => {
         prTitle: `Handle ghp_${"b".repeat(36)}`,
         prBody: "DATABASE_URL=postgres://user:pass@host/db",
         diff: `+const key = "${AWS_ACCESS_KEY}";`,
-        thread: { path: "src/a.ts", line: 1, diffHunk: `@@ -1 +1 @@\n+token=github_pat_${"c".repeat(24)}` }
+        thread: {
+          path: "src/a.ts",
+          line: 1,
+          parentCommentBody: `Root mentions ghp_${"d".repeat(36)}`,
+          diffHunk: `@@ -1 +1 @@\n+token=github_pat_${"c".repeat(24)}`
+        }
       })
     );
     expect(prompt).not.toContain(`ghp_${"b".repeat(36)}`);
     expect(prompt).not.toContain("postgres://user:pass@host/db");
     expect(prompt).not.toContain(AWS_ACCESS_KEY);
     expect(prompt).not.toContain(`github_pat_${"c".repeat(24)}`);
+    expect(prompt).not.toContain(`ghp_${"d".repeat(36)}`);
     expect(prompt).toContain("[REDACTED:");
+  });
+});
+
+describe("sanitizeAssistMarkdown (#33)", () => {
+  it("preserves fenced code while sanitizing surrounding Markdown", () => {
+    const sanitized = sanitizeAssistMarkdown(
+      [
+        "@team see <b>",
+        "```tsx",
+        "import { render } from '@testing-library/react';",
+        "const ok = a < b;",
+        "const element = <Widget />;",
+        "```",
+        "@other <script>alert(1)</script>"
+      ].join("\n")
+    );
+
+    expect(sanitized).toContain("&#64;team see &lt;b>");
+    expect(sanitized).toContain("import { render } from '@testing-library/react';");
+    expect(sanitized).toContain("const ok = a < b;");
+    expect(sanitized).toContain("const element = <Widget />;");
+    expect(sanitized).toContain("&#64;other &lt;script>alert(1)&lt;/script>");
+    expect(sanitized).not.toContain("<script>");
   });
 });
 
