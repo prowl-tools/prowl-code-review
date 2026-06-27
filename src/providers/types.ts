@@ -16,7 +16,12 @@ export const PROVIDER_NAMES: readonly ProviderName[] = ["anthropic", "openai", "
  * versions; BYOK users can always override without a release.
  */
 export const DEFAULT_MODELS: Record<ProviderName, string> = {
-  anthropic: "claude-sonnet-4-6",
+  // Haiku is the default: prowl-review's bug-catching comes from the differentiators
+  // (multi-pass specialists, judge/dedup, verification, agentic context, linter/SAST
+  // grounding) more than raw model size, so a cheap, fast model keeps per-review cost
+  // in cents out of the box. Pin a per-provider `model` (e.g. claude-sonnet-4-6) for a
+  // higher-fidelity review.
+  anthropic: "claude-haiku-4-5",
   openai: "gpt-5.2",
   gemini: "gemini-2.5-pro"
 };
