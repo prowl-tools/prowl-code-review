@@ -104,6 +104,8 @@ repo owner/member/collaborator is honored):
 | `@prowl-review ignore` | Reply on a finding to mute it — it won't be raised again on this PR (#30). |
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
 | `@prowl-review resume` | Re-enable auto-review. |
+| `@prowl-review docstrings` | Draft docstrings for the changed code, posted as a copy-paste reply (#33). |
+| `@prowl-review tests` | Draft unit-test stubs for the changed code, posted as a copy-paste reply (#33). |
 | `@prowl-review help` | List the available commands. |
 | `@prowl-review <question>` | Ask a free-form question — answered in-thread, grounded in the PR diff (#27). |
 
@@ -113,6 +115,15 @@ thread. The starter below listens to top-level PR comments only; inline review
 comments can be supported by also adding `pull_request_review_comment`, but each
 inline comment creates a workflow run, so leave it out unless you need inline
 questions or `ignore` replies.
+
+**Code assists (#33).** `@prowl-review docstrings` drafts docstrings/doc-comments
+for the functions, classes, and methods changed in the PR (in each file's
+language convention); `@prowl-review tests` drafts unit-test stubs covering the
+changed behavior, inferring the project's test framework from the diff. Both are
+grounded in the (size-guarded, secret-redacted) PR diff and reply with
+copy-paste-ready fenced code blocks — in-thread when invoked on an inline
+comment, otherwise as a PR comment. They're suggestions to review before
+committing, not auto-applied. Singular/`doc`/`docs` aliases are accepted.
 
 ```yaml
 # .github/workflows/prowl-review-command.yml

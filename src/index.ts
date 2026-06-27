@@ -175,6 +175,16 @@ export {
   type ChatThreadContext
 } from "./review/chat.js";
 export {
+  generateAssist,
+  sanitizeAssistMarkdown,
+  buildAssistSystem,
+  buildAssistPrompt,
+  assistLabel,
+  DEFAULT_ASSIST_MAX_TOKENS,
+  type AssistInput,
+  type AssistKind
+} from "./review/generate.js";
+export {
   planCheckRun,
   submitCheckRun,
   annotationLevelFor,

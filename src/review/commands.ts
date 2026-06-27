@@ -13,7 +13,17 @@
  */
 
 /** Verbs the bot honors today. Anything else parses to `unknown` (→ chat/help). */
-export const COMMAND_VERBS = ["review", "full-review", "break-glass", "ignore", "pause", "resume", "help"] as const;
+export const COMMAND_VERBS = [
+  "review",
+  "full-review",
+  "break-glass",
+  "ignore",
+  "pause",
+  "resume",
+  "docstrings",
+  "tests",
+  "help"
+] as const;
 
 /** A recognized bot command verb. */
 export type CommandVerb = (typeof COMMAND_VERBS)[number];
@@ -76,6 +86,14 @@ export function parseCommand(body: string | null | undefined): ParsedCommand | n
     return { verb: "break-glass", argument: tokens.slice(consumed).join(" ") };
   }
 
+  // Accept singular/`doc`/`docs` aliases for the #33 generation verbs.
+  if (first === "docstring" || first === "docstrings" || first === "doc" || first === "docs") {
+    return { verb: "docstrings", argument: tokens.slice(1).join(" ") };
+  }
+  if (first === "test" || first === "tests") {
+    return { verb: "tests", argument: tokens.slice(1).join(" ") };
+  }
+
   if ((COMMAND_VERBS as readonly string[]).includes(first)) {
     return { verb: first as CommandVerb, argument: tokens.slice(1).join(" ") };
   }
@@ -94,6 +112,8 @@ export function commandHelpText(): string {
     "- `ignore` — reply on a finding to mute it; it won't be raised again on this PR.",
     "- `pause` — stop auto-reviewing this PR on new pushes.",
     "- `resume` — re-enable auto-review.",
+    "- `docstrings` — draft docstrings for the changed code.",
+    "- `tests` — draft unit-test stubs for the changed code.",
     "- `help` — show this message.",
     "",
     "_Only a repository owner, member, or collaborator can drive the bot._"
