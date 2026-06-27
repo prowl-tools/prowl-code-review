@@ -391,10 +391,12 @@ export async function submitReview(
     findPriorSummary(octokit, ref, botLogin),
     listPriorInlineFingerprints(octokit, ref, botLogin)
   ]);
+  // This pre-review plan drives deduping and the optional seed comment. It must
+  // not record `headSha` yet; only the final post-review summary may advance
+  // `lastReviewedSha`.
   const initialPlan = planPublish({
     payload,
     priorComment: prior,
-    headSha: options.headSha,
     preservePriorSummary: options.preservePriorSummary,
     priorPostedFindings,
     repostableFindings: options.repostableFindings,
@@ -405,6 +407,30 @@ export async function submitReview(
   let posted = false;
   const newInline = options.commitId ? initialPlan.newInlineComments : [];
   const reviewComments = newInline.map(toGitHubComment);
+
+  // On the first run, seed the summary comment BEFORE posting the review so it
+  // sits above the review in the PR conversation timeline (GitHub orders by
+  // creation time; otherwise the flagged-findings review lands on top). The seed
+  // records no reviewed SHA or posted fingerprints yet — the real marker is
+  // written by the summary update after the review posts, so a failed review
+  // submission never makes the summary claim a SHA or inline comments that don't
+  // exist (#12 retry-safety; the inline fingerprint markers remain the recovery
+  // source either way). Re-runs keep their existing summary (updated in place)
+  // above later reviews, so seeding is first-run only.
+  const willPostReview = payload.event === "COMMENT" ? reviewComments.length > 0 : true;
+  let seededSummaryId: number | undefined;
+  if (initialPlan.priorCommentId === undefined && willPostReview) {
+    if (options.shouldPublish && !(await options.shouldPublish())) {
+      return { posted, cancelled: true };
+    }
+    const seeded = await octokit.rest.issues.createComment({
+      owner: ref.owner,
+      repo: ref.repo,
+      issue_number: ref.pull_number,
+      body: initialPlan.summaryBody
+    });
+    seededSummaryId = seeded.data.id;
+  }
 
   if (payload.event === "COMMENT") {
     // COMMENT path (#22): publish net-new inline findings as one cohesive review
@@ -461,15 +487,17 @@ export async function submitReview(
     repostableFindings: options.repostableFindings,
     postedInlineComments
   });
-  // Summary: update in place, or create on the first run.
+  // Summary: update in place (a prior summary, or the one we just seeded), or
+  // create it when there was nothing to seed (e.g. a no-findings first run).
   if (options.shouldPublish && !(await options.shouldPublish())) {
     return { posted, cancelled: true };
   }
-  if (finalPlan.priorCommentId !== undefined) {
+  const summaryCommentId = seededSummaryId ?? finalPlan.priorCommentId;
+  if (summaryCommentId !== undefined) {
     await octokit.rest.issues.updateComment({
       owner: ref.owner,
       repo: ref.repo,
-      comment_id: finalPlan.priorCommentId,
+      comment_id: summaryCommentId,
       body: finalPlan.summaryBody
     });
   } else {
