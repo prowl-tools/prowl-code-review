@@ -17,13 +17,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-22. **Update-not-duplicate: resolve fixed threads + respect human replies** *(core + thread tidy-up done — see resolved.md)*
-    As a developer, I want re-runs to also tidy up stale threads and honor my replies, so that the PR stays clean and the bot isn't argumentative.
-    - **Done (core):** the summary is found by marker and updated in place (now a top-level PR comment, not a stacked review); only net-new inline findings are posted (deduped via the #12 state fingerprints).
-    - **Done:** fixed finding threads are resolved via GraphQL `resolveReviewThread` when the finding no longer appears in the latest full review.
-    - **Done:** human replies are honored — "won't fix"/"acknowledged" resolves the thread and withholds the finding; "I disagree" keeps the thread open and withholds the finding (withdrawn from re-emit) instead of blindly re-posting it.
-    - Acceptance (remaining): on "I disagree", have the judge actively **re-justify** the finding (defend with reasoning) or formally **withdraw** it, rather than just withholding it — rides with the bot-command/event infra (#26/#27) that owns reply-driven re-review.
-
 26. **Bot command set** *(core verbs done — see resolved.md)*
     As a developer, I want chat commands to control the reviewer, so that I can drive it from the PR like CodeRabbit.
     - **Done:** `@prowl-review` command parsing + verb allowlist (#14), trust-gated to owner/member/collaborator, dispatched from an `issue_comment` workflow + a `command` CLI subcommand (Action `mode: command`). Verbs: `review` (re-review latest), `full review` (full re-scan), `pause`/`resume` (auto-review toggle persisted in the summary state marker), `help`.
