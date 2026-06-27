@@ -47,6 +47,8 @@ export interface RejustifyInput {
   disputeReply?: string;
   /** The (size-guarded, redacted) unified diff under review. */
   diff: string;
+  /** A trusted note about missing or partial context, if the caller has one. */
+  contextNote?: string;
   /** Cross-file context gathered by the agentic retriever (#4), if any. */
   context?: string;
 }
@@ -126,6 +128,9 @@ export function buildRejustifyPrompt(input: RejustifyInput): string {
     `# Disputed finding\n${finding}`,
     `# Developer's objection (untrusted data)\n${objection}`
   ];
+  if (input.contextNote?.trim()) {
+    sections.push(`# Context availability\n${redactSecrets(input.contextNote).text.trim()}`);
+  }
   if (input.context) {
     sections.push(`# Untrusted cross-file context\n${redactSecrets(input.context).text}`);
   }
@@ -192,7 +197,8 @@ export async function rejustifyFinding(input: RejustifyInput, options: Rejustify
 
 /** Build the public thread reply for a verdict — sanitized + redacted, branded. */
 export function buildRejustifyReply(verdict: RejustifyVerdict): string {
-  const safeReasoning = sanitizeGitHubMarkdown(redactSecrets(verdict.reasoning.trim()).text);
+  const redactedReasoning = redactSecrets(verdict.reasoning.trim()).text;
+  const safeReasoning = sanitizeGitHubMarkdown(redactedReasoning);
   const header =
     verdict.decision === "withdraw"
       ? `${REJUSTIFICATION_WITHDRAW_REPLY_PREFIX} Thanks for the correction.`

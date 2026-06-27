@@ -7,7 +7,11 @@ import {
   type ReviewThread
 } from "../src/github/threads.js";
 import type { OctokitLike } from "../src/github/client.js";
-import { buildRejustifyReply } from "../src/review/rejustify.js";
+import {
+  buildRejustifyReply,
+  REJUSTIFICATION_REPLY_MARKER,
+  REJUSTIFICATION_WITHDRAW_REPLY_PREFIX
+} from "../src/review/rejustify.js";
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 
@@ -314,6 +318,42 @@ describe("fetchReviewThreads (#22)", () => {
     expect(t.humanIntent).toBe("other");
     expect(t.humanReplyBody).toBeUndefined();
     expect(t.botRejustification).toBe("withdrawn");
+  });
+
+  it("classifies withdrawal only from the controlled reply header", async () => {
+    const { octokit } = mockOctokit([
+      {
+        id: "T1",
+        isResolved: false,
+        isOutdated: false,
+        comments: {
+          nodes: [
+            { body: "<!-- prowl-review:finding fp1 -->", author: { login: "prowl-bot", __typename: "Bot" } }
+          ]
+        },
+        recentComments: {
+          nodes: [
+            { body: "I disagree, this is guarded.", authorAssociation: "OWNER", author: { login: "dev", __typename: "User" } },
+            {
+              body: [
+                "**Standing by this finding.** Here's why, on reflection:",
+                "",
+                `The objection quoted ${REJUSTIFICATION_WITHDRAW_REPLY_PREFIX}, but the code still fails.`,
+                "",
+                `<sub>prowl-review - ${REJUSTIFICATION_REPLY_MARKER}.</sub>`
+              ].join("\n"),
+              author: { login: "prowl-bot", __typename: "Bot" }
+            }
+          ]
+        }
+      }
+    ]);
+
+    const [t] = await fetchReviewThreads(octokit, ref, "prowl-bot");
+
+    expect(t.humanIntent).toBe("other");
+    expect(t.humanReplyBody).toBeUndefined();
+    expect(t.botRejustification).toBeUndefined();
   });
 
   it("re-exposes a defended dispute when the human replies again", async () => {
