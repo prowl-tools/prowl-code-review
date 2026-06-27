@@ -66,6 +66,13 @@ describe("buildRejustifyPrompt (#22)", () => {
     expect(prompt).not.toContain(`ghp_${"b".repeat(36)}`);
     expect(prompt).toContain("[REDACTED:");
   });
+
+  it("redacts secrets from cross-file context", () => {
+    const prompt = buildRejustifyPrompt(input({ context: `export const key = "${AWS_ACCESS_KEY}";` }));
+    expect(prompt).toContain("Untrusted cross-file context");
+    expect(prompt).not.toContain(AWS_ACCESS_KEY);
+    expect(prompt).toContain("[REDACTED:");
+  });
 });
 
 describe("parseRejustifyVerdict (#22)", () => {

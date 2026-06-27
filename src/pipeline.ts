@@ -790,7 +790,7 @@ export interface ThreadTidyResult {
   withheldSettled: number;
   /** Current findings withheld because a human disputed them ("disagree"). */
   withheldDisputed: number;
-  /** Disputed threads left open for the human (not resolved). */
+  /** Disputed threads still withheld/open because re-justification did not act. */
   keptOpenDisputed: number;
   /** Disputed findings the judge re-justified and defended in-thread (#22). */
   defended: number;
@@ -801,6 +801,11 @@ export interface ThreadTidyResult {
 }
 
 type ThreadResolveAction = ThreadActionPlan["resolve"][number];
+
+interface RejustificationOutcome {
+  verdict?: RejustifyVerdict;
+  usage: TokenUsage;
+}
 
 async function resolveThreadActions(params: {
   actions: ThreadResolveAction[];
@@ -919,17 +924,18 @@ async function tidyReviewThreads(params: {
   dryRun: boolean;
   shouldResolveThread?: () => Promise<boolean>;
   /** Re-evaluate a disputed finding — defend/withdraw (#22). Omitted → withhold (prior behavior). */
-  rejustify?: (input: { finding: Finding; disputeReply?: string }) => Promise<RejustifyVerdict | null>;
+  rejustify?: (input: { finding: Finding; disputeReply?: string }) => Promise<RejustificationOutcome | null>;
   /** Post a reply on a review thread (#22). Required for the re-justification reply. */
   replyToThread?: (octokit: OctokitLike, threadId: string, body: string) => Promise<boolean>;
-}): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number }> {
+}): Promise<{ findings: Finding[]; notes: string[]; tidy?: ThreadTidyResult; capped?: number; usage: TokenUsage }> {
+  let rejustifyUsage = emptyUsage();
   if (!params.enabled) {
-    return { findings: params.findings, notes: [] };
+    return { findings: params.findings, notes: [], usage: rejustifyUsage };
   }
 
   const threads = await params.fetchThreads(params.octokit, params.ref);
   if (threads.length === 0) {
-    return { findings: params.findings, notes: [] };
+    return { findings: params.findings, notes: [], usage: rejustifyUsage };
   }
 
   const fingerprintByFinding = new Map(params.findings.map((finding) => [finding, findingFingerprint(finding)]));
@@ -944,7 +950,6 @@ async function tidyReviewThreads(params: {
   const approvalBlockingSettled = params.resolveStaleThreads ? 0 : acknowledged.size;
   let withheldSettled = 0;
   let withheldDisputed = 0;
-  const kept: Finding[] = [];
   const visibleLimit = params.findings.length;
   for (const finding of candidateFindings) {
     const fingerprint = fingerprintByCandidate.get(finding)!;
@@ -952,12 +957,8 @@ async function tidyReviewThreads(params: {
       withheldSettled += 1;
     } else if (disputed.has(fingerprint)) {
       withheldDisputed += 1;
-    } else {
-      kept.push(finding);
     }
   }
-  const refilled = kept.slice(0, visibleLimit);
-  const capped = hasCandidateFindings ? Math.max(0, kept.length - refilled.length) : undefined;
 
   // Resolve threads (skipped on a dry run, which never mutates PR state).
   let resolvedFixed = 0;
@@ -978,6 +979,8 @@ async function tidyReviewThreads(params: {
   // re-justifier falls back to the prior behavior (withhold, leave open).
   let defended = 0;
   let withdrawn = 0;
+  const defendedFingerprints = new Set<string>();
+  const withdrawnFingerprints = new Set<string>();
   if (params.rejustify && !params.dryRun && plan.disputedThreads.length > 0) {
     const findingByFingerprint = new Map<string, Finding>();
     for (const finding of candidateFindings) {
@@ -994,34 +997,53 @@ async function tidyReviewThreads(params: {
       if (!fingerprint) {
         continue; // the finding is no longer current — nothing to defend
       }
-      const verdict = await params.rejustify({
+      const outcome = await params.rejustify({
         finding: findingByFingerprint.get(fingerprint)!,
         ...(thread.humanReplyBody !== undefined ? { disputeReply: thread.humanReplyBody } : {})
       });
-      if (!verdict) {
+      if (!outcome) {
         continue; // re-justification failed — leave the thread open (fallback)
       }
+      rejustifyUsage = addUsage(rejustifyUsage, outcome.usage);
+      if (!outcome.verdict) {
+        continue; // re-justification failed — leave the thread open (fallback)
+      }
+      const verdict = outcome.verdict;
       const replyBody = buildRejustifyReply(verdict);
+      const replied = params.replyToThread
+        ? await params.replyToThread(params.octokit, thread.id, replyBody)
+        : false;
+      if (!replied) {
+        continue; // no visible reply — do not act on the verdict
+      }
       if (verdict.decision === "withdraw") {
-        if (params.replyToThread) {
-          await params.replyToThread(params.octokit, thread.id, replyBody);
-        }
         if (await params.resolveThread(params.octokit, thread.id)) {
           withdrawn += 1;
+          withdrawnFingerprints.add(fingerprint);
         }
       } else {
-        if (params.replyToThread) {
-          await params.replyToThread(params.octokit, thread.id, replyBody);
-        }
         defended += 1;
+        defendedFingerprints.add(fingerprint);
       }
     }
   }
-  // Withdrawn disputes are conceded — drop them from the still-in-contention counts
-  // so they no longer block the approval gate.
-  const keptOpenDisputed = Math.max(0, plan.keptOpenDisputed - withdrawn);
-  const contestedDisputed = Math.max(0, withheldDisputed - withdrawn);
-  const unrejustifiedOpen = Math.max(0, keptOpenDisputed - defended);
+  const eligibleAfterRejustify = candidateFindings.filter((finding) => {
+    const fingerprint = fingerprintByCandidate.get(finding)!;
+    return (
+      !acknowledged.has(fingerprint) &&
+      !withdrawnFingerprints.has(fingerprint) &&
+      (!disputed.has(fingerprint) || defendedFingerprints.has(fingerprint))
+    );
+  });
+  const refilledAfterRejustify = eligibleAfterRejustify.slice(0, visibleLimit);
+  const cappedAfterRejustify = hasCandidateFindings
+    ? Math.max(0, eligibleAfterRejustify.length - refilledAfterRejustify.length)
+    : undefined;
+  // Defended disputes are surfaced again as active findings. Only unreplied or
+  // failed re-justifications remain withheld/open as separate approval blockers.
+  const keptOpenDisputed = Math.max(0, plan.keptOpenDisputed - withdrawn - defended);
+  const contestedDisputed = Math.max(0, withheldDisputed - withdrawn - defended);
+  const unrejustifiedOpen = keptOpenDisputed;
 
   const notes: string[] = [];
   const resolvedTotal = resolvedFixed + resolvedSettled;
@@ -1063,7 +1085,7 @@ async function tidyReviewThreads(params: {
     withdrawn,
     repostableFindings: [...new Set([...plan.repostable, ...resolvedFixedFingerprints])]
   };
-  return { findings: refilled, notes, tidy, capped };
+  return { findings: refilledAfterRejustify, notes, tidy, capped: cappedAfterRejustify, usage: rejustifyUsage };
 }
 
 function approvalBlockingThreadCount(tidy: ThreadTidyResult | undefined): number {
@@ -1323,14 +1345,14 @@ export async function reviewPullRequest(
   const makeRejustifier = (
     diff: string,
     context?: string
-  ): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustifyVerdict | null>) | undefined =>
+  ): ((input: { finding: Finding; disputeReply?: string }) => Promise<RejustificationOutcome | null>) | undefined =>
     rejustifyDisputedEnabled
       ? async (input) => {
           const result = await rejustifyFn(
             { finding: input.finding, diff, ...(context !== undefined ? { context } : {}), ...(input.disputeReply !== undefined ? { disputeReply: input.disputeReply } : {}) },
             { config }
           );
-          return result.ok && result.verdict ? result.verdict : null;
+          return { ...(result.ok && result.verdict ? { verdict: result.verdict } : {}), usage: result.usage };
         }
       : undefined;
   const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
@@ -1703,7 +1725,7 @@ export async function reviewPullRequest(
     }
     reviewResult.raw = reviewResult.findings;
     await generatePrDescriptionIfAllowed(reviewResult.usage);
-    const totalUsage = addUsage(reviewResult.usage, prDescriptionUsage);
+    const usageBeforeTidy = addUsage(reviewResult.usage, prDescriptionUsage);
     const requirementsCoverage = runRequirementsOnlyReview
       ? {
           passed: reviewResult.passes.filter((pass) => pass.ok).length,
@@ -1717,7 +1739,7 @@ export async function reviewPullRequest(
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
     // Tidy prior threads first (#22) so withheld findings don't count toward the gate.
     const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
-      ? { findings: reviewResult.findings, notes: [] }
+      ? { findings: reviewResult.findings, notes: [], usage: emptyUsage() }
       : await tidyReviewThreads({
           fetchThreads,
           resolveThread,
@@ -1732,6 +1754,7 @@ export async function reviewPullRequest(
           rejustify: makeRejustifier(diffText),
           replyToThread
         });
+    const totalUsage = addUsage(usageBeforeTidy, tidied.usage);
     reviewResult.findings = tidied.findings;
     reviewResult.raw = tidied.findings;
     if (tidied.capped !== undefined) {
@@ -2030,13 +2053,13 @@ export async function reviewPullRequest(
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
   const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
 
-  const totalUsage = addUsage(usageBeforePrDescription, prDescriptionUsage);
+  const usageBeforeTidy = addUsage(usageBeforePrDescription, prDescriptionUsage);
 
   const headAdvancedBeforeTidy = await hasHeadAdvanced();
   // Tidy prior threads (#22) before the gate decision, so findings a human
   // already settled or disputed are withheld and don't drive request-changes.
   const tidied: Awaited<ReturnType<typeof tidyReviewThreads>> = headAdvancedBeforeTidy
-    ? { findings: reviewResult.findings, notes: [] }
+    ? { findings: reviewResult.findings, notes: [], usage: emptyUsage() }
     : await tidyReviewThreads({
         fetchThreads,
         resolveThread,
@@ -2052,6 +2075,7 @@ export async function reviewPullRequest(
         rejustify: makeRejustifier(diffText, reviewContext),
         replyToThread
       });
+  const totalUsage = addUsage(usageBeforeTidy, tidied.usage);
   reviewResult.findings = tidied.findings;
   if (tidied.capped !== undefined) {
     reviewResult.judge.capped = tidied.capped;
