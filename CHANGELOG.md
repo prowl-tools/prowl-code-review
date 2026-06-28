@@ -4,6 +4,20 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Bot commands `resolve` + `configure` (backlog #26, completes the bot command set): two new trust-gated
+  `@prowl-review` verbs. **`resolve`** — reply on a finding's thread to mark it resolved: it recovers the
+  finding fingerprint from the bot's comment, resolves the matching open review thread via GraphQL, and mutes
+  the fingerprint so it isn't re-raised (the difference from `ignore`, which leaves the thread open). Reuses the
+  #22 thread plumbing (`fetchReviewThreads` + `resolveReviewThread`), so no new GraphQL was needed.
+  **`configure <key=value …>`** — set per-PR review settings from a comment: an allowlist of `minSeverity`,
+  `maxFindings`, and `verify` (with `configure reset` to clear), validated by a new `parseConfigureArgs` (a typo
+  replies with usage rather than silently weakening the review). Overrides persist in the #12 summary state
+  marker (new `configOverrides`) and win over the repo config on the next review (an explicit per-run option is
+  only overridden when set); the applied overrides are surfaced as a review note. New `setConfigOverrides`
+  (state-write helpers now all preserve `configOverrides`), `handleResolve`/`handleConfigure` orchestrators,
+  dispatch + CLI wiring, README command-table + reply-handling docs, and public exports.
+
 ### Fixed
 - Published-review ordering (presentation, #10/#22): on a PR's first review, the **walkthrough summary comment
   now appears above the flagged-findings review** in the conversation timeline, instead of below it. GitHub
