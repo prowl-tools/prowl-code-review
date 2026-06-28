@@ -82,6 +82,20 @@ describe("serializeState / parseState round-trip", () => {
     expect(parseState('<!-- prowl-review:state {"v":1,"postedFindings":[]} -->')?.ignoredFindings).toBeUndefined();
   });
 
+  it("round-trips per-PR configure overrides (#26)", () => {
+    const configured: ReviewState = {
+      v: REVIEW_STATE_VERSION,
+      configOverrides: { minSeverity: "major", maxFindings: 5, verify: false },
+      postedFindings: []
+    };
+    expect(parseState(serializeState(configured))).toEqual(configured);
+  });
+
+  it("rejects an invalid configOverrides marker (graceful fallback to null)", () => {
+    expect(parseState('<!-- prowl-review:state {"v":1,"configOverrides":{"minSeverity":"urgent"},"postedFindings":[]} -->')).toBeNull();
+    expect(parseState('<!-- prowl-review:state {"v":1,"configOverrides":{"nope":1},"postedFindings":[]} -->')).toBeNull();
+  });
+
   it("returns null for missing/empty/markerless bodies", () => {
     expect(parseState(null)).toBeNull();
     expect(parseState("")).toBeNull();

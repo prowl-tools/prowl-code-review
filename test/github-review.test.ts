@@ -5,6 +5,7 @@ import {
   hasActiveRequestChanges,
   setPausedState,
   setIgnoredFindings,
+  setConfigOverrides,
   fetchReviewCommentFingerprints,
   replyToReviewComment,
   fetchReviewCommentBody,
@@ -1070,5 +1071,90 @@ describe("getAuthenticatedLogin (#22 dedup on the Actions token)", () => {
       throw new Error("403");
     });
     expect(await getAuthenticatedLogin(octokit)).toBeUndefined();
+  });
+});
+
+describe("setConfigOverrides (#26)", () => {
+  it("merges overrides into the existing summary state, preserving other fields", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
+      v: 1,
+      lastReviewedSha: "abc",
+      paused: true,
+      ignoredFindings: ["fp-muted"],
+      configOverrides: { minSeverity: "minor" },
+      postedFindings: ["fp-a"]
+    })}`;
+    const { octokit, updateComment, createComment } = mockOctokit([
+      { id: 5, body: prior, user: { login: "github-actions[bot]" } }
+    ]);
+
+    const result = await setConfigOverrides(octokit, ref, { overrides: { maxFindings: 10, minSeverity: "major" } });
+
+    expect(result.overrides).toEqual({ minSeverity: "major", maxFindings: 10 });
+    expect(createComment).not.toHaveBeenCalled();
+    const updated = updateComment.mock.calls[0][0] as { comment_id: number; body: string };
+    expect(updated.comment_id).toBe(5);
+    expect(parseState(updated.body)).toEqual({
+      v: 1,
+      lastReviewedSha: "abc",
+      paused: true,
+      ignoredFindings: ["fp-muted"],
+      configOverrides: { minSeverity: "major", maxFindings: 10 },
+      postedFindings: ["fp-a"]
+    });
+  });
+
+  it("clears overrides on reset while preserving the rest of the state", async () => {
+    const prior = `${REVIEW_MARKER}\n\nsummary\n\n${serializeState({
+      v: 1,
+      ignoredFindings: ["fp-muted"],
+      configOverrides: { minSeverity: "major", verify: false },
+      postedFindings: ["fp-a"]
+    })}`;
+    const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
+
+    const result = await setConfigOverrides(octokit, ref, { reset: true });
+
+    expect(result.overrides).toBeUndefined();
+    const updated = updateComment.mock.calls[0][0] as { body: string };
+    const state = parseState(updated.body);
+    expect(state?.configOverrides).toBeUndefined();
+    expect(state?.ignoredFindings).toEqual(["fp-muted"]); // unrelated state preserved
+  });
+
+  it("creates a marked summary when none exists yet", async () => {
+    const { octokit, createComment, updateComment } = mockOctokit([]);
+    const result = await setConfigOverrides(octokit, ref, { overrides: { minSeverity: "major" } });
+    expect(updateComment).not.toHaveBeenCalled();
+    const created = createComment.mock.calls[0][0] as { body: string };
+    expect(parseState(created.body)?.configOverrides).toEqual({ minSeverity: "major" });
+    expect(result.overrides).toEqual({ minSeverity: "major" });
+  });
+});
+
+describe("config overrides survive other state writes (#26)", () => {
+  const overrides = { minSeverity: "major" as const };
+
+  it("planPublish carries forward configOverrides on a normal review", () => {
+    const prior = {
+      id: 9,
+      body: `${REVIEW_MARKER}\n${serializeState({ v: 1, configOverrides: overrides, postedFindings: [] })}`
+    };
+    const plan = planPublish({ payload: payload(), priorComment: prior, headSha: "sha2" });
+    expect(plan.state.configOverrides).toEqual(overrides);
+  });
+
+  it("setPausedState preserves configOverrides", async () => {
+    const prior = `${REVIEW_MARKER}\n${serializeState({ v: 1, configOverrides: overrides, postedFindings: ["fp-a"] })}`;
+    const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
+    await setPausedState(octokit, ref, true);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.configOverrides).toEqual(overrides);
+  });
+
+  it("setIgnoredFindings preserves configOverrides", async () => {
+    const prior = `${REVIEW_MARKER}\n${serializeState({ v: 1, configOverrides: overrides, postedFindings: [] })}`;
+    const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
+    await setIgnoredFindings(octokit, ref, ["fp-x"]);
+    expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.configOverrides).toEqual(overrides);
   });
 });

@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   parseCommand,
   commandHelpText,
+  parseConfigureArgs,
+  configureHelpText,
   isTrustedCommandAuthor,
   COMMAND_VERBS
 } from "../src/review/commands.js";
@@ -16,9 +18,18 @@ describe("parseCommand (#26)", () => {
   it("parses each known verb", () => {
     expect(parseCommand("@prowl-review review")).toEqual({ verb: "review", argument: "" });
     expect(parseCommand("@prowl-review ignore")).toEqual({ verb: "ignore", argument: "" });
+    expect(parseCommand("@prowl-review resolve")).toEqual({ verb: "resolve", argument: "" });
     expect(parseCommand("@prowl-review pause")).toEqual({ verb: "pause", argument: "" });
     expect(parseCommand("@prowl-review resume")).toEqual({ verb: "resume", argument: "" });
     expect(parseCommand("@prowl-review help")).toEqual({ verb: "help", argument: "" });
+  });
+
+  it("parses `configure` with its settings as the argument (#26)", () => {
+    expect(parseCommand("@prowl-review configure minSeverity=major verify=off")).toEqual({
+      verb: "configure",
+      argument: "minSeverity=major verify=off"
+    });
+    expect(parseCommand("@prowl-review configure reset")).toEqual({ verb: "configure", argument: "reset" });
   });
 
   it("treats `full review` and `full-review` as a full re-scan", () => {
@@ -98,8 +109,66 @@ describe("commandHelpText (#26)", () => {
     for (const verb of COMMAND_VERBS) {
       // Multiword commands are shown in prose.
       const shown =
-        verb === "full-review" ? "full review" : verb === "break-glass" ? "break glass <head-sha>" : verb;
+        verb === "full-review"
+          ? "full review"
+          : verb === "break-glass"
+            ? "break glass <head-sha>"
+            : verb === "configure"
+              ? "configure <key=value …>"
+              : verb;
       expect(help).toContain(`\`${shown}\``);
     }
+  });
+});
+
+describe("parseConfigureArgs (#26)", () => {
+  it("parses the allowlisted settings with validation", () => {
+    expect(parseConfigureArgs("minSeverity=major maxFindings=10 verify=off")).toEqual({
+      reset: false,
+      overrides: { minSeverity: "major", maxFindings: 10, verify: false },
+      errors: [],
+      empty: false
+    });
+  });
+
+  it("accepts comma separators and verify truthy/falsy aliases", () => {
+    expect(parseConfigureArgs("minSeverity=critical, verify=on").overrides).toEqual({
+      minSeverity: "critical",
+      verify: true
+    });
+  });
+
+  it("treats a lone `reset` as a clear", () => {
+    expect(parseConfigureArgs("reset")).toMatchObject({ reset: true, empty: false });
+  });
+
+  it("reports an error for an unknown key", () => {
+    const parsed = parseConfigureArgs("minConfidence=0.9");
+    expect(parsed.overrides).toEqual({});
+    expect(parsed.errors[0]).toContain("Unknown setting");
+    expect(parsed.empty).toBe(true);
+  });
+
+  it("reports errors for invalid values without applying them", () => {
+    expect(parseConfigureArgs("minSeverity=urgent").errors[0]).toContain("Invalid minSeverity");
+    expect(parseConfigureArgs("maxFindings=0").errors[0]).toContain("Invalid maxFindings");
+    expect(parseConfigureArgs("maxFindings=-3").errors[0]).toContain("Invalid maxFindings");
+    expect(parseConfigureArgs("verify=maybe").errors[0]).toContain("Invalid verify");
+    expect(parseConfigureArgs("nonsense").errors[0]).toContain("key=value");
+  });
+
+  it("flags empty input (no settings, no reset)", () => {
+    expect(parseConfigureArgs("")).toMatchObject({ reset: false, empty: true });
+  });
+});
+
+describe("configureHelpText (#26)", () => {
+  it("lists the supported settings and prepends any errors", () => {
+    const help = configureHelpText(["Invalid minSeverity `x`."]);
+    expect(help).toContain("Invalid minSeverity `x`.");
+    expect(help).toContain("minSeverity");
+    expect(help).toContain("maxFindings");
+    expect(help).toContain("verify");
+    expect(help).toContain("reset");
   });
 });
