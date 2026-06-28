@@ -295,6 +295,32 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("limited cross-file context");
   });
 
+  it("applies per-PR configure overrides over the config (#26)", async () => {
+    const priorState: ReviewState = {
+      v: 1,
+      postedFindings: [],
+      configOverrides: { minSeverity: "major", maxFindings: 3, verify: false }
+    };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const deps = { ...makeDeps(), fetchPriorState };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      minSeverity: "minor", // overridden by the per-PR configure setting
+      verify: true
+    });
+
+    const reviewOptions = deps.runReview.mock.calls[0][1];
+    expect(reviewOptions.minSeverity).toBe("major");
+    expect(reviewOptions.maxFindings).toBe(3);
+    expect(reviewOptions.verify).toBe(false);
+    // The applied overrides are surfaced as a review note (markdown-escaped).
+    expect(result.payload.body).toContain("minSeverity=major");
+    expect(result.payload.body).toContain("verify=off");
+  });
+
   it("incrementally reviews only the delta since the last reviewed SHA (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);

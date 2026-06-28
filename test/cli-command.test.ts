@@ -9,6 +9,8 @@ import {
   respondToComment,
   generateForComment,
   handleIgnore,
+  handleResolve,
+  handleConfigure,
   type CommandDispatchDeps,
   type CommentEvent
 } from "../src/cli/commands/command.js";
@@ -127,6 +129,39 @@ describe("dispatchCommand (#26)", () => {
   it("falls back to help for a generation verb when no generator is wired (#33)", async () => {
     const d = deps(); // no generate
     await dispatchCommand({ verb: "docstrings", argument: "" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
+  });
+
+  it("resolves a finding thread via the resolve handler (#26)", async () => {
+    const resolve = vi.fn(async () => ({ resolved: 1 }));
+    const d = deps({ resolve });
+    const outcome = await dispatchCommand({ verb: "resolve", argument: "" }, { octokit, ref, deps: d });
+    expect(resolve).toHaveBeenCalledTimes(1);
+    expect(outcome.resolved).toBe(1);
+    expect(d.postComment).not.toHaveBeenCalled();
+  });
+
+  it("falls back to help for resolve when no handler is wired (#26)", async () => {
+    const d = deps(); // no resolve
+    await dispatchCommand({ verb: "resolve", argument: "" }, { octokit, ref, deps: d });
+    expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
+  });
+
+  it("applies per-PR settings via the configure handler (#26)", async () => {
+    const configure = vi.fn(async () => ({ ok: true }));
+    const d = deps({ configure });
+    const outcome = await dispatchCommand(
+      { verb: "configure", argument: "minSeverity=major" },
+      { octokit, ref, deps: d }
+    );
+    expect(configure).toHaveBeenCalledWith("minSeverity=major");
+    expect(outcome.configured).toBe(true);
+    expect(d.postComment).not.toHaveBeenCalled();
+  });
+
+  it("falls back to help for configure when no handler is wired (#26)", async () => {
+    const d = deps(); // no configure
+    await dispatchCommand({ verb: "configure", argument: "minSeverity=major" }, { octokit, ref, deps: d });
     expect(d.postComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("prowl-review commands"));
   });
 });
@@ -886,5 +921,121 @@ describe("generateForComment (#33)", () => {
     expect(body).toContain("import { render } from '@testing-library/react';");
     expect(body).toContain("const ok = a < b;");
     expect(body).not.toContain("<script>");
+  });
+});
+
+describe("handleResolve (#26)", () => {
+  const threadEvent: CommentEvent = {
+    body: "@prowl-review resolve",
+    association: "OWNER",
+    login: "dev",
+    pullNumber: 7,
+    commentId: 55,
+    parentCommentId: 40,
+    isReviewComment: true,
+    thread: { path: "src/a.ts", line: 6 }
+  };
+
+  function resolveDeps() {
+    return {
+      fetchFingerprints: vi.fn(async () => ["fp-a"]),
+      fetchThreads: vi.fn(async () => [
+        { id: "T-open", isResolved: false, isOutdated: false, fingerprints: ["fp-a"], humanIntent: "other" as const },
+        { id: "T-other", isResolved: false, isOutdated: false, fingerprints: ["fp-z"], humanIntent: "other" as const }
+      ]),
+      resolveThread: vi.fn(async () => true),
+      setIgnored: vi.fn(async () => ({ added: 1, total: 1 })),
+      postReviewReply: vi.fn(async () => {}),
+      postIssueComment: vi.fn(async () => {})
+    };
+  }
+
+  it("resolves the matching thread, mutes the finding, and acks in-thread", async () => {
+    const deps = resolveDeps();
+    const result = await handleResolve({ octokit, ref, event: threadEvent, deps });
+
+    expect(result.resolved).toBe(1);
+    expect(deps.resolveThread).toHaveBeenCalledWith(octokit, "T-open");
+    expect(deps.resolveThread).not.toHaveBeenCalledWith(octokit, "T-other");
+    expect(deps.setIgnored).toHaveBeenCalledWith(octokit, ref, ["fp-a"]);
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("Resolved"));
+  });
+
+  it("guides the user when invoked off a finding thread", async () => {
+    const deps = resolveDeps();
+    const result = await handleResolve({
+      octokit,
+      ref,
+      event: { ...threadEvent, isReviewComment: false, parentCommentId: undefined, commentId: undefined },
+      deps
+    });
+    expect(result.resolved).toBe(0);
+    expect(deps.resolveThread).not.toHaveBeenCalled();
+    expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("directly on a finding"));
+  });
+
+  it("acks when no prowl-review finding is found on the thread", async () => {
+    const deps = resolveDeps();
+    deps.fetchFingerprints.mockResolvedValueOnce([]);
+    const result = await handleResolve({ octokit, ref, event: threadEvent, deps });
+    expect(result.resolved).toBe(0);
+    expect(deps.resolveThread).not.toHaveBeenCalled();
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("couldn't identify"));
+  });
+});
+
+describe("handleConfigure (#26)", () => {
+  const event: CommentEvent = {
+    body: "@prowl-review configure minSeverity=major",
+    association: "OWNER",
+    login: "dev",
+    pullNumber: 7,
+    commentId: 80,
+    isReviewComment: false
+  };
+
+  it("persists valid overrides and acks", async () => {
+    const setOverrides = vi.fn(async () => ({ overrides: { minSeverity: "major" as const } }));
+    const postIssueComment = vi.fn(async () => {});
+    const result = await handleConfigure({
+      octokit,
+      ref,
+      event,
+      argument: "minSeverity=major",
+      deps: { setOverrides, postIssueComment }
+    });
+    expect(result.ok).toBe(true);
+    expect(setOverrides).toHaveBeenCalledWith(octokit, ref, { overrides: { minSeverity: "major" }, reset: false });
+    expect(postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("minSeverity=major"));
+  });
+
+  it("clears overrides on reset", async () => {
+    const setOverrides = vi.fn(async () => ({ overrides: undefined }));
+    const postIssueComment = vi.fn(async () => {});
+    const result = await handleConfigure({
+      octokit,
+      ref,
+      event,
+      argument: "reset",
+      deps: { setOverrides, postIssueComment }
+    });
+    expect(result.ok).toBe(true);
+    expect(setOverrides).toHaveBeenCalledWith(octokit, ref, { overrides: {}, reset: true });
+    expect(postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("Cleared"));
+  });
+
+  it("replies with usage and does not persist on invalid input", async () => {
+    const setOverrides = vi.fn(async () => ({ overrides: undefined }));
+    const postIssueComment = vi.fn(async () => {});
+    const result = await handleConfigure({
+      octokit,
+      ref,
+      event,
+      argument: "minSeverity=urgent",
+      deps: { setOverrides, postIssueComment }
+    });
+    expect(result.ok).toBe(false);
+    expect(setOverrides).not.toHaveBeenCalled();
+    expect(postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("Invalid minSeverity"));
   });
 });
