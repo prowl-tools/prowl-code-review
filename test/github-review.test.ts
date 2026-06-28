@@ -1130,6 +1130,24 @@ describe("setConfigOverrides (#26)", () => {
     expect(parseState(created.body)?.configOverrides).toEqual({ minSeverity: "major" });
     expect(result.overrides).toEqual({ minSeverity: "major" });
   });
+
+  it("preserves state from a minimal summary created by other command state writes", async () => {
+    const paused = mockOctokit([]);
+    await setPausedState(paused.octokit, ref, true);
+    const pausedBody = (paused.createComment.mock.calls[0][0] as { body: string }).body;
+
+    const ignored = mockOctokit([{ id: 5, body: pausedBody, user: { login: "github-actions[bot]" } }]);
+    await setIgnoredFindings(ignored.octokit, ref, ["fp-muted"]);
+    const ignoredBody = (ignored.updateComment.mock.calls[0][0] as { body: string }).body;
+
+    const configured = mockOctokit([{ id: 5, body: ignoredBody, user: { login: "github-actions[bot]" } }]);
+    await setConfigOverrides(configured.octokit, ref, { overrides: { verify: false } });
+
+    const finalState = parseState((configured.updateComment.mock.calls[0][0] as { body: string }).body);
+    expect(finalState?.paused).toBe(true);
+    expect(finalState?.ignoredFindings).toEqual(["fp-muted"]);
+    expect(finalState?.configOverrides).toEqual({ verify: false });
+  });
 });
 
 describe("config overrides survive other state writes (#26)", () => {

@@ -157,6 +157,15 @@ describe("parseConfigureArgs (#26)", () => {
     expect(parseConfigureArgs("nonsense").errors[0]).toContain("key=value");
   });
 
+  it("keeps valid settings and reports every error for mixed tokens", () => {
+    const parsed = parseConfigureArgs("minSeverity=major unknownKey=foo maxFindings=abc verify=on");
+    expect(parsed.overrides).toEqual({ minSeverity: "major", verify: true });
+    expect(parsed.errors).toHaveLength(2);
+    expect(parsed.errors[0]).toContain("Unknown setting");
+    expect(parsed.errors[1]).toContain("Invalid maxFindings");
+    expect(parsed.empty).toBe(false);
+  });
+
   it("flags empty input (no settings, no reset)", () => {
     expect(parseConfigureArgs("")).toMatchObject({ reset: false, empty: true });
   });

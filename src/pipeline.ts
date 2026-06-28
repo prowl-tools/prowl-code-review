@@ -512,6 +512,32 @@ function formatConfigOverrides(overrides: NonNullable<ReviewState["configOverrid
   return parts.join(", ");
 }
 
+function configuredOverrideNotes(input: {
+  saved: ReviewState["configOverrides"];
+  applied: ReviewState["configOverrides"];
+  explicitKeys: string[];
+}): string[] {
+  if (!input.saved || Object.keys(input.saved).length === 0) {
+    return [];
+  }
+  const savedText = formatConfigOverrides(input.saved);
+  const appliedText =
+    input.applied && Object.keys(input.applied).length > 0 ? formatConfigOverrides(input.applied) : undefined;
+  if (input.explicitKeys.length === 0) {
+    return [`Applied per-PR \`@prowl-review configure\` overrides (#26): ${savedText}.`];
+  }
+  if (appliedText) {
+    return [
+      `Per-PR \`@prowl-review configure\` settings (#26): ${savedText}. Applied this run: ${appliedText}; ` +
+        `explicit run options took precedence for ${input.explicitKeys.join(", ")}.`
+    ];
+  }
+  return [
+    `Per-PR \`@prowl-review configure\` settings (#26): ${savedText}. ` +
+      `Explicit run options took precedence for this run.`
+  ];
+}
+
 /**
  * Resolve linked-issue requirements for issue/ticket validation (#32): parse the
  * PR title/body for linked issues, fetch each (capped, tolerant), and assemble
@@ -1506,15 +1532,30 @@ export async function reviewPullRequest(
   const priorState = await loadPriorState(octokit, ref);
   const ignoredFingerprints = new Set(priorState?.ignoredFindings ?? []);
   // Per-PR `@prowl-review configure` overrides (#26) win over the config file for
-  // this PR; an explicit per-run option is only overridden when an override is set.
+  // this PR, while explicit per-run options win for that invocation.
   const configOverrides = priorState?.configOverrides;
-  const effectiveMinSeverity = configOverrides?.minSeverity ?? options.minSeverity;
-  const effectiveMaxFindings = configOverrides?.maxFindings ?? options.maxFindings;
-  const effectiveVerify = configOverrides?.verify ?? options.verify;
-  const configOverrideNotes =
-    configOverrides && Object.keys(configOverrides).length > 0
-      ? [`Applied per-PR \`@prowl-review configure\` overrides (#26): ${formatConfigOverrides(configOverrides)}.`]
-      : [];
+  const effectiveMinSeverity = options.minSeverity ?? configOverrides?.minSeverity;
+  const effectiveMaxFindings = options.maxFindings ?? configOverrides?.maxFindings;
+  const effectiveVerify = options.verify ?? configOverrides?.verify;
+  const appliedConfigOverrides: NonNullable<ReviewState["configOverrides"]> = {};
+  const explicitConfigOverrideKeys: string[] = [];
+  if (configOverrides?.minSeverity !== undefined) {
+    if (options.minSeverity === undefined) appliedConfigOverrides.minSeverity = configOverrides.minSeverity;
+    else explicitConfigOverrideKeys.push("minSeverity");
+  }
+  if (configOverrides?.maxFindings !== undefined) {
+    if (options.maxFindings === undefined) appliedConfigOverrides.maxFindings = configOverrides.maxFindings;
+    else explicitConfigOverrideKeys.push("maxFindings");
+  }
+  if (configOverrides?.verify !== undefined) {
+    if (options.verify === undefined) appliedConfigOverrides.verify = configOverrides.verify;
+    else explicitConfigOverrideKeys.push("verify");
+  }
+  const configOverrideNotes = configuredOverrideNotes({
+    saved: configOverrides,
+    applied: appliedConfigOverrides,
+    explicitKeys: explicitConfigOverrideKeys
+  });
 
   let parsed = fullParsed;
   let incrementalBaseSha: string | undefined;

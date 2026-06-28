@@ -27,6 +27,7 @@ import {
   isTrustedCommandAuthor,
   type ParsedCommand
 } from "../../review/commands.js";
+import type { ReviewState } from "../../review/state.js";
 import {
   generateChatReply as defaultGenerateChatReply,
   sanitizeChatReplyMarkdown,
@@ -582,14 +583,16 @@ export interface ResolveHandlerDeps {
   postIssueComment?: (octokit: OctokitLike, ref: PullRequestRef, body: string) => Promise<void>;
 }
 
+const RESOLVE_THREAD_CONCURRENCY = 4;
+
 /**
  * Resolve the finding thread an `@prowl-review resolve` reply targets (#26):
  * recover the finding fingerprint(s) from the bot's root comment, resolve the
  * matching open review thread(s) via GraphQL, and mute the fingerprint(s) so the
  * finding isn't re-raised on the next review (the difference from `ignore`, which
  * leaves the thread open). Only meaningful as a reply on a finding's comment;
- * otherwise it replies with guidance. Tolerant — thread-resolution failures are
- * surfaced via the count, never thrown.
+ * otherwise it replies with guidance. Tolerant — it leaves the finding unmuted
+ * unless the matching thread(s) resolve and the mute state persists cleanly.
  */
 export async function handleResolve(params: {
   octokit: OctokitLike;
@@ -629,15 +632,29 @@ export async function handleResolve(params: {
   // finding isn't re-raised on the next review.
   const targets = new Set(fingerprints);
   const threads = await fetchThreads(params.octokit, params.ref);
+  const matchingThreads = threads.filter(
+    (thread) => !thread.isResolved && thread.fingerprints.some((fingerprint) => targets.has(fingerprint))
+  );
   let resolved = 0;
-  for (const thread of threads) {
-    if (!thread.isResolved && thread.fingerprints.some((fingerprint) => targets.has(fingerprint))) {
-      if (await resolveThread(params.octokit, thread.id)) {
+  for (let index = 0; index < matchingThreads.length; index += RESOLVE_THREAD_CONCURRENCY) {
+    const batch = matchingThreads.slice(index, index + RESOLVE_THREAD_CONCURRENCY);
+    const results = await Promise.allSettled(batch.map((thread) => resolveThread(params.octokit, thread.id)));
+    for (const result of results) {
+      if (result.status === "fulfilled" && result.value) {
         resolved += 1;
       }
     }
   }
-  await setIgnored(params.octokit, params.ref, fingerprints);
+  if (matchingThreads.length === 0 || resolved !== matchingThreads.length) {
+    await ack("⚠️ I couldn't resolve this finding's thread cleanly, so I left it unmuted.");
+    return { resolved };
+  }
+  try {
+    await setIgnored(params.octokit, params.ref, fingerprints);
+  } catch {
+    await ack("⚠️ I resolved the matching thread, but couldn't mute the finding for future reviews.");
+    return { resolved };
+  }
   await ack("✅ Resolved — marked this finding's thread resolved and muted it on this PR.");
   return { resolved };
 }
@@ -680,10 +697,17 @@ export async function handleConfigure(params: {
     return { ok: false };
   }
 
-  const { overrides } = await setOverrides(params.octokit, params.ref, {
-    overrides: parsed.overrides,
-    reset: parsed.reset
-  });
+  let overrides: ReviewState["configOverrides"];
+  try {
+    const result = await setOverrides(params.octokit, params.ref, {
+      overrides: parsed.overrides,
+      reset: parsed.reset
+    });
+    overrides = result.overrides;
+  } catch {
+    await ack("⚠️ I couldn't save per-PR review settings, so no settings were changed.");
+    return { ok: false };
+  }
 
   if (parsed.reset || !overrides) {
     await ack("⚙️ Cleared per-PR review settings — back to the repository config. Comment `@prowl-review review` to refresh.");

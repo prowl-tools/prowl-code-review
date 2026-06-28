@@ -92,8 +92,16 @@ describe("serializeState / parseState round-trip", () => {
   });
 
   it("rejects an invalid configOverrides marker (graceful fallback to null)", () => {
-    expect(parseState('<!-- prowl-review:state {"v":1,"configOverrides":{"minSeverity":"urgent"},"postedFindings":[]} -->')).toBeNull();
-    expect(parseState('<!-- prowl-review:state {"v":1,"configOverrides":{"nope":1},"postedFindings":[]} -->')).toBeNull();
+    expect(
+      parseState(
+        `<!-- prowl-review:state {"v":${REVIEW_STATE_VERSION},"configOverrides":{"minSeverity":"urgent"},"postedFindings":[]} -->`
+      )
+    ).toBeNull();
+    expect(
+      parseState(
+        `<!-- prowl-review:state {"v":${REVIEW_STATE_VERSION},"configOverrides":{"nope":1},"postedFindings":[]} -->`
+      )
+    ).toBeNull();
   });
 
   it("returns null for missing/empty/markerless bodies", () => {

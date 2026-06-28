@@ -295,7 +295,7 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("limited cross-file context");
   });
 
-  it("applies per-PR configure overrides over the config (#26)", async () => {
+  it("applies per-PR configure overrides unless explicit run options win (#26)", async () => {
     const priorState: ReviewState = {
       v: 1,
       postedFindings: [],
@@ -308,16 +308,18 @@ describe("reviewPullRequest", () => {
       config,
       toolkitRoot: "/repo",
       deps,
-      minSeverity: "minor", // overridden by the per-PR configure setting
+      minSeverity: "minor",
       verify: true
     });
 
     const reviewOptions = deps.runReview.mock.calls[0][1];
-    expect(reviewOptions.minSeverity).toBe("major");
+    expect(reviewOptions.minSeverity).toBe("minor");
     expect(reviewOptions.maxFindings).toBe(3);
-    expect(reviewOptions.verify).toBe(false);
-    // The applied overrides are surfaced as a review note (markdown-escaped).
+    expect(reviewOptions.verify).toBe(true);
+    // The saved settings are surfaced, while the note calls out explicit run-option precedence.
     expect(result.payload.body).toContain("minSeverity=major");
+    expect(result.payload.body).toContain("Applied this run: maxFindings=3");
+    expect(result.payload.body).toContain("explicit run options took precedence for minSeverity, verify");
     expect(result.payload.body).toContain("verify=off");
   });
 
