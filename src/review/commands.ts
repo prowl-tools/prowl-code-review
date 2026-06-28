@@ -12,12 +12,16 @@
  * break-glass gate (#52). An untrusted commenter's `@prowl-review` is ignored.
  */
 
+import type { Severity } from "./findings.js";
+
 /** Verbs the bot honors today. Anything else parses to `unknown` (→ chat/help). */
 export const COMMAND_VERBS = [
   "review",
   "full-review",
   "break-glass",
   "ignore",
+  "resolve",
+  "configure",
   "pause",
   "resume",
   "docstrings",
@@ -110,12 +114,110 @@ export function commandHelpText(): string {
     "- `full review` — re-scan the entire PR from scratch.",
     "- `break glass <head-sha>` — re-run the approval gate after a trusted override.",
     "- `ignore` — reply on a finding to mute it; it won't be raised again on this PR.",
+    "- `resolve` — reply on a finding to mark its thread resolved and stop re-raising it.",
+    "- `configure <key=value …>` — set per-PR review settings (`minSeverity`, `maxFindings`, `verify`); `configure reset` clears them.",
     "- `pause` — stop auto-reviewing this PR on new pushes.",
     "- `resume` — re-enable auto-review.",
     "- `docstrings` — draft docstrings for the changed code.",
     "- `tests` — draft unit-test stubs for the changed code.",
     "- `help` — show this message.",
     "",
+    "_Only a repository owner, member, or collaborator can drive the bot._"
+  ].join("\n");
+}
+
+/** Per-PR review settings a trusted commenter may set via `@prowl-review configure` (#26). */
+export interface ConfigureOverrides {
+  minSeverity?: Severity;
+  maxFindings?: number;
+  verify?: boolean;
+}
+
+/** Parsed `@prowl-review configure` arguments. */
+export interface ParsedConfigure {
+  /** `configure reset` — clear all per-PR overrides. */
+  reset: boolean;
+  /** Recognized, validated overrides to apply. */
+  overrides: ConfigureOverrides;
+  /** Per-token validation errors (unknown key, bad value). */
+  errors: string[];
+  /** True when no recognizable settings (and not a reset) were supplied. */
+  empty: boolean;
+}
+
+const CONFIGURE_SEVERITIES = new Set<Severity>(["critical", "major", "minor", "trivial", "info"]);
+
+/**
+ * Parse the argument of an `@prowl-review configure` command into validated
+ * per-PR overrides. Conservative: only an allowlist of keys (`minSeverity`,
+ * `maxFindings`, `verify`) is honored, each value is validated, and anything else
+ * becomes an error the caller surfaces — so a typo never silently weakens reviews.
+ * `configure reset` clears all overrides.
+ */
+export function parseConfigureArgs(argument: string | null | undefined): ParsedConfigure {
+  const overrides: ConfigureOverrides = {};
+  const errors: string[] = [];
+  const tokens = (typeof argument === "string" ? argument : "")
+    .split(/[\s,]+/)
+    .map((token) => token.trim())
+    .filter(Boolean);
+
+  if (tokens.length === 1 && tokens[0].toLowerCase() === "reset") {
+    return { reset: true, overrides, errors, empty: false };
+  }
+
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq <= 0) {
+      errors.push(`Couldn't parse \`${token}\` — use \`key=value\`.`);
+      continue;
+    }
+    const key = token.slice(0, eq).trim().toLowerCase();
+    const value = token.slice(eq + 1).trim();
+    if (key === "minseverity") {
+      const severity = value.toLowerCase() as Severity;
+      if (CONFIGURE_SEVERITIES.has(severity)) {
+        overrides.minSeverity = severity;
+      } else {
+        errors.push(`Invalid minSeverity \`${value}\` — use critical | major | minor | trivial | info.`);
+      }
+    } else if (key === "maxfindings") {
+      const parsed = Number(value);
+      if (Number.isInteger(parsed) && parsed > 0) {
+        overrides.maxFindings = parsed;
+      } else {
+        errors.push(`Invalid maxFindings \`${value}\` — use a positive integer.`);
+      }
+    } else if (key === "verify") {
+      const truthy = ["true", "on", "yes", "1"];
+      const falsy = ["false", "off", "no", "0"];
+      if (truthy.includes(value.toLowerCase())) {
+        overrides.verify = true;
+      } else if (falsy.includes(value.toLowerCase())) {
+        overrides.verify = false;
+      } else {
+        errors.push(`Invalid verify \`${value}\` — use on/off.`);
+      }
+    } else {
+      errors.push(`Unknown setting \`${key}\` — supported: minSeverity, maxFindings, verify (or \`reset\`).`);
+    }
+  }
+
+  return { reset: false, overrides, errors, empty: Object.keys(overrides).length === 0 };
+}
+
+/** Usage reply for a malformed `@prowl-review configure` command. */
+export function configureHelpText(errors: string[] = []): string {
+  return [
+    ...(errors.length > 0 ? [...errors, ""] : []),
+    "**`@prowl-review configure`** — set per-PR review settings:",
+    "",
+    "- `minSeverity=<critical|major|minor|trivial|info>` — only surface findings at/above this severity",
+    "- `maxFindings=<n>` — cap the number of findings",
+    "- `verify=<on|off>` — toggle the false-positive verification pass",
+    "- `reset` — clear all per-PR overrides",
+    "",
+    "Example: `@prowl-review configure minSeverity=major verify=off`",
     "_Only a repository owner, member, or collaborator can drive the bot._"
   ].join("\n");
 }
