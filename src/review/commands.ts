@@ -12,7 +12,8 @@
  * break-glass gate (#52). An untrusted commenter's `@prowl-review` is ignored.
  */
 
-import type { Severity } from "./findings.js";
+import { SEVERITIES } from "./findings.js";
+import { ConfigOverridesSchema, type ConfigOverrides } from "./state.js";
 
 /** Verbs the bot honors today. Anything else parses to `unknown` (→ chat/help). */
 export const COMMAND_VERBS = [
@@ -127,11 +128,7 @@ export function commandHelpText(): string {
 }
 
 /** Per-PR review settings a trusted commenter may set via `@prowl-review configure` (#26). */
-export interface ConfigureOverrides {
-  minSeverity?: Severity;
-  maxFindings?: number;
-  verify?: boolean;
-}
+export type ConfigureOverrides = ConfigOverrides;
 
 /** Parsed `@prowl-review configure` arguments. */
 export interface ParsedConfigure {
@@ -145,7 +142,40 @@ export interface ParsedConfigure {
   empty: boolean;
 }
 
-const CONFIGURE_SEVERITIES = new Set<Severity>(["critical", "major", "minor", "trivial", "info"]);
+const CONFIGURE_KEYS = ["minSeverity", "maxFindings", "verify"] as const;
+type ConfigureKey = (typeof CONFIGURE_KEYS)[number];
+const CONFIGURE_KEY_BY_NORMALIZED = new Map<string, ConfigureKey>(
+  CONFIGURE_KEYS.map((key) => [key.toLowerCase(), key])
+);
+const VERIFY_TRUE_VALUES = new Set(["true", "on", "yes", "1"]);
+const VERIFY_FALSE_VALUES = new Set(["false", "off", "no", "0"]);
+
+function parseConfigureValue(key: ConfigureKey, value: string): unknown {
+  if (key === "minSeverity") {
+    return value.toLowerCase();
+  }
+  if (key === "maxFindings") {
+    return Number(value);
+  }
+  const normalized = value.toLowerCase();
+  if (VERIFY_TRUE_VALUES.has(normalized)) {
+    return true;
+  }
+  if (VERIFY_FALSE_VALUES.has(normalized)) {
+    return false;
+  }
+  return value;
+}
+
+function errorForConfigureValue(key: ConfigureKey, value: string): string {
+  if (key === "minSeverity") {
+    return `Invalid minSeverity \`${value}\` — use ${SEVERITIES.join(" | ")}.`;
+  }
+  if (key === "maxFindings") {
+    return `Invalid maxFindings \`${value}\` — use a positive integer.`;
+  }
+  return `Invalid verify \`${value}\` — use on/off.`;
+}
 
 /**
  * Parse the argument of an `@prowl-review configure` command into validated
@@ -172,34 +202,18 @@ export function parseConfigureArgs(argument: string | null | undefined): ParsedC
       errors.push(`Couldn't parse \`${token}\` — use \`key=value\`.`);
       continue;
     }
-    const key = token.slice(0, eq).trim().toLowerCase();
+    const key = CONFIGURE_KEY_BY_NORMALIZED.get(token.slice(0, eq).trim().toLowerCase());
     const value = token.slice(eq + 1).trim();
-    if (key === "minseverity") {
-      const severity = value.toLowerCase() as Severity;
-      if (CONFIGURE_SEVERITIES.has(severity)) {
-        overrides.minSeverity = severity;
-      } else {
-        errors.push(`Invalid minSeverity \`${value}\` — use critical | major | minor | trivial | info.`);
-      }
-    } else if (key === "maxfindings") {
-      const parsed = Number(value);
-      if (Number.isInteger(parsed) && parsed > 0) {
-        overrides.maxFindings = parsed;
-      } else {
-        errors.push(`Invalid maxFindings \`${value}\` — use a positive integer.`);
-      }
-    } else if (key === "verify") {
-      const truthy = ["true", "on", "yes", "1"];
-      const falsy = ["false", "off", "no", "0"];
-      if (truthy.includes(value.toLowerCase())) {
-        overrides.verify = true;
-      } else if (falsy.includes(value.toLowerCase())) {
-        overrides.verify = false;
-      } else {
-        errors.push(`Invalid verify \`${value}\` — use on/off.`);
-      }
+    if (!key) {
+      const unknown = token.slice(0, eq).trim().toLowerCase();
+      errors.push(`Unknown setting \`${unknown}\` — supported: minSeverity, maxFindings, verify (or \`reset\`).`);
+      continue;
+    }
+    const result = ConfigOverridesSchema.safeParse({ [key]: parseConfigureValue(key, value) });
+    if (result.success) {
+      Object.assign(overrides, result.data);
     } else {
-      errors.push(`Unknown setting \`${key}\` — supported: minSeverity, maxFindings, verify (or \`reset\`).`);
+      errors.push(errorForConfigureValue(key, value));
     }
   }
 

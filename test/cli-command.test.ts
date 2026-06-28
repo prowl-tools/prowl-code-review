@@ -961,6 +961,41 @@ describe("handleResolve (#26)", () => {
     expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("Resolved"));
   });
 
+  it("leaves the finding unmuted when no matching open thread resolves", async () => {
+    const deps = resolveDeps();
+    deps.resolveThread.mockResolvedValueOnce(false);
+
+    const result = await handleResolve({ octokit, ref, event: threadEvent, deps });
+
+    expect(result.resolved).toBe(0);
+    expect(deps.setIgnored).not.toHaveBeenCalled();
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("left it unmuted"));
+  });
+
+  it("leaves the finding unmuted when there is no matching open thread", async () => {
+    const deps = resolveDeps();
+    deps.fetchThreads.mockResolvedValueOnce([
+      { id: "T-other", isResolved: false, isOutdated: false, fingerprints: ["fp-z"], humanIntent: "other" as const }
+    ]);
+
+    const result = await handleResolve({ octokit, ref, event: threadEvent, deps });
+
+    expect(result.resolved).toBe(0);
+    expect(deps.resolveThread).not.toHaveBeenCalled();
+    expect(deps.setIgnored).not.toHaveBeenCalled();
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("left it unmuted"));
+  });
+
+  it("warns when muting fails after a thread resolves", async () => {
+    const deps = resolveDeps();
+    deps.setIgnored.mockRejectedValueOnce(new Error("write failed"));
+
+    const result = await handleResolve({ octokit, ref, event: threadEvent, deps });
+
+    expect(result.resolved).toBe(1);
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("couldn't mute"));
+  });
+
   it("guides the user when invoked off a finding thread", async () => {
     const deps = resolveDeps();
     const result = await handleResolve({
@@ -1037,5 +1072,21 @@ describe("handleConfigure (#26)", () => {
     expect(result.ok).toBe(false);
     expect(setOverrides).not.toHaveBeenCalled();
     expect(postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("Invalid minSeverity"));
+  });
+
+  it("warns and reports failure when settings cannot be persisted", async () => {
+    const setOverrides = vi.fn(async () => {
+      throw new Error("write failed");
+    });
+    const postIssueComment = vi.fn(async () => {});
+    const result = await handleConfigure({
+      octokit,
+      ref,
+      event,
+      argument: "minSeverity=major",
+      deps: { setOverrides, postIssueComment }
+    });
+    expect(result.ok).toBe(false);
+    expect(postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("couldn't save"));
   });
 });

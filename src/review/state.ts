@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
-import type { Finding } from "./findings.js";
+import { SEVERITIES, type Finding } from "./findings.js";
 import { REVIEW_MARKER } from "./walkthrough.js";
 
 /**
@@ -29,6 +29,15 @@ const SUMMARY_BODY_TRUNCATION_NOTICE =
 /** Matches the persisted state marker and captures its JSON payload. */
 const STATE_MARKER_RE = /<!-- prowl-review:state ([\s\S]*?) -->/;
 
+/** Per-PR review-setting overrides persisted in the state marker. */
+export const ConfigOverridesSchema = z
+  .object({
+    minSeverity: z.enum(SEVERITIES).optional(),
+    maxFindings: z.number().int().positive().optional(),
+    verify: z.boolean().optional()
+  })
+  .strict();
+
 /** Persisted state marker schema embedded in prowl-review's summary comment. */
 export const ReviewStateSchema = z.object({
   /** Schema version for forward-compatible parsing. */
@@ -40,17 +49,13 @@ export const ReviewStateSchema = z.object({
   /** Fingerprints muted via `@prowl-review ignore` (#30); suppressed from future reviews of this PR. */
   ignoredFindings: z.array(z.string()).optional(),
   /** Per-PR review-setting overrides set via `@prowl-review configure` (#26); applied on later reviews. */
-  configOverrides: z
-    .object({
-      minSeverity: z.enum(["critical", "major", "minor", "trivial", "info"]).optional(),
-      maxFindings: z.number().int().positive().optional(),
-      verify: z.boolean().optional()
-    })
-    .strict()
-    .optional(),
+  configOverrides: ConfigOverridesSchema.optional(),
   /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
   postedFindings: z.array(z.string()).default([])
 });
+
+/** Per-PR review-setting override values. */
+export type ConfigOverrides = z.infer<typeof ConfigOverridesSchema>;
 
 /** Parsed review state loaded from a prior prowl-review summary comment. */
 export type ReviewState = z.infer<typeof ReviewStateSchema>;
