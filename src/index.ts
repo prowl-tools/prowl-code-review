@@ -148,6 +148,7 @@ export {
   hasActiveRequestChanges,
   setPausedState,
   setIgnoredFindings,
+  setConfigOverrides,
   fetchReviewCommentFingerprints,
   postPullRequestComment,
   type SubmitReviewOptions,
@@ -159,11 +160,15 @@ export {
 export {
   parseCommand,
   commandHelpText,
+  parseConfigureArgs,
+  configureHelpText,
   isTrustedCommandAuthor,
   COMMAND_VERBS,
   TRUSTED_COMMAND_ASSOCIATIONS,
   type CommandVerb,
-  type ParsedCommand
+  type ParsedCommand,
+  type ConfigureOverrides,
+  type ParsedConfigure
 } from "./review/commands.js";
 export {
   generateChatReply,
