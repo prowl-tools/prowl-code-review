@@ -39,6 +39,15 @@ export const ReviewStateSchema = z.object({
   paused: z.boolean().optional(),
   /** Fingerprints muted via `@prowl-review ignore` (#30); suppressed from future reviews of this PR. */
   ignoredFindings: z.array(z.string()).optional(),
+  /** Per-PR review-setting overrides set via `@prowl-review configure` (#26); applied on later reviews. */
+  configOverrides: z
+    .object({
+      minSeverity: z.enum(["critical", "major", "minor", "trivial", "info"]).optional(),
+      maxFindings: z.number().int().positive().optional(),
+      verify: z.boolean().optional()
+    })
+    .strict()
+    .optional(),
   /** Fingerprints of findings already posted as inline comments (dedup across pushes). */
   postedFindings: z.array(z.string()).default([])
 });
