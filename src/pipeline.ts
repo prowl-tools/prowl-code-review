@@ -179,6 +179,9 @@ export interface PipelineDeps {
   fetchIssue?: typeof defaultFetchIssue;
 }
 
+export type ReviewSettingSource = "explicit" | "config";
+export type ReviewSettingKey = "minSeverity" | "maxFindings" | "verify";
+
 export interface ReviewPullRequestOptions {
   config?: ProviderConfig;
   /**
@@ -222,6 +225,11 @@ export interface ReviewPullRequestOptions {
   diffLimits?: DiffLimits;
   contextLimits?: RetrievalLimits;
   minSeverity?: Severity;
+  /**
+   * Source metadata for review settings that can also be configured per PR.
+   * Omitted source treats a provided option as explicit for library callers.
+   */
+  reviewSettingSources?: Partial<Record<ReviewSettingKey, ReviewSettingSource>>;
   /** Drop non-critical findings below this confidence (default 0.5, #55). */
   minConfidence?: number;
   /** Cap the number of findings surfaced (default 25, #55). */
@@ -536,6 +544,14 @@ function configuredOverrideNotes(input: {
     `Per-PR \`@prowl-review configure\` settings (#26): ${savedText}. ` +
       `Explicit run options took precedence for this run.`
   ];
+}
+
+function isExplicitReviewSetting(
+  sources: ReviewPullRequestOptions["reviewSettingSources"],
+  key: ReviewSettingKey,
+  hasValue: boolean
+): boolean {
+  return hasValue && sources?.[key] !== "config";
 }
 
 /**
@@ -1534,21 +1550,42 @@ export async function reviewPullRequest(
   // Per-PR `@prowl-review configure` overrides (#26) win over the config file for
   // this PR, while explicit per-run options win for that invocation.
   const configOverrides = priorState?.configOverrides;
-  const effectiveMinSeverity = options.minSeverity ?? configOverrides?.minSeverity;
-  const effectiveMaxFindings = options.maxFindings ?? configOverrides?.maxFindings;
-  const effectiveVerify = options.verify ?? configOverrides?.verify;
+  const explicitMinSeverity = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "minSeverity",
+    options.minSeverity !== undefined
+  );
+  const explicitMaxFindings = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "maxFindings",
+    options.maxFindings !== undefined
+  );
+  const explicitVerify = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "verify",
+    options.verify !== undefined
+  );
+  const effectiveMinSeverity = explicitMinSeverity
+    ? options.minSeverity
+    : (configOverrides?.minSeverity ?? options.minSeverity);
+  const effectiveMaxFindings = explicitMaxFindings
+    ? options.maxFindings
+    : (configOverrides?.maxFindings ?? options.maxFindings);
+  const effectiveVerify = explicitVerify
+    ? options.verify
+    : (configOverrides?.verify ?? options.verify);
   const appliedConfigOverrides: NonNullable<ReviewState["configOverrides"]> = {};
   const explicitConfigOverrideKeys: string[] = [];
   if (configOverrides?.minSeverity !== undefined) {
-    if (options.minSeverity === undefined) appliedConfigOverrides.minSeverity = configOverrides.minSeverity;
+    if (!explicitMinSeverity) appliedConfigOverrides.minSeverity = configOverrides.minSeverity;
     else explicitConfigOverrideKeys.push("minSeverity");
   }
   if (configOverrides?.maxFindings !== undefined) {
-    if (options.maxFindings === undefined) appliedConfigOverrides.maxFindings = configOverrides.maxFindings;
+    if (!explicitMaxFindings) appliedConfigOverrides.maxFindings = configOverrides.maxFindings;
     else explicitConfigOverrideKeys.push("maxFindings");
   }
   if (configOverrides?.verify !== undefined) {
-    if (options.verify === undefined) appliedConfigOverrides.verify = configOverrides.verify;
+    if (!explicitVerify) appliedConfigOverrides.verify = configOverrides.verify;
     else explicitConfigOverrideKeys.push("verify");
   }
   const configOverrideNotes = configuredOverrideNotes({

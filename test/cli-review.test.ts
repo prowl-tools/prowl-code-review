@@ -653,6 +653,7 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   it("falls back to built-in defaults (undefined) when neither CLI nor config set a value", () => {
     const resolved = resolveReviewOptions({}, {}, env);
     expect(resolved.minSeverity).toBeUndefined();
+    expect(resolved.reviewSettingSources).toBeUndefined();
     expect(resolved.minConfidence).toBeUndefined();
     expect(resolved.maxFindings).toBeUndefined();
     expect(resolved.verify).toBeUndefined();
@@ -672,6 +673,11 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     };
     const resolved = resolveReviewOptions({}, config, env);
     expect(resolved.minSeverity).toBe("major");
+    expect(resolved.reviewSettingSources).toEqual({
+      minSeverity: "config",
+      maxFindings: "config",
+      verify: "config"
+    });
     expect(resolved.minConfidence).toBe(0.7);
     expect(resolved.maxFindings).toBe(10);
     expect(resolved.verify).toBe(false);
@@ -686,6 +692,7 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
   it("lets a CLI --min-severity override the config", () => {
     const resolved = resolveReviewOptions({ minSeverity: "critical" }, { review: { minSeverity: "minor" } }, env);
     expect(resolved.minSeverity).toBe("critical");
+    expect(resolved.reviewSettingSources?.minSeverity).toBe("explicit");
   });
 
   it("lets trusted action env min severity override the config when CLI is silent", () => {
@@ -695,6 +702,7 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
       { PROWL_MIN_SEVERITY: "major" } as NodeJS.ProcessEnv
     );
     expect(resolved.minSeverity).toBe("major");
+    expect(resolved.reviewSettingSources?.minSeverity).toBe("explicit");
   });
 
   it("lets CLI disable flags win over an enabling config", () => {
@@ -703,6 +711,7 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolved.skipContext).toBe(true);
     expect(resolved.skipGrounding).toBe(true);
     expect(resolved.verify).toBe(false);
+    expect(resolved.reviewSettingSources?.verify).toBe("explicit");
   });
 
   it("lets a CLI --trust-workspace win over config and env", () => {
