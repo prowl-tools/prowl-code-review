@@ -295,6 +295,61 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("limited cross-file context");
   });
 
+  it("applies per-PR configure overrides unless explicit run options win (#26)", async () => {
+    const priorState: ReviewState = {
+      v: 1,
+      postedFindings: [],
+      configOverrides: { minSeverity: "major", maxFindings: 3, verify: false }
+    };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const deps = { ...makeDeps(), fetchPriorState };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      minSeverity: "minor",
+      verify: true
+    });
+
+    const reviewOptions = deps.runReview.mock.calls[0][1];
+    expect(reviewOptions.minSeverity).toBe("minor");
+    expect(reviewOptions.maxFindings).toBe(3);
+    expect(reviewOptions.verify).toBe(true);
+    // The saved settings are surfaced, while the note calls out explicit run-option precedence.
+    expect(result.payload.body).toContain("minSeverity=major");
+    expect(result.payload.body).toContain("Applied this run: maxFindings=3");
+    expect(result.payload.body).toContain("explicit run options took precedence for minSeverity, verify");
+    expect(result.payload.body).toContain("verify=off");
+  });
+
+  it("applies per-PR configure overrides over config-derived review options (#26)", async () => {
+    const priorState: ReviewState = {
+      v: 1,
+      postedFindings: [],
+      configOverrides: { minSeverity: "major", maxFindings: 3, verify: false }
+    };
+    const fetchPriorState = vi.fn(async () => priorState);
+    const deps = { ...makeDeps(), fetchPriorState };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      minSeverity: "minor",
+      maxFindings: 10,
+      verify: true,
+      reviewSettingSources: { minSeverity: "config", maxFindings: "config", verify: "config" }
+    });
+
+    const reviewOptions = deps.runReview.mock.calls[0][1];
+    expect(reviewOptions.minSeverity).toBe("major");
+    expect(reviewOptions.maxFindings).toBe(3);
+    expect(reviewOptions.verify).toBe(false);
+    expect(result.payload.body).toContain("minSeverity=major, maxFindings=3, verify=off");
+    expect(result.payload.body).not.toContain("explicit run options took precedence");
+  });
+
   it("incrementally reviews only the delta since the last reviewed SHA (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);

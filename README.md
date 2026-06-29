@@ -102,6 +102,8 @@ repo owner/member/collaborator is honored):
 | `@prowl-review review` | Re-review the latest changes (incremental). |
 | `@prowl-review full review` | Re-scan the entire PR from scratch. |
 | `@prowl-review ignore` | Reply on a finding to mute it — it won't be raised again on this PR (#30). |
+| `@prowl-review resolve` | Reply on a finding to mark its thread resolved and stop re-raising it (#26). |
+| `@prowl-review configure <key=value …>` | Set per-PR review settings (`minSeverity`, `maxFindings`, `verify`); `configure reset` clears them (#26). |
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
 | `@prowl-review resume` | Re-enable auto-review. |
 | `@prowl-review docstrings` | Draft docstrings for the changed code, posted as a copy-paste reply (#33). |
@@ -133,6 +135,13 @@ dropping it — it either **defends** it with reasoning in the thread (kept open
 still gates merge) or **withdraws** it, conceding and resolving the thread. Only
 a repo owner/member/collaborator's reply is honored. Turn it off with
 `review.rejustifyDisputed: false` (then a disputed finding is just withheld).
+
+You can also reply **`@prowl-review resolve`** on a finding to mark its thread
+resolved and stop re-raising it (like `ignore`, but it also closes the thread),
+and **`@prowl-review configure minSeverity=major`** to set per-PR review settings
+(`minSeverity`, `maxFindings`, `verify`) that apply on the next review;
+`@prowl-review configure reset` clears them (#26). Per-PR settings are stored in
+the summary's state marker and win over the repo config for that PR only.
 
 ```yaml
 # .github/workflows/prowl-review-command.yml

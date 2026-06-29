@@ -485,6 +485,7 @@ interface ReviewCommandOptions {
 type ResolvedReviewOptions = Pick<
   ReviewPullRequestOptions,
   | "minSeverity"
+  | "reviewSettingSources"
   | "minConfidence"
   | "maxFindings"
   | "verify"
@@ -691,11 +692,26 @@ export function resolveReviewOptions(
   env: NodeJS.ProcessEnv = process.env,
   isFork = isForkPullRequestEvent(env)
 ): ResolvedReviewOptions {
-  const minSeverity = cli.minSeverity ?? envString(env.PROWL_MIN_SEVERITY);
+  const minSeverity = envString(cli.minSeverity) ?? envString(env.PROWL_MIN_SEVERITY);
   const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
+    reviewSettingSources: compact({
+      minSeverity:
+        minSeverity !== undefined
+          ? "explicit"
+          : config.review?.minSeverity !== undefined
+            ? "config"
+            : undefined,
+      maxFindings: config.review?.maxFindings !== undefined ? "config" : undefined,
+      verify:
+        cli.verify === false
+          ? "explicit"
+          : config.review?.verify !== undefined
+            ? "config"
+            : undefined
+    }),
     minConfidence: config.review?.minConfidence,
     maxFindings: config.review?.maxFindings,
     maxInlineComments: config.review?.maxInlineComments,

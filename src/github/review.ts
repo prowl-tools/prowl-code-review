@@ -125,6 +125,7 @@ export function planPublish(input: {
     ...(priorState?.ignoredFindings && priorState.ignoredFindings.length > 0
       ? { ignoredFindings: priorState.ignoredFindings }
       : {}),
+    ...(priorState?.configOverrides ? { configOverrides: priorState.configOverrides } : {}),
     postedFindings
   };
   const { body: summaryBody, state } = embedStateWithFittedState(
@@ -537,6 +538,7 @@ export async function setPausedState(
       ...(priorState?.ignoredFindings && priorState.ignoredFindings.length > 0
         ? { ignoredFindings: priorState.ignoredFindings }
         : {}),
+      ...(priorState?.configOverrides ? { configOverrides: priorState.configOverrides } : {}),
       postedFindings: priorState?.postedFindings ?? []
     };
     const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
@@ -657,6 +659,7 @@ export async function setIgnoredFindings(
       ...(priorState?.lastReviewedSha ? { lastReviewedSha: priorState.lastReviewedSha } : {}),
       ...(priorState?.paused !== undefined ? { paused: priorState.paused } : {}),
       ...(merged.length > 0 ? { ignoredFindings: merged } : {}),
+      ...(priorState?.configOverrides ? { configOverrides: priorState.configOverrides } : {}),
       postedFindings: priorState?.postedFindings ?? []
     };
     const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
@@ -671,4 +674,52 @@ export async function setIgnoredFindings(
   );
   await octokit.rest.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.pull_number, body });
   return { added, total: merged.length };
+}
+
+/**
+ * Set or clear per-PR review-setting overrides via `@prowl-review configure` (#26).
+ * Merges `update.overrides` over any existing overrides in the summary state marker
+ * (or clears them when `update.reset`), preserving the rest of the state
+ * (lastReviewedSha / paused / ignoredFindings / postedFindings). Edits the summary
+ * in place when present, or creates a minimal marked comment so the override
+ * survives until the next review. Returns the effective overrides (undefined when
+ * none remain).
+ */
+export async function setConfigOverrides(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  update: { overrides?: NonNullable<ReviewState["configOverrides"]>; reset?: boolean },
+  botLogin?: string
+): Promise<{ overrides: ReviewState["configOverrides"] }> {
+  const login = await getAuthenticatedLogin(octokit, botLogin);
+  const prior = await findPriorSummary(octokit, ref, login);
+  const priorState = prior ? parseState(prior.body) : null;
+  const merged = update.reset
+    ? {}
+    : { ...(priorState?.configOverrides ?? {}), ...(update.overrides ?? {}) };
+  const effective = Object.keys(merged).length > 0 ? merged : undefined;
+
+  if (prior) {
+    const nextState: ReviewState = {
+      v: REVIEW_STATE_VERSION,
+      ...(priorState?.lastReviewedSha ? { lastReviewedSha: priorState.lastReviewedSha } : {}),
+      ...(priorState?.paused !== undefined ? { paused: priorState.paused } : {}),
+      ...(priorState?.ignoredFindings && priorState.ignoredFindings.length > 0
+        ? { ignoredFindings: priorState.ignoredFindings }
+        : {}),
+      ...(effective ? { configOverrides: effective } : {}),
+      postedFindings: priorState?.postedFindings ?? []
+    };
+    const { body } = embedStateWithFittedState(prior.body, nextState, GITHUB_COMMENT_BODY_LIMIT);
+    await octokit.rest.issues.updateComment({ owner: ref.owner, repo: ref.repo, comment_id: prior.id, body });
+    return { overrides: effective };
+  }
+
+  const { body } = embedStateWithFittedState(
+    `${REVIEW_MARKER}\n\nprowl-review review settings updated for this PR via \`@prowl-review configure\`.`,
+    { v: REVIEW_STATE_VERSION, ...(effective ? { configOverrides: effective } : {}), postedFindings: [] },
+    GITHUB_COMMENT_BODY_LIMIT
+  );
+  await octokit.rest.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.pull_number, body });
+  return { overrides: effective };
 }
