@@ -179,6 +179,9 @@ export interface PipelineDeps {
   fetchIssue?: typeof defaultFetchIssue;
 }
 
+export type ReviewSettingSource = "explicit" | "config";
+export type ReviewSettingKey = "minSeverity" | "maxFindings" | "verify";
+
 export interface ReviewPullRequestOptions {
   config?: ProviderConfig;
   /**
@@ -222,6 +225,11 @@ export interface ReviewPullRequestOptions {
   diffLimits?: DiffLimits;
   contextLimits?: RetrievalLimits;
   minSeverity?: Severity;
+  /**
+   * Source metadata for review settings that can also be configured per PR.
+   * Omitted source treats a provided option as explicit for library callers.
+   */
+  reviewSettingSources?: Partial<Record<ReviewSettingKey, ReviewSettingSource>>;
   /** Drop non-critical findings below this confidence (default 0.5, #55). */
   minConfidence?: number;
   /** Cap the number of findings surfaced (default 25, #55). */
@@ -501,6 +509,49 @@ function suggestionGatingNotes(findings: Finding[], minConfidence: number): stri
     );
   }
   return notes;
+}
+
+/** Render the active per-PR `@prowl-review configure` overrides for a review note (#26). */
+function formatConfigOverrides(overrides: NonNullable<ReviewState["configOverrides"]>): string {
+  const parts: string[] = [];
+  if (overrides.minSeverity !== undefined) parts.push(`minSeverity=${overrides.minSeverity}`);
+  if (overrides.maxFindings !== undefined) parts.push(`maxFindings=${overrides.maxFindings}`);
+  if (overrides.verify !== undefined) parts.push(`verify=${overrides.verify ? "on" : "off"}`);
+  return parts.join(", ");
+}
+
+function configuredOverrideNotes(input: {
+  saved: ReviewState["configOverrides"];
+  applied: ReviewState["configOverrides"];
+  explicitKeys: string[];
+}): string[] {
+  if (!input.saved || Object.keys(input.saved).length === 0) {
+    return [];
+  }
+  const savedText = formatConfigOverrides(input.saved);
+  const appliedText =
+    input.applied && Object.keys(input.applied).length > 0 ? formatConfigOverrides(input.applied) : undefined;
+  if (input.explicitKeys.length === 0) {
+    return [`Applied per-PR \`@prowl-review configure\` overrides (#26): ${savedText}.`];
+  }
+  if (appliedText) {
+    return [
+      `Per-PR \`@prowl-review configure\` settings (#26): ${savedText}. Applied this run: ${appliedText}; ` +
+        `explicit run options took precedence for ${input.explicitKeys.join(", ")}.`
+    ];
+  }
+  return [
+    `Per-PR \`@prowl-review configure\` settings (#26): ${savedText}. ` +
+      `Explicit run options took precedence for this run.`
+  ];
+}
+
+function isExplicitReviewSetting(
+  sources: ReviewPullRequestOptions["reviewSettingSources"],
+  key: ReviewSettingKey,
+  hasValue: boolean
+): boolean {
+  return hasValue && sources?.[key] !== "config";
 }
 
 /**
@@ -1491,10 +1542,57 @@ export async function reviewPullRequest(
   // since the last reviewed SHA instead of the whole PR. Best-effort — a missing
   // prior SHA, an unchanged head, or a compare failure (e.g. after a force-push)
   // falls back to the full PR diff.
-  // Load prior persisted state once: the last reviewed SHA (#23) and the per-PR
-  // ignore list (#30) both live in the summary comment's state marker.
+  // Load prior persisted state once: the last reviewed SHA (#23), the per-PR
+  // ignore list (#30), and per-PR config overrides (#26) all live in the summary
+  // comment's state marker.
   const priorState = await loadPriorState(octokit, ref);
   const ignoredFingerprints = new Set(priorState?.ignoredFindings ?? []);
+  // Per-PR `@prowl-review configure` overrides (#26) win over the config file for
+  // this PR, while explicit per-run options win for that invocation.
+  const configOverrides = priorState?.configOverrides;
+  const explicitMinSeverity = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "minSeverity",
+    options.minSeverity !== undefined
+  );
+  const explicitMaxFindings = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "maxFindings",
+    options.maxFindings !== undefined
+  );
+  const explicitVerify = isExplicitReviewSetting(
+    options.reviewSettingSources,
+    "verify",
+    options.verify !== undefined
+  );
+  const effectiveMinSeverity = explicitMinSeverity
+    ? options.minSeverity
+    : (configOverrides?.minSeverity ?? options.minSeverity);
+  const effectiveMaxFindings = explicitMaxFindings
+    ? options.maxFindings
+    : (configOverrides?.maxFindings ?? options.maxFindings);
+  const effectiveVerify = explicitVerify
+    ? options.verify
+    : (configOverrides?.verify ?? options.verify);
+  const appliedConfigOverrides: NonNullable<ReviewState["configOverrides"]> = {};
+  const explicitConfigOverrideKeys: string[] = [];
+  if (configOverrides?.minSeverity !== undefined) {
+    if (!explicitMinSeverity) appliedConfigOverrides.minSeverity = configOverrides.minSeverity;
+    else explicitConfigOverrideKeys.push("minSeverity");
+  }
+  if (configOverrides?.maxFindings !== undefined) {
+    if (!explicitMaxFindings) appliedConfigOverrides.maxFindings = configOverrides.maxFindings;
+    else explicitConfigOverrideKeys.push("maxFindings");
+  }
+  if (configOverrides?.verify !== undefined) {
+    if (!explicitVerify) appliedConfigOverrides.verify = configOverrides.verify;
+    else explicitConfigOverrideKeys.push("verify");
+  }
+  const configOverrideNotes = configuredOverrideNotes({
+    saved: configOverrides,
+    applied: appliedConfigOverrides,
+    explicitKeys: explicitConfigOverrideKeys
+  });
 
   let parsed = fullParsed;
   let incrementalBaseSha: string | undefined;
@@ -1767,10 +1865,10 @@ export async function reviewPullRequest(
           },
           {
             config,
-            minSeverity: options.minSeverity,
+            minSeverity: effectiveMinSeverity,
             minConfidence: options.minConfidence,
-            maxFindings: options.maxFindings,
-            verify: options.verify,
+            maxFindings: effectiveMaxFindings,
+            verify: effectiveVerify,
             verifyConfidence: options.verifyConfidence,
             maxTokens: options.budgetTokens,
             ...(options.retry ? { retry: options.retry } : {}),
@@ -1886,6 +1984,7 @@ export async function reviewPullRequest(
           : []),
         ...verificationNotes(reviewResult),
         ...judgeNotes(reviewResult),
+        ...configOverrideNotes,
         ...suggestionGatingNotes(reviewResult.findings, options.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE),
         ...reviewPassNotes(reviewResult),
         ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note)),
@@ -2085,10 +2184,10 @@ export async function reviewPullRequest(
   const reviewResult: ReviewResult = ensembleActive
     ? await ensembleReview(reviewInput, {
         configs: ensembleConfigs,
-        minSeverity: options.minSeverity,
+        minSeverity: effectiveMinSeverity,
         minConfidence: options.minConfidence,
-        maxFindings: options.maxFindings,
-        verify: options.verify,
+        maxFindings: effectiveMaxFindings,
+        verify: effectiveVerify,
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
         ...(options.retry ? { retry: options.retry } : {}),
@@ -2098,10 +2197,10 @@ export async function reviewPullRequest(
       })
     : await review(reviewInput, {
         config,
-        minSeverity: options.minSeverity,
+        minSeverity: effectiveMinSeverity,
         minConfidence: options.minConfidence,
-        maxFindings: options.maxFindings,
-        verify: options.verify,
+        maxFindings: effectiveMaxFindings,
+        verify: effectiveVerify,
         verifyConfidence: options.verifyConfidence,
         maxTokens: reviewBudgetTokens,
         ...(options.retry ? { retry: options.retry } : {}),
@@ -2228,6 +2327,7 @@ export async function reviewPullRequest(
         : []),
       ...verificationNotes(reviewResult),
       ...judgeNotes(reviewResult),
+      ...configOverrideNotes,
       ...suggestionGatingNotes(reviewResult.findings, options.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE),
       ...reviewPassNotes(reviewResult),
       ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note))
