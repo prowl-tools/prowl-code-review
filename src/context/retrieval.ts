@@ -25,6 +25,7 @@ import {
 import { isSensitiveFile, redactSecrets } from "../review/redact.js";
 import { isLanguageId } from "../review/language.js";
 import { totalTokens } from "../cost/pricing.js";
+import { z } from "zod";
 
 /**
  * Agentic cross-file context retrieval (backlog #4, the #1 bug-catching lever).
@@ -35,6 +36,39 @@ import { totalTokens } from "../cost/pricing.js";
  * error, or limit) is returned so it can be added to the cached review prompt
  * and reported (core principle #5).
  */
+
+const SymbolToolInputSchema = z.object({
+  symbol: z.string().min(1).describe("Symbol name to locate."),
+  dir: z.string().optional().describe("Optional subdirectory to limit the search."),
+  language: z
+    .string()
+    .optional()
+    .describe("Optional language id (e.g. typescript, python, go) to restrict the search for precision.")
+});
+
+function toolParametersFromSchema(schema: z.ZodObject<z.ZodRawShape>): Record<string, unknown> {
+  const properties: Record<string, Record<string, string>> = {};
+  const required: string[] = [];
+
+  for (const [name, field] of Object.entries(schema.shape)) {
+    const zodField = field as z.ZodTypeAny;
+    properties[name] = {
+      type: "string",
+      ...(zodField.description ? { description: zodField.description } : {})
+    };
+    if (!zodField.safeParse(undefined).success) {
+      required.push(name);
+    }
+  }
+
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {})
+  };
+}
+
+const SYMBOL_TOOL_PARAMETERS = toolParametersFromSchema(SymbolToolInputSchema);
 
 /** Tool definitions advertised to the model (provider-agnostic). */
 export const REVIEW_TOOLS: ToolDefinition[] = [
@@ -76,35 +110,13 @@ export const REVIEW_TOOLS: ToolDefinition[] = [
     name: "find_definition",
     description:
       "Find where a symbol (function/class/type/variable) is likely DEFINED. Sharper than search_repo for locating a declaration. Returns path:line: text matches.",
-    parameters: {
-      type: "object",
-      properties: {
-        symbol: { type: "string", description: "Symbol name to locate the definition of." },
-        dir: { type: "string", description: "Optional subdirectory to limit the search." },
-        language: {
-          type: "string",
-          description: "Optional language id (e.g. typescript, python, go) to restrict the search for precision."
-        }
-      },
-      required: ["symbol"]
-    }
+    parameters: SYMBOL_TOOL_PARAMETERS
   },
   {
     name: "find_references",
     description:
       "Find REFERENCES to a symbol — definitions and call sites — to see who depends on the changed code. Returns path:line: text matches.",
-    parameters: {
-      type: "object",
-      properties: {
-        symbol: { type: "string", description: "Symbol name to find references to." },
-        dir: { type: "string", description: "Optional subdirectory to limit the search." },
-        language: {
-          type: "string",
-          description: "Optional language id (e.g. typescript, python, go) to restrict the search for precision."
-        }
-      },
-      required: ["symbol"]
-    }
+    parameters: SYMBOL_TOOL_PARAMETERS
   }
 ];
 
@@ -312,18 +324,20 @@ function executeTool(
     }
 
     if (call.name === "find_definition" || call.name === "find_references") {
-      const symbol = typeof call.input.symbol === "string" ? call.input.symbol : "";
-      if (!symbol) {
-        return toolExecution(`Error: ${call.name} requires a 'symbol'.`);
+      const parsedInput = SymbolToolInputSchema.safeParse(call.input);
+      if (!parsedInput.success) {
+        return toolExecution(`Error: ${call.name} requires a non-empty 'symbol'.`);
       }
-      const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
-      const languageInput = typeof call.input.language === "string" ? call.input.language : "";
-      if (languageInput && !isLanguageId(languageInput)) {
+      const { symbol } = parsedInput.data;
+      const dir = parsedInput.data.dir ?? ".";
+      const languageInput = parsedInput.data.language ?? "";
+      const language = languageInput && isLanguageId(languageInput) ? languageInput : undefined;
+      if (languageInput && !language) {
         notes.push(`Ignored unknown language '${languageInput}' for ${call.name}`);
       }
       const symbolOptions: SymbolSearchOptions = {
         dir,
-        ...(languageInput && isLanguageId(languageInput) ? { language: languageInput } : {}),
+        ...(language ? { language } : {}),
         shouldSearchFile: (path) => !isSensitiveFile(path)
       };
       // Symbol tools reuse searchRepo's regex-complexity + repo-root guards.
@@ -334,7 +348,7 @@ function executeTool(
       const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
       const skippedSensitive = result.matches.length - safeMatches.length;
       if ((result.skippedFiles ?? 0) > 0) {
-        notes.push(`Skipped ${result.skippedFiles} sensitive file(s) during ${call.name}`);
+        notes.push(`Skipped ${result.skippedFiles} file(s) during ${call.name} due to search filters`);
       }
       if (skippedSensitive > 0) {
         notes.push(`Skipped ${skippedSensitive} ${call.name} result(s) from sensitive file(s)`);
@@ -351,7 +365,7 @@ function executeTool(
       }
       toolOutputs.push({
         tool: call.name,
-        input: { symbol, dir, ...(languageInput ? { language: languageInput } : {}) },
+        input: { symbol, dir, ...(language ? { language } : {}) },
         content,
         truncated: result.truncated
       });

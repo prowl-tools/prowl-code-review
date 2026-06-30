@@ -207,12 +207,31 @@ describe("findDefinition / findReferences (#5)", () => {
     // TS: definition + a separate call site.
     writeFileSync(join(symRoot, "src", "widget.ts"), "export function makeWidget() {\n  return 1;\n}\n");
     writeFileSync(join(symRoot, "src", "use.ts"), "import { makeWidget } from './widget';\nconst w = makeWidget();\n");
-    // TS: assigned arrow function + class.
-    writeFileSync(join(symRoot, "src", "store.ts"), "export const loadStore = () => ({});\nexport class Store {}\n");
+    // TS: assigned arrow functions, $ identifiers, and a class.
+    writeFileSync(
+      join(symRoot, "src", "store.ts"),
+      [
+        "export const loadStore = () => ({});",
+        "export const bareArrow = value => value;",
+        "export const asyncBareArrow = async value => value;",
+        "export const $el = () => ({});",
+        "$el();",
+        "export const total$ = 1;",
+        "total$;",
+        "const totalValue = 1;",
+        "export class Store {}",
+        "bareAssigned = value => value;",
+        "asyncBareAssigned = async value => value;",
+        ""
+      ].join("\n")
+    );
     // Python def with the same name as a TS symbol (for language scoping).
     writeFileSync(join(symRoot, "py", "widget.py"), "def make_widget():\n    return 1\n\nmake_widget()\n");
     // Go receiver method.
-    writeFileSync(join(symRoot, "go", "s.go"), "package s\n\nfunc (s *Server) Serve() error {\n\treturn nil\n}\n");
+    writeFileSync(
+      join(symRoot, "go", "s.go"),
+      "package s\n\nfunc (s *Server) Serve() error {\n\treturn nil\n}\n\nfunc (s *Server[T](nested)) ServeGeneric() error {\n\treturn nil\n}\n"
+    );
     symOptions = { root: symRoot };
   });
 
@@ -229,12 +248,34 @@ describe("findDefinition / findReferences (#5)", () => {
 
   it("locates an assigned arrow function and a class declaration", () => {
     expect(findDefinition(symOptions, "loadStore").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "bareArrow").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "asyncBareArrow").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "bareAssigned").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "asyncBareAssigned").matches.some((m) => m.path === "src/store.ts")).toBe(
+      true
+    );
     expect(findDefinition(symOptions, "Store").matches.some((m) => m.path === "src/store.ts")).toBe(true);
   });
 
   it("locates a Python def and a Go receiver method", () => {
     expect(findDefinition(symOptions, "make_widget").matches.some((m) => m.path === "py/widget.py")).toBe(true);
     expect(findDefinition(symOptions, "Serve").matches.some((m) => m.path === "go/s.go" && m.line === 3)).toBe(true);
+    expect(findDefinition(symOptions, "ServeGeneric").matches.some((m) => m.path === "go/s.go" && m.line === 7)).toBe(true);
+  });
+
+  it("supports symbols containing $ in definitions and references", () => {
+    expect(findDefinition(symOptions, "$el").matches.some((m) => m.path === "src/store.ts" && m.line === 4)).toBe(
+      true
+    );
+
+    const dollarPrefix = findReferences(symOptions, "$el");
+    expect(dollarPrefix.matches.some((m) => m.path === "src/store.ts" && m.line === 4)).toBe(true);
+    expect(dollarPrefix.matches.some((m) => m.path === "src/store.ts" && m.line === 5)).toBe(true);
+
+    const dollarSuffix = findReferences(symOptions, "total$");
+    expect(dollarSuffix.matches.some((m) => m.path === "src/store.ts" && m.line === 6)).toBe(true);
+    expect(dollarSuffix.matches.some((m) => m.path === "src/store.ts" && m.line === 7)).toBe(true);
+    expect(dollarSuffix.matches.every((m) => !m.text.includes("totalValue"))).toBe(true);
   });
 
   it("restricts to a language when one is given", () => {
