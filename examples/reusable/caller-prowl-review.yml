@@ -1,0 +1,25 @@
+# Caller for the reusable auto-review workflow (#37).
+# Copy to .github/workflows/prowl-review.yml in EACH repo that should be reviewed.
+# This is the whole per-repo file — the heavy lifting lives in the org workflow.
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+# A reusable workflow's token scopes are capped by the caller, so grant them here.
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  review:
+    # Point at your org's `.github` repo; pin a version (e.g. @v1).
+    uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
+    secrets: inherit
+    # with:
+    #   min-severity: major
+    #   ai-provider: anthropic
+    #   org-guidelines-path: https://example.com/review-guidelines.md

@@ -1,0 +1,105 @@
+# Reusable prowl-review auto-review workflow (#37).
+#
+# Install this ONCE in your org's `.github` repository as
+#   .github/workflows/prowl-review.yml
+# then every repo in the org calls it in a few lines — see
+# `caller-prowl-review.yml`. No per-repo YAML copy-paste.
+#
+# Pin a version when calling it (e.g. @v1) so a repo opts into upgrades.
+name: prowl-review (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ai-provider:
+        description: "LLM provider override: anthropic | openai | gemini. Blank = CLI default / ensemble."
+        type: string
+        required: false
+        default: ""
+      ai-model:
+        description: "Model override (per-provider default otherwise)."
+        type: string
+        required: false
+        default: ""
+      min-severity:
+        description: "Drop findings below this severity (critical|major|minor|trivial|info)."
+        type: string
+        required: false
+        default: ""
+      config-path:
+        description: >
+          Trusted .prowl-review.yml path, relative to the workspace. The base branch is
+          checked out at `prowl-base/`, so set e.g. `prowl-base/.prowl-review.yml` to use
+          your committed config. Blank ignores repo config (recommended default).
+        type: string
+        required: false
+        default: ""
+      org-guidelines-path:
+        description: "Path to an org-wide guidelines file or an http(s) URL, injected into every review (#30)."
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        description: "Runner label(s) for the job."
+        type: string
+        required: false
+        default: "ubuntu-latest"
+    secrets:
+      # BYOK: provide the key(s) your provider/ensemble needs. With `secrets: inherit`
+      # in the caller, these flow through automatically.
+      PROWL_AI_KEY:
+        description: "Generic provider key fallback (single-provider setups)."
+        required: false
+      PROWL_AI_KEY_ANTHROPIC:
+        required: false
+      PROWL_AI_KEY_OPENAI:
+        required: false
+      PROWL_AI_KEY_GEMINI:
+        required: false
+
+# Token scopes the review needs. A reusable workflow's permissions are capped by
+# the caller, so the caller must also grant these (the caller example does).
+permissions:
+  pull-requests: write   # post the review + inline comments
+  issues: write          # create/update the summary comment (+ repo-wide learnings, #30)
+  checks: write          # optional merge-gate check run
+  contents: read
+
+jobs:
+  review:
+    # Skip forks; draft policy is handled inside prowl-review so trusted config can opt in.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ inputs.runs-on }}
+    # Queue auto reviews with manual commands for the same PR so pushes do not
+    # cancel command side effects; stale-head checks prevent outdated publishes.
+    concurrency:
+      group: prowl-review-${{ github.event.pull_request.number }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Checkout PR (context)
+        uses: actions/checkout@v4
+
+      - name: Checkout trusted base (config + guidelines)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.base.sha }}
+          path: prowl-base
+          persist-credentials: false
+
+      - name: prowl-review
+        uses: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+          ai-key-openai: ${{ secrets.PROWL_AI_KEY_OPENAI }}
+          ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
+          ai-provider: ${{ inputs.ai-provider }}
+          ai-model: ${{ inputs.ai-model }}
+          min-severity: ${{ inputs.min-severity }}
+          # Config + guidelines come from the TRUSTED base checkout, never PR code.
+          config-path: ${{ inputs.config-path }}
+          guidelines-path: ${{ github.workspace }}/prowl-base
+          org-guidelines-path: ${{ inputs.org-guidelines-path }}
+          # Context retrieval reads the PR checkout (the code under review).
+          workspace-path: ${{ github.workspace }}
