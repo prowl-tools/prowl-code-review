@@ -7,7 +7,14 @@ import { join } from "node:path";
  * rely on, so guard them against accidental deletion/weakening: the load-bearing
  * claims must stay present and the README must link both pages.
  */
-const read = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
+const read = (path: string): string => {
+  try {
+    return readFileSync(join(process.cwd(), path), "utf8");
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    throw new Error(`Expected policy doc at ${path} to be readable: ${reason}`);
+  }
+};
 
 describe("auth policy doc (#38)", () => {
   const doc = read("docs/auth.md");
