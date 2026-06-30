@@ -7,6 +7,9 @@ import {
   setIgnoredFindings,
   setConfigOverrides,
   fetchReviewCommentFingerprints,
+  fetchReviewCommentLearningEntries,
+  fetchRepoLearnings,
+  recordRepoLearnings,
   replyToReviewComment,
   fetchReviewCommentBody,
   getAuthenticatedLogin
@@ -15,6 +18,12 @@ import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
 import { serializeState, parseState } from "../src/review/state.js";
+import {
+  LEARNINGS_ISSUE_TITLE,
+  learningFingerprints,
+  parseLearnings,
+  renderLearningsIssueBody
+} from "../src/review/learnings.js";
 
 type MockIssueComment = { id: number; body?: string; user?: { login?: string } | null };
 type MockReviewComment = { body?: string; user?: { login?: string } | null };
@@ -1174,5 +1183,117 @@ describe("config overrides survive other state writes (#26)", () => {
     const { octokit, updateComment } = mockOctokit([{ id: 5, body: prior, user: { login: "github-actions[bot]" } }]);
     await setIgnoredFindings(octokit, ref, ["fp-x"]);
     expect(parseState((updateComment.mock.calls[0][0] as { body: string }).body)?.configOverrides).toEqual(overrides);
+  });
+});
+
+type MockRepoIssue = {
+  number: number;
+  title?: string;
+  body?: string | null;
+  user?: { login?: string } | null;
+  pull_request?: unknown;
+};
+
+function mockLearningsOctokit(issues: MockRepoIssue[] = [], login = "github-actions[bot]") {
+  const listForRepo = vi.fn(async (params: { per_page?: number; page?: number; creator?: string }) => {
+    const perPage = params.per_page ?? 30;
+    const page = params.page ?? 1;
+    const filtered = params.creator ? issues.filter((issue) => issue.user?.login === params.creator) : issues;
+    const start = (page - 1) * perPage;
+    return { data: filtered.slice(start, start + perPage) };
+  });
+  const create = vi.fn(async () => ({ data: { number: 4242 } }));
+  const update = vi.fn(async () => ({ data: {} }));
+  const getReviewComment = vi.fn(async () => ({ data: { body: "" } }));
+  const getAuthenticated = vi.fn(async () => ({ data: { login } }));
+  const octokit = {
+    rest: {
+      issues: { listForRepo, create, update },
+      pulls: { getReviewComment },
+      users: { getAuthenticated }
+    }
+  } as unknown as OctokitLike;
+  return { octokit, listForRepo, create, update, getReviewComment, getAuthenticated };
+}
+
+describe("repo-wide learnings store (#30)", () => {
+  const issueWith = (patterns: Array<{ fp: string; label?: string }>, over: Partial<MockRepoIssue> = {}): MockRepoIssue => ({
+    number: 7,
+    title: LEARNINGS_ISSUE_TITLE,
+    body: renderLearningsIssueBody({ v: 1, patterns }),
+    user: { login: "github-actions[bot]" },
+    ...over
+  });
+
+  it("fetchRepoLearnings returns the muted fingerprints from the open store issue", async () => {
+    const { octokit } = mockLearningsOctokit([issueWith([{ fp: "aaaa", label: "A" }, { fp: "bbbb" }])]);
+    expect(await fetchRepoLearnings(octokit, ref)).toEqual(["aaaa", "bbbb"]);
+  });
+
+  it("fetchRepoLearnings ignores pull requests and unmarked issues", async () => {
+    const { octokit } = mockLearningsOctokit([
+      { number: 1, body: "a PR body", user: { login: "github-actions[bot]" }, pull_request: {} },
+      { number: 2, body: "unrelated issue", user: { login: "github-actions[bot]" } }
+    ]);
+    expect(await fetchRepoLearnings(octokit, ref)).toEqual([]);
+  });
+
+  it("fetchRepoLearnings is tolerant of API errors", async () => {
+    const { octokit, listForRepo } = mockLearningsOctokit([]);
+    listForRepo.mockRejectedValueOnce(new Error("boom"));
+    expect(await fetchRepoLearnings(octokit, ref)).toEqual([]);
+  });
+
+  it("recordRepoLearnings creates the store issue when none exists", async () => {
+    const { octokit, create, update } = mockLearningsOctokit([]);
+    const { added } = await recordRepoLearnings(octokit, ref, [{ fp: "aaaa", label: "Null deref" }]);
+    expect(added).toBe(1);
+    expect(update).not.toHaveBeenCalled();
+    expect(create).toHaveBeenCalledTimes(1);
+    const body = (create.mock.calls[0][0] as { title: string; body: string }).body;
+    expect(parseLearnings(body)?.patterns).toEqual([{ fp: "aaaa", label: "Null deref" }]);
+    expect((create.mock.calls[0][0] as { title: string }).title).toBe(LEARNINGS_ISSUE_TITLE);
+  });
+
+  it("recordRepoLearnings merges into an existing store issue in place", async () => {
+    const { octokit, create, update } = mockLearningsOctokit([issueWith([{ fp: "aaaa", label: "A" }])]);
+    const { added } = await recordRepoLearnings(octokit, ref, [
+      { fp: "aaaa", label: "A" },
+      { fp: "cccc", label: "C" }
+    ]);
+    expect(added).toBe(1);
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+    const call = update.mock.calls[0][0] as { issue_number: number; body: string };
+    expect(call.issue_number).toBe(7);
+    expect(learningFingerprints(parseLearnings(call.body))).toEqual(["aaaa", "cccc"]);
+  });
+
+  it("recordRepoLearnings is a no-op for empty entries", async () => {
+    const { octokit, create, update, listForRepo } = mockLearningsOctokit([]);
+    expect(await recordRepoLearnings(octokit, ref, [])).toEqual({ added: 0 });
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
+    expect(listForRepo).not.toHaveBeenCalled();
+  });
+
+  it("fetchReviewCommentLearningEntries recovers fingerprint + label from the comment", async () => {
+    const { octokit, getReviewComment } = mockLearningsOctokit([]);
+    getReviewComment.mockResolvedValueOnce({
+      data: {
+        body: "🟠 **[major] Off-by-one in loop bound**\n\nDetails…\n\n<!-- prowl-review:finding aaaa1111 -->"
+      }
+    });
+    expect(await fetchReviewCommentLearningEntries(octokit, ref, 99)).toEqual([
+      { fp: "aaaa1111", label: "Off-by-one in loop bound" }
+    ]);
+  });
+
+  it("fetchReviewCommentLearningEntries falls back to a label-less entry", async () => {
+    const { octokit, getReviewComment } = mockLearningsOctokit([]);
+    getReviewComment.mockResolvedValueOnce({
+      data: { body: "plain note\n\n<!-- prowl-review:finding bbbb2222 -->" }
+    });
+    expect(await fetchReviewCommentLearningEntries(octokit, ref, 99)).toEqual([{ fp: "bbbb2222" }]);
   });
 });
