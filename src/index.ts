@@ -254,6 +254,7 @@ export {
   parseLearnings,
   serializeLearnings,
   mergeLearnings,
+  fitLearningsIssueBody,
   renderLearningsIssueBody,
   learningFingerprints,
   emptyLearnings,
@@ -262,7 +263,8 @@ export {
   LEARNINGS_ISSUE_LABEL,
   RepoLearningsSchema,
   type RepoLearnings,
-  type RepoLearningEntry
+  type RepoLearningEntry,
+  type FittedLearningsIssueBody
 } from "./review/learnings.js";
 
 // Local pre-push review mode (#35): diff git refs + render findings to the terminal.

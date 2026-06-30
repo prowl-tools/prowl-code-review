@@ -17,7 +17,7 @@ import {
 import type { OctokitLike } from "../src/github/client.js";
 import type { ReviewComment, ReviewPayload } from "../src/review/inline.js";
 import { REVIEW_MARKER } from "../src/review/walkthrough.js";
-import { serializeState, parseState } from "../src/review/state.js";
+import { GITHUB_COMMENT_BODY_LIMIT, serializeState, parseState } from "../src/review/state.js";
 import {
   LEARNINGS_ISSUE_TITLE,
   LEARNINGS_ISSUE_LABEL,
@@ -1305,6 +1305,32 @@ describe("repo-wide learnings store (#30)", () => {
     expect(parseLearnings(body)?.patterns).toEqual([{ fp: "aaaa", label: "Null deref" }]);
     expect((create.mock.calls[0][0] as { title: string }).title).toBe(LEARNINGS_ISSUE_TITLE);
     expect((create.mock.calls[0][0] as { labels: string[] }).labels).toEqual([LEARNINGS_ISSUE_LABEL]);
+  });
+
+  it("recordRepoLearnings only acknowledges entries persisted in the fitted body", async () => {
+    const { octokit, create } = mockLearningsOctokit([]);
+
+    const { added } = await recordRepoLearnings(octokit, ref, [
+      { fp: "fits", label: "Fits" },
+      { fp: "too-large", label: "x".repeat(GITHUB_COMMENT_BODY_LIMIT) }
+    ]);
+
+    expect(added).toBe(1);
+    expect(create).toHaveBeenCalledTimes(1);
+    const body = (create.mock.calls[0][0] as { body: string }).body;
+    expect(learningFingerprints(parseLearnings(body))).toEqual(["fits"]);
+  });
+
+  it("recordRepoLearnings skips writes when no requested entries can fit", async () => {
+    const { octokit, create, update } = mockLearningsOctokit([issueWith([{ fp: "existing", label: "Existing" }])]);
+
+    const result = await recordRepoLearnings(octokit, ref, [
+      { fp: "too-large", label: "x".repeat(GITHUB_COMMENT_BODY_LIMIT) }
+    ]);
+
+    expect(result).toEqual({ added: 0 });
+    expect(create).not.toHaveBeenCalled();
+    expect(update).not.toHaveBeenCalled();
   });
 
   it("recordRepoLearnings merges into an existing store issue in place", async () => {

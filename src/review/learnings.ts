@@ -182,17 +182,24 @@ function renderBody(state: RepoLearnings): string {
   return `${prose}\n\n${serializeLearnings(state)}`;
 }
 
+/** A rendered learnings issue body plus the fitted state it actually persists. */
+export interface FittedLearningsIssueBody {
+  body: string;
+  learnings: RepoLearnings;
+  dropped: number;
+}
+
 /**
  * Render a human-readable issue body that carries the hidden learnings marker,
  * dropping the oldest patterns until the whole rendered body (prose + marker)
  * fits within GitHub's comment-body limit. Prose and marker are always fitted
  * together so the visible list never disagrees with the persisted store.
  */
-export function renderLearningsIssueBody(state: RepoLearnings): string {
+export function fitLearningsIssueBody(state: RepoLearnings): FittedLearningsIssueBody {
   const patterns = [...state.patterns];
   const fullBody = renderBody({ v: REPO_LEARNINGS_VERSION, patterns });
   if (fullBody.length <= GITHUB_COMMENT_BODY_LIMIT) {
-    return fullBody;
+    return { body: fullBody, learnings: { v: REPO_LEARNINGS_VERSION, patterns }, dropped: 0 };
   }
 
   let low = 0;
@@ -208,5 +215,15 @@ export function renderLearningsIssueBody(state: RepoLearnings): string {
       low = mid + 1;
     }
   }
-  return renderBody({ v: REPO_LEARNINGS_VERSION, patterns: patterns.slice(bestStart) });
+  const fittedPatterns = patterns.slice(bestStart);
+  const learnings: RepoLearnings = { v: REPO_LEARNINGS_VERSION, patterns: fittedPatterns };
+  return { body: renderBody(learnings), learnings, dropped: patterns.length - fittedPatterns.length };
+}
+
+/**
+ * Render a human-readable issue body that carries the hidden learnings marker,
+ * dropping the oldest patterns until the whole rendered body fits.
+ */
+export function renderLearningsIssueBody(state: RepoLearnings): string {
+  return fitLearningsIssueBody(state).body;
 }

@@ -268,6 +268,39 @@ describe("review command helpers", () => {
       warn.mockRestore();
     });
 
+    it("rejects non-canonical private IPv6 literals before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("local rules"));
+
+      expect(
+        await loadOrgGuidelines("http://[0:0:0:0:0:0:0:1]/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+      warn.mockRestore();
+    });
+
+    it.each(["0:0:0:0:0:0:0:1", "0:0:0:0:0:ffff:7f00:1", "fe80:0:0:0:0:0:0:1"])(
+      "rejects private IPv6 DNS result %s before fetching",
+      async (address) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => [address]);
+
+        expect(
+          await loadOrgGuidelines("https://example.com/guide.md", {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+        warn.mockRestore();
+      }
+    );
+
     it("rejects URLs with embedded credentials before fetching", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const fetchImpl = vi.fn(async () => new Response("remote rules"));
