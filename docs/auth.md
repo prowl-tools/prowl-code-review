@@ -94,8 +94,12 @@ section and [`SECURITY.md`](../SECURITY.md).
 A common ask is "can I reuse my Claude Pro / ChatGPT / Gemini *subscription*
 instead of buying API credits?" The answer is policy, not laziness:
 
-- **Claude (Anthropic) — not supported.** Reusing Claude subscription OAuth in a
-  third-party tool violates the Anthropic Consumer Terms (§3.7) and is an
+- **Claude (Anthropic) — not supported.** The current
+  [Anthropic Consumer Terms](https://www.anthropic.com/legal/consumer-terms)
+  §3.7 allow automated access only through an Anthropic API key or explicit
+  permission; otherwise they prohibit access through "automated or non-human
+  means, whether through a bot, script, or otherwise." Reusing Claude
+  subscription OAuth in a third-party tool is the non-API path and creates an
   account-ban risk. Use an Anthropic **API** key.
 - **Gemini (Google) — not supported.** Google began enforcing against
   subscription-OAuth reuse in third-party tools (Feb 2026). Use a Gemini **API**
