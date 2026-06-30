@@ -5,6 +5,22 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Repo-wide learnings + org-guidelines-by-URL (backlog #30, completes #30): two cross-PR capabilities, both
+  BYOK with no external store. **Repo-wide learnings** — opt in with `review.repoLearnings: true` and an
+  `@prowl-review ignore` / `resolve` mute is persisted (beyond its PR) to a dedicated **`prowl-review: learned
+  patterns`** tracking issue, so the same finding is suppressed on every future PR (the OSS equivalent of
+  CodeRabbit "learnings"). The store is a hidden versioned marker in the issue body (new `src/review/learnings.ts`:
+  `parseLearnings`/`serializeLearnings`/`mergeLearnings`/`renderLearningsIssueBody`, de-duplicated by fingerprint
+  and capped at 1000 with oldest-dropped fitting); reviews union its fingerprints into the suppression set, and
+  the human controls it directly — delete a line to re-surface a finding, or close the issue to clear the store.
+  New `fetchRepoLearnings`/`recordRepoLearnings`/`fetchReviewCommentLearningEntries` (issue read via
+  `issues.listForRepo`, write via `issues.create`/`issues.update`; only open, bot-authored issues count). Writes
+  are trust-gated (command authors only) and best-effort — a failed issue write never blocks the per-PR mute.
+  **Org guidelines by URL** — `PROWL_ORG_GUIDELINES_PATH` now accepts an `http(s)` URL in addition to a file
+  path (new async `loadOrgGuidelines`, 10s timeout + 256 KB cap), so an org can host one shared standard;
+  fetched text stays untrusted prompt data, and a failed/non-OK/oversized fetch is skipped with a warning. New
+  `review.repoLearnings` config key, pipeline `repoLearnings` option + `fetchRepoLearnings` dep, README docs,
+  and public exports.
 - Bot commands `resolve` + `configure` (backlog #26, completes the bot command set): two new trust-gated
   `@prowl-review` verbs. **`resolve`** — reply on a finding's thread to mark it resolved: it recovers the
   finding fingerprint from the bot's comment, resolves the matching open review thread via GraphQL, and mutes

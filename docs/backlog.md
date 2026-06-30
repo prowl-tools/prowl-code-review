@@ -17,13 +17,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-30. **Explicit guidelines + learnings files (the OSS replacement for CodeRabbit "learnings")**
-    As a team, I want version-controlled review guidelines and a learned-patterns file, so that the reviewer is tuned to us and stops repeating known false positives.
-    - **Done (core, see resolved.md):** the reviewer loads `CLAUDE.md`/`REVIEW_GUIDELINES.md` **and** a `LEARNED_PATTERNS.md` and injects them into the prompt (learned patterns as a distinct "do not re-raise" section); an optional org-wide guidelines **file** (`org-guidelines-path` / `PROWL_ORG_GUIDELINES_PATH`) is injected into every repo's prompts alongside per-repo files.
-    - **Done:** the `@prowl-review ignore` feedback path (see resolved.md) — muting a finding persists its fingerprint to the #12 state marker and future reviews suppress it (per-PR). The 👎-reaction trigger is impractical via Actions (no usable reaction event).
-    - Acceptance (remaining): **repo-wide** learnings — persist muted patterns across PRs (write back to `LEARNED_PATTERNS.md` or a repo-level store), so an ignore on one PR teaches future PRs. Needs a commit/persistent-store decision (today the mute is per-PR via #12).
-    - Acceptance (remaining): support the org-wide guidelines template via **URL** (not just a file), so orgs can host one shared standard.
-
 37. **Reusable org-level workflow**
     As an org owner, I want one reusable workflow referenced by all repos, so that "across all my projects" needs no YAML copy-paste.
     - Acceptance: documented `workflow_call` workflow (intended for `Prowl-qa/.github`) that any repo invokes in a few lines.
