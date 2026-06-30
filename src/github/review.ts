@@ -642,7 +642,7 @@ export async function fetchReviewCommentFingerprints(
 }
 
 /** Captures the finding title from an inline comment's `**[severity] Title**` heading line. */
-const INLINE_FINDING_TITLE_RE = /\*\*\[(?:critical|major|minor|trivial|info)\]\s*([^\n*]+?)\s*\*\*/i;
+const INLINE_FINDING_TITLE_RE = /\*\*\[(?:critical|major|minor|trivial|info)\]\s*((?:[^\n*]|\*(?!\*))+?)\s*\*\*/i;
 const LEARNING_LABEL_MAX = 160;
 
 /** Best-effort human-readable label for a muted finding, drawn from its inline comment. */

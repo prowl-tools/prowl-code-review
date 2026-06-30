@@ -1353,6 +1353,18 @@ describe("repo-wide learnings store (#30)", () => {
     ]);
   });
 
+  it("keeps wildcard characters in learned-pattern labels", async () => {
+    const { octokit, getReviewComment } = mockLearningsOctokit([]);
+    getReviewComment.mockResolvedValueOnce({
+      data: {
+        body: "🟠 **[major] Files with *.js extension**\n\nDetails…\n\n<!-- prowl-review:finding aaaa1111 -->"
+      }
+    });
+    expect(await fetchReviewCommentLearningEntries(octokit, ref, 99)).toEqual([
+      { fp: "aaaa1111", label: "Files with *.js extension" }
+    ]);
+  });
+
   it("truncates very long learned-pattern labels", async () => {
     const { octokit, getReviewComment } = mockLearningsOctokit([]);
     const longTitle = "A".repeat(220);

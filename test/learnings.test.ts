@@ -59,6 +59,33 @@ describe("serializeLearnings / parseLearnings round-trip", () => {
     const body = renderLearningsIssueBody(store).replace("- `aaaa1111` — Off-by-one in loop bound\n", "");
     expect(parseLearnings(body)?.patterns).toEqual([{ fp: "bbbb2222" }]);
   });
+
+  it("parses only visible learned-pattern bullet fingerprints from the editable section", () => {
+    const persisted: RepoLearnings = {
+      v: REPO_LEARNINGS_VERSION,
+      patterns: [
+        { fp: "keep", label: "Keep muted" },
+        { fp: "drop", label: "Drop muted" },
+        { fp: "hidden", label: "Hidden muted" }
+      ]
+    };
+    const body = [
+      "# prowl-review: learned patterns",
+      "",
+      "## Muted patterns (2)",
+      "",
+      "- `keep` — Keep muted",
+      "Plain text with `hidden` should not count.",
+      "- `drop` — Drop muted",
+      "",
+      serializeLearnings(persisted)
+    ].join("\n");
+
+    expect(parseLearnings(body)?.patterns).toEqual([
+      { fp: "keep", label: "Keep muted" },
+      { fp: "drop", label: "Drop muted" }
+    ]);
+  });
 });
 
 describe("mergeLearnings", () => {
