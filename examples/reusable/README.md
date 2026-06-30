@@ -15,7 +15,7 @@ In your org's **`.github`** repo (create it if it doesn't exist), add:
 | `.github/workflows/prowl-review-command.yml` | [`prowl-review-command.yml`](prowl-review-command.yml) |
 
 These are `workflow_call` (reusable) workflows: they own the checkout, the
-trusted-base config/guidelines split, the fork/draft guards, and the
+trusted-base config/guidelines split, the fork + author-trust guards, and the
 `prowl-tools/prowl-code-review@v1` invocation. Add the provider key(s) as **org
 secrets** (Settings → Secrets and variables → Actions) — e.g. `PROWL_AI_KEY`, or
 `PROWL_AI_KEY_ANTHROPIC` + `PROWL_AI_KEY_GEMINI` for the ensemble — and make them

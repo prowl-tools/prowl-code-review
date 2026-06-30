@@ -151,8 +151,8 @@ function normalizeExpression(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function shouldRunAutoReview(input: { draft: boolean; headRepo: string; repository: string }): boolean {
-  return input.draft === false && input.headRepo === input.repository;
+function shouldRunAutoReview(input: { headRepo: string; repository: string }): boolean {
+  return input.headRepo === input.repository;
 }
 
 function shouldRunCommandJob(input: { isPullRequest: boolean; userType: string; authorAssociation: string; body: string }): boolean {
@@ -240,20 +240,19 @@ describe("reusable org workflows (#37)", () => {
   it("the auto-review workflow loads config/guidelines from the trusted base, not PR code", () => {
     const doc = parseWorkflow("prowl-review.yml");
     const text = read("prowl-review.yml");
-    // Fork + draft guard on the job.
+    // Fork guard stays at the workflow layer; draft policy stays inside the action.
     const review = (doc.jobs as { review: { if: string } }).review;
-    expect(normalizeExpression(review.if)).toBe(
-      "github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository"
-    );
+    expect(normalizeExpression(review.if)).toBe("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(review.if).not.toContain("draft");
     // Base checkout feeds guidelines; PR checkout feeds context.
     expect(text).toContain("ref: ${{ github.event.pull_request.base.sha }}");
     expect(text).toContain("guidelines-path: ${{ github.workspace }}/prowl-base");
   });
 
   it.each([
-    ["same-repo ready PR", { draft: false, headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, true],
-    ["draft PR", { draft: true, headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, false],
-    ["fork PR", { draft: false, headRepo: "contributor/app", repository: "Prowl-qa/app" }, false]
+    ["same-repo ready PR", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, true],
+    ["same-repo draft PR", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, true],
+    ["fork PR", { headRepo: "contributor/app", repository: "Prowl-qa/app" }, false]
   ])("the auto-review job guard handles %s", (_name, input, expected) => {
     expect(shouldRunAutoReview(input)).toBe(expected);
   });
