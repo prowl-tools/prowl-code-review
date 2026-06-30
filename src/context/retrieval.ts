@@ -13,12 +13,17 @@ import {
   type TokenUsage
 } from "../providers/index.js";
 import {
+  findDefinition,
+  findReferences,
   listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
+  type SearchResult,
+  type SymbolSearchOptions,
   type ToolkitOptions
 } from "./tools.js";
 import { isSensitiveFile, redactSecrets } from "../review/redact.js";
+import { isLanguageId } from "../review/language.js";
 import { totalTokens } from "../cost/pricing.js";
 
 /**
@@ -66,6 +71,40 @@ export const REVIEW_TOOLS: ToolDefinition[] = [
         dir: { type: "string", description: "Optional subdirectory (defaults to repo root)." }
       }
     }
+  },
+  {
+    name: "find_definition",
+    description:
+      "Find where a symbol (function/class/type/variable) is likely DEFINED. Sharper than search_repo for locating a declaration. Returns path:line: text matches.",
+    parameters: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Symbol name to locate the definition of." },
+        dir: { type: "string", description: "Optional subdirectory to limit the search." },
+        language: {
+          type: "string",
+          description: "Optional language id (e.g. typescript, python, go) to restrict the search for precision."
+        }
+      },
+      required: ["symbol"]
+    }
+  },
+  {
+    name: "find_references",
+    description:
+      "Find REFERENCES to a symbol — definitions and call sites — to see who depends on the changed code. Returns path:line: text matches.",
+    parameters: {
+      type: "object",
+      properties: {
+        symbol: { type: "string", description: "Symbol name to find references to." },
+        dir: { type: "string", description: "Optional subdirectory to limit the search." },
+        language: {
+          type: "string",
+          description: "Optional language id (e.g. typescript, python, go) to restrict the search for precision."
+        }
+      },
+      required: ["symbol"]
+    }
   }
 ];
 
@@ -85,7 +124,7 @@ export interface RetrievedFile {
 }
 
 export interface RetrievedToolOutput {
-  tool: "search_repo" | "list_files";
+  tool: "search_repo" | "list_files" | "find_definition" | "find_references";
   input: Record<string, string>;
   content: string;
   truncated: boolean;
@@ -164,8 +203,10 @@ function seedPrompt(changedPaths: string[]): string {
     "",
     "Use the tools to read the definitions and callers of the changed code, plus any",
     "closely related files needed to catch broken callers, contract/interface",
-    "violations, and inconsistent patterns. Fetch only what is relevant. When you",
-    "have enough context, reply without calling any tools."
+    "violations, and inconsistent patterns. Prefer find_definition to locate where a",
+    "symbol is declared and find_references to find its call sites; fall back to",
+    "search_repo for free-form patterns. Fetch only what is relevant. When you have",
+    "enough context, reply without calling any tools."
   ].join("\n");
 }
 
@@ -264,6 +305,53 @@ function executeTool(
       toolOutputs.push({
         tool: "list_files",
         input: { dir },
+        content,
+        truncated: result.truncated
+      });
+      return toolExecution(content, result.truncated);
+    }
+
+    if (call.name === "find_definition" || call.name === "find_references") {
+      const symbol = typeof call.input.symbol === "string" ? call.input.symbol : "";
+      if (!symbol) {
+        return toolExecution(`Error: ${call.name} requires a 'symbol'.`);
+      }
+      const dir = typeof call.input.dir === "string" ? call.input.dir : ".";
+      const languageInput = typeof call.input.language === "string" ? call.input.language : "";
+      if (languageInput && !isLanguageId(languageInput)) {
+        notes.push(`Ignored unknown language '${languageInput}' for ${call.name}`);
+      }
+      const symbolOptions: SymbolSearchOptions = {
+        dir,
+        ...(languageInput && isLanguageId(languageInput) ? { language: languageInput } : {}),
+        shouldSearchFile: (path) => !isSensitiveFile(path)
+      };
+      // Symbol tools reuse searchRepo's regex-complexity + repo-root guards.
+      const result: SearchResult =
+        call.name === "find_definition"
+          ? findDefinition(options, symbol, symbolOptions)
+          : findReferences(options, symbol, symbolOptions);
+      const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
+      const skippedSensitive = result.matches.length - safeMatches.length;
+      if ((result.skippedFiles ?? 0) > 0) {
+        notes.push(`Skipped ${result.skippedFiles} sensitive file(s) during ${call.name}`);
+      }
+      if (skippedSensitive > 0) {
+        notes.push(`Skipped ${skippedSensitive} ${call.name} result(s) from sensitive file(s)`);
+      }
+      const rawBody = safeMatches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const { text: body, count: redactions } = redactSecrets(rawBody);
+      if (redactions > 0) {
+        notes.push(`Redacted ${redactions} secret(s) from ${call.name} results`);
+      }
+      const noMatch = call.name === "find_definition" ? "(no definition found)" : "(no references found)";
+      const content = (body || noMatch) + (result.truncated ? "\n…[more matches omitted]" : "");
+      if (result.truncated) {
+        notes.push(`${call.name} results truncated for '${symbol}' under ${dir}`);
+      }
+      toolOutputs.push({
+        tool: call.name,
+        input: { symbol, dir, ...(languageInput ? { language: languageInput } : {}) },
         content,
         truncated: result.truncated
       });
