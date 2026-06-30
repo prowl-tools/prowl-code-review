@@ -63,6 +63,7 @@ import type { DiffFile, DiffLimits, SkippedFile } from "./review/diff-types.js";
 import { renderGuardedDiff } from "./review/render-diff.js";
 import {
   ContextRetrievalError,
+  formatGatheredContext,
   gatherContext as defaultGatherContext,
   type GatherContextParams,
   type GatheredContext,
@@ -2150,8 +2151,8 @@ export async function reviewPullRequest(
       // context on an otherwise healthy review — not an inability to run. Like a
       // guardrail file-skip it stays a benign note, NOT a degraded headline (#56).
       // Only a thrown retrieval error (catch below) means coverage truly degraded.
-      if (gathered.files.length > 0) {
-        const joined = gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n");
+      const joined = formatGatheredContext(gathered);
+      if (joined !== undefined) {
         // Defense-in-depth: tool reads are already redacted, but redact again.
         context = redactSecrets(joined).text;
       }

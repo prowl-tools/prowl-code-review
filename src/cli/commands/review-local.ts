@@ -13,7 +13,12 @@ import type { DiffFile, SkippedFile } from "../../review/diff-types.js";
 import { summarizeLanguages } from "../../review/language.js";
 import { DEFAULT_SPECIALISTS } from "../../review/specialists.js";
 import { diffComplexity, planOrchestration, selectRiskTier } from "../../review/risk-tier.js";
-import { gatherContext, ContextRetrievalError, type RetrievalLimits } from "../../context/retrieval.js";
+import {
+  gatherContext,
+  formatGatheredContext,
+  ContextRetrievalError,
+  type RetrievalLimits
+} from "../../context/retrieval.js";
 import { buildGroundingSummary, gatherGrounding } from "../../grounding/index.js";
 import { runReview, type ReviewInput, type ReviewResult } from "../../review/run-review.js";
 import { emptyUsage, type TokenUsage } from "../../providers/index.js";
@@ -604,8 +609,9 @@ export async function runLocalReview(
       for (const note of gathered.notes) {
         notes.push(`Context retrieval: ${note}`);
       }
-      if (gathered.files.length > 0) {
-        context = redactSecrets(gathered.files.map((file) => `# ${file.path}\n${file.content}`).join("\n\n")).text;
+      const joined = formatGatheredContext(gathered);
+      if (joined !== undefined) {
+        context = redactSecrets(joined).text;
       }
       debug?.({
         type: "context",
