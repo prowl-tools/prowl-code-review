@@ -21,13 +21,15 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toMatch(/\.prowl-review\.yml[\s\S]*no config field that accepts a key/i);
   });
 
-  it("documents why subscription routing is unsupported for Claude/Gemini, Codex the only exception", () => {
+  it("documents why subscription routing is unsupported for Claude/Gemini and why Codex is the only exception", () => {
     expect(doc).toContain("Anthropic Consumer Terms");
     expect(doc).toMatch(/Gemini.*not supported|not supported.*Gemini/i);
-    expect(doc).toMatch(/violates[\s\S]*Consumer Terms/i);
+    expect(doc).toMatch(/automated or non-human\s+means/i);
+    expect(doc).toMatch(/bot, script, or otherwise/i);
     expect(doc).toMatch(/account-ban risk/i);
-    expect(doc).toMatch(/OpenAI\/Codex/);
-    expect(doc).toMatch(/off-by-default|off by default/i);
+    expect(doc).toMatch(/OpenClaw/i);
+    expect(doc).toMatch(/OpenAI\/Codex[\s\S]*only possible exception[\s\S]*off-by-default/i);
+    expect(doc).toMatch(/OpenAI\/Codex[\s\S]*Legal\/Compliance sign-off/i);
   });
 
   it("explains Action secret handling and GITHUB_TOKEN posting", () => {
@@ -68,6 +70,8 @@ describe("data-privacy doc (#40)", () => {
   it("states zero retention on our side", () => {
     expect(doc).toMatch(/prowl-review retains \*\*nothing\*\*/i);
     expect(doc).toMatch(/no database, no logs of your code, no\s+copy of your key/i);
+    expect(doc).toMatch(/State that does persist[\s\S]*lives \*\*in your own GitHub\*\*/i);
+    expect(doc).toMatch(/tracking issue in your repo/i);
   });
 });
 
