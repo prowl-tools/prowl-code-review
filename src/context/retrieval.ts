@@ -157,6 +157,19 @@ export interface GatheredContext {
   notes: string[];
 }
 
+function formatToolOutput(output: RetrievedToolOutput): string {
+  return [`# ${output.tool} output`, `Input: ${JSON.stringify(output.input)}`, output.content].join("\n");
+}
+
+/** Format fetched files and non-file tool outputs for the reviewer prompt. */
+export function formatGatheredContext(gathered: Pick<GatheredContext, "files" | "toolOutputs">): string | undefined {
+  const sections = [
+    ...gathered.files.map((file) => `# ${file.path}\n${file.content}`),
+    ...gathered.toolOutputs.map((output) => formatToolOutput(output))
+  ];
+  return sections.length > 0 ? sections.join("\n\n") : undefined;
+}
+
 export interface GatherContextParams {
   /** Sandboxed repo-access configuration. */
   toolkit: ToolkitOptions;

@@ -109,6 +109,7 @@ export {
 } from "./context/tools.js";
 export {
   ContextRetrievalError,
+  formatGatheredContext,
   gatherContext,
   REVIEW_TOOLS,
   type GatherContextParams,
