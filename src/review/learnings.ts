@@ -172,14 +172,37 @@ const ISSUE_INTRO = [
   "_Maintained automatically by prowl-review. The visible list above controls which patterns stay muted._"
 ].join("\n");
 
+const EMPTY_PATTERNS_LINE = "_No learned patterns yet._";
+const MUTED_PATTERNS_HEADING_PREFIX = `${ISSUE_INTRO}\n\n## Muted patterns (`;
+const MUTED_PATTERNS_HEADING_SUFFIX = ")\n\n";
+const LEARNINGS_JSON_PREFIX = `{"v":${REPO_LEARNINGS_VERSION},"patterns":[`;
+const LEARNINGS_JSON_SUFFIX = "]}";
+const BODY_MARKER_SEPARATOR = "\n\n";
+
+function renderPatternLine(entry: RepoLearningEntry): string {
+  return `- \`${entry.fp}\` — ${entry.label ?? "(no description recorded)"}`;
+}
+
 /** Build the full issue body (visible prose + hidden marker) for a store. */
 function renderBody(state: RepoLearnings): string {
-  const lines =
-    state.patterns.length === 0
-      ? ["_No learned patterns yet._"]
-      : state.patterns.map((entry) => `- \`${entry.fp}\` — ${entry.label ?? "(no description recorded)"}`);
+  const lines = state.patterns.length === 0 ? [EMPTY_PATTERNS_LINE] : state.patterns.map(renderPatternLine);
   const prose = `${ISSUE_INTRO}\n\n## Muted patterns (${state.patterns.length})\n\n${lines.join("\n")}`;
   return `${prose}\n\n${serializeLearnings(state)}`;
+}
+
+function retainedBodyLength(count: number, patternLinesLength: number, patternJsonLength: number): number {
+  const linesLength = count === 0 ? EMPTY_PATTERNS_LINE.length : patternLinesLength + count - 1;
+  const markerPayloadLength = LEARNINGS_JSON_PREFIX.length + patternJsonLength + Math.max(0, count - 1) + LEARNINGS_JSON_SUFFIX.length;
+  return (
+    MUTED_PATTERNS_HEADING_PREFIX.length +
+    String(count).length +
+    MUTED_PATTERNS_HEADING_SUFFIX.length +
+    linesLength +
+    BODY_MARKER_SEPARATOR.length +
+    MARKER_PREFIX.length +
+    markerPayloadLength +
+    MARKER_SUFFIX.length
+  );
 }
 
 /** A rendered learnings issue body plus the fitted state it actually persists. */
@@ -197,24 +220,29 @@ export interface FittedLearningsIssueBody {
  */
 export function fitLearningsIssueBody(state: RepoLearnings): FittedLearningsIssueBody {
   const patterns = [...state.patterns];
-  const fullBody = renderBody({ v: REPO_LEARNINGS_VERSION, patterns });
-  if (fullBody.length <= GITHUB_COMMENT_BODY_LIMIT) {
-    return { body: fullBody, learnings: { v: REPO_LEARNINGS_VERSION, patterns }, dropped: 0 };
+  const lineSuffixLengths = Array.from({ length: patterns.length + 1 }, () => 0);
+  const jsonSuffixLengths = Array.from({ length: patterns.length + 1 }, () => 0);
+  for (let index = patterns.length - 1; index >= 0; index -= 1) {
+    lineSuffixLengths[index] = lineSuffixLengths[index + 1] + renderPatternLine(patterns[index]).length;
+    jsonSuffixLengths[index] = jsonSuffixLengths[index + 1] + JSON.stringify(patterns[index]).length;
   }
 
-  let low = 0;
-  let high = patterns.length;
-  let bestStart = patterns.length;
-  while (low <= high) {
-    const mid = Math.floor((low + high) / 2);
-    const body = renderBody({ v: REPO_LEARNINGS_VERSION, patterns: patterns.slice(mid) });
-    if (body.length <= GITHUB_COMMENT_BODY_LIMIT || mid === patterns.length) {
-      bestStart = mid;
-      high = mid - 1;
-    } else {
-      low = mid + 1;
-    }
+  const fullLength = retainedBodyLength(patterns.length, lineSuffixLengths[0], jsonSuffixLengths[0]);
+  if (fullLength <= GITHUB_COMMENT_BODY_LIMIT) {
+    const learnings: RepoLearnings = { v: REPO_LEARNINGS_VERSION, patterns };
+    return { body: renderBody(learnings), learnings, dropped: 0 };
   }
+
+  let bestStart = patterns.length;
+  for (let start = patterns.length; start >= 0; start -= 1) {
+    const count = patterns.length - start;
+    const length = retainedBodyLength(count, lineSuffixLengths[start], jsonSuffixLengths[start]);
+    if (length > GITHUB_COMMENT_BODY_LIMIT) {
+      break;
+    }
+    bestStart = start;
+  }
+
   const fittedPatterns = patterns.slice(bestStart);
   const learnings: RepoLearnings = { v: REPO_LEARNINGS_VERSION, patterns: fittedPatterns };
   return { body: renderBody(learnings), learnings, dropped: patterns.length - fittedPatterns.length };
