@@ -10,6 +10,17 @@ import {
   REVIEW_STATE_VERSION,
   type ReviewState
 } from "../review/state.js";
+import {
+  LEARNINGS_ISSUE_LABEL,
+  LEARNINGS_ISSUE_TITLE,
+  REPO_LEARNINGS_VERSION,
+  fitLearningsIssueBody,
+  learningFingerprints,
+  mergeLearnings,
+  parseLearnings,
+  type RepoLearningEntry,
+  type RepoLearnings
+} from "../review/learnings.js";
 
 /**
  * Publish the review with update-not-duplicate semantics (backlog #12 + #22).
@@ -30,6 +41,7 @@ import {
 const MAX_SUMMARY_COMMENT_PAGES = 10;
 const MAX_INLINE_COMMENT_PAGES = 10;
 const MAX_REVIEW_PAGES = 10;
+const LEARNINGS_WRITE_ATTEMPTS = 3;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
@@ -630,6 +642,39 @@ export async function fetchReviewCommentFingerprints(
   return parseInlineFingerprintMarkers(body);
 }
 
+/** Captures the finding title from an inline comment's `**[severity] Title**` heading line. */
+const INLINE_FINDING_TITLE_RE = /\*\*\[(?:critical|major|minor|trivial|info)\]\s*((?:[^\n*]|\*(?!\*))+?)\s*\*\*/i;
+const LEARNING_LABEL_MAX = 160;
+
+/** Best-effort human-readable label for a muted finding, drawn from its inline comment. */
+function extractFindingLabel(body: string | undefined): string | undefined {
+  if (!body) {
+    return undefined;
+  }
+  const match = INLINE_FINDING_TITLE_RE.exec(body);
+  const title = match?.[1]?.trim();
+  if (!title) {
+    return undefined;
+  }
+  return title.length > LEARNING_LABEL_MAX ? `${title.slice(0, LEARNING_LABEL_MAX - 1).trimEnd()}…` : title;
+}
+
+/**
+ * Recover repo-wide learning entries (fingerprint + human-readable label) from a
+ * review comment, for persisting an `@prowl-review ignore` / `resolve` to the
+ * repo-wide learnings store (#30). Returns [] when the comment is gone or carries
+ * no fingerprint marker.
+ */
+export async function fetchReviewCommentLearningEntries(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  commentId: number
+): Promise<RepoLearningEntry[]> {
+  const body = await fetchReviewCommentBody(octokit, ref, commentId);
+  const label = extractFindingLabel(body);
+  return parseInlineFingerprintMarkers(body).map((fp) => (label ? { fp, label } : { fp }));
+}
+
 /**
  * Mute finding fingerprints for a PR via `@prowl-review ignore` (#30): merge them
  * into `ignoredFindings` in the summary comment's state marker (#12), so future
@@ -722,4 +767,190 @@ export async function setConfigOverrides(
   );
   await octokit.rest.issues.createComment({ owner: ref.owner, repo: ref.repo, issue_number: ref.pull_number, body });
   return { overrides: effective };
+}
+
+/** The dedicated repo-wide learnings store issue, located by its hidden marker (#30). */
+interface LearningsIssue {
+  number: number;
+  body: string;
+  learnings: RepoLearnings;
+}
+
+function issueMatchesLearningsStore(issue: {
+  title?: string;
+  user?: { login?: string } | null;
+  pull_request?: unknown;
+}, botLogin: string): boolean {
+  return !issue.pull_request && issue.title === LEARNINGS_ISSUE_TITLE && issue.user?.login === botLogin;
+}
+
+function toLearningsIssue(issue: {
+  number: number;
+  body?: string | null;
+  title?: string;
+  user?: { login?: string } | null;
+  pull_request?: unknown;
+}, botLogin: string): LearningsIssue | null {
+  if (!issueMatchesLearningsStore(issue, botLogin)) {
+    return null;
+  }
+  const body = issue.body ?? "";
+  const learnings = parseLearnings(body);
+  return learnings ? { number: issue.number, body, learnings } : null;
+}
+
+async function listLearningsIssueByOptions(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin: string,
+  options: { labels?: string } = {}
+): Promise<LearningsIssue | null> {
+  const perPage = 100;
+  for (let page = 1; ; page += 1) {
+    const response = await octokit.rest.issues.listForRepo({
+      owner: ref.owner,
+      repo: ref.repo,
+      state: "open",
+      creator: botLogin,
+      ...(options.labels ? { labels: options.labels } : {}),
+      per_page: perPage,
+      page,
+      sort: "created",
+      direction: "asc"
+    });
+    for (const issue of response.data) {
+      const learningsIssue = toLearningsIssue(issue, botLogin);
+      if (learningsIssue) {
+        return learningsIssue;
+      }
+    }
+    if (response.data.length < perPage) {
+      return null;
+    }
+  }
+}
+
+/**
+ * Find the open dedicated learnings-store issue (#30): the bot-authored issue
+ * carrying our `prowl-review:learnings` marker. Only **open** issues count, so a
+ * maintainer can clear the repo-wide store by closing it. Returns null when none
+ * exists or it can't be read.
+ */
+async function findLearningsIssue(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin: string
+): Promise<LearningsIssue | null> {
+  try {
+    const labeled = await listLearningsIssueByOptions(octokit, ref, botLogin, { labels: LEARNINGS_ISSUE_LABEL });
+    if (labeled) {
+      return labeled;
+    }
+  } catch {
+    // Label lookup is an optimization/keyed path; fall back to exact-title lookup
+    // so repositories without the label available still retain existing stores.
+  }
+  return listLearningsIssueByOptions(octokit, ref, botLogin);
+}
+
+/**
+ * Read the repo-wide learnings store (#30): the muted fingerprints that should be
+ * suppressed on **every** PR in this repo, not just the PR they were ignored on.
+ * Tolerant — any read failure (no store, API error, malformed marker) yields an
+ * empty list so a missing store never sinks a review.
+ */
+export async function fetchRepoLearnings(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin?: string
+): Promise<string[]> {
+  try {
+    const login = await getAuthenticatedLogin(octokit, botLogin);
+    if (!login) {
+      return [];
+    }
+    const issue = await findLearningsIssue(octokit, ref, login);
+    return learningFingerprints(issue?.learnings);
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Persist muted findings to the repo-wide learnings store (#30) so an
+ * `@prowl-review ignore` / `resolve` on this PR teaches future PRs. Merges the
+ * entries into the open store issue (de-duplicated by fingerprint), or creates
+ * the dedicated issue when none exists. Returns how many fingerprints were newly
+ * added repo-wide (0 when nothing was created/changed).
+ */
+export async function recordRepoLearnings(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  entries: RepoLearningEntry[],
+  botLogin?: string
+): Promise<{ added: number }> {
+  const renderableEntries = entries.filter((entry) =>
+    fitLearningsIssueBody({ v: REPO_LEARNINGS_VERSION, patterns: [entry] }).learnings.patterns.some(
+      (pattern) => pattern.fp === entry.fp
+    )
+  );
+  if (renderableEntries.length === 0) {
+    return { added: 0 };
+  }
+  const login = await getAuthenticatedLogin(octokit, botLogin);
+  if (!login) {
+    return { added: 0 };
+  }
+
+  for (let attempt = 1; attempt <= LEARNINGS_WRITE_ATTEMPTS; attempt += 1) {
+    const existing = await findLearningsIssue(octokit, ref, login);
+    const existingFingerprints = new Set(learningFingerprints(existing?.learnings));
+    const requestedFingerprints = new Set(renderableEntries.map((entry) => entry.fp));
+    const { learnings, added } = mergeLearnings(existing?.learnings ?? null, renderableEntries);
+    if (added === 0) {
+      return { added: 0 };
+    }
+    const fitted = fitLearningsIssueBody(learnings);
+    const persistedFingerprints = new Set(learningFingerprints(fitted.learnings));
+    const persistedAdded = [...requestedFingerprints].filter(
+      (fingerprint) => !existingFingerprints.has(fingerprint) && persistedFingerprints.has(fingerprint)
+    ).length;
+    if (persistedAdded === 0) {
+      return { added: 0 };
+    }
+
+    try {
+      if (existing) {
+        await octokit.rest.issues.update({
+          owner: ref.owner,
+          repo: ref.repo,
+          issue_number: existing.number,
+          body: fitted.body
+        });
+      } else {
+        try {
+          await octokit.rest.issues.create({
+            owner: ref.owner,
+            repo: ref.repo,
+            title: LEARNINGS_ISSUE_TITLE,
+            body: fitted.body,
+            labels: [LEARNINGS_ISSUE_LABEL]
+          });
+        } catch {
+          await octokit.rest.issues.create({
+            owner: ref.owner,
+            repo: ref.repo,
+            title: LEARNINGS_ISSUE_TITLE,
+            body: fitted.body
+          });
+        }
+      }
+      return { added: persistedAdded };
+    } catch (error) {
+      if (attempt === LEARNINGS_WRITE_ATTEMPTS) {
+        throw error;
+      }
+    }
+  }
+  return { added: 0 };
 }

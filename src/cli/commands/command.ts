@@ -9,12 +9,15 @@ import {
 import {
   fetchReviewCommentBody as defaultFetchReviewCommentBody,
   fetchReviewCommentFingerprints as defaultFetchReviewCommentFingerprints,
+  fetchReviewCommentLearningEntries as defaultFetchReviewCommentLearningEntries,
+  recordRepoLearnings as defaultRecordRepoLearnings,
   setPausedState,
   setIgnoredFindings,
   setConfigOverrides,
   postPullRequestComment,
   replyToReviewComment
 } from "../../github/review.js";
+import type { RepoLearningEntry } from "../../review/learnings.js";
 import {
   fetchReviewThreads as defaultFetchReviewThreads,
   resolveReviewThread as defaultResolveReviewThread
@@ -50,6 +53,7 @@ import { DEFAULT_IGNORE_GLOBS, filterIgnoredDiffFiles } from "../../review/ignor
 import { REVIEW_MARKER } from "../../review/walkthrough.js";
 import type { DiffFile } from "../../review/diff-types.js";
 import { loadConfig } from "../../config/loader.js";
+import type { ProwlReviewConfig } from "../../config/schema.js";
 import { resolveProviderConfig, type ProviderConfig, type TokenUsage } from "../../providers/index.js";
 import {
   resolveRepo,
@@ -513,8 +517,53 @@ export function loadChatGuidelines(): string | undefined {
   return composeGuidelines(orgGuidelines, repoGuidelines);
 }
 
+/** Injectable side effects shared by the `ignore` / `resolve` repo-wide learnings step (#30). */
+export interface RepoLearningsDeps {
+  /** Recover fingerprint + label entries from a finding's comment for repo-wide muting. */
+  fetchLearningEntries?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    commentId: number
+  ) => Promise<RepoLearningEntry[]>;
+  /** Persist muted findings to the repo-wide learnings store issue. */
+  recordLearnings?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    entries: RepoLearningEntry[]
+  ) => Promise<{ added: number }>;
+}
+
+/**
+ * Persist a mute to the repo-wide learnings store (#30) so it teaches future PRs.
+ * Opt-in (`enabled`) and strictly best-effort: any failure leaves the per-PR mute
+ * intact and reports 0 taught, so repo-wide persistence never sinks the command.
+ */
+async function teachRepoWide(params: {
+  octokit: OctokitLike;
+  ref: PullRequestRef;
+  rootId: number;
+  enabled?: boolean;
+  deps?: RepoLearningsDeps;
+}): Promise<number> {
+  if (!params.enabled) {
+    return 0;
+  }
+  const fetchLearningEntries = params.deps?.fetchLearningEntries ?? defaultFetchReviewCommentLearningEntries;
+  const recordLearnings = params.deps?.recordLearnings ?? defaultRecordRepoLearnings;
+  try {
+    const entries = await fetchLearningEntries(params.octokit, params.ref, params.rootId);
+    if (entries.length === 0) {
+      return 0;
+    }
+    const { added } = await recordLearnings(params.octokit, params.ref, entries);
+    return added;
+  } catch {
+    return 0;
+  }
+}
+
 /** Injectable side effects for the `ignore` orchestration (#30). */
-export interface IgnoreHandlerDeps {
+export interface IgnoreHandlerDeps extends RepoLearningsDeps {
   fetchFingerprints?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number) => Promise<string[]>;
   setIgnored?: (
     octokit: OctokitLike,
@@ -536,6 +585,8 @@ export async function handleIgnore(params: {
   octokit: OctokitLike;
   ref: PullRequestRef;
   event: CommentEvent;
+  /** Also persist the mute repo-wide so it teaches future PRs (#30); opt-in. */
+  repoLearnings?: boolean;
   deps?: IgnoreHandlerDeps;
 }): Promise<{ ignored: number }> {
   const fetchFingerprints = params.deps?.fetchFingerprints ?? defaultFetchReviewCommentFingerprints;
@@ -565,12 +616,23 @@ export async function handleIgnore(params: {
   }
 
   const { added } = await setIgnored(params.octokit, params.ref, fingerprints);
-  await ack("👍 Ignored — I won't raise this finding again on this PR. Comment `@prowl-review review` to refresh.");
+  const taughtRepoWide = await teachRepoWide({
+    octokit: params.octokit,
+    ref: params.ref,
+    rootId,
+    enabled: params.repoLearnings,
+    deps: params.deps
+  });
+  await ack(
+    taughtRepoWide > 0
+      ? "👍 Ignored — muted on this PR and added to this repo's learned patterns, so it won't be raised on future PRs either."
+      : "👍 Ignored — I won't raise this finding again on this PR. Comment `@prowl-review review` to refresh."
+  );
   return { ignored: added };
 }
 
 /** Injectable side effects for the `resolve` orchestration (#26). */
-export interface ResolveHandlerDeps {
+export interface ResolveHandlerDeps extends RepoLearningsDeps {
   fetchFingerprints?: (octokit: OctokitLike, ref: PullRequestRef, commentId: number) => Promise<string[]>;
   fetchThreads?: typeof defaultFetchReviewThreads;
   resolveThread?: (octokit: OctokitLike, threadId: string) => Promise<boolean>;
@@ -598,6 +660,8 @@ export async function handleResolve(params: {
   octokit: OctokitLike;
   ref: PullRequestRef;
   event: CommentEvent;
+  /** Also persist the mute repo-wide so it teaches future PRs (#30); opt-in. */
+  repoLearnings?: boolean;
   deps?: ResolveHandlerDeps;
 }): Promise<{ resolved: number }> {
   const fetchFingerprints = params.deps?.fetchFingerprints ?? defaultFetchReviewCommentFingerprints;
@@ -655,7 +719,18 @@ export async function handleResolve(params: {
     await ack("⚠️ I resolved the matching thread, but couldn't mute the finding for future reviews.");
     return { resolved };
   }
-  await ack("✅ Resolved — marked this finding's thread resolved and muted it on this PR.");
+  const taughtRepoWide = await teachRepoWide({
+    octokit: params.octokit,
+    ref: params.ref,
+    rootId,
+    enabled: params.repoLearnings,
+    deps: params.deps
+  });
+  await ack(
+    taughtRepoWide > 0
+      ? "✅ Resolved — thread resolved, muted on this PR, and added to this repo's learned patterns for future PRs."
+      : "✅ Resolved — marked this finding's thread resolved and muted it on this PR."
+  );
   return { resolved };
 }
 
@@ -720,6 +795,25 @@ export async function handleConfigure(params: {
   return { ok: true };
 }
 
+/**
+ * Read the optional repo-wide learning flag for per-PR ignore/resolve commands.
+ * Config load failures should not block those commands: repo-wide teaching is an
+ * opt-in extension, while the per-PR mute/resolve should still complete.
+ */
+export async function loadRepoLearningsFlag(loadCommandConfig: () => Promise<ProwlReviewConfig>): Promise<boolean> {
+  try {
+    const config = await loadCommandConfig();
+    return config.review?.repoLearnings === true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      "prowl-review: could not load config for repo-wide learnings; continuing with per-PR mute only " +
+        `(${message}).`
+    );
+    return false;
+  }
+}
+
 /** Build the `command` CLI subcommand wired to the comment-event dispatch. */
 export function buildCommandCommand(): Command {
   const command = new Command("command");
@@ -755,15 +849,22 @@ export function buildCommandCommand(): Command {
       const octokit = createOctokit(token);
       const ref = { owner, repo, pull_number: event.pullNumber };
 
-      // AI-backed verbs (chat #27, docstrings/tests #33) resolve the provider
-      // config lazily so non-AI verbs (pause/resume/ignore) never require a key.
-      const resolveAiContext = async (): Promise<{ config: ProviderConfig; ignore?: readonly string[] }> => {
+      // Load the repo config honoring fork-config trust. Shared by the AI verbs
+      // (which also need a provider key) and the repo-wide-learnings flag read for
+      // ignore/resolve (#30), which must not require a key.
+      const loadCommandConfig = async (): Promise<ProwlReviewConfig> => {
         const root = resolveWorkspace();
         const eventFork = resolveForkReviewDecisionFromEvent(process.env);
         const fork = eventFork ?? (await resolveForkReviewDecisionForRun(octokit, ref));
-        const { config } = loadConfig(
+        return loadConfig(
           resolveConfigLoadOptions({}, root, process.env, fork.isFork, resolveTrustedConfigBase(process.env))
-        );
+        ).config;
+      };
+
+      // AI-backed verbs (chat #27, docstrings/tests #33) resolve the provider
+      // config lazily so non-AI verbs (pause/resume/ignore) never require a key.
+      const resolveAiContext = async (): Promise<{ config: ProviderConfig; ignore?: readonly string[] }> => {
+        const config = await loadCommandConfig();
         return {
           config: resolveProviderConfig(process.env, { provider: config.provider, model: config.model }),
           ignore: config.ignore
@@ -798,8 +899,12 @@ export function buildCommandCommand(): Command {
         });
       };
 
-      const ignore = (): Promise<{ ignored: number }> => handleIgnore({ octokit, ref, event });
-      const resolve = (): Promise<{ resolved: number }> => handleResolve({ octokit, ref, event });
+      const ignore = async (): Promise<{ ignored: number }> => {
+        return handleIgnore({ octokit, ref, event, repoLearnings: await loadRepoLearningsFlag(loadCommandConfig) });
+      };
+      const resolve = async (): Promise<{ resolved: number }> => {
+        return handleResolve({ octokit, ref, event, repoLearnings: await loadRepoLearningsFlag(loadCommandConfig) });
+      };
       const configure = (argument: string): Promise<{ ok: boolean }> =>
         handleConfigure({ octokit, ref, event, argument });
 

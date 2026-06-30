@@ -7,6 +7,8 @@ import {
   buildReviewCommand,
   loadGuidelines,
   loadLearnedPatterns,
+  loadOrgGuidelines,
+  ORG_GUIDELINES_MAX_BYTES,
   composeGuidelines,
   isForkPullRequestEvent,
   hasAnyProviderKey,
@@ -28,6 +30,7 @@ import {
   resolveDebugLogPath,
   DEFAULT_DEBUG_LOG_FILENAME,
   resolveWorkspace,
+  runReviewWithOptions,
   reportReviewCommandResult
 } from "../src/cli/commands/review.js";
 import type { OctokitLike } from "../src/github/client.js";
@@ -186,6 +189,276 @@ describe("review command helpers", () => {
     expect(resolveOrgGuidelinesPath({ PROWL_ORG_GUIDELINES_PATH: "/org/guide.md" } as NodeJS.ProcessEnv)).toBe(
       "/org/guide.md"
     );
+  });
+
+  describe("loadOrgGuidelines (#30 file or URL)", () => {
+    it("returns undefined for an empty/whitespace value", async () => {
+      expect(await loadOrgGuidelines(undefined)).toBeUndefined();
+      expect(await loadOrgGuidelines("   ")).toBeUndefined();
+    });
+
+    it("reads a local file path via the injected reader", async () => {
+      const readFile = vi.fn(() => "file rules");
+      const fetchImpl = vi.fn();
+      expect(await loadOrgGuidelines("/org/guide.md", { readFile, fetchImpl: fetchImpl as unknown as typeof fetch })).toBe(
+        "file rules"
+      );
+      expect(readFile).toHaveBeenCalledWith("/org/guide.md");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("fetches an http(s) URL and returns the trimmed body", async () => {
+      const fetchImpl = vi.fn(async () => new Response("  remote rules\n"));
+      const result = await loadOrgGuidelines("https://example.com/guide.md", {
+        fetchImpl: fetchImpl as unknown as typeof fetch
+      });
+      expect(result).toBe("remote rules");
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "https://example.com/guide.md",
+        expect.objectContaining({ signal: expect.anything(), redirect: "error" })
+      );
+    });
+
+    it("fetches an http URL when the host is valid", async () => {
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const result = await loadOrgGuidelines("http://example.com/guide.md", {
+        fetchImpl: fetchImpl as unknown as typeof fetch
+      });
+      expect(result).toBe("remote rules");
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "http://example.com/guide.md",
+        expect.objectContaining({ signal: expect.anything(), redirect: "error" })
+      );
+    });
+
+    it("degrades to undefined (not throw) on a non-OK response", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("nope", { status: 404 }));
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("HTTP 404"));
+      warn.mockRestore();
+    });
+
+    it("degrades to undefined on a fetch error", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => {
+        throw new Error("network down");
+      });
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("network down"));
+      warn.mockRestore();
+    });
+
+    it("rejects an oversized response", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const huge = "x".repeat(ORG_GUIDELINES_MAX_BYTES + 1);
+      const fetchImpl = vi.fn(async () => new Response(huge));
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("exceeds"));
+      warn.mockRestore();
+    });
+
+    it("rejects URLs targeting local or private hosts before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("local rules"));
+
+      await expect(
+        loadOrgGuidelines("https://127.0.0.1/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).resolves.toBeUndefined();
+      await expect(
+        loadOrgGuidelines("https://localhost/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).resolves.toBeUndefined();
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+      warn.mockRestore();
+    });
+
+    it("rejects non-canonical private IPv6 literals before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("local rules"));
+
+      expect(
+        await loadOrgGuidelines("http://[0:0:0:0:0:0:0:1]/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+      warn.mockRestore();
+    });
+
+    it.each([
+      "::",
+      "::1",
+      "::7f00:1",
+      "::ffff:127.0.0.1",
+      "0:0:0:0:0:0:0:1",
+      "0:0:0:0:0:ffff:7f00:1",
+      "fe80::1%eth0",
+      "fe80:0:0:0:0:0:0:1",
+      "fc00::1",
+      "fd00::1",
+      "ff02:0:0:0:0:0:0:1",
+      "2001:db8::1"
+    ])(
+      "rejects private IPv6 DNS result %s before fetching",
+      async (address) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => [address]);
+
+        expect(
+          await loadOrgGuidelines("https://example.com/guide.md", {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+        warn.mockRestore();
+      }
+    );
+
+    it("degrades to undefined when DNS resolution fails before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolveHost = vi.fn(async () => {
+        throw new Error("getaddrinfo ENOTFOUND example.com");
+      });
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("ENOTFOUND"));
+      warn.mockRestore();
+    });
+
+    it("rejects URLs with embedded credentials before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+
+      expect(
+        await loadOrgGuidelines("https://user:token@example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("credentials"));
+      warn.mockRestore();
+    });
+
+    it("rejects hostnames that resolve to private addresses before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolveHost = vi.fn(async () => ["10.0.0.1"]);
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBeUndefined();
+      expect(resolveHost).toHaveBeenCalledWith("example.com");
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+      warn.mockRestore();
+    });
+
+    it.each(["http://myserver/guidelines.md", "http://intranet"])(
+      "rejects dotless hostname %s before DNS lookup or fetching",
+      async (url) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => ["8.8.8.8"]);
+
+        expect(
+          await loadOrgGuidelines(url, {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(resolveHost).not.toHaveBeenCalled();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+        warn.mockRestore();
+      }
+    );
+
+    it.each(["192.0.2.1", "198.51.100.1", "203.0.113.1"])(
+      "rejects reserved TEST-NET IPv4 DNS result %s before fetching",
+      async (address) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => [address]);
+
+        expect(
+          await loadOrgGuidelines("https://example.com/guide.md", {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+        warn.mockRestore();
+      }
+    );
+
+    it("caps DNS validation to the first 100 resolved addresses", async () => {
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolvedAddresses = Array.from(
+        { length: 150 },
+        (_unused, index) => `8.8.${Math.floor(index / 250)}.${index % 250}`
+      );
+      resolvedAddresses[120] = "10.0.0.1";
+      const resolveHost = vi.fn(async () => resolvedAddresses);
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBe("remote rules");
+      expect(resolveHost).toHaveBeenCalledWith("example.com");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("redacts secrets from failed fetch warnings", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => {
+        throw new Error("request failed with token=supersecrettoken");
+      });
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("token=[REDACTED:assignment]"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("supersecrettoken"));
+      warn.mockRestore();
+    });
+
+    it("enforces the URL size limit in bytes, not UTF-16 characters", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const multiByteBody = "€".repeat(Math.floor(ORG_GUIDELINES_MAX_BYTES / 2));
+      expect(multiByteBody.length).toBeLessThan(ORG_GUIDELINES_MAX_BYTES);
+      const fetchImpl = vi.fn(async () => new Response(multiByteBody));
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("exceeds"));
+      warn.mockRestore();
+    });
   });
 
   it("parses and validates min severity", () => {
@@ -957,6 +1230,40 @@ describe("review command action env helpers", () => {
     });
 
     expect(logSpy.mock.calls.some(([line]) => String(line).includes("validated against 0 linked issue(s)"))).toBe(true);
+  });
+
+  it("awaits org-guideline loading and passes composed guidelines into the review run (#30)", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        repository: { full_name: "prowl-tools/prowl-code-review" },
+        pull_request: {
+          number: 7,
+          draft: false,
+          head: { sha: "head-sha", repo: { fork: false, full_name: "prowl-tools/prowl-code-review" } },
+          base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+        }
+      })
+    );
+    process.env.GITHUB_TOKEN = "token";
+    process.env.PROWL_AI_KEY = "provider-key";
+    process.env.GITHUB_REPOSITORY = "prowl-tools/prowl-code-review";
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.PROWL_ORG_GUIDELINES_PATH = "https://example.com/org.md";
+    process.env.PROWL_WORKSPACE = dir;
+
+    const loadOrgGuidelinesDep = vi.fn(async () => "org rules");
+    const reviewPullRequestDep = vi.fn(async () => reviewCommandResult());
+
+    await runReviewWithOptions(
+      { repo: "prowl-tools/prowl-code-review", pr: "7", dryRun: true, config: false },
+      { loadOrgGuidelines: loadOrgGuidelinesDep, reviewPullRequest: reviewPullRequestDep }
+    );
+
+    expect(loadOrgGuidelinesDep).toHaveBeenCalledWith("https://example.com/org.md");
+    expect(reviewPullRequestDep.mock.calls[0][2]).toEqual(expect.objectContaining({ guidelines: "org rules" }));
   });
 
   it("prices ensemble runs with each provider's own model and usage", () => {

@@ -46,6 +46,13 @@ const reviewSchema = z
     /** On "I disagree", re-justify the finding (defend in-thread or withdraw). Default true (#22). */
     rejustifyDisputed: z.boolean().optional(),
     /**
+     * Repo-wide learnings (#30): persist `@prowl-review ignore` / `resolve` mutes to
+     * a dedicated tracking issue so they suppress matching findings on every future
+     * PR, not just the PR they were muted on. Default false — opt in to let the bot
+     * create + maintain that issue. Close the issue to clear the store.
+     */
+    repoLearnings: z.boolean().optional(),
+    /**
      * Auto-review pull-request events. Default true. Set false for on-demand
      * only: the bot reviews only when asked with `@prowl-review review` (#28).
      */
