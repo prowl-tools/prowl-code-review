@@ -19,6 +19,7 @@ import { fetchIssue as defaultFetchIssue, type FetchedIssue } from "./github/iss
 import {
   submitReview as defaultSubmitReview,
   fetchPriorReviewState as defaultFetchPriorReviewState,
+  fetchRepoLearnings as defaultFetchRepoLearnings,
   hasActiveRequestChanges as defaultHasActiveRequestChanges,
   type SubmitReviewOptions,
   type SubmitReviewResult,
@@ -129,6 +130,8 @@ export interface PipelineDeps {
   fetchPullRequestMeta?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<PullRequestMeta>;
   /** Load prior persisted review state to find the last reviewed SHA (#23). */
   fetchPriorState?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<ReviewState | null>;
+  /** Load repo-wide muted fingerprints from the learnings store issue (#30). */
+  fetchRepoLearnings?: (octokit: OctokitLike, ref: PullRequestRef) => Promise<string[]>;
   /** Fetch the raw delta diff between two commits for incremental re-review (#23). */
   fetchComparisonDiff?: (
     octokit: OctokitLike,
@@ -272,6 +275,12 @@ export interface ReviewPullRequestOptions {
   guidelines?: string;
   /** Learned false-positive patterns (LEARNED_PATTERNS.md) injected into prompts (#30). */
   learnedPatterns?: string;
+  /**
+   * Repo-wide learnings (#30): when true, union the muted fingerprints from the
+   * dedicated learnings-store issue into this PR's suppression set, so an ignore
+   * on any PR suppresses the matching finding here too. Default false (opt-in).
+   */
+  repoLearnings?: boolean;
   /**
    * Merge gate via the Checks API (#24). Opt-in (needs `checks: write`). With
    * `failOn` set, findings at/above that severity make the check fail; omitted →
@@ -1480,6 +1489,7 @@ export async function reviewPullRequest(
   const rejustifyDisputedEnabled = options.rejustifyDisputed !== false;
   const staleGuardEnabled = options.cancelIfHeadAdvanced !== false;
   const loadPriorState = deps.fetchPriorState ?? defaultFetchPriorReviewState;
+  const loadRepoLearnings = deps.fetchRepoLearnings ?? defaultFetchRepoLearnings;
   const compareDiff = deps.fetchComparisonDiff ?? defaultFetchComparisonDiff;
   const debug = options.debug;
   const ensembleProviderNames = (options.ensemble?.configs ?? []).map((entry) => entry.provider);
@@ -1547,6 +1557,14 @@ export async function reviewPullRequest(
   // comment's state marker.
   const priorState = await loadPriorState(octokit, ref);
   const ignoredFingerprints = new Set(priorState?.ignoredFindings ?? []);
+  // Repo-wide learnings (#30): an ignore on any PR teaches every PR. Union the
+  // muted fingerprints from the dedicated learnings-store issue into this PR's
+  // suppression set. Opt-in; tolerant — a missing/unreadable store adds nothing.
+  if (options.repoLearnings) {
+    for (const fingerprint of await loadRepoLearnings(octokit, ref)) {
+      ignoredFingerprints.add(fingerprint);
+    }
+  }
   // Per-PR `@prowl-review configure` overrides (#26) win over the config file for
   // this PR, while explicit per-run options win for that invocation.
   const configOverrides = priorState?.configOverrides;
