@@ -59,6 +59,7 @@ In the Action, pass your key(s) as **secrets** through the `ai-key*` inputs:
     ai-key: ${{ secrets.PROWL_AI_KEY }}            # generic, single-provider
     # or per-provider (ensemble):
     # ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+    # ai-key-openai: ${{ secrets.PROWL_AI_KEY_OPENAI }}
     # ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
 ```
 
