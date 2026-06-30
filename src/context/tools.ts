@@ -1,5 +1,6 @@
 import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { detectLanguage, type LanguageId } from "../review/language.js";
 
 /**
  * Sandboxed repo-access tools for agentic cross-file context retrieval.
@@ -388,6 +389,125 @@ function truncateSearchMatchText(text: string, maxBytes: number): { text: string
   return { text: `${text.slice(0, end)}...[truncated]`, truncated: true };
 }
 
+function compileSearchPattern(pattern: string): RegExp {
+  try {
+    assertSafeSearchPattern(pattern);
+    return new RegExp(pattern);
+  } catch (error) {
+    if (error instanceof RepoAccessError) {
+      throw error;
+    }
+    throw new RepoAccessError(
+      `Invalid search pattern: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function searchRepoWithRegexes(
+  options: ToolkitOptions,
+  regexes: RegExp[],
+  searchDir = ".",
+  searchOptions: SearchOptions = {}
+): SearchResult {
+  if (regexes.length === 0) {
+    return { matches: [], truncated: false, skippedFiles: 0 };
+  }
+
+  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const maxMatchTextBytes = boundedCount(
+    options.maxMatchTextBytes,
+    DEFAULT_MAX_MATCH_TEXT_BYTES
+  );
+  const orderedBuckets = regexes.length > 1 ? regexes.map((): SearchMatch[] => []) : undefined;
+  const matches: SearchMatch[] = [];
+  let truncated = false;
+
+  const traversal = walkRepoFiles(options, searchDir, (file, abs) => {
+    if (!orderedBuckets && matches.length >= maxMatches) {
+      truncated = true;
+      return false;
+    }
+    let buffer;
+    try {
+      assertNoSymlinkPath(options.root, abs, file);
+      const stat = statSync(abs);
+      if (!stat.isFile()) {
+        return undefined;
+      }
+      if (stat.size > maxFileBytes) {
+        truncated = true;
+        return undefined;
+      }
+      buffer = readFileSync(abs);
+    } catch {
+      return undefined;
+    }
+    if (buffer.includes(0)) {
+      return undefined; // skip binary files
+    }
+    const lines = buffer.toString("utf8").split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      if (orderedBuckets?.every((bucket) => bucket.length >= maxMatches)) {
+        truncated = true;
+        return false;
+      }
+      for (let patternIndex = 0; patternIndex < regexes.length; patternIndex += 1) {
+        const orderedBucket = orderedBuckets?.[patternIndex];
+        if (orderedBucket && orderedBucket.length >= maxMatches) {
+          continue;
+        }
+        if (!regexes[patternIndex].test(lines[i])) {
+          continue;
+        }
+        const matchText = truncateSearchMatchText(lines[i], maxMatchTextBytes);
+        if (matchText.truncated) {
+          truncated = true;
+        }
+        const match = { path: file, line: i + 1, text: matchText.text };
+        if (orderedBuckets) {
+          const bucket = orderedBuckets[patternIndex];
+          bucket.push(match);
+          if (bucket.length >= maxMatches) {
+            truncated = true;
+          }
+          continue;
+        }
+        matches.push(match);
+        if (matches.length >= maxMatches) {
+          truncated = true;
+          return false;
+        }
+      }
+    }
+    return undefined;
+  }, searchOptions.shouldSearchFile);
+
+  if (orderedBuckets) {
+    const seen = new Set<string>();
+    for (const bucket of orderedBuckets) {
+      for (const match of bucket) {
+        const key = `${match.path}:${match.line}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        if (matches.length >= maxMatches) {
+          truncated = true;
+          break;
+        }
+        matches.push(match);
+      }
+    }
+  }
+
+  if (traversal.truncated) {
+    truncated = true;
+  }
+
+  return { matches, truncated, skippedFiles: traversal.skippedFiles };
+}
+
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
@@ -441,72 +561,133 @@ export function searchRepo(
   searchDir = ".",
   searchOptions: SearchOptions = {}
 ): SearchResult {
-  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
-  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-  const maxMatchTextBytes = boundedCount(
-    options.maxMatchTextBytes,
-    DEFAULT_MAX_MATCH_TEXT_BYTES
-  );
+  return searchRepoWithRegexes(options, [compileSearchPattern(pattern)], searchDir, searchOptions);
+}
 
-  let regex: RegExp;
-  try {
-    assertSafeSearchPattern(pattern);
-    regex = new RegExp(pattern);
-  } catch (error) {
-    if (error instanceof RepoAccessError) {
-      throw error;
-    }
+/**
+ * Language-aware symbol resolution (backlog #5) — sharper caller/definition
+ * lookup than a bare regex grep, without a heavy tree-sitter/WASM dependency.
+ *
+ * These are thin, definition-shaped layers over {@link searchRepo}, so they
+ * inherit all of its guards (repo-root confinement, symlink/ignore rejection,
+ * binary skip, bounded matches, the safe-pattern subset) for free. An optional
+ * `language` narrows the search to files of that language for precision; the
+ * caller's `shouldSearchFile` (used for sensitive-file skipping) is composed in.
+ */
+
+/** Options shared by the symbol-resolution helpers. */
+export interface SymbolSearchOptions extends SearchOptions {
+  /** Subdirectory to limit the search (defaults to the repo root). */
+  dir?: string;
+  /** Restrict the search to files of this language (improves precision). */
+  language?: LanguageId;
+}
+
+const MAX_SYMBOL_LENGTH = 128;
+const SYMBOL_IDENTIFIER_CHARS = "A-Za-z0-9_$";
+const SYMBOL_START_BOUNDARY = `(?:^|[^${SYMBOL_IDENTIFIER_CHARS}])`;
+const SYMBOL_END_BOUNDARY = `(?:$|[^${SYMBOL_IDENTIFIER_CHARS}])`;
+
+/** Escape a string so it can be embedded literally inside a search regex. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A symbol the tools accept: an identifier (optionally dotted/qualified), short
+ * enough to keep the derived patterns inside the safe-pattern subset. Rejected
+ * input yields a clear error rather than an unsafe regex.
+ */
+function assertResolvableSymbol(symbol: string): void {
+  if (!symbol) {
+    throw new RepoAccessError("Symbol is required.");
+  }
+  if (symbol.length > MAX_SYMBOL_LENGTH) {
+    throw new RepoAccessError(`Symbol exceeds ${MAX_SYMBOL_LENGTH} characters.`);
+  }
+  if (!/^[A-Za-z_$][A-Za-z0-9_$.]*$/.test(symbol)) {
     throw new RepoAccessError(
-      `Invalid search pattern: ${error instanceof Error ? error.message : String(error)}`
+      "Symbol must be an identifier (letters, digits, '_', '$', '.'), e.g. a function or class name."
     );
   }
+}
 
-  const matches: SearchMatch[] = [];
-  let truncated = false;
-
-  const traversal = walkRepoFiles(options, searchDir, (file, abs) => {
-    if (matches.length >= maxMatches) {
-      truncated = true;
-      return false;
-    }
-    let buffer;
-    try {
-      assertNoSymlinkPath(options.root, abs, file);
-      const stat = statSync(abs);
-      if (!stat.isFile()) {
-        return undefined;
-      }
-      if (stat.size > maxFileBytes) {
-        truncated = true;
-        return undefined;
-      }
-      buffer = readFileSync(abs);
-    } catch {
-      return undefined;
-    }
-    if (buffer.includes(0)) {
-      return undefined; // skip binary files
-    }
-    const lines = buffer.toString("utf8").split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (regex.test(lines[i])) {
-        const matchText = truncateSearchMatchText(lines[i], maxMatchTextBytes);
-        if (matchText.truncated) {
-          truncated = true;
-        }
-        matches.push({ path: file, line: i + 1, text: matchText.text });
-        if (matches.length >= maxMatches) {
-          truncated = true;
-          return false;
-        }
-      }
-    }
-    return undefined;
-  }, searchOptions.shouldSearchFile);
-
-  if (traversal.truncated) {
-    truncated = true;
+/** Compose the caller's sensitive-file predicate with an optional language filter. */
+function symbolFilePredicate(options: SymbolSearchOptions): ((path: string) => boolean) | undefined {
+  const { shouldSearchFile, language } = options;
+  if (!language) {
+    return shouldSearchFile;
   }
+  return (path: string) => (shouldSearchFile ? shouldSearchFile(path) : true) && detectLanguage(path) === language;
+}
 
-  return { matches, truncated, skippedFiles: traversal.skippedFiles };
+/**
+ * Definition-shaped patterns for a symbol, covering the common declaration forms
+ * across languages (keyword-led functions/types/vars, Go receiver methods,
+ * assigned JS functions, modifier-led typed methods, C macros). Each entry stays
+ * inside the safe-pattern subset (≤4 unbounded repetitions, no lookarounds).
+ */
+function definitionPatterns(escaped: string): string[] {
+  return [
+    // function / method declarations led by a keyword
+    `\\b(?:function|func|fn|def|fun|sub|method)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
+    // type-like declarations
+    `\\b(?:class|interface|trait|struct|enum|protocol|record|object|module|namespace|type)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
+    // variable / constant bindings
+    `\\b(?:const|let|var|val|static)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
+    // Go-style receiver methods: func (r *T) Name(
+    `\\bfunc\\s+\\(.*\\)\\s*${escaped}${SYMBOL_END_BOUNDARY}`,
+    // assigned functions: const Name = function | Name = ( … ) =>
+    `${SYMBOL_START_BOUNDARY}${escaped}\\s*=\\s*(?:async\\s+)?(?:function\\b|\\(|[A-Za-z_$][A-Za-z0-9_$]{0,100}\\s*=>)`,
+    // modifier-led typed methods (Java/C#/Kotlin/C++/Swift): public void Name(
+    `\\b(?:public|private|protected|internal|static|final|override|virtual|abstract|async|suspend)[\\sA-Za-z0-9_<>,.*&]*\\b${escaped}\\s*\\(`,
+    // C/C++ macros
+    `#define\\s+${escaped}${SYMBOL_END_BOUNDARY}`
+  ];
+}
+
+/**
+ * Find where a symbol is likely **defined**: run the definition-shaped patterns
+ * and merge their matches (deduped by location, declaration-keyword hits first).
+ * Sharper than a raw grep for "where is X declared", and bounded exactly like
+ * {@link searchRepo}. Returns no matches (rather than throwing) when nothing
+ * matches; throws {@link RepoAccessError} on an invalid symbol/dir.
+ */
+export function findDefinition(
+  options: ToolkitOptions,
+  symbol: string,
+  symbolOptions: SymbolSearchOptions = {}
+): SearchResult {
+  assertResolvableSymbol(symbol);
+  const escaped = escapeRegExp(symbol);
+  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
+  const shouldSearchFile = symbolFilePredicate(symbolOptions);
+  let skippedFiles = 0;
+  const regexes = definitionPatterns(escaped).map((pattern) => compileSearchPattern(pattern));
+
+  const result = searchRepoWithRegexes(options, regexes, symbolOptions.dir ?? ".", { shouldSearchFile });
+  skippedFiles = Math.max(skippedFiles, result.skippedFiles ?? 0);
+
+  return {
+    matches: result.matches.slice(0, maxMatches),
+    truncated: result.truncated || result.matches.length > maxMatches,
+    skippedFiles
+  };
+}
+
+/**
+ * Find **references** to a symbol — word-boundary occurrences across the repo
+ * (definitions and call sites alike), so the agent can see who depends on the
+ * changed code. A thin, safe wrapper over {@link searchRepo}.
+ */
+export function findReferences(
+  options: ToolkitOptions,
+  symbol: string,
+  symbolOptions: SymbolSearchOptions = {}
+): SearchResult {
+  assertResolvableSymbol(symbol);
+  const escaped = escapeRegExp(symbol);
+  return searchRepo(options, `${SYMBOL_START_BOUNDARY}${escaped}${SYMBOL_END_BOUNDARY}`, symbolOptions.dir ?? ".", {
+    shouldSearchFile: symbolFilePredicate(symbolOptions)
+  });
 }

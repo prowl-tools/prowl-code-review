@@ -151,6 +151,35 @@ describe("runLocalReview (#35)", () => {
     expect(d.runReview).toHaveBeenCalledTimes(1);
   });
 
+  it("includes retrieval tool outputs in local review context", async () => {
+    isolatedWorkspace();
+    const runReview = vi.fn().mockResolvedValue(reviewResult({ findings: [finding()] }));
+    const { deps: d } = deps({
+      runReview,
+      gatherContext: vi.fn().mockResolvedValue({
+        files: [],
+        notes: [],
+        usage: emptyUsage(),
+        rounds: 1,
+        reachedLimit: false,
+        toolOutputs: [
+          {
+            tool: "find_definition",
+            input: { symbol: "x", dir: "." },
+            content: "src/a.ts:1: const x = 1;",
+            truncated: false
+          }
+        ]
+      })
+    });
+
+    await runLocalReview({ base: "main", config: false }, d);
+
+    const input = runReview.mock.calls[0][0];
+    expect(input.context).toContain("# find_definition output");
+    expect(input.context).toContain("src/a.ts:1: const x = 1;");
+  });
+
   it("reports no changes without calling the review engine", async () => {
     isolatedWorkspace();
     const { deps: d, out } = deps({ resolveDiff: vi.fn().mockResolvedValue("") });

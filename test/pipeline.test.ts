@@ -118,6 +118,32 @@ describe("reviewPullRequest", () => {
     expect(result.contextFiles).toBe(1);
   });
 
+  it("includes retrieval tool outputs in review context", async () => {
+    const deps = makeDeps();
+    deps.gatherContext.mockResolvedValue({
+      files: [],
+      rounds: 1,
+      usage: { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 },
+      reachedLimit: false,
+      notes: [],
+      toolOutputs: [
+        {
+          tool: "find_definition",
+          input: { symbol: "a", dir: "." },
+          content: "src/a.ts:1: export const a = 1;",
+          truncated: false
+        }
+      ]
+    });
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    const reviewInput = deps.runReview.mock.calls[0][0];
+    expect(reviewInput.context).toContain("# find_definition output");
+    expect(reviewInput.context).toContain("src/a.ts:1: export const a = 1;");
+    expect(result.contextFiles).toBe(0);
+  });
+
   it("threads retry and failback through the normal review path", async () => {
     const deps = {
       ...makeDeps(),

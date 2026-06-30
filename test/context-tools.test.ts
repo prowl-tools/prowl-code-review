@@ -7,6 +7,8 @@ import {
   listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
+  findDefinition,
+  findReferences,
   RepoAccessError,
   type ToolkitOptions
 } from "../src/context/tools.js";
@@ -190,5 +192,125 @@ describe("searchRepo", () => {
 
   it("rejects search patterns with too many unbounded repetitions", () => {
     expect(() => searchRepo(options, "a*a*a*a*a*b")).toThrow(/too many unbounded repetitions/);
+  });
+});
+
+describe("findDefinition / findReferences (#5)", () => {
+  let symRoot: string;
+  let symOptions: ToolkitOptions;
+
+  beforeAll(() => {
+    symRoot = mkdtempSync(join(tmpdir(), "prowl-sym-"));
+    mkdirSync(join(symRoot, "src"));
+    mkdirSync(join(symRoot, "py"));
+    mkdirSync(join(symRoot, "go"));
+    // TS: definition + a separate call site.
+    writeFileSync(join(symRoot, "src", "widget.ts"), "export function makeWidget() {\n  return 1;\n}\n");
+    writeFileSync(join(symRoot, "src", "use.ts"), "import { makeWidget } from './widget';\nconst w = makeWidget();\n");
+    // TS: assigned arrow functions, $ identifiers, and a class.
+    writeFileSync(
+      join(symRoot, "src", "store.ts"),
+      [
+        "export const loadStore = () => ({});",
+        "export const bareArrow = value => value;",
+        "export const asyncBareArrow = async value => value;",
+        "export const $el = () => ({});",
+        "$el();",
+        "export const total$ = 1;",
+        "total$;",
+        "const totalValue = 1;",
+        "export class Store {}",
+        "bareAssigned = value => value;",
+        "asyncBareAssigned = async value => value;",
+        ""
+      ].join("\n")
+    );
+    // Python def with the same name as a TS symbol (for language scoping).
+    writeFileSync(join(symRoot, "py", "widget.py"), "def make_widget():\n    return 1\n\nmake_widget()\n");
+    // Go receiver method.
+    writeFileSync(
+      join(symRoot, "go", "s.go"),
+      "package s\n\nfunc (s *Server) Serve() error {\n\treturn nil\n}\n\nfunc (s *Server[T](nested)) ServeGeneric() error {\n\treturn nil\n}\n"
+    );
+    symOptions = { root: symRoot };
+  });
+
+  afterAll(() => {
+    rmSync(symRoot, { recursive: true, force: true });
+  });
+
+  it("locates a function definition, not its call site", () => {
+    const result = findDefinition(symOptions, "makeWidget");
+    expect(result.matches.some((m) => m.path === "src/widget.ts" && m.line === 1)).toBe(true);
+    // The call site in use.ts is not a definition-shaped line.
+    expect(result.matches.some((m) => m.path === "src/use.ts")).toBe(false);
+  });
+
+  it("locates an assigned arrow function and a class declaration", () => {
+    expect(findDefinition(symOptions, "loadStore").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "bareArrow").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "asyncBareArrow").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "bareAssigned").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+    expect(findDefinition(symOptions, "asyncBareAssigned").matches.some((m) => m.path === "src/store.ts")).toBe(
+      true
+    );
+    expect(findDefinition(symOptions, "Store").matches.some((m) => m.path === "src/store.ts")).toBe(true);
+  });
+
+  it("locates a Python def and a Go receiver method", () => {
+    expect(findDefinition(symOptions, "make_widget").matches.some((m) => m.path === "py/widget.py")).toBe(true);
+    expect(findDefinition(symOptions, "Serve").matches.some((m) => m.path === "go/s.go" && m.line === 3)).toBe(true);
+    expect(findDefinition(symOptions, "ServeGeneric").matches.some((m) => m.path === "go/s.go" && m.line === 7)).toBe(true);
+  });
+
+  it("supports symbols containing $ in definitions and references", () => {
+    expect(findDefinition(symOptions, "$el").matches.some((m) => m.path === "src/store.ts" && m.line === 4)).toBe(
+      true
+    );
+
+    const dollarPrefix = findReferences(symOptions, "$el");
+    expect(dollarPrefix.matches.some((m) => m.path === "src/store.ts" && m.line === 4)).toBe(true);
+    expect(dollarPrefix.matches.some((m) => m.path === "src/store.ts" && m.line === 5)).toBe(true);
+
+    const dollarSuffix = findReferences(symOptions, "total$");
+    expect(dollarSuffix.matches.some((m) => m.path === "src/store.ts" && m.line === 6)).toBe(true);
+    expect(dollarSuffix.matches.some((m) => m.path === "src/store.ts" && m.line === 7)).toBe(true);
+    expect(dollarSuffix.matches.every((m) => !m.text.includes("totalValue"))).toBe(true);
+  });
+
+  it("restricts to a language when one is given", () => {
+    const py = findDefinition(symOptions, "make_widget", { language: "python" });
+    expect(py.matches.every((m) => m.path.endsWith(".py"))).toBe(true);
+    const tsOnly = findDefinition(symOptions, "make_widget", { language: "typescript" });
+    expect(tsOnly.matches).toHaveLength(0); // make_widget is only defined in Python
+  });
+
+  it("can scope to a subdirectory", () => {
+    const result = findDefinition(symOptions, "make_widget", { dir: "src" });
+    expect(result.matches).toHaveLength(0); // only defined under py/
+  });
+
+  it("returns no matches (without throwing) for an unknown symbol", () => {
+    expect(findDefinition(symOptions, "doesNotExistAnywhere").matches).toHaveLength(0);
+  });
+
+  it("rejects an invalid symbol rather than building an unsafe pattern", () => {
+    expect(() => findDefinition(symOptions, "a b")).toThrow(RepoAccessError);
+    expect(() => findReferences(symOptions, "")).toThrow(RepoAccessError);
+    expect(() => findDefinition(symOptions, "x".repeat(200))).toThrow(/exceeds/);
+  });
+
+  it("findReferences returns definition and call sites", () => {
+    const result = findReferences(symOptions, "makeWidget");
+    const paths = result.matches.map((m) => m.path);
+    expect(paths).toContain("src/widget.ts"); // definition
+    expect(paths).toContain("src/use.ts"); // import + call site
+  });
+
+  it("findReferences matches whole words only", () => {
+    // "Store" must not match "loadStore" (no word boundary there) — but class Store does.
+    const result = findReferences(symOptions, "Store");
+    expect(result.matches.some((m) => m.text.includes("class Store"))).toBe(true);
+    expect(result.matches.every((m) => !/loadStore/.test(m.text) || /\bStore\b/.test(m.text))).toBe(true);
   });
 });
