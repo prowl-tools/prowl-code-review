@@ -658,6 +658,17 @@ environment only, never stored or proxied, and your code only ever goes to **you
 chosen provider. **It collects no telemetry or analytics** — the only network
 calls are to your LLM provider and the GitHub API.
 
+Two pages spell out the policy in full:
+
+- **[`docs/auth.md`](docs/auth.md)** — the authentication & key policy: BYOK env-only
+  keys, the `PROWL_AI_*` variables and precedence, how the Action passes keys as
+  masked secrets, GitHub-token posting, and **why subscription/OAuth routing isn't
+  supported for Claude or Gemini** (TOS + account-ban risk) — with OpenAI/Codex the
+  only possible, off-by-default future exception.
+- **[`docs/privacy.md`](docs/privacy.md)** — data-privacy positioning: code goes only
+  to *your* provider (direct, no proxy), no telemetry, secret redaction +
+  credential-file skipping before anything is sent, and zero retention on our side.
+
 ## License
 
 Apache-2.0 — see [`LICENSE`](LICENSE) and [`NOTICE`](NOTICE).

@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Auth policy + data-privacy docs (backlog #38 + #40, completes both): two authoritative pages stating how
+  prowl-review authenticates and where code/keys go. `docs/auth.md` (#38) — BYOK keys read from the environment
+  only (`PROWL_AI_PROVIDER` / `PROWL_AI_KEY_<PROVIDER>` preferred / `PROWL_AI_KEY` fallback; never from config or
+  the repo), how the Action passes keys as masked secrets (blank inputs never exported), `GITHUB_TOKEN` posting,
+  fork-PR key handling, and **why subscription/OAuth routing is not supported for Claude or Gemini** (Anthropic
+  Consumer Terms §3.7; Google's Feb-2026 enforcement; OpenClaw precedent) with OpenAI/Codex the only possible,
+  off-by-default, legally-gated future exception (#45). `docs/privacy.md` (#40) — code goes directly from the
+  runner to *your* chosen provider (the three provider endpoints, no proxy / no prowl-review server), no
+  telemetry/analytics (only provider + GitHub API calls), secret redaction + credential-file skipping before
+  anything is sent (#15), and zero retention on our side (persisted state lives in your own GitHub). Extended the
+  README "Security & privacy" section to link both, plus a docs-content guard test.
 - Reusable org-level workflow (backlog #37, completes #37): roll prowl-review out across a whole org without
   copy-pasting the full workflow into every repo. New `examples/reusable/` ships two `workflow_call` (reusable)
   workflows for an org's `.github` repo — `prowl-review.yml` (auto-review) and `prowl-review-command.yml`
