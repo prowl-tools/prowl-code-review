@@ -294,7 +294,20 @@ describe("review command helpers", () => {
       warn.mockRestore();
     });
 
-    it.each(["0:0:0:0:0:0:0:1", "0:0:0:0:0:ffff:7f00:1", "fe80:0:0:0:0:0:0:1", "ff02:0:0:0:0:0:0:1"])(
+    it.each([
+      "::",
+      "::1",
+      "::7f00:1",
+      "::ffff:127.0.0.1",
+      "0:0:0:0:0:0:0:1",
+      "0:0:0:0:0:ffff:7f00:1",
+      "fe80::1%eth0",
+      "fe80:0:0:0:0:0:0:1",
+      "fc00::1",
+      "fd00::1",
+      "ff02:0:0:0:0:0:0:1",
+      "2001:db8::1"
+    ])(
       "rejects private IPv6 DNS result %s before fetching",
       async (address) => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
