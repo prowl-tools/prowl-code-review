@@ -65,7 +65,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   providers:
 #     - provider: anthropic
 #     - provider: openai
-#       # model: gpt-5.2
+#       # model: gpt-5.4-mini
 
 # --- Issue / ticket validation ------------------------------------------------
 # When a PR links a GitHub issue (a closing keyword like "Closes #12", an

@@ -136,7 +136,7 @@ describe("resolveProviderConfig", () => {
         PROWL_AI_PROVIDER: "anthropic",
         PROWL_AI_KEY: "k"
       } as NodeJS.ProcessEnv,
-      { provider: "openai", model: "gpt-5.2" }
+      { provider: "openai", model: "gpt-custom" }
     );
     expect(cfg.provider).toBe("anthropic");
     expect(cfg.model).toBe(DEFAULT_MODELS.anthropic);
@@ -170,7 +170,7 @@ describe("resolveProviderConfig", () => {
       PROWL_AI_PROVIDER: "openai",
       PROWL_AI_KEY: "k"
     } as NodeJS.ProcessEnv);
-    expect(cfg.model).toBe("gpt-5.2");
+    expect(cfg.model).toBe("gpt-5.4-mini");
   });
 
   it("prefers a provider-scoped key over the generic key when both are set", () => {
