@@ -20,7 +20,7 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   // cost/latency/context-window trade-off; pin a per-provider `model` (e.g.
   // claude-sonnet-4-6) for maximum-fidelity, large-PR, or eval-gated deployments.
   anthropic: "claude-haiku-4-5",
-  openai: "gpt-5.2",
+  openai: "gpt-5.4-mini",
   gemini: "gemini-2.5-pro"
 };
 

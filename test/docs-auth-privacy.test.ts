@@ -27,6 +27,8 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toContain("PROWL_AI_PROVIDER");
     expect(doc).toContain("PROWL_AI_KEY_<PROVIDER>");
     expect(doc).toContain("PROWL_AI_KEY");
+    expect(doc).toContain("gpt-5.4-mini");
+    expect(doc).not.toContain("gpt-5.2");
     expect(doc).toMatch(/environment only/i);
     expect(doc).toMatch(/Provider keys come from the environment only[\s\S]*never from `\.prowl-review\.yml`/i);
     expect(doc).toMatch(/\.prowl-review\.yml[\s\S]*no config field that accepts a key/i);
