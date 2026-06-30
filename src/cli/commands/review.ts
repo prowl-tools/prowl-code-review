@@ -1,8 +1,11 @@
 import { Command } from "commander";
 import { lookup } from "node:dns/promises";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
+import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { Readable } from "node:stream";
 import { z } from "zod";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
 import { submitCheckRun, type CheckRunPlan, type CheckConclusion } from "../../github/check-run.js";
@@ -132,6 +135,11 @@ const ORG_GUIDELINES_BLOCKED_HOST_SUFFIXES = [".internal", ".local", ".localhost
 
 type HostResolver = (hostname: string) => Promise<string[]>;
 
+interface ValidatedOrgGuidelinesUrl {
+  url: URL;
+  addresses: string[];
+}
+
 function isBlockedIpv4(address: string): boolean {
   const parts = address.split(".").map((part) => Number(part));
   if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
@@ -253,8 +261,8 @@ function isBlockedOrgGuidelinesHostname(hostname: string): boolean {
 }
 
 async function defaultResolveHost(hostname: string): Promise<string[]> {
-  const records = await lookup(hostname, { all: true, verbatim: true });
-  return records.slice(0, ORG_GUIDELINES_MAX_DNS_ADDRESSES).map((record) => record.address);
+  const record = await lookup(hostname, { verbatim: true });
+  return [record.address];
 }
 
 function abortReason(signal: AbortSignal): Error {
@@ -274,7 +282,11 @@ async function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise
   });
 }
 
-async function validateOrgGuidelinesUrl(value: string, signal: AbortSignal, resolveHost?: HostResolver): Promise<URL> {
+async function validateOrgGuidelinesUrl(
+  value: string,
+  signal: AbortSignal,
+  resolveHost?: HostResolver
+): Promise<ValidatedOrgGuidelinesUrl> {
   const url = new URL(value);
   if (url.protocol !== "https:" && url.protocol !== "http:") {
     throw new Error("only http(s) URLs are supported");
@@ -290,20 +302,23 @@ async function validateOrgGuidelinesUrl(value: string, signal: AbortSignal, reso
   if (!literalKind && isBlockedOrgGuidelinesHostname(hostname)) {
     throw new Error("hostname is not publicly routable");
   }
+  if (literalKind) {
+    return { url, addresses: [hostname] };
+  }
   if (resolveHost) {
     const resolvedAddresses = await withAbort(resolveHost(hostname), signal);
     const addresses = resolvedAddresses.slice(0, ORG_GUIDELINES_MAX_DNS_ADDRESSES);
     if (addresses.length === 0 || addresses.some((address) => !isPublicRoutableAddress(address))) {
       throw new Error("hostname resolves to a non-public address");
     }
+    return { url, addresses };
   }
-  return url;
+  return { url, addresses: [] };
 }
 
 async function readResponseTextWithByteLimit(response: Response, signal: AbortSignal): Promise<string | null> {
   if (!response.body) {
-    const text = await response.text();
-    return new TextEncoder().encode(text).byteLength > ORG_GUIDELINES_MAX_BYTES ? null : text;
+    return "";
   }
 
   const reader = response.body.getReader();
@@ -332,6 +347,53 @@ async function readResponseTextWithByteLimit(response: Response, signal: AbortSi
   }
 }
 
+function headersFromIncoming(headers: IncomingHttpHeaders): Headers {
+  const result = new Headers();
+  for (const [name, value] of Object.entries(headers)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        result.append(name, item);
+      }
+    } else {
+      result.set(name, value);
+    }
+  }
+  return result;
+}
+
+function fetchPinnedOrgGuidelinesUrl(url: URL, address: string, signal: AbortSignal): Promise<Response> {
+  const family = isIP(address);
+  if (family !== 4 && family !== 6) {
+    return Promise.reject(new Error("hostname resolves to a non-public address"));
+  }
+  const request = url.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise<Response>((resolveResponse, rejectResponse) => {
+    const req = request(
+      url,
+      {
+        signal,
+        lookup: (_hostname, _options, callback) => {
+          callback(null, address, family);
+        }
+      },
+      (message) => {
+        resolveResponse(
+          new Response(Readable.toWeb(message) as unknown as BodyInit, {
+            status: message.statusCode ?? 500,
+            statusText: message.statusMessage,
+            headers: headersFromIncoming(message.headers)
+          })
+        );
+      }
+    );
+    req.on("error", rejectResponse);
+    req.end();
+  });
+}
+
 /**
  * Load the org-wide guidelines from a trusted file path **or** an `http(s)` URL
  * (#30), so orgs can host one shared standard instead of vendoring a file. The
@@ -357,13 +419,15 @@ export async function loadOrgGuidelines(
     return (deps.readFile ?? readOptionalFile)(value);
   }
 
-  const fetchImpl = deps.fetchImpl ?? fetch;
+  const fetchImpl = deps.fetchImpl;
   const resolveHost = deps.resolveHost ?? (deps.fetchImpl ? undefined : defaultResolveHost);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ORG_GUIDELINES_FETCH_TIMEOUT_MS);
   try {
-    const url = await validateOrgGuidelinesUrl(value, controller.signal, resolveHost);
-    const response = await fetchImpl(url.toString(), { signal: controller.signal, redirect: "error" });
+    const validated = await validateOrgGuidelinesUrl(value, controller.signal, resolveHost);
+    const response = fetchImpl
+      ? await fetchImpl(validated.url.toString(), { signal: controller.signal, redirect: "error" })
+      : await fetchPinnedOrgGuidelinesUrl(validated.url, validated.addresses[0], controller.signal);
     if (!response.ok) {
       console.warn(`prowl-review: org guidelines URL returned HTTP ${response.status}; continuing without them.`);
       return undefined;
