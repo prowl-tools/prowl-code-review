@@ -74,6 +74,7 @@ jobs:
     # cancel command side effects; stale-head checks prevent outdated publishes.
     concurrency:
       group: prowl-review-${{ github.event.pull_request.number }}
+      queue: max
       cancel-in-progress: false
     steps:
       - name: Checkout PR (context)
