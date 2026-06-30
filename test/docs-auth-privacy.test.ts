@@ -16,19 +16,22 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toContain("PROWL_AI_PROVIDER");
     expect(doc).toContain("PROWL_AI_KEY_<PROVIDER>");
     expect(doc).toContain("PROWL_AI_KEY");
-    // Keys never come from config/repo.
     expect(doc).toMatch(/environment only/i);
-    expect(doc).toMatch(/never (?:from )?committed|never .*repo|never from .*config/i);
+    expect(doc).toMatch(/Provider keys come from the environment only[\s\S]*never from `\.prowl-review\.yml`/i);
+    expect(doc).toMatch(/\.prowl-review\.yml[\s\S]*no config field that accepts a key/i);
   });
 
   it("documents why subscription routing is unsupported for Claude/Gemini, Codex the only exception", () => {
     expect(doc).toContain("Anthropic Consumer Terms");
     expect(doc).toMatch(/Gemini.*not supported|not supported.*Gemini/i);
+    expect(doc).toMatch(/violates[\s\S]*Consumer Terms/i);
+    expect(doc).toMatch(/account-ban risk/i);
     expect(doc).toMatch(/OpenAI\/Codex/);
     expect(doc).toMatch(/off-by-default|off by default/i);
   });
 
   it("explains Action secret handling and GITHUB_TOKEN posting", () => {
+    expect(doc).toContain("ai-key-openai");
     expect(doc).toContain("GITHUB_TOKEN");
     expect(doc).toMatch(/secret/i);
     expect(doc).toMatch(/fork/i);
@@ -38,12 +41,22 @@ describe("auth policy doc (#38)", () => {
 describe("data-privacy doc (#40)", () => {
   const doc = read("docs/privacy.md");
 
-  it("states code goes only to the user's provider, with no proxy and no telemetry", () => {
+  it("states review prompt content goes directly to the user's provider, with no proxy and no telemetry", () => {
     expect(doc).toMatch(/never see your code/i);
     expect(doc).toMatch(/no telemetry|no.*analytics/i);
+    expect(doc).toMatch(/no prowl-review server/i);
+    expect(doc).toMatch(/hosted proxy/i);
     expect(doc).toContain("api.anthropic.com");
     expect(doc).toContain("api.openai.com");
     expect(doc).toContain("generativelanguage.googleapis.com");
+  });
+
+  it("documents optional non-provider egress for configured grounding features", () => {
+    expect(doc).toContain("PROWL_ORG_GUIDELINES_PATH");
+    expect(doc).toMatch(/Semgrep registry/i);
+    expect(doc).toMatch(/p\/default/);
+    expect(doc).toMatch(/metrics.*disabled|metrics and version checks disabled/i);
+    expect(doc).toMatch(/OSV\.dev/i);
   });
 
   it("documents secret redaction + sensitive-file skipping before sending", () => {
@@ -53,7 +66,8 @@ describe("data-privacy doc (#40)", () => {
   });
 
   it("states zero retention on our side", () => {
-    expect(doc).toMatch(/retains?\s+\*\*?nothing|zero[- ]retention|retains nothing/i);
+    expect(doc).toMatch(/prowl-review retains \*\*nothing\*\*/i);
+    expect(doc).toMatch(/no database, no logs of your code, no\s+copy of your key/i);
   });
 });
 
