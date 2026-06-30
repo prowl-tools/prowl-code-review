@@ -67,8 +67,8 @@ permissions:
 
 jobs:
   review:
-    # Skip drafts and forks; forked PRs do not receive provider secrets.
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    # Skip forks; draft policy is handled inside prowl-review so trusted config can opt in.
+    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ inputs.runs-on }}
     # Queue auto reviews with manual commands for the same PR so pushes do not
     # cancel command side effects; stale-head checks prevent outdated publishes.

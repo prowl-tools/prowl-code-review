@@ -9,7 +9,7 @@ All notable changes to Prowl Review will be documented in this file.
   copy-pasting the full workflow into every repo. New `examples/reusable/` ships two `workflow_call` (reusable)
   workflows for an org's `.github` repo — `prowl-review.yml` (auto-review) and `prowl-review-command.yml`
   (`@prowl-review` commands) — each owning the checkout, the trusted-base config/guidelines split, the
-  fork/draft + author-trust guards, and the pinned `prowl-tools/prowl-code-review@v1` invocation, with
+  fork + author-trust guards, and the pinned `prowl-tools/prowl-code-review@v1` invocation, with
   `ai-provider`/`ai-model`/`min-severity`/`config-path`/`org-guidelines-path`/`runs-on` inputs and BYOK key
   secrets. Per-repo opt-in is a few lines (`caller-prowl-review.yml` / `caller-prowl-review-command.yml`):
   declare the trigger + token scopes and `uses:` the org workflow with `secrets: inherit`. New
