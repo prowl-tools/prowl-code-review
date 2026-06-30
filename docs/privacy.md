@@ -52,9 +52,14 @@ an intermediate service for your code, key, or review traffic.
 
 ## What leaves the runner (and what doesn't)
 
-What is sent to your provider: the **size-guarded PR diff** and any **cross-file
-context** the agentic retriever pulls (callers/definitions/related files) to ground
-the review — after the protections below.
+What can be sent to your provider, depending on enabled features: the
+**size-guarded PR diff**, any **cross-file context** the agentic retriever pulls
+(callers/definitions/related files), configured **repo/org guidelines**,
+**repo-wide learned patterns**, deterministic **grounding** results, linked-issue
+**requirements** and `requirementsDiff`, the PR title for PR-description
+generation, and the selected language/specialist labels. These are provider-bound
+prompt inputs, not prowl-review telemetry, and they are sent only from your
+runner to your selected provider — after the protections below.
 
 Applied **before** anything is sent (`src/review/redact.ts`, wired through the
 pipeline and the context retriever):
@@ -77,10 +82,18 @@ scrubbed before it can reach the provider.
 
 ## Data retention
 
-prowl-review retains **nothing** — it holds no database, no logs of your code, no
-copy of your key. State that does persist (incremental-review markers, the
-repo-wide learnings store) lives **in your own GitHub** as PR-comment markers and a
-tracking issue in your repo (see backlog #12/#30), under your control.
+prowl-review retains **nothing on a prowl-review server** — it operates no
+database and keeps no hosted logs of your code or key. State that does persist
+(incremental-review markers, the repo-wide learnings store) lives **in your own
+GitHub** as PR-comment markers and a tracking issue in your repo (see backlog
+#12/#30), under your control.
+
+If you opt into debug tracing with `--debug`, `PROWL_DEBUG`, or config,
+prowl-review writes a redacted JSONL trace in **your workspace** at the path you
+choose (or `.prowl-review/debug.jsonl`). That file can include assembled prompts,
+redacted code/context, and run metadata for troubleshooting. If you upload it as
+a GitHub Actions artifact, retention is governed by your GitHub/artifact policy,
+not by prowl-review.
 
 What your provider retains is governed by **your account and your agreement with
 that provider** — not by prowl-review. If you need zero-retention or
