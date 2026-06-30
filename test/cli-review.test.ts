@@ -362,6 +362,45 @@ describe("review command helpers", () => {
       warn.mockRestore();
     });
 
+    it.each(["http://myserver/guidelines.md", "http://intranet"])(
+      "rejects dotless hostname %s before DNS lookup or fetching",
+      async (url) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => ["8.8.8.8"]);
+
+        expect(
+          await loadOrgGuidelines(url, {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(resolveHost).not.toHaveBeenCalled();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+        warn.mockRestore();
+      }
+    );
+
+    it.each(["192.0.2.1", "198.51.100.1", "203.0.113.1"])(
+      "rejects reserved TEST-NET IPv4 DNS result %s before fetching",
+      async (address) => {
+        const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+        const fetchImpl = vi.fn(async () => new Response("remote rules"));
+        const resolveHost = vi.fn(async () => [address]);
+
+        expect(
+          await loadOrgGuidelines("https://example.com/guide.md", {
+            fetchImpl: fetchImpl as unknown as typeof fetch,
+            resolveHost
+          })
+        ).toBeUndefined();
+        expect(fetchImpl).not.toHaveBeenCalled();
+        expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+        warn.mockRestore();
+      }
+    );
+
     it("caps DNS validation to the first 100 resolved addresses", async () => {
       const fetchImpl = vi.fn(async () => new Response("remote rules"));
       const resolvedAddresses = Array.from(
