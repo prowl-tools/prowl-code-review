@@ -268,6 +268,70 @@ describe("review command helpers", () => {
       warn.mockRestore();
     });
 
+    it("rejects URLs with embedded credentials before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+
+      expect(
+        await loadOrgGuidelines("https://user:token@example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("credentials"));
+      warn.mockRestore();
+    });
+
+    it("rejects hostnames that resolve to private addresses before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolveHost = vi.fn(async () => ["10.0.0.1"]);
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBeUndefined();
+      expect(resolveHost).toHaveBeenCalledWith("example.com");
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("non-public"));
+      warn.mockRestore();
+    });
+
+    it("caps DNS validation to the first 100 resolved addresses", async () => {
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolvedAddresses = Array.from(
+        { length: 150 },
+        (_unused, index) => `8.8.${Math.floor(index / 250)}.${index % 250}`
+      );
+      resolvedAddresses[120] = "10.0.0.1";
+      const resolveHost = vi.fn(async () => resolvedAddresses);
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBe("remote rules");
+      expect(resolveHost).toHaveBeenCalledWith("example.com");
+      expect(fetchImpl).toHaveBeenCalledTimes(1);
+    });
+
+    it("redacts secrets from failed fetch warnings", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => {
+        throw new Error("request failed with token=supersecrettoken");
+      });
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("token=[REDACTED:assignment]"));
+      expect(warn).not.toHaveBeenCalledWith(expect.stringContaining("supersecrettoken"));
+      warn.mockRestore();
+    });
+
     it("enforces the URL size limit in bytes, not UTF-16 characters", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const multiByteBody = "€".repeat(Math.floor(ORG_GUIDELINES_MAX_BYTES / 2));

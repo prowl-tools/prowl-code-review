@@ -43,6 +43,7 @@ import {
 import { appendUsageRecord, toUsageRecord, defaultUsageLogPath } from "../../cost/usage-log.js";
 import { createJsonlSink, type DebugSink } from "../../debug/trace.js";
 import { DEFAULT_DEBUG_LOG_FILENAME, hasSymlinkComponent, isWorkspaceConfinedPath } from "../../debug/paths.js";
+import { redactSecrets } from "../../review/redact.js";
 import { runLocalReview } from "./review-local.js";
 
 /**
@@ -126,6 +127,7 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
 export const ORG_GUIDELINES_MAX_BYTES = 256 * 1024;
 /** Timeout for fetching org-guidelines over the network (#30). */
 const ORG_GUIDELINES_FETCH_TIMEOUT_MS = 10_000;
+const ORG_GUIDELINES_MAX_DNS_ADDRESSES = 100;
 const ORG_GUIDELINES_BLOCKED_HOST_SUFFIXES = [".internal", ".local", ".localhost"];
 
 type HostResolver = (hostname: string) => Promise<string[]>;
@@ -193,7 +195,7 @@ function isBlockedOrgGuidelinesHostname(hostname: string): boolean {
 
 async function defaultResolveHost(hostname: string): Promise<string[]> {
   const records = await lookup(hostname, { all: true, verbatim: true });
-  return records.map((record) => record.address);
+  return records.slice(0, ORG_GUIDELINES_MAX_DNS_ADDRESSES).map((record) => record.address);
 }
 
 function abortReason(signal: AbortSignal): Error {
@@ -230,7 +232,8 @@ async function validateOrgGuidelinesUrl(value: string, signal: AbortSignal, reso
     throw new Error("hostname is not publicly routable");
   }
   if (resolveHost) {
-    const addresses = await withAbort(resolveHost(hostname), signal);
+    const resolvedAddresses = await withAbort(resolveHost(hostname), signal);
+    const addresses = resolvedAddresses.slice(0, ORG_GUIDELINES_MAX_DNS_ADDRESSES);
     if (addresses.length === 0 || addresses.some((address) => !isPublicRoutableAddress(address))) {
       throw new Error("hostname resolves to a non-public address");
     }
@@ -317,7 +320,9 @@ export async function loadOrgGuidelines(
     return text.trim() || undefined;
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    console.warn(`prowl-review: failed to fetch org guidelines URL (${reason}); continuing without them.`);
+    console.warn(
+      `prowl-review: failed to fetch org guidelines URL (${redactSecrets(reason).text}); continuing without them.`
+    );
     return undefined;
   } finally {
     clearTimeout(timeout);
