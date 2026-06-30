@@ -11,6 +11,7 @@ import {
   type ReviewState
 } from "../review/state.js";
 import {
+  LEARNINGS_ISSUE_LABEL,
   LEARNINGS_ISSUE_TITLE,
   learningFingerprints,
   mergeLearnings,
@@ -39,7 +40,7 @@ import {
 const MAX_SUMMARY_COMMENT_PAGES = 10;
 const MAX_INLINE_COMMENT_PAGES = 10;
 const MAX_REVIEW_PAGES = 10;
-const MAX_LEARNINGS_ISSUE_PAGES = 5;
+const LEARNINGS_WRITE_ATTEMPTS = 3;
 const INLINE_FINGERPRINT_PREFIX = "<!-- prowl-review:finding ";
 const INLINE_FINGERPRINT_SUFFIX = " -->";
 const INLINE_FINGERPRINT_RE = /<!-- prowl-review:finding ([A-Za-z0-9._:-]+) -->/g;
@@ -774,6 +775,60 @@ interface LearningsIssue {
   learnings: RepoLearnings;
 }
 
+function issueMatchesLearningsStore(issue: {
+  title?: string;
+  user?: { login?: string } | null;
+  pull_request?: unknown;
+}, botLogin: string): boolean {
+  return !issue.pull_request && issue.title === LEARNINGS_ISSUE_TITLE && issue.user?.login === botLogin;
+}
+
+function toLearningsIssue(issue: {
+  number: number;
+  body?: string | null;
+  title?: string;
+  user?: { login?: string } | null;
+  pull_request?: unknown;
+}, botLogin: string): LearningsIssue | null {
+  if (!issueMatchesLearningsStore(issue, botLogin)) {
+    return null;
+  }
+  const body = issue.body ?? "";
+  const learnings = parseLearnings(body);
+  return learnings ? { number: issue.number, body, learnings } : null;
+}
+
+async function listLearningsIssueByOptions(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  botLogin: string,
+  options: { labels?: string } = {}
+): Promise<LearningsIssue | null> {
+  const perPage = 100;
+  for (let page = 1; ; page += 1) {
+    const response = await octokit.rest.issues.listForRepo({
+      owner: ref.owner,
+      repo: ref.repo,
+      state: "open",
+      creator: botLogin,
+      ...(options.labels ? { labels: options.labels } : {}),
+      per_page: perPage,
+      page,
+      sort: "created",
+      direction: "asc"
+    });
+    for (const issue of response.data) {
+      const learningsIssue = toLearningsIssue(issue, botLogin);
+      if (learningsIssue) {
+        return learningsIssue;
+      }
+    }
+    if (response.data.length < perPage) {
+      return null;
+    }
+  }
+}
+
 /**
  * Find the open dedicated learnings-store issue (#30): the bot-authored issue
  * carrying our `prowl-review:learnings` marker. Only **open** issues count, so a
@@ -785,33 +840,16 @@ async function findLearningsIssue(
   ref: PullRequestRef,
   botLogin: string
 ): Promise<LearningsIssue | null> {
-  const perPage = 100;
-  for (let page = 1; page <= MAX_LEARNINGS_ISSUE_PAGES; page += 1) {
-    const response = await octokit.rest.issues.listForRepo({
-      owner: ref.owner,
-      repo: ref.repo,
-      state: "open",
-      creator: botLogin,
-      per_page: perPage,
-      page,
-      sort: "created",
-      direction: "asc"
-    });
-    for (const issue of response.data) {
-      // A PR is also an "issue"; skip those — our store is a real issue.
-      if (issue.pull_request) {
-        continue;
-      }
-      const learnings = parseLearnings(issue.body);
-      if (learnings) {
-        return { number: issue.number, body: issue.body ?? "", learnings };
-      }
+  try {
+    const labeled = await listLearningsIssueByOptions(octokit, ref, botLogin, { labels: LEARNINGS_ISSUE_LABEL });
+    if (labeled) {
+      return labeled;
     }
-    if (response.data.length < perPage) {
-      break;
-    }
+  } catch {
+    // Label lookup is an optimization/keyed path; fall back to exact-title lookup
+    // so repositories without the label available still retain existing stores.
   }
-  return null;
+  return listLearningsIssueByOptions(octokit, ref, botLogin);
 }
 
 /**
@@ -857,14 +895,37 @@ export async function recordRepoLearnings(
   if (!login) {
     return { added: 0 };
   }
-  const existing = await findLearningsIssue(octokit, ref, login);
-  const { learnings, added } = mergeLearnings(existing?.learnings ?? null, entries);
-  const body = renderLearningsIssueBody(learnings);
 
-  if (existing) {
-    await octokit.rest.issues.update({ owner: ref.owner, repo: ref.repo, issue_number: existing.number, body });
-    return { added };
+  for (let attempt = 1; attempt <= LEARNINGS_WRITE_ATTEMPTS; attempt += 1) {
+    const existing = await findLearningsIssue(octokit, ref, login);
+    const { learnings, added } = mergeLearnings(existing?.learnings ?? null, entries);
+    if (added === 0) {
+      return { added: 0 };
+    }
+    const body = renderLearningsIssueBody(learnings);
+
+    try {
+      if (existing) {
+        await octokit.rest.issues.update({ owner: ref.owner, repo: ref.repo, issue_number: existing.number, body });
+      } else {
+        try {
+          await octokit.rest.issues.create({
+            owner: ref.owner,
+            repo: ref.repo,
+            title: LEARNINGS_ISSUE_TITLE,
+            body,
+            labels: [LEARNINGS_ISSUE_LABEL]
+          });
+        } catch {
+          await octokit.rest.issues.create({ owner: ref.owner, repo: ref.repo, title: LEARNINGS_ISSUE_TITLE, body });
+        }
+      }
+      return { added };
+    } catch (error) {
+      if (attempt === LEARNINGS_WRITE_ATTEMPTS) {
+        throw error;
+      }
+    }
   }
-  await octokit.rest.issues.create({ owner: ref.owner, repo: ref.repo, title: LEARNINGS_ISSUE_TITLE, body });
-  return { added };
+  return { added: 0 };
 }

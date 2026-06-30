@@ -795,6 +795,25 @@ export async function handleConfigure(params: {
   return { ok: true };
 }
 
+/**
+ * Read the optional repo-wide learning flag for per-PR ignore/resolve commands.
+ * Config load failures should not block those commands: repo-wide teaching is an
+ * opt-in extension, while the per-PR mute/resolve should still complete.
+ */
+export async function loadRepoLearningsFlag(loadCommandConfig: () => Promise<ProwlReviewConfig>): Promise<boolean> {
+  try {
+    const config = await loadCommandConfig();
+    return config.review?.repoLearnings === true;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      "prowl-review: could not load config for repo-wide learnings; continuing with per-PR mute only " +
+        `(${message}).`
+    );
+    return false;
+  }
+}
+
 /** Build the `command` CLI subcommand wired to the comment-event dispatch. */
 export function buildCommandCommand(): Command {
   const command = new Command("command");
@@ -881,12 +900,10 @@ export function buildCommandCommand(): Command {
       };
 
       const ignore = async (): Promise<{ ignored: number }> => {
-        const config = await loadCommandConfig();
-        return handleIgnore({ octokit, ref, event, repoLearnings: config.review?.repoLearnings === true });
+        return handleIgnore({ octokit, ref, event, repoLearnings: await loadRepoLearningsFlag(loadCommandConfig) });
       };
       const resolve = async (): Promise<{ resolved: number }> => {
-        const config = await loadCommandConfig();
-        return handleResolve({ octokit, ref, event, repoLearnings: config.review?.repoLearnings === true });
+        return handleResolve({ octokit, ref, event, repoLearnings: await loadRepoLearningsFlag(loadCommandConfig) });
       };
       const configure = (argument: string): Promise<{ ok: boolean }> =>
         handleConfigure({ octokit, ref, event, argument });

@@ -1,5 +1,7 @@
 import { Command } from "commander";
+import { lookup } from "node:dns/promises";
 import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { isIP } from "node:net";
 import { isAbsolute, join, relative, resolve } from "node:path";
 import { z } from "zod";
 import { createOctokit, type OctokitLike } from "../../github/client.js";
@@ -124,6 +126,149 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
 export const ORG_GUIDELINES_MAX_BYTES = 256 * 1024;
 /** Timeout for fetching org-guidelines over the network (#30). */
 const ORG_GUIDELINES_FETCH_TIMEOUT_MS = 10_000;
+const ORG_GUIDELINES_BLOCKED_HOST_SUFFIXES = [".internal", ".local", ".localhost"];
+
+type HostResolver = (hostname: string) => Promise<string[]>;
+
+function isBlockedIpv4(address: string): boolean {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return true;
+  }
+  const [a, b] = parts;
+  return (
+    a === 0 ||
+    a === 10 ||
+    a === 127 ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && b === 168) ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 192 && b === 0) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    a >= 224
+  );
+}
+
+function isBlockedIpv6(address: string): boolean {
+  const normalized = address.toLowerCase();
+  if (normalized.startsWith("::ffff:")) {
+    const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+    return mapped ? isBlockedIpv4(mapped[1]) : true;
+  }
+  if (
+    normalized === "::" ||
+    normalized === "::1" ||
+    normalized.startsWith("fe80:") ||
+    normalized.startsWith("fc") ||
+    normalized.startsWith("fd") ||
+    normalized.startsWith("2001:db8:")
+  ) {
+    return true;
+  }
+  return false;
+}
+
+function isPublicRoutableAddress(address: string): boolean {
+  const kind = isIP(address);
+  if (kind === 4) {
+    return !isBlockedIpv4(address);
+  }
+  if (kind === 6) {
+    return !isBlockedIpv6(address);
+  }
+  return false;
+}
+
+function isBlockedOrgGuidelinesHostname(hostname: string): boolean {
+  const normalized = hostname.toLowerCase().replace(/\.$/, "");
+  return (
+    normalized === "localhost" ||
+    !normalized.includes(".") ||
+    ORG_GUIDELINES_BLOCKED_HOST_SUFFIXES.some(
+      (suffix) => normalized.endsWith(suffix) || normalized === suffix.slice(1)
+    )
+  );
+}
+
+async function defaultResolveHost(hostname: string): Promise<string[]> {
+  const records = await lookup(hostname, { all: true, verbatim: true });
+  return records.map((record) => record.address);
+}
+
+function abortReason(signal: AbortSignal): Error {
+  return signal.reason instanceof Error ? signal.reason : new Error("org guidelines fetch timed out");
+}
+
+async function withAbort<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    throw abortReason(signal);
+  }
+  return new Promise<T>((resolvePromise, rejectPromise) => {
+    const onAbort = (): void => rejectPromise(abortReason(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    operation.then(resolvePromise, rejectPromise).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+async function validateOrgGuidelinesUrl(value: string, signal: AbortSignal, resolveHost?: HostResolver): Promise<URL> {
+  const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:") {
+    throw new Error("only http(s) URLs are supported");
+  }
+  if (url.username || url.password) {
+    throw new Error("URLs with credentials are not allowed");
+  }
+  const hostname = url.hostname.replace(/^\[|\]$/g, "");
+  const literalKind = isIP(hostname);
+  if (literalKind && !isPublicRoutableAddress(hostname)) {
+    throw new Error("IP address is not publicly routable");
+  }
+  if (!literalKind && isBlockedOrgGuidelinesHostname(hostname)) {
+    throw new Error("hostname is not publicly routable");
+  }
+  if (resolveHost) {
+    const addresses = await withAbort(resolveHost(hostname), signal);
+    if (addresses.length === 0 || addresses.some((address) => !isPublicRoutableAddress(address))) {
+      throw new Error("hostname resolves to a non-public address");
+    }
+  }
+  return url;
+}
+
+async function readResponseTextWithByteLimit(response: Response, signal: AbortSignal): Promise<string | null> {
+  if (!response.body) {
+    const text = await response.text();
+    return new TextEncoder().encode(text).byteLength > ORG_GUIDELINES_MAX_BYTES ? null : text;
+  }
+
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+
+  try {
+    for (;;) {
+      if (signal.aborted) {
+        throw abortReason(signal);
+      }
+      const { done, value } = await withAbort(reader.read(), signal);
+      if (done) {
+        return text + decoder.decode();
+      }
+      bytes += value.byteLength;
+      if (bytes > ORG_GUIDELINES_MAX_BYTES) {
+        await reader.cancel().catch(() => {});
+        return null;
+      }
+      text += decoder.decode(value, { stream: true });
+    }
+  } finally {
+    reader.releaseLock();
+  }
+}
 
 /**
  * Load the org-wide guidelines from a trusted file path **or** an `http(s)` URL
@@ -139,6 +284,7 @@ export async function loadOrgGuidelines(
   deps: {
     fetchImpl?: typeof fetch;
     readFile?: (filePath: string) => string | undefined;
+    resolveHost?: HostResolver;
   } = {}
 ): Promise<string | undefined> {
   const value = pathOrUrl?.trim();
@@ -150,16 +296,18 @@ export async function loadOrgGuidelines(
   }
 
   const fetchImpl = deps.fetchImpl ?? fetch;
+  const resolveHost = deps.resolveHost ?? (deps.fetchImpl ? undefined : defaultResolveHost);
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), ORG_GUIDELINES_FETCH_TIMEOUT_MS);
   try {
-    const response = await fetchImpl(value, { signal: controller.signal });
+    const url = await validateOrgGuidelinesUrl(value, controller.signal, resolveHost);
+    const response = await fetchImpl(url.toString(), { signal: controller.signal, redirect: "error" });
     if (!response.ok) {
       console.warn(`prowl-review: org guidelines URL returned HTTP ${response.status}; continuing without them.`);
       return undefined;
     }
-    const text = await response.text();
-    if (text.length > ORG_GUIDELINES_MAX_BYTES) {
+    const text = await readResponseTextWithByteLimit(response, controller.signal);
+    if (text === null) {
       console.warn(
         `prowl-review: org guidelines URL exceeds ${ORG_GUIDELINES_MAX_BYTES} bytes; ` +
           "continuing without them. Host a smaller file."
@@ -1120,7 +1268,11 @@ export function buildReviewCommand(): Command {
  */
 export async function runReviewWithOptions(
   options: ReviewCommandOptions,
-  runtime: { respectPause?: boolean } = {}
+  runtime: {
+    respectPause?: boolean;
+    loadOrgGuidelines?: typeof loadOrgGuidelines;
+    reviewPullRequest?: typeof reviewPullRequest;
+  } = {}
 ): Promise<void> {
   const token = process.env.GITHUB_TOKEN;
   if (!token) {
@@ -1266,7 +1418,7 @@ export async function runReviewWithOptions(
 
   const guidelinesRoot = resolveGuidelinesWorkspace();
   const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
-  const orgGuidelines = await loadOrgGuidelines(resolveOrgGuidelinesPath());
+  const orgGuidelines = await (runtime.loadOrgGuidelines ?? loadOrgGuidelines)(resolveOrgGuidelinesPath());
   const guidelines = composeGuidelines(orgGuidelines, repoGuidelines);
   // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
@@ -1345,7 +1497,8 @@ export async function runReviewWithOptions(
   };
 
   try {
-    const result = await withHeartbeat(() => reviewPullRequest(octokit, ref, reviewOptions), {
+    const runReview = runtime.reviewPullRequest ?? reviewPullRequest;
+    const result = await withHeartbeat(() => runReview(octokit, ref, reviewOptions), {
       onTick: ({ elapsedMs }) =>
         console.log(
           `prowl-review: still reviewing ${owner}/${repo}#${pullNumber}… (${Math.round(elapsedMs / 1000)}s elapsed)`
