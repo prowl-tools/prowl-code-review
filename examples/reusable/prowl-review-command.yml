@@ -20,6 +20,11 @@ on:
         type: string
         required: false
         default: ""
+      min-severity:
+        description: "Drop findings below this severity (critical|major|minor|trivial|info)."
+        type: string
+        required: false
+        default: ""
       config-path:
         description: "Trusted .prowl-review.yml path (e.g. prowl-base/.prowl-review.yml). Blank ignores repo config."
         type: string
@@ -70,7 +75,6 @@ jobs:
     # `pull_request` (pull_request_review_comment).
     concurrency:
       group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
-      queue: max
       cancel-in-progress: false
     steps:
       - name: Resolve PR metadata
@@ -82,9 +86,11 @@ jobs:
           set -euo pipefail
           pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
           IFS=$'\t' read -r base_sha head_sha head_repo < <(
-            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name] | @tsv'
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha // "", .head.sha // "", .head.repo.full_name // ""] | @tsv'
           )
-          if [ -z "${base_sha}" ] || [ -z "${head_sha}" ] || [ -z "${head_repo}" ]; then
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] || \
+            [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] || \
+            [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
             echo "Failed to resolve complete PR metadata for #${pr_number}." >&2
             exit 1
           fi
@@ -102,6 +108,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
+          path: prowl-base
           persist-credentials: false
 
       - name: Checkout PR head for context
@@ -126,6 +133,8 @@ jobs:
           ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
           ai-provider: ${{ inputs.ai-provider }}
           ai-model: ${{ inputs.ai-model }}
+          min-severity: ${{ inputs.min-severity }}
           config-path: ${{ inputs.config-path }}
-          guidelines-path: ${{ github.workspace }}
+          guidelines-path: ${{ github.workspace }}/prowl-base
+          org-guidelines-path: ${{ inputs.org-guidelines-path }}
           workspace-path: ${{ github.workspace }}/pr-head

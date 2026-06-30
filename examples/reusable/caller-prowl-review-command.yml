@@ -22,4 +22,5 @@ jobs:
     uses: Prowl-qa/.github/.github/workflows/prowl-review-command.yml@v1
     secrets: inherit
     # with:
+    #   min-severity: major
     #   ai-provider: anthropic
