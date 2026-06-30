@@ -1,5 +1,6 @@
 import { closeSync, lstatSync, openSync, readFileSync, readSync, readdirSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
+import { detectLanguage, type LanguageId } from "../review/language.js";
 
 /**
  * Sandboxed repo-access tools for agentic cross-file context retrieval.
@@ -509,4 +510,157 @@ export function searchRepo(
   }
 
   return { matches, truncated, skippedFiles: traversal.skippedFiles };
+}
+
+/**
+ * Language-aware symbol resolution (backlog #5) — sharper caller/definition
+ * lookup than a bare regex grep, without a heavy tree-sitter/WASM dependency.
+ *
+ * These are thin, definition-shaped layers over {@link searchRepo}, so they
+ * inherit all of its guards (repo-root confinement, symlink/ignore rejection,
+ * binary skip, bounded matches, the safe-pattern subset) for free. An optional
+ * `language` narrows the search to files of that language for precision; the
+ * caller's `shouldSearchFile` (used for sensitive-file skipping) is composed in.
+ */
+
+/** Options shared by the symbol-resolution helpers. */
+export interface SymbolSearchOptions extends SearchOptions {
+  /** Subdirectory to limit the search (defaults to the repo root). */
+  dir?: string;
+  /** Restrict the search to files of this language (improves precision). */
+  language?: LanguageId;
+}
+
+const MAX_SYMBOL_LENGTH = 128;
+
+/** Escape a string so it can be embedded literally inside a search regex. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * A symbol the tools accept: an identifier (optionally dotted/qualified), short
+ * enough to keep the derived patterns inside the safe-pattern subset. Rejected
+ * input yields a clear error rather than an unsafe regex.
+ */
+function assertResolvableSymbol(symbol: string): void {
+  if (!symbol) {
+    throw new RepoAccessError("Symbol is required.");
+  }
+  if (symbol.length > MAX_SYMBOL_LENGTH) {
+    throw new RepoAccessError(`Symbol exceeds ${MAX_SYMBOL_LENGTH} characters.`);
+  }
+  if (!/^[A-Za-z_$][A-Za-z0-9_$.]*$/.test(symbol)) {
+    throw new RepoAccessError(
+      "Symbol must be an identifier (letters, digits, '_', '$', '.'), e.g. a function or class name."
+    );
+  }
+}
+
+/** Compose the caller's sensitive-file predicate with an optional language filter. */
+function symbolFilePredicate(options: SymbolSearchOptions): ((path: string) => boolean) | undefined {
+  const { shouldSearchFile, language } = options;
+  if (!language) {
+    return shouldSearchFile;
+  }
+  return (path: string) => (shouldSearchFile ? shouldSearchFile(path) : true) && detectLanguage(path) === language;
+}
+
+/**
+ * Definition-shaped patterns for a symbol, covering the common declaration forms
+ * across languages (keyword-led functions/types/vars, Go receiver methods,
+ * assigned JS functions, modifier-led typed methods, C macros). Each entry stays
+ * inside the safe-pattern subset (≤4 unbounded repetitions, no lookarounds).
+ */
+function definitionPatterns(escaped: string): string[] {
+  return [
+    // function / method declarations led by a keyword
+    `\\b(?:function|func|fn|def|fun|sub|method)\\s+${escaped}\\b`,
+    // type-like declarations
+    `\\b(?:class|interface|trait|struct|enum|protocol|record|object|module|namespace|type)\\s+${escaped}\\b`,
+    // variable / constant bindings
+    `\\b(?:const|let|var|val|static)\\s+${escaped}\\b`,
+    // Go-style receiver methods: func (r *T) Name(
+    `\\bfunc\\s+\\([^)]*\\)\\s*${escaped}\\b`,
+    // assigned functions: const Name = function | Name = ( … ) =>
+    `\\b${escaped}\\s*=\\s*(?:async\\s+)?(?:function\\b|\\()`,
+    // modifier-led typed methods (Java/C#/Kotlin/C++/Swift): public void Name(
+    `\\b(?:public|private|protected|internal|static|final|override|virtual|abstract|async|suspend)[\\sA-Za-z0-9_<>,.*&]*\\b${escaped}\\s*\\(`,
+    // C/C++ macros
+    `#define\\s+${escaped}\\b`
+  ];
+}
+
+/**
+ * Find where a symbol is likely **defined**: run the definition-shaped patterns
+ * and merge their matches (deduped by location, declaration-keyword hits first).
+ * Sharper than a raw grep for "where is X declared", and bounded exactly like
+ * {@link searchRepo}. Returns no matches (rather than throwing) when nothing
+ * matches; throws {@link RepoAccessError} on an invalid symbol/dir.
+ */
+export function findDefinition(
+  options: ToolkitOptions,
+  symbol: string,
+  symbolOptions: SymbolSearchOptions = {}
+): SearchResult {
+  assertResolvableSymbol(symbol);
+  const escaped = escapeRegExp(symbol);
+  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
+  const shouldSearchFile = symbolFilePredicate(symbolOptions);
+
+  const seen = new Set<string>();
+  const matches: SearchMatch[] = [];
+  let truncated = false;
+  let skippedFiles = 0;
+
+  for (const pattern of definitionPatterns(escaped)) {
+    if (matches.length >= maxMatches) {
+      truncated = true;
+      break;
+    }
+    let result: SearchResult;
+    try {
+      result = searchRepo(options, pattern, symbolOptions.dir ?? ".", { shouldSearchFile });
+    } catch (error) {
+      if (error instanceof RepoAccessError && /pattern/i.test(error.message)) {
+        continue; // skip a pattern that somehow trips the safe-pattern guard
+      }
+      throw error;
+    }
+    if (result.truncated) {
+      truncated = true;
+    }
+    skippedFiles = Math.max(skippedFiles, result.skippedFiles ?? 0);
+    for (const match of result.matches) {
+      const key = `${match.path}:${match.line}`;
+      if (seen.has(key)) {
+        continue;
+      }
+      seen.add(key);
+      matches.push(match);
+      if (matches.length >= maxMatches) {
+        truncated = true;
+        break;
+      }
+    }
+  }
+
+  return { matches, truncated, skippedFiles };
+}
+
+/**
+ * Find **references** to a symbol — word-boundary occurrences across the repo
+ * (definitions and call sites alike), so the agent can see who depends on the
+ * changed code. A thin, safe wrapper over {@link searchRepo}.
+ */
+export function findReferences(
+  options: ToolkitOptions,
+  symbol: string,
+  symbolOptions: SymbolSearchOptions = {}
+): SearchResult {
+  assertResolvableSymbol(symbol);
+  const escaped = escapeRegExp(symbol);
+  return searchRepo(options, `\\b${escaped}\\b`, symbolOptions.dir ?? ".", {
+    shouldSearchFile: symbolFilePredicate(symbolOptions)
+  });
 }
