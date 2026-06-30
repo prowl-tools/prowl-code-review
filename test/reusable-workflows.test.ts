@@ -12,6 +12,7 @@ import { z } from "zod";
  */
 const dir = join(process.cwd(), "examples", "reusable");
 const read = (name: string): string => readFileSync(join(dir, name), "utf8");
+const readRepo = (path: string): string => readFileSync(join(process.cwd(), path), "utf8");
 
 // YAML 1.2 keeps `on` a string key; fall back to the YAML 1.1 boolean-true key.
 function triggers(doc: Record<string, unknown>): Record<string, unknown> {
@@ -21,6 +22,7 @@ function triggers(doc: Record<string, unknown>): Record<string, unknown> {
 const REUSABLE = ["prowl-review.yml", "prowl-review-command.yml"] as const;
 const CALLERS = ["caller-prowl-review.yml", "caller-prowl-review-command.yml"] as const;
 const ALL_WORKFLOWS = [...REUSABLE, ...CALLERS] as const;
+const DOGFOOD_WORKFLOWS = [".github/workflows/prowl-review.yml", ".github/workflows/prowl-review-command.yml"] as const;
 
 const permissionSchema = z.record(z.enum(["read", "write", "none"]));
 const expressionOrLiteralSchema = z.union([z.string(), z.number(), z.boolean()]);
@@ -86,6 +88,7 @@ const stepSchema = z
 const concurrencySchema = z
   .object({
     group: z.string(),
+    queue: z.enum(["single", "max"]).optional(),
     "cancel-in-progress": expressionOrLiteralSchema.optional()
   })
   .strict();
@@ -167,6 +170,10 @@ function shouldRunCommandAction(trustedHead: string): boolean {
   return trustedHead === "true";
 }
 
+function hasCompletePrMetadata(input: { baseSha: string; headSha: string; headRepo: string }): boolean {
+  return Object.values(input).every((value) => value !== "" && value !== "null");
+}
+
 describe("reusable org workflows (#37)", () => {
   it.each(ALL_WORKFLOWS)("%s is valid GitHub Actions workflow YAML", (name) => {
     expect(() => parseWorkflow(name)).not.toThrow();
@@ -176,7 +183,7 @@ describe("reusable org workflows (#37)", () => {
   it("the schema check rejects unsupported workflow structure", () => {
     const doc = parseWorkflow("prowl-review.yml");
     const review = (doc.jobs as { review: { concurrency: Record<string, unknown> } }).review;
-    review.concurrency.queue = "max";
+    review.concurrency.unsupported = "value";
     expect(workflowSchema.safeParse(doc).success).toBe(false);
   });
 
@@ -198,6 +205,12 @@ describe("reusable org workflows (#37)", () => {
     const text = read(name);
     expect(text).toContain("uses: prowl-tools/prowl-code-review@v1");
     expect(text).not.toContain("uses: ./");
+  });
+
+  it.each(DOGFOOD_WORKFLOWS)("%s dogfoods the local action, never the published v1 action", (path) => {
+    const text = readRepo(path);
+    expect(text).toMatch(/^\s*uses:\s*\.\/(?:\s+#.*)?$/m);
+    expect(text).not.toMatch(/^\s*uses:\s*prowl-tools\/prowl-code-review@v1\b/m);
   });
 
   it.each(REUSABLE)("%s grants the token scopes the review needs", (name) => {
@@ -281,6 +294,18 @@ describe("reusable org workflows (#37)", () => {
       "org-guidelines-path": "${{ inputs.org-guidelines-path }}",
       "workspace-path": "${{ github.workspace }}/pr-head"
     });
+  });
+
+  it.each([
+    ["complete metadata", { baseSha: "abc", headSha: "def", headRepo: "Prowl-qa/app" }, true],
+    ["missing base SHA", { baseSha: "", headSha: "def", headRepo: "Prowl-qa/app" }, false],
+    ["null base SHA", { baseSha: "null", headSha: "def", headRepo: "Prowl-qa/app" }, false],
+    ["missing head SHA", { baseSha: "abc", headSha: "", headRepo: "Prowl-qa/app" }, false],
+    ["null head SHA", { baseSha: "abc", headSha: "null", headRepo: "Prowl-qa/app" }, false],
+    ["missing head repository", { baseSha: "abc", headSha: "def", headRepo: "" }, false],
+    ["null head repository", { baseSha: "abc", headSha: "def", headRepo: "null" }, false]
+  ])("the command metadata guard handles %s", (_name, input, expected) => {
+    expect(hasCompletePrMetadata(input)).toBe(expected);
   });
 
   it.each(CALLERS)("%s invokes the org workflow with inherited secrets in a few lines", (name) => {
