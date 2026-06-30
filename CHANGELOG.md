@@ -5,6 +5,19 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Language-aware symbol resolution for cross-file context (backlog #5, completes #5): two new agentic retrieval
+  tools — **`find_definition`** (locate where a symbol is declared via definition-shaped patterns per language:
+  keyword-led functions/types/vars, Go receiver methods, assigned JS arrow functions, modifier-led typed
+  methods, C macros) and **`find_references`** (word-boundary call sites) — exposed in `REVIEW_TOOLS` and
+  dispatched in the retrieval loop, with an optional `language` hint (validated by a new `isLanguageId`) to
+  narrow the search across the 23 detected languages. Implemented as thin layers over the existing guarded
+  `searchRepo` primitive, so they inherit repo-root confinement, symlink/ignore rejection, binary skip, bounded
+  matches, secret redaction, and sensitive-file skipping. This delivers #5's goal — **sharper-than-grep
+  caller/definition lookup** — **without a tree-sitter/WASM dependency**, a deliberate decision to keep the
+  "agentic grep, no heavy infra, no vector DB" design (no indexing step, nothing extra shipped, no slower
+  `npm ci`). New public exports (`findDefinition`/`findReferences`/`SymbolSearchOptions`/`isLanguageId`); README
+  "Cross-file context" section; 20+ new tests (symbol tools across TS/Python/Go, language scoping, invalid-symbol
+  rejection, dispatch + notes).
 - Auth policy + data-privacy docs (backlog #38 + #40, completes both): two authoritative pages stating how
   prowl-review authenticates and where code/keys go. `docs/auth.md` (#38) — BYOK keys read from the environment
   only (`PROWL_AI_PROVIDER` / `PROWL_AI_KEY_<PROVIDER>` preferred / `PROWL_AI_KEY` fallback; never from config or
