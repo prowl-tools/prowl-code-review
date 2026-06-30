@@ -63,7 +63,7 @@ jobs:
 - **Config & guidelines stay trusted.** The reusable workflows load
   `.prowl-review.yml` and `REVIEW_GUIDELINES.md`/`CLAUDE.md`/`LEARNED_PATTERNS.md`
   from the **base** checkout, never from PR code. Set `config-path:
-  prowl-base/.prowl-review.yml` (auto-review) to use a committed config.
+  prowl-base/.prowl-review.yml` to use a committed config.
 - **Self-hosted runners:** pass `runs-on:` to target your own labels.
 
 For a single self-contained repo (no org `.github`), use the standalone
