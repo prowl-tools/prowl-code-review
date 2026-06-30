@@ -150,6 +150,9 @@ export {
   setIgnoredFindings,
   setConfigOverrides,
   fetchReviewCommentFingerprints,
+  fetchReviewCommentLearningEntries,
+  fetchRepoLearnings,
+  recordRepoLearnings,
   postPullRequestComment,
   type SubmitReviewOptions,
   type SubmitReviewResult,
@@ -245,6 +248,24 @@ export {
   ReviewStateSchema,
   type ReviewState
 } from "./review/state.js";
+
+// Repo-wide learnings store (#30): cross-PR persistence of ignored/resolved findings.
+export {
+  parseLearnings,
+  serializeLearnings,
+  mergeLearnings,
+  fitLearningsIssueBody,
+  renderLearningsIssueBody,
+  learningFingerprints,
+  emptyLearnings,
+  REPO_LEARNINGS_VERSION,
+  LEARNINGS_ISSUE_TITLE,
+  LEARNINGS_ISSUE_LABEL,
+  RepoLearningsSchema,
+  type RepoLearnings,
+  type RepoLearningEntry,
+  type FittedLearningsIssueBody
+} from "./review/learnings.js";
 
 // Local pre-push review mode (#35): diff git refs + render findings to the terminal.
 export {

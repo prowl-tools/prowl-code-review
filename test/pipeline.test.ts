@@ -350,6 +350,32 @@ describe("reviewPullRequest", () => {
     expect(result.payload.body).not.toContain("explicit run options took precedence");
   });
 
+  it("suppresses findings muted in the repo-wide learnings store when enabled (#30)", async () => {
+    const fetchRepoLearnings = vi.fn(async () => [findingFingerprint(finding())]);
+    const deps = { ...makeDeps(), fetchRepoLearnings };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      repoLearnings: true
+    });
+
+    expect(fetchRepoLearnings).toHaveBeenCalledWith(octokit, ref);
+    // The only finding is muted repo-wide, so nothing is posted inline.
+    expect(result.payload.comments).toHaveLength(0);
+  });
+
+  it("does not read the repo-wide learnings store unless opted in (#30)", async () => {
+    const fetchRepoLearnings = vi.fn(async () => [findingFingerprint(finding())]);
+    const deps = { ...makeDeps(), fetchRepoLearnings };
+
+    const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+    expect(fetchRepoLearnings).not.toHaveBeenCalled();
+    expect(result.payload.comments).toHaveLength(1); // finding still surfaced
+  });
+
   it("incrementally reviews only the delta since the last reviewed SHA (#23)", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const fetchPriorState = vi.fn(async () => priorState);

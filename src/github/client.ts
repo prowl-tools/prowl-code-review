@@ -148,6 +148,43 @@ export interface OctokitLike {
         comment_id: number;
         body: string;
       }): Promise<{ data: unknown }>;
+      /** List repo issues — used to find the repo-wide learnings store issue (#30). */
+      listForRepo(params: {
+        owner: string;
+        repo: string;
+        state?: "open" | "closed" | "all";
+        creator?: string;
+        labels?: string;
+        per_page?: number;
+        page?: number;
+        sort?: "created" | "updated";
+        direction?: "asc" | "desc";
+      }): Promise<{
+        data: Array<{
+          number: number;
+          title?: string;
+          body?: string | null;
+          user?: { login?: string } | null;
+          state?: string;
+          /** Present when the "issue" is actually a pull request; skipped by callers. */
+          pull_request?: unknown;
+        }>;
+      }>;
+      /** Create the dedicated repo-wide learnings store issue when none exists (#30). */
+      create(params: {
+        owner: string;
+        repo: string;
+        title: string;
+        body: string;
+        labels?: string[];
+      }): Promise<{ data: { number: number } }>;
+      /** Update an issue's body in place — refreshes the repo-wide learnings store (#30). */
+      update(params: {
+        owner: string;
+        repo: string;
+        issue_number: number;
+        body?: string;
+      }): Promise<{ data: unknown }>;
     };
     /** Repository endpoints — commit comparison for incremental re-review (#23). */
     repos: {

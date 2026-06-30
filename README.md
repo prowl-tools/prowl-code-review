@@ -101,7 +101,7 @@ repo owner/member/collaborator is honored):
 |---|---|
 | `@prowl-review review` | Re-review the latest changes (incremental). |
 | `@prowl-review full review` | Re-scan the entire PR from scratch. |
-| `@prowl-review ignore` | Reply on a finding to mute it — it won't be raised again on this PR (#30). |
+| `@prowl-review ignore` | Reply on a finding to mute it — it won't be raised again on this PR (and repo-wide when `review.repoLearnings` is on) (#30). |
 | `@prowl-review resolve` | Reply on a finding to mark its thread resolved and stop re-raising it (#26). |
 | `@prowl-review configure <key=value …>` | Set per-PR review settings (`minSeverity`, `maxFindings`, `verify`); `configure reset` clears them (#26). |
 | `@prowl-review pause` | Stop auto-reviewing this PR on new pushes. |
@@ -142,6 +142,24 @@ and **`@prowl-review configure minSeverity=major`** to set per-PR review setting
 (`minSeverity`, `maxFindings`, `verify`) that apply on the next review;
 `@prowl-review configure reset` clears them (#26). Per-PR settings are stored in
 the summary's state marker and win over the repo config for that PR only.
+
+**Repo-wide learnings (#30).** By default an `ignore` / `resolve` mute is scoped
+to its PR. Set **`review.repoLearnings: true`** and the mute is also persisted to
+a dedicated **`prowl-review: learned patterns`** tracking issue, so the same
+finding is suppressed on **every** future PR — the OSS, BYOK equivalent of
+CodeRabbit "learnings", with no external store. The issue lists each muted
+pattern in plain text; **delete a line** (and re-run) to re-surface that finding,
+or **close the issue** to clear the whole store. Only repo owner/member/
+collaborator commands can teach it (same trust gate as every command), and the
+write is best-effort — a failed issue write never blocks the per-PR mute.
+
+**Guidelines & learned patterns (#30).** prowl-review injects repo guidelines
+(`REVIEW_GUIDELINES.md` or `CLAUDE.md`) and a `LEARNED_PATTERNS.md` "do-not-raise"
+file from the trusted checkout into every review. Set `PROWL_ORG_GUIDELINES_PATH`
+to share one org-wide standard across repos — it accepts a **file path or an
+`http(s)` URL** (host the file once and point every repo at it). The fetched
+content is treated as untrusted prompt data just like a local file; a failed,
+non-OK, or oversized fetch is skipped with a warning and the review proceeds.
 
 ```yaml
 # .github/workflows/prowl-review-command.yml
