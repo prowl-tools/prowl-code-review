@@ -84,7 +84,7 @@ const stepSchema = z
     "timeout-minutes": expressionOrLiteralSchema.optional()
   })
   .strict()
-  .refine((step) => step.uses !== undefined || step.run !== undefined, "step must either use an action or run a command");
+  .refine((step) => (step.uses !== undefined) !== (step.run !== undefined), "step must define exactly one of uses or run");
 const concurrencySchema = z
   .object({
     group: z.string(),
@@ -185,6 +185,20 @@ describe("reusable org workflows (#37)", () => {
     const review = (doc.jobs as { review: { concurrency: Record<string, unknown> } }).review;
     review.concurrency.unsupported = "value";
     expect(workflowSchema.safeParse(doc).success).toBe(false);
+  });
+
+  it("the schema check requires exactly one of uses or run per step", () => {
+    const missingAction = parseWorkflow("prowl-review.yml");
+    stepsFor(missingAction, "review")[0] = { name: "Invalid empty step" };
+    expect(workflowSchema.safeParse(missingAction).success).toBe(false);
+
+    const conflictingAction = parseWorkflow("prowl-review.yml");
+    stepsFor(conflictingAction, "review")[0] = {
+      name: "Invalid mixed step",
+      uses: "actions/checkout@v4",
+      run: "echo invalid"
+    };
+    expect(workflowSchema.safeParse(conflictingAction).success).toBe(false);
   });
 
   it.each(REUSABLE)("%s is a workflow_call (reusable) workflow with declared secrets", (name) => {
