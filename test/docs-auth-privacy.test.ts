@@ -53,6 +53,15 @@ describe("data-privacy doc (#40)", () => {
     expect(doc).toContain("generativelanguage.googleapis.com");
   });
 
+  it("inventories provider-bound prompt inputs beyond diff and context", () => {
+    expect(doc).toMatch(/repo\/org guidelines/i);
+    expect(doc).toMatch(/repo-wide learned patterns/i);
+    expect(doc).toMatch(/grounding/i);
+    expect(doc).toMatch(/requirements/i);
+    expect(doc).toContain("requirementsDiff");
+    expect(doc).toMatch(/PR title/i);
+  });
+
   it("documents optional non-provider egress for configured grounding features", () => {
     expect(doc).toContain("PROWL_ORG_GUIDELINES_PATH");
     expect(doc).toMatch(/Semgrep registry/i);
@@ -68,10 +77,12 @@ describe("data-privacy doc (#40)", () => {
   });
 
   it("states zero retention on our side", () => {
-    expect(doc).toMatch(/prowl-review retains \*\*nothing\*\*/i);
-    expect(doc).toMatch(/no database, no logs of your code, no\s+copy of your key/i);
-    expect(doc).toMatch(/State that does persist[\s\S]*lives \*\*in your own GitHub\*\*/i);
+    expect(doc).toMatch(/prowl-review retains \*\*nothing on a prowl-review server\*\*/i);
+    expect(doc).toMatch(/no\s+database[\s\S]*no hosted logs of your code or key/i);
+    expect(doc).toMatch(/State that does persist[\s\S]*lives \*\*in your own\s+GitHub\*\*/i);
     expect(doc).toMatch(/tracking issue in your repo/i);
+    expect(doc).toMatch(/debug tracing[\s\S]*redacted JSONL trace[\s\S]*your workspace/i);
+    expect(doc).toMatch(/GitHub Actions artifact[\s\S]*GitHub\/artifact policy/i);
   });
 });
 
