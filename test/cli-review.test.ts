@@ -7,6 +7,8 @@ import {
   buildReviewCommand,
   loadGuidelines,
   loadLearnedPatterns,
+  loadOrgGuidelines,
+  ORG_GUIDELINES_MAX_BYTES,
   composeGuidelines,
   isForkPullRequestEvent,
   hasAnyProviderKey,
@@ -186,6 +188,65 @@ describe("review command helpers", () => {
     expect(resolveOrgGuidelinesPath({ PROWL_ORG_GUIDELINES_PATH: "/org/guide.md" } as NodeJS.ProcessEnv)).toBe(
       "/org/guide.md"
     );
+  });
+
+  describe("loadOrgGuidelines (#30 file or URL)", () => {
+    it("returns undefined for an empty/whitespace value", async () => {
+      expect(await loadOrgGuidelines(undefined)).toBeUndefined();
+      expect(await loadOrgGuidelines("   ")).toBeUndefined();
+    });
+
+    it("reads a local file path via the injected reader", async () => {
+      const readFile = vi.fn(() => "file rules");
+      const fetchImpl = vi.fn();
+      expect(await loadOrgGuidelines("/org/guide.md", { readFile, fetchImpl: fetchImpl as unknown as typeof fetch })).toBe(
+        "file rules"
+      );
+      expect(readFile).toHaveBeenCalledWith("/org/guide.md");
+      expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("fetches an http(s) URL and returns the trimmed body", async () => {
+      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => "  remote rules\n" }));
+      const result = await loadOrgGuidelines("https://example.com/guide.md", {
+        fetchImpl: fetchImpl as unknown as typeof fetch
+      });
+      expect(result).toBe("remote rules");
+      expect(fetchImpl).toHaveBeenCalledWith("https://example.com/guide.md", expect.objectContaining({ signal: expect.anything() }));
+    });
+
+    it("degrades to undefined (not throw) on a non-OK response", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, text: async () => "nope" }));
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("HTTP 404"));
+      warn.mockRestore();
+    });
+
+    it("degrades to undefined on a fetch error", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => {
+        throw new Error("network down");
+      });
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("network down"));
+      warn.mockRestore();
+    });
+
+    it("rejects an oversized response", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const huge = "x".repeat(ORG_GUIDELINES_MAX_BYTES + 1);
+      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => huge }));
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("exceeds"));
+      warn.mockRestore();
+    });
   });
 
   it("parses and validates min severity", () => {

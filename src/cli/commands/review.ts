@@ -120,6 +120,62 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
   return env.PROWL_ORG_GUIDELINES_PATH?.trim() || undefined;
 }
 
+/** Cap on fetched org-guidelines size so a runaway URL can't bloat the prompt (#30). */
+export const ORG_GUIDELINES_MAX_BYTES = 256 * 1024;
+/** Timeout for fetching org-guidelines over the network (#30). */
+const ORG_GUIDELINES_FETCH_TIMEOUT_MS = 10_000;
+
+/**
+ * Load the org-wide guidelines from a trusted file path **or** an `http(s)` URL
+ * (#30), so orgs can host one shared standard instead of vendoring a file. The
+ * value is operator-supplied (env/Action input), hence trusted as a *source*;
+ * the fetched text is still treated as untrusted *data* in the prompt, exactly
+ * like a file. Tolerant — a failed/oversized/non-OK fetch logs a warning and
+ * yields undefined so the review proceeds without org guidelines rather than
+ * failing. `fetchImpl`/`readFile` are injectable for testing.
+ */
+export async function loadOrgGuidelines(
+  pathOrUrl: string | undefined,
+  deps: {
+    fetchImpl?: typeof fetch;
+    readFile?: (filePath: string) => string | undefined;
+  } = {}
+): Promise<string | undefined> {
+  const value = pathOrUrl?.trim();
+  if (!value) {
+    return undefined;
+  }
+  if (!/^https?:\/\//i.test(value)) {
+    return (deps.readFile ?? readOptionalFile)(value);
+  }
+
+  const fetchImpl = deps.fetchImpl ?? fetch;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), ORG_GUIDELINES_FETCH_TIMEOUT_MS);
+  try {
+    const response = await fetchImpl(value, { signal: controller.signal });
+    if (!response.ok) {
+      console.warn(`prowl-review: org guidelines URL returned HTTP ${response.status}; continuing without them.`);
+      return undefined;
+    }
+    const text = await response.text();
+    if (text.length > ORG_GUIDELINES_MAX_BYTES) {
+      console.warn(
+        `prowl-review: org guidelines URL exceeds ${ORG_GUIDELINES_MAX_BYTES} bytes; ` +
+          "continuing without them. Host a smaller file."
+      );
+      return undefined;
+    }
+    return text.trim() || undefined;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(`prowl-review: failed to fetch org guidelines URL (${reason}); continuing without them.`);
+    return undefined;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 /**
  * Compose org-wide and per-repo guidelines into one block (#30). When both are
  * present they are kept under clear sub-headers; otherwise whichever exists is
@@ -504,6 +560,7 @@ type ResolvedReviewOptions = Pick<
   | "incremental"
   | "resolveThreads"
   | "rejustifyDisputed"
+  | "repoLearnings"
   | "checkRun"
   | "approval"
   | "prDescription"
@@ -723,6 +780,8 @@ export function resolveReviewOptions(
     resolveThreads: cli.resolveThreads === false ? false : config.review?.resolveThreads,
     // Re-justify disputed findings on "I disagree" (#22); on by default, config-tunable.
     rejustifyDisputed: config.review?.rejustifyDisputed,
+    // Repo-wide learnings (#30): off by default; opt in to suppress ignored findings across PRs.
+    repoLearnings: config.review?.repoLearnings,
     skipContext:
       cli.context === false || config.context?.enabled === false ? true : undefined,
     contextLimits: compact({
@@ -1207,8 +1266,7 @@ export async function runReviewWithOptions(
 
   const guidelinesRoot = resolveGuidelinesWorkspace();
   const repoGuidelines = guidelinesRoot ? loadGuidelines(guidelinesRoot) : undefined;
-  const orgGuidelinesPath = resolveOrgGuidelinesPath();
-  const orgGuidelines = orgGuidelinesPath ? readOptionalFile(orgGuidelinesPath) : undefined;
+  const orgGuidelines = await loadOrgGuidelines(resolveOrgGuidelinesPath());
   const guidelines = composeGuidelines(orgGuidelines, repoGuidelines);
   // Learned false-positive patterns (#30) load from the trusted guidelines checkout.
   const learnedPatterns = guidelinesRoot ? loadLearnedPatterns(guidelinesRoot) : undefined;
