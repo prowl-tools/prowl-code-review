@@ -766,6 +766,44 @@ describe("handleIgnore (#30)", () => {
     expect(deps.postIssueComment).toHaveBeenCalledWith(octokit, ref, expect.stringContaining("directly on a finding"));
     expect(result.ignored).toBe(0);
   });
+
+  function learnDeps() {
+    return {
+      ...ignoreDeps(),
+      fetchLearningEntries: vi.fn(async () => [{ fp: "fp-1", label: "Bug" }]),
+      recordLearnings: vi.fn(async () => ({ added: 1 }))
+    };
+  }
+
+  it("teaches the repo-wide store and acks for future PRs when opted in (#30)", async () => {
+    const deps = learnDeps();
+    const result = await handleIgnore({ octokit, ref, event: inlineEvent, repoLearnings: true, deps });
+
+    expect(deps.fetchLearningEntries).toHaveBeenCalledWith(octokit, ref, 100);
+    expect(deps.recordLearnings).toHaveBeenCalledWith(octokit, ref, [{ fp: "fp-1", label: "Bug" }]);
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 100, expect.stringContaining("future PRs"));
+    expect(result.ignored).toBe(1);
+  });
+
+  it("does not touch the repo-wide store unless opted in (#30)", async () => {
+    const deps = learnDeps();
+    await handleIgnore({ octokit, ref, event: inlineEvent, deps });
+    expect(deps.fetchLearningEntries).not.toHaveBeenCalled();
+    expect(deps.recordLearnings).not.toHaveBeenCalled();
+  });
+
+  it("keeps the per-PR mute even if repo-wide persistence fails (#30)", async () => {
+    const deps = {
+      ...learnDeps(),
+      recordLearnings: vi.fn(async () => {
+        throw new Error("issue write failed");
+      })
+    };
+    const result = await handleIgnore({ octokit, ref, event: inlineEvent, repoLearnings: true, deps });
+    expect(result.ignored).toBe(1);
+    // Falls back to the per-PR ack with no repo-wide claim.
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 100, expect.stringContaining("on this PR"));
+  });
 });
 
 describe("command workflow metadata", () => {
@@ -1016,6 +1054,30 @@ describe("handleResolve (#26)", () => {
     expect(result.resolved).toBe(0);
     expect(deps.resolveThread).not.toHaveBeenCalled();
     expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("couldn't identify"));
+  });
+
+  it("teaches the repo-wide store and acks for future PRs when opted in (#30)", async () => {
+    const deps = {
+      ...resolveDeps(),
+      fetchLearningEntries: vi.fn(async () => [{ fp: "fp-a", label: "Bug" }]),
+      recordLearnings: vi.fn(async () => ({ added: 1 }))
+    };
+    const result = await handleResolve({ octokit, ref, event: threadEvent, repoLearnings: true, deps });
+
+    expect(result.resolved).toBe(1);
+    expect(deps.recordLearnings).toHaveBeenCalledWith(octokit, ref, [{ fp: "fp-a", label: "Bug" }]);
+    expect(deps.postReviewReply).toHaveBeenCalledWith(octokit, ref, 55, expect.stringContaining("future PRs"));
+  });
+
+  it("does not touch the repo-wide store unless opted in (#30)", async () => {
+    const deps = {
+      ...resolveDeps(),
+      fetchLearningEntries: vi.fn(async () => [{ fp: "fp-a" }]),
+      recordLearnings: vi.fn(async () => ({ added: 1 }))
+    };
+    await handleResolve({ octokit, ref, event: threadEvent, deps });
+    expect(deps.fetchLearningEntries).not.toHaveBeenCalled();
+    expect(deps.recordLearnings).not.toHaveBeenCalled();
   });
 });
 
