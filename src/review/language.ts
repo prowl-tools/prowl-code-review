@@ -39,6 +39,11 @@ export const LANGUAGES = {
 
 export type LanguageId = keyof typeof LANGUAGES;
 
+/** True when `value` is a known language id (validates untrusted tool input, #5). */
+export function isLanguageId(value: string): value is LanguageId {
+  return Object.prototype.hasOwnProperty.call(LANGUAGES, value);
+}
+
 /** File extension (without the dot, lowercase) → language id. */
 const EXTENSION_TO_LANGUAGE: Record<string, LanguageId> = {
   ts: "typescript",
