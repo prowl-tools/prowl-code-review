@@ -18,6 +18,13 @@ the recommended patterns from the [main README](../README.md).
 5. Open a pull request — prowl-review posts a walkthrough summary + inline
    comments.
 
+## Org-wide rollout (one reusable workflow, #37)
+
+Running prowl-review across many repos? Instead of copy-pasting the full workflow
+into each one, define it **once** in your org's `.github` repo and have every repo
+opt in with a few lines. See [`reusable/`](reusable/) for the `workflow_call`
+templates + the tiny per-repo callers.
+
 ## Local pre-push review (no GitHub)
 
 Run the same engine against a local diff before you push:
