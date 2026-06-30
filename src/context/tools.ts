@@ -389,6 +389,118 @@ function truncateSearchMatchText(text: string, maxBytes: number): { text: string
   return { text: `${text.slice(0, end)}...[truncated]`, truncated: true };
 }
 
+function compileSearchPattern(pattern: string): RegExp {
+  try {
+    assertSafeSearchPattern(pattern);
+    return new RegExp(pattern);
+  } catch (error) {
+    if (error instanceof RepoAccessError) {
+      throw error;
+    }
+    throw new RepoAccessError(
+      `Invalid search pattern: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
+}
+
+function searchRepoWithRegexes(
+  options: ToolkitOptions,
+  regexes: RegExp[],
+  searchDir = ".",
+  searchOptions: SearchOptions = {}
+): SearchResult {
+  if (regexes.length === 0) {
+    return { matches: [], truncated: false, skippedFiles: 0 };
+  }
+
+  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
+  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
+  const maxMatchTextBytes = boundedCount(
+    options.maxMatchTextBytes,
+    DEFAULT_MAX_MATCH_TEXT_BYTES
+  );
+  const orderedBuckets = regexes.length > 1 ? regexes.map((): SearchMatch[] => []) : undefined;
+  const matches: SearchMatch[] = [];
+  let truncated = false;
+
+  const traversal = walkRepoFiles(options, searchDir, (file, abs) => {
+    if (!orderedBuckets && matches.length >= maxMatches) {
+      truncated = true;
+      return false;
+    }
+    let buffer;
+    try {
+      assertNoSymlinkPath(options.root, abs, file);
+      const stat = statSync(abs);
+      if (!stat.isFile()) {
+        return undefined;
+      }
+      if (stat.size > maxFileBytes) {
+        truncated = true;
+        return undefined;
+      }
+      buffer = readFileSync(abs);
+    } catch {
+      return undefined;
+    }
+    if (buffer.includes(0)) {
+      return undefined; // skip binary files
+    }
+    const lines = buffer.toString("utf8").split("\n");
+    for (let i = 0; i < lines.length; i += 1) {
+      for (let patternIndex = 0; patternIndex < regexes.length; patternIndex += 1) {
+        if (!regexes[patternIndex].test(lines[i])) {
+          continue;
+        }
+        const matchText = truncateSearchMatchText(lines[i], maxMatchTextBytes);
+        if (matchText.truncated) {
+          truncated = true;
+        }
+        const match = { path: file, line: i + 1, text: matchText.text };
+        if (orderedBuckets) {
+          const bucket = orderedBuckets[patternIndex];
+          if (bucket.length < maxMatches) {
+            bucket.push(match);
+          } else {
+            truncated = true;
+          }
+          continue;
+        }
+        matches.push(match);
+        if (matches.length >= maxMatches) {
+          truncated = true;
+          return false;
+        }
+      }
+    }
+    return undefined;
+  }, searchOptions.shouldSearchFile);
+
+  if (orderedBuckets) {
+    const seen = new Set<string>();
+    for (const bucket of orderedBuckets) {
+      for (const match of bucket) {
+        const key = `${match.path}:${match.line}`;
+        if (seen.has(key)) {
+          continue;
+        }
+        seen.add(key);
+        if (matches.length >= maxMatches) {
+          truncated = true;
+          break;
+        }
+        matches.push(match);
+      }
+    }
+  }
+
+  if (traversal.truncated) {
+    truncated = true;
+  }
+
+  return { matches, truncated, skippedFiles: traversal.skippedFiles };
+}
+
 /** Read a repo file, confined to the root and capped at `maxFileBytes`. */
 export function readRepoFile(options: ToolkitOptions, requestedPath: string): ReadFileResult {
   const maxBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
@@ -442,74 +554,7 @@ export function searchRepo(
   searchDir = ".",
   searchOptions: SearchOptions = {}
 ): SearchResult {
-  const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
-  const maxFileBytes = options.maxFileBytes ?? DEFAULT_MAX_FILE_BYTES;
-  const maxMatchTextBytes = boundedCount(
-    options.maxMatchTextBytes,
-    DEFAULT_MAX_MATCH_TEXT_BYTES
-  );
-
-  let regex: RegExp;
-  try {
-    assertSafeSearchPattern(pattern);
-    regex = new RegExp(pattern);
-  } catch (error) {
-    if (error instanceof RepoAccessError) {
-      throw error;
-    }
-    throw new RepoAccessError(
-      `Invalid search pattern: ${error instanceof Error ? error.message : String(error)}`
-    );
-  }
-
-  const matches: SearchMatch[] = [];
-  let truncated = false;
-
-  const traversal = walkRepoFiles(options, searchDir, (file, abs) => {
-    if (matches.length >= maxMatches) {
-      truncated = true;
-      return false;
-    }
-    let buffer;
-    try {
-      assertNoSymlinkPath(options.root, abs, file);
-      const stat = statSync(abs);
-      if (!stat.isFile()) {
-        return undefined;
-      }
-      if (stat.size > maxFileBytes) {
-        truncated = true;
-        return undefined;
-      }
-      buffer = readFileSync(abs);
-    } catch {
-      return undefined;
-    }
-    if (buffer.includes(0)) {
-      return undefined; // skip binary files
-    }
-    const lines = buffer.toString("utf8").split("\n");
-    for (let i = 0; i < lines.length; i += 1) {
-      if (regex.test(lines[i])) {
-        const matchText = truncateSearchMatchText(lines[i], maxMatchTextBytes);
-        if (matchText.truncated) {
-          truncated = true;
-        }
-        matches.push({ path: file, line: i + 1, text: matchText.text });
-        if (matches.length >= maxMatches) {
-          truncated = true;
-          return false;
-        }
-      }
-    }
-    return undefined;
-  }, searchOptions.shouldSearchFile);
-
-  if (traversal.truncated) {
-    truncated = true;
-  }
-
-  return { matches, truncated, skippedFiles: traversal.skippedFiles };
+  return searchRepoWithRegexes(options, [compileSearchPattern(pattern)], searchDir, searchOptions);
 }
 
 /**
@@ -532,6 +577,9 @@ export interface SymbolSearchOptions extends SearchOptions {
 }
 
 const MAX_SYMBOL_LENGTH = 128;
+const SYMBOL_IDENTIFIER_CHARS = "A-Za-z0-9_$";
+const SYMBOL_START_BOUNDARY = `(?:^|[^${SYMBOL_IDENTIFIER_CHARS}])`;
+const SYMBOL_END_BOUNDARY = `(?:$|[^${SYMBOL_IDENTIFIER_CHARS}])`;
 
 /** Escape a string so it can be embedded literally inside a search regex. */
 function escapeRegExp(value: string): string {
@@ -575,19 +623,19 @@ function symbolFilePredicate(options: SymbolSearchOptions): ((path: string) => b
 function definitionPatterns(escaped: string): string[] {
   return [
     // function / method declarations led by a keyword
-    `\\b(?:function|func|fn|def|fun|sub|method)\\s+${escaped}\\b`,
+    `\\b(?:function|func|fn|def|fun|sub|method)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
     // type-like declarations
-    `\\b(?:class|interface|trait|struct|enum|protocol|record|object|module|namespace|type)\\s+${escaped}\\b`,
+    `\\b(?:class|interface|trait|struct|enum|protocol|record|object|module|namespace|type)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
     // variable / constant bindings
-    `\\b(?:const|let|var|val|static)\\s+${escaped}\\b`,
+    `\\b(?:const|let|var|val|static)\\s+${escaped}${SYMBOL_END_BOUNDARY}`,
     // Go-style receiver methods: func (r *T) Name(
-    `\\bfunc\\s+\\([^)]*\\)\\s*${escaped}\\b`,
+    `\\bfunc\\s+\\(.*\\)\\s*${escaped}${SYMBOL_END_BOUNDARY}`,
     // assigned functions: const Name = function | Name = ( … ) =>
-    `\\b${escaped}\\s*=\\s*(?:async\\s+)?(?:function\\b|\\()`,
+    `${SYMBOL_START_BOUNDARY}${escaped}\\s*=\\s*(?:async\\s+)?(?:function\\b|\\(|[A-Za-z_$][A-Za-z0-9_$]{0,100}\\s*=>)`,
     // modifier-led typed methods (Java/C#/Kotlin/C++/Swift): public void Name(
     `\\b(?:public|private|protected|internal|static|final|override|virtual|abstract|async|suspend)[\\sA-Za-z0-9_<>,.*&]*\\b${escaped}\\s*\\(`,
     // C/C++ macros
-    `#define\\s+${escaped}\\b`
+    `#define\\s+${escaped}${SYMBOL_END_BOUNDARY}`
   ];
 }
 
@@ -607,45 +655,28 @@ export function findDefinition(
   const escaped = escapeRegExp(symbol);
   const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
   const shouldSearchFile = symbolFilePredicate(symbolOptions);
-
-  const seen = new Set<string>();
-  const matches: SearchMatch[] = [];
-  let truncated = false;
   let skippedFiles = 0;
+  const regexes: RegExp[] = [];
 
   for (const pattern of definitionPatterns(escaped)) {
-    if (matches.length >= maxMatches) {
-      truncated = true;
-      break;
-    }
-    let result: SearchResult;
     try {
-      result = searchRepo(options, pattern, symbolOptions.dir ?? ".", { shouldSearchFile });
+      regexes.push(compileSearchPattern(pattern));
     } catch (error) {
       if (error instanceof RepoAccessError && /pattern/i.test(error.message)) {
         continue; // skip a pattern that somehow trips the safe-pattern guard
       }
       throw error;
     }
-    if (result.truncated) {
-      truncated = true;
-    }
-    skippedFiles = Math.max(skippedFiles, result.skippedFiles ?? 0);
-    for (const match of result.matches) {
-      const key = `${match.path}:${match.line}`;
-      if (seen.has(key)) {
-        continue;
-      }
-      seen.add(key);
-      matches.push(match);
-      if (matches.length >= maxMatches) {
-        truncated = true;
-        break;
-      }
-    }
   }
 
-  return { matches, truncated, skippedFiles };
+  const result = searchRepoWithRegexes(options, regexes, symbolOptions.dir ?? ".", { shouldSearchFile });
+  skippedFiles = Math.max(skippedFiles, result.skippedFiles ?? 0);
+
+  return {
+    matches: result.matches.slice(0, maxMatches),
+    truncated: result.truncated || result.matches.length > maxMatches,
+    skippedFiles
+  };
 }
 
 /**
@@ -660,7 +691,7 @@ export function findReferences(
 ): SearchResult {
   assertResolvableSymbol(symbol);
   const escaped = escapeRegExp(symbol);
-  return searchRepo(options, `\\b${escaped}\\b`, symbolOptions.dir ?? ".", {
+  return searchRepo(options, `${SYMBOL_START_BOUNDARY}${escaped}${SYMBOL_END_BOUNDARY}`, symbolOptions.dir ?? ".", {
     shouldSearchFile: symbolFilePredicate(symbolOptions)
   });
 }

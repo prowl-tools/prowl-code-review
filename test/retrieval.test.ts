@@ -142,7 +142,25 @@ describe("gatherContext", () => {
     const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
 
     expect(result.notes.some((n) => n.includes("Ignored unknown language 'klingon'"))).toBe(true);
-    expect(result.toolOutputs.find((o) => o.tool === "find_definition")?.content).toContain("src/a.ts:1");
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output?.content).toContain("src/a.ts:1");
+    expect(output?.input).toEqual({ symbol: "a", dir: "." });
+  });
+
+  it("records only applied language filters in symbol tool output (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a", language: "typescript" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    expect(result.toolOutputs.find((o) => o.tool === "find_definition")?.input).toEqual({
+      symbol: "a",
+      dir: ".",
+      language: "typescript"
+    });
+    expect(result.notes.some((n) => n.includes("due to search filters"))).toBe(true);
   });
 
   it("surfaces an invalid-symbol error as a note without throwing (#5)", async () => {
