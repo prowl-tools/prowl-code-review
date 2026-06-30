@@ -638,6 +638,11 @@ command workflow, and a `.prowl-review.yml`). For a rendered sample of the
 published walkthrough — summary, findings table, 🤝 consensus, per-model
 sections — see [`docs/example-review.md`](docs/example-review.md).
 
+**Rolling out across a whole org?** Define the workflow once in your org's
+`.github` repo and have every repo opt in with a few lines — see the reusable
+`workflow_call` templates + per-repo callers in
+[`examples/reusable/`](examples/reusable/) (#37).
+
 ## Contributing
 
 Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the

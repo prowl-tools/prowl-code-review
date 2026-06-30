@@ -5,6 +5,18 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Reusable org-level workflow (backlog #37, completes #37): roll prowl-review out across a whole org without
+  copy-pasting the full workflow into every repo. New `examples/reusable/` ships two `workflow_call` (reusable)
+  workflows for an org's `.github` repo — `prowl-review.yml` (auto-review) and `prowl-review-command.yml`
+  (`@prowl-review` commands) — each owning the checkout, the trusted-base config/guidelines split, the
+  fork/draft + author-trust guards, and the pinned `prowl-tools/prowl-code-review@v1` invocation, with
+  `ai-provider`/`ai-model`/`min-severity`/`config-path`/`org-guidelines-path`/`runs-on` inputs and BYOK key
+  secrets. Per-repo opt-in is a few lines (`caller-prowl-review.yml` / `caller-prowl-review-command.yml`):
+  declare the trigger + token scopes and `uses:` the org workflow with `secrets: inherit`. New
+  `examples/reusable/README.md` (one-time org setup + per-repo opt-in + the permissions/pinning caveats),
+  cross-links from `README.md` + `examples/README.md`, and a YAML-structure test guarding the templates against
+  drift (valid YAML, the `workflow_call` contract, the published-action pin vs. the dogfood `uses: ./`, and the
+  trust/fork guards).
 - Repo-wide learnings + org-guidelines-by-URL (backlog #30, completes #30): two cross-PR capabilities, both
   BYOK with no external store. **Repo-wide learnings** — opt in with `review.repoLearnings: true` and an
   `@prowl-review ignore` / `resolve` mute is persisted (beyond its PR) to a dedicated **`prowl-review: learned
