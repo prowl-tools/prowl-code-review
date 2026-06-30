@@ -219,6 +219,18 @@ describe("review command helpers", () => {
       );
     });
 
+    it("fetches an http URL when the host is valid", async () => {
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const result = await loadOrgGuidelines("http://example.com/guide.md", {
+        fetchImpl: fetchImpl as unknown as typeof fetch
+      });
+      expect(result).toBe("remote rules");
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "http://example.com/guide.md",
+        expect.objectContaining({ signal: expect.anything(), redirect: "error" })
+      );
+    });
+
     it("degrades to undefined (not throw) on a non-OK response", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const fetchImpl = vi.fn(async () => new Response("nope", { status: 404 }));
@@ -282,7 +294,7 @@ describe("review command helpers", () => {
       warn.mockRestore();
     });
 
-    it.each(["0:0:0:0:0:0:0:1", "0:0:0:0:0:ffff:7f00:1", "fe80:0:0:0:0:0:0:1"])(
+    it.each(["0:0:0:0:0:0:0:1", "0:0:0:0:0:ffff:7f00:1", "fe80:0:0:0:0:0:0:1", "ff02:0:0:0:0:0:0:1"])(
       "rejects private IPv6 DNS result %s before fetching",
       async (address) => {
         const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
@@ -300,6 +312,24 @@ describe("review command helpers", () => {
         warn.mockRestore();
       }
     );
+
+    it("degrades to undefined when DNS resolution fails before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("remote rules"));
+      const resolveHost = vi.fn(async () => {
+        throw new Error("getaddrinfo ENOTFOUND example.com");
+      });
+
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", {
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          resolveHost
+        })
+      ).toBeUndefined();
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("ENOTFOUND"));
+      warn.mockRestore();
+    });
 
     it("rejects URLs with embedded credentials before fetching", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
