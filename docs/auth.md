@@ -38,7 +38,7 @@ neither is set the run fails fast with a message naming both variables. The
 multi-provider **ensemble** (#53) reads each `PROWL_AI_KEY_<PROVIDER>` so several
 providers can review at once.
 
-Default models per provider: Anthropic `claude-haiku-4-5`, OpenAI `gpt-5.2`,
+Default models per provider: Anthropic `claude-haiku-4-5`, OpenAI `gpt-5.4-mini`,
 Gemini `gemini-2.5-pro` — each overridable with `PROWL_AI_MODEL` (or a per-provider
 `model` in config).
 
