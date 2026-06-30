@@ -17,15 +17,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## Medium Priority
 
-38. **Document the auth policy (BYOK default; Codex the only subscription exception)**
-    As a user, I want clear docs on how `prowl-review` authenticates to each provider, so that I understand the cost model and avoid TOS/account-ban risk.
-    - Acceptance: README + `prowl-docs` state the policy — **BYO API key for every configurable provider** (Claude, OpenAI, Gemini); we never store/proxy keys.
-    - Acceptance: state that **subscription routing is supported for OpenAI/Codex only** (opt-in; see the Codex-subscription backend item) and **not** for Claude or Gemini — directly reusing their subscription OAuth in a third-party tool is prohibited and gets accounts banned (Anthropic Consumer Terms §3.7; Google Feb-2026 bans; OpenClaw is the precedent). Explain *why*.
-
-40. **Data-privacy positioning**
-    As a privacy-conscious user, I want it documented that my code only ever goes to my own provider, so that I trust the tool over hosted SaaS.
-    - Acceptance: doc + landing point — BYOK means we never see/store code or keys; inference goes directly from the user's runner to the user's chosen provider (paired with secret redaction, #15).
-
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
     - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
@@ -36,9 +27,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Done:** tag-triggered `.github/workflows/publish.yml` (on `vX.Y.Z`: tag↔version guard → `npm ci` → build → lint → test → release-note verification → draft GitHub Release → `npm publish --provenance --access public` → publish GitHub Release); package made publish-ready (`publishConfig.access: public`); Homebrew formula template (`packaging/homebrew/prowl-review.rb`) + `docs/releasing.md`.
     - Acceptance (remaining, operational): add the `NPM_TOKEN` repo secret and cut the **first release** (push a `vX.Y.Z` tag) to actually publish; add the filled-in `Formula/prowl-review.rb` (real `url` + `sha256`) to the separate `Prowl-qa/homebrew-tap` repo.
 
-43. **Docs + marketing integration**
+43. **Docs + marketing integration (dedicated site)**
     As a prospective user, I want docs and a landing section, so that I can discover and set up the tool.
-    - Acceptance: `docs/code-review.md` + sidebar entry in `prowl-docs`; a code-review section + install snippet in `prowl-web`; raccoon/brand conventions; "made for agents, controlled by humans" framing.
+    - **Decision (2026-06-30):** prowl-review gets its own **dedicated satellite site** (e.g. `review.prowl.tools`), mirroring the suite pattern — `prowl-web` already lists "Prowl Code Review" as a *coming soon* tile, and Hub/Infra each live at their own subdomain. Build a new `prowl-review-docs` Docusaurus site reusing `prowl-docs`' theme/brand (teal, raccoon, Space Grotesk), then flip the `prowl-web` Suite tile from `href: null` to the live link.
+    - Acceptance: dedicated Docusaurus site (own repo) with getting-started + the differentiators + config/commands reference; **port the ready-made auth + privacy content** from [`docs/auth.md`](./auth.md) and [`docs/privacy.md`](./privacy.md) (#38/#40, done) as site pages; raccoon/brand conventions; "made for agents, controlled by humans" framing.
+    - Acceptance: update `prowl-web`'s `Suite.tsx` Code Review tile to point at the new site; cross-link from this repo's README.
 
 45. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
     As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
