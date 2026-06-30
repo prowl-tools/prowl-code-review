@@ -448,7 +448,15 @@ function searchRepoWithRegexes(
     }
     const lines = buffer.toString("utf8").split("\n");
     for (let i = 0; i < lines.length; i += 1) {
+      if (orderedBuckets?.every((bucket) => bucket.length >= maxMatches)) {
+        truncated = true;
+        return false;
+      }
       for (let patternIndex = 0; patternIndex < regexes.length; patternIndex += 1) {
+        const orderedBucket = orderedBuckets?.[patternIndex];
+        if (orderedBucket && orderedBucket.length >= maxMatches) {
+          continue;
+        }
         if (!regexes[patternIndex].test(lines[i])) {
           continue;
         }
@@ -459,9 +467,8 @@ function searchRepoWithRegexes(
         const match = { path: file, line: i + 1, text: matchText.text };
         if (orderedBuckets) {
           const bucket = orderedBuckets[patternIndex];
-          if (bucket.length < maxMatches) {
-            bucket.push(match);
-          } else {
+          bucket.push(match);
+          if (bucket.length >= maxMatches) {
             truncated = true;
           }
           continue;
@@ -656,18 +663,7 @@ export function findDefinition(
   const maxMatches = options.maxMatches ?? DEFAULT_MAX_MATCHES;
   const shouldSearchFile = symbolFilePredicate(symbolOptions);
   let skippedFiles = 0;
-  const regexes: RegExp[] = [];
-
-  for (const pattern of definitionPatterns(escaped)) {
-    try {
-      regexes.push(compileSearchPattern(pattern));
-    } catch (error) {
-      if (error instanceof RepoAccessError && /pattern/i.test(error.message)) {
-        continue; // skip a pattern that somehow trips the safe-pattern guard
-      }
-      throw error;
-    }
-  }
+  const regexes = definitionPatterns(escaped).map((pattern) => compileSearchPattern(pattern));
 
   const result = searchRepoWithRegexes(options, regexes, symbolOptions.dir ?? ".", { shouldSearchFile });
   skippedFiles = Math.max(skippedFiles, result.skippedFiles ?? 0);

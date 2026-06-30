@@ -22,8 +22,10 @@ const USAGE = { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 };
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "prowl-retrieval-"));
   mkdirSync(join(root, "src"));
+  mkdirSync(join(root, "py"));
   writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2;\n");
+  writeFileSync(join(root, "py", "a.py"), "def a():\n    return 1\n");
   writeFileSync(
     join(root, ".env"),
     "API_KEY=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://user:pass@host/db\n"
@@ -155,11 +157,14 @@ describe("gatherContext", () => {
 
     const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
 
-    expect(result.toolOutputs.find((o) => o.tool === "find_definition")?.input).toEqual({
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output?.input).toEqual({
       symbol: "a",
       dir: ".",
       language: "typescript"
     });
+    expect(output?.content).toContain("src/a.ts:1");
+    expect(output?.content).not.toContain("py/a.py");
     expect(result.notes.some((n) => n.includes("due to search filters"))).toBe(true);
   });
 
