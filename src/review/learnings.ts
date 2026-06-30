@@ -23,14 +23,19 @@ export const REPO_LEARNINGS_VERSION = 1;
 /** Title of the dedicated issue that holds the repo-wide learnings store. */
 export const LEARNINGS_ISSUE_TITLE = "prowl-review: learned patterns";
 
+/** Dedicated label used to find the repo-wide learnings issue without broad scans. */
+export const LEARNINGS_ISSUE_LABEL = "prowl-review:learnings";
+
 /** Hard cap on stored patterns so the issue body stays manageable; oldest drop first. */
 export const MAX_LEARNED_PATTERNS = 1000;
 
 const MARKER_PREFIX = "<!-- prowl-review:learnings ";
 const MARKER_SUFFIX = " -->";
 
-/** Matches the persisted learnings marker and captures its JSON payload. */
-const MARKER_RE = /<!-- prowl-review:learnings ([\s\S]*?) -->/;
+/** Matches the persisted learnings marker and captures its single-line JSON payload. */
+const MARKER_RE = /<!-- prowl-review:learnings (\{[^\r\n]*\}) -->/;
+const VISIBLE_PATTERNS_HEADING_RE = /^## Muted patterns \(\d+\)\s*$/m;
+const VISIBLE_PATTERN_RE = /^- `([^`\r\n]+)`/gm;
 
 /** A single muted finding remembered repo-wide. */
 export const RepoLearningEntrySchema = z
@@ -88,7 +93,31 @@ export function parseLearnings(body: string | null | undefined): RepoLearnings |
     return null;
   }
   const result = RepoLearningsSchema.safeParse(raw);
-  return result.success ? result.data : null;
+  if (!result.success) {
+    return null;
+  }
+  const visible = parseVisibleLearningFingerprints(body);
+  if (!visible) {
+    return result.data;
+  }
+  return {
+    ...result.data,
+    patterns: result.data.patterns.filter((entry) => visible.has(entry.fp))
+  };
+}
+
+function parseVisibleLearningFingerprints(body: string): Set<string> | null {
+  const heading = VISIBLE_PATTERNS_HEADING_RE.exec(body);
+  if (!heading) {
+    return null;
+  }
+  const markerIndex = body.indexOf(MARKER_PREFIX, heading.index);
+  const section = body.slice(heading.index, markerIndex === -1 ? undefined : markerIndex);
+  const fingerprints = new Set<string>();
+  for (const match of section.matchAll(VISIBLE_PATTERN_RE)) {
+    fingerprints.add(match[1]);
+  }
+  return fingerprints;
 }
 
 /** The muted fingerprints in a learnings store. */
@@ -140,7 +169,7 @@ const ISSUE_INTRO = [
   "- **Re-surface one finding:** delete its line below, then re-run a review.",
   "- **Clear everything / turn it off:** close this issue (prowl-review ignores a closed store).",
   "",
-  "_Maintained automatically by prowl-review. The hidden marker at the bottom is the machine-readable source of truth._"
+  "_Maintained automatically by prowl-review. The visible list above controls which patterns stay muted._"
 ].join("\n");
 
 /** Build the full issue body (visible prose + hidden marker) for a store. */
@@ -160,12 +189,24 @@ function renderBody(state: RepoLearnings): string {
  * together so the visible list never disagrees with the persisted store.
  */
 export function renderLearningsIssueBody(state: RepoLearnings): string {
-  let patterns = [...state.patterns];
-  for (;;) {
-    const body = renderBody({ v: REPO_LEARNINGS_VERSION, patterns });
-    if (body.length <= GITHUB_COMMENT_BODY_LIMIT || patterns.length === 0) {
-      return body;
-    }
-    patterns = patterns.slice(1);
+  const patterns = [...state.patterns];
+  const fullBody = renderBody({ v: REPO_LEARNINGS_VERSION, patterns });
+  if (fullBody.length <= GITHUB_COMMENT_BODY_LIMIT) {
+    return fullBody;
   }
+
+  let low = 0;
+  let high = patterns.length;
+  let bestStart = patterns.length;
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const body = renderBody({ v: REPO_LEARNINGS_VERSION, patterns: patterns.slice(mid) });
+    if (body.length <= GITHUB_COMMENT_BODY_LIMIT || mid === patterns.length) {
+      bestStart = mid;
+      high = mid - 1;
+    } else {
+      low = mid + 1;
+    }
+  }
+  return renderBody({ v: REPO_LEARNINGS_VERSION, patterns: patterns.slice(bestStart) });
 }

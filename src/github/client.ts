@@ -176,6 +176,7 @@ export interface OctokitLike {
         repo: string;
         title: string;
         body: string;
+        labels?: string[];
       }): Promise<{ data: { number: number } }>;
       /** Update an issue's body in place — refreshes the repo-wide learnings store (#30). */
       update(params: {

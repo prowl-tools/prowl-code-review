@@ -11,10 +11,12 @@ import {
   handleIgnore,
   handleResolve,
   handleConfigure,
+  loadRepoLearningsFlag,
   type CommandDispatchDeps,
   type CommentEvent
 } from "../src/cli/commands/command.js";
 import type { OctokitLike } from "../src/github/client.js";
+import { loadConfig } from "../src/config/loader.js";
 
 const ref = { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 };
 const octokit = {} as unknown as OctokitLike;
@@ -1078,6 +1080,32 @@ describe("handleResolve (#26)", () => {
     await handleResolve({ octokit, ref, event: threadEvent, deps });
     expect(deps.fetchLearningEntries).not.toHaveBeenCalled();
     expect(deps.recordLearnings).not.toHaveBeenCalled();
+  });
+});
+
+describe("loadRepoLearningsFlag", () => {
+  it("reads repoLearnings from config loaded on disk", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-cmd-"));
+    try {
+      writeFileSync(join(dir, ".prowl-review.yml"), "review:\n  repoLearnings: true\n");
+
+      await expect(loadRepoLearningsFlag(async () => loadConfig({ cwd: dir }).config)).resolves.toBe(true);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("falls back to false when config loading fails", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(
+      loadRepoLearningsFlag(async () => {
+        throw new Error("bad config");
+      })
+    ).resolves.toBe(false);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("continuing with per-PR mute only"));
+    warn.mockRestore();
   });
 });
 

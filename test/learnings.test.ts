@@ -26,6 +26,14 @@ describe("serializeLearnings / parseLearnings round-trip", () => {
     expect(parseLearnings(serializeLearnings(store))).toEqual(store);
   });
 
+  it("keeps marker boundaries intact when labels contain comment-like text", () => {
+    const state: RepoLearnings = {
+      v: REPO_LEARNINGS_VERSION,
+      patterns: [{ fp: "aaaa1111", label: "Text with --> inside" }]
+    };
+    expect(parseLearnings(serializeLearnings(state))).toEqual(state);
+  });
+
   it("finds the marker embedded in a rendered issue body", () => {
     const body = renderLearningsIssueBody(store);
     expect(parseLearnings(body)).toEqual(store);
@@ -45,6 +53,11 @@ describe("serializeLearnings / parseLearnings round-trip", () => {
 
   it("defaults patterns to an empty array when omitted", () => {
     expect(parseLearnings('<!-- prowl-review:learnings {"v":1} -->')).toEqual({ v: 1, patterns: [] });
+  });
+
+  it("treats the visible list as the editable source of truth", () => {
+    const body = renderLearningsIssueBody(store).replace("- `aaaa1111` — Off-by-one in loop bound\n", "");
+    expect(parseLearnings(body)?.patterns).toEqual([{ fp: "bbbb2222" }]);
   });
 });
 
@@ -127,5 +140,26 @@ describe("renderLearningsIssueBody", () => {
     // Oldest dropped, newest kept.
     expect(learningFingerprints(parsed)).toContain("fp-4999");
     expect(learningFingerprints(parsed)).not.toContain("fp-0");
+    const retained = learningFingerprints(parsed);
+    const firstRetained = Number(retained[0].replace("fp-", ""));
+    expect(retained).toEqual(
+      Array.from({ length: retained.length }, (_unused, index) => `fp-${firstRetained + index}`)
+    );
+  });
+
+  it("terminates cleanly when no single pattern can fit", () => {
+    const body = renderLearningsIssueBody({
+      v: REPO_LEARNINGS_VERSION,
+      patterns: [{ fp: "too-large", label: "x".repeat(GITHUB_COMMENT_BODY_LIMIT) }]
+    });
+
+    expect(body.length).toBeLessThanOrEqual(GITHUB_COMMENT_BODY_LIMIT);
+    expect(parseLearnings(body)).toEqual(emptyLearnings());
+  });
+
+  it("keeps a single fitting pattern without entering the drop path", () => {
+    const state = { v: REPO_LEARNINGS_VERSION, patterns: [{ fp: "single", label: "Fits" }] };
+    const body = renderLearningsIssueBody(state);
+    expect(parseLearnings(body)).toEqual(state);
   });
 });

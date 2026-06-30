@@ -30,6 +30,7 @@ import {
   resolveDebugLogPath,
   DEFAULT_DEBUG_LOG_FILENAME,
   resolveWorkspace,
+  runReviewWithOptions,
   reportReviewCommandResult
 } from "../src/cli/commands/review.js";
 import type { OctokitLike } from "../src/github/client.js";
@@ -207,17 +208,20 @@ describe("review command helpers", () => {
     });
 
     it("fetches an http(s) URL and returns the trimmed body", async () => {
-      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => "  remote rules\n" }));
+      const fetchImpl = vi.fn(async () => new Response("  remote rules\n"));
       const result = await loadOrgGuidelines("https://example.com/guide.md", {
         fetchImpl: fetchImpl as unknown as typeof fetch
       });
       expect(result).toBe("remote rules");
-      expect(fetchImpl).toHaveBeenCalledWith("https://example.com/guide.md", expect.objectContaining({ signal: expect.anything() }));
+      expect(fetchImpl).toHaveBeenCalledWith(
+        "https://example.com/guide.md",
+        expect.objectContaining({ signal: expect.anything(), redirect: "error" })
+      );
     });
 
     it("degrades to undefined (not throw) on a non-OK response", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-      const fetchImpl = vi.fn(async () => ({ ok: false, status: 404, text: async () => "nope" }));
+      const fetchImpl = vi.fn(async () => new Response("nope", { status: 404 }));
       expect(
         await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
       ).toBeUndefined();
@@ -240,7 +244,36 @@ describe("review command helpers", () => {
     it("rejects an oversized response", async () => {
       const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const huge = "x".repeat(ORG_GUIDELINES_MAX_BYTES + 1);
-      const fetchImpl = vi.fn(async () => ({ ok: true, status: 200, text: async () => huge }));
+      const fetchImpl = vi.fn(async () => new Response(huge));
+      expect(
+        await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).toBeUndefined();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("exceeds"));
+      warn.mockRestore();
+    });
+
+    it("rejects URLs targeting local or private hosts before fetching", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchImpl = vi.fn(async () => new Response("local rules"));
+
+      await expect(
+        loadOrgGuidelines("https://127.0.0.1/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).resolves.toBeUndefined();
+      await expect(
+        loadOrgGuidelines("https://localhost/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
+      ).resolves.toBeUndefined();
+
+      expect(fetchImpl).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("publicly routable"));
+      warn.mockRestore();
+    });
+
+    it("enforces the URL size limit in bytes, not UTF-16 characters", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const multiByteBody = "€".repeat(Math.floor(ORG_GUIDELINES_MAX_BYTES / 2));
+      expect(multiByteBody.length).toBeLessThan(ORG_GUIDELINES_MAX_BYTES);
+      const fetchImpl = vi.fn(async () => new Response(multiByteBody));
+
       expect(
         await loadOrgGuidelines("https://example.com/guide.md", { fetchImpl: fetchImpl as unknown as typeof fetch })
       ).toBeUndefined();
@@ -1018,6 +1051,40 @@ describe("review command action env helpers", () => {
     });
 
     expect(logSpy.mock.calls.some(([line]) => String(line).includes("validated against 0 linked issue(s)"))).toBe(true);
+  });
+
+  it("awaits org-guideline loading and passes composed guidelines into the review run (#30)", async () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(
+      eventPath,
+      JSON.stringify({
+        repository: { full_name: "prowl-tools/prowl-code-review" },
+        pull_request: {
+          number: 7,
+          draft: false,
+          head: { sha: "head-sha", repo: { fork: false, full_name: "prowl-tools/prowl-code-review" } },
+          base: { repo: { full_name: "prowl-tools/prowl-code-review" } }
+        }
+      })
+    );
+    process.env.GITHUB_TOKEN = "token";
+    process.env.PROWL_AI_KEY = "provider-key";
+    process.env.GITHUB_REPOSITORY = "prowl-tools/prowl-code-review";
+    process.env.GITHUB_EVENT_PATH = eventPath;
+    process.env.PROWL_ORG_GUIDELINES_PATH = "https://example.com/org.md";
+    process.env.PROWL_WORKSPACE = dir;
+
+    const loadOrgGuidelinesDep = vi.fn(async () => "org rules");
+    const reviewPullRequestDep = vi.fn(async () => reviewCommandResult());
+
+    await runReviewWithOptions(
+      { repo: "prowl-tools/prowl-code-review", pr: "7", dryRun: true, config: false },
+      { loadOrgGuidelines: loadOrgGuidelinesDep, reviewPullRequest: reviewPullRequestDep }
+    );
+
+    expect(loadOrgGuidelinesDep).toHaveBeenCalledWith("https://example.com/org.md");
+    expect(reviewPullRequestDep.mock.calls[0][2]).toEqual(expect.objectContaining({ guidelines: "org rules" }));
   });
 
   it("prices ensemble runs with each provider's own model and usage", () => {

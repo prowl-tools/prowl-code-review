@@ -259,6 +259,7 @@ export {
   emptyLearnings,
   REPO_LEARNINGS_VERSION,
   LEARNINGS_ISSUE_TITLE,
+  LEARNINGS_ISSUE_LABEL,
   RepoLearningsSchema,
   type RepoLearnings,
   type RepoLearningEntry
