@@ -1,0 +1,26 @@
+# Caller for the reusable command workflow (#37).
+# Copy to .github/workflows/prowl-review-command.yml in each repo that should
+# answer @prowl-review commands. The whole per-repo file is below.
+name: prowl-review command
+
+on:
+  issue_comment:
+    types: [created]
+  # Uncomment to also answer inline review-comment commands (each inline comment
+  # creates a workflow run):
+  # pull_request_review_comment:
+  #   types: [created]
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  command:
+    uses: Prowl-qa/.github/.github/workflows/prowl-review-command.yml@v1
+    secrets: inherit
+    # with:
+    #   min-severity: major
+    #   ai-provider: anthropic

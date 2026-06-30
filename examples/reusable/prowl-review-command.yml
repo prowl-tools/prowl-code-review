@@ -1,0 +1,141 @@
+# Reusable prowl-review command workflow (#37) — handles @prowl-review chat
+# commands + questions on pull requests (#26, #27).
+#
+# Install this ONCE in your org's `.github` repository as
+#   .github/workflows/prowl-review-command.yml
+# then every repo calls it in a few lines — see `caller-prowl-review-command.yml`.
+#
+# The job-level `if` only spins up a runner for trusted maintainer mentions; the
+# tool independently re-checks author trust as defense in depth.
+name: prowl-review command (reusable)
+
+on:
+  workflow_call:
+    inputs:
+      ai-provider:
+        type: string
+        required: false
+        default: ""
+      ai-model:
+        type: string
+        required: false
+        default: ""
+      min-severity:
+        description: "Drop findings below this severity (critical|major|minor|trivial|info)."
+        type: string
+        required: false
+        default: ""
+      config-path:
+        description: "Trusted .prowl-review.yml path (e.g. prowl-base/.prowl-review.yml). Blank ignores repo config."
+        type: string
+        required: false
+        default: ""
+      org-guidelines-path:
+        type: string
+        required: false
+        default: ""
+      runs-on:
+        type: string
+        required: false
+        default: "ubuntu-latest"
+    secrets:
+      PROWL_AI_KEY:
+        required: false
+      PROWL_AI_KEY_ANTHROPIC:
+        required: false
+      PROWL_AI_KEY_OPENAI:
+        required: false
+      PROWL_AI_KEY_GEMINI:
+        required: false
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  command:
+    # Only PR comments (top-level or inline) from a trusted maintainer that mention
+    # the bot; never plain issue comments, bot comments, or our own marker comments.
+    if: |
+      (github.event.issue.pull_request || github.event.pull_request) &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review') &&
+      !contains(github.event.comment.body, '<!-- prowl-review:summary -->') &&
+      !contains(github.event.comment.body, '<!-- prowl-review:finding ')
+    runs-on: ${{ inputs.runs-on }}
+    # Serialize commands with auto reviews for the same PR so publishing + dedupe
+    # cannot race. The PR number comes from `issue` (issue_comment) or
+    # `pull_request` (pull_request_review_comment).
+    concurrency:
+      group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
+      queue: max
+      cancel-in-progress: false
+    steps:
+      - name: Resolve PR metadata
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="${{ github.event.issue.number || github.event.pull_request.number }}"
+          IFS=$'\t' read -r base_sha head_sha head_repo < <(
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha // "", .head.sha // "", .head.repo.full_name // ""] | @tsv'
+          )
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] || \
+            [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] || \
+            [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
+            echo "Failed to resolve complete PR metadata for #${pr_number}." >&2
+            exit 1
+          fi
+          echo "base_sha=${base_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_sha=${head_sha}" >> "$GITHUB_OUTPUT"
+          echo "head_repo=${head_repo}" >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping command from fork PR head ${head_repo}."
+          fi
+
+      - name: Checkout trusted base (config + guidelines)
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.base_sha }}
+          path: prowl-base
+          persist-credentials: false
+
+      - name: Checkout PR head for context
+        if: steps.pr.outputs.trusted_head == 'true'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.pr.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+
+      - name: prowl-review command
+        if: steps.pr.outputs.trusted_head == 'true'
+        uses: prowl-tools/prowl-code-review@v1
+        env:
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
+        with:
+          mode: command
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
+          ai-key-openai: ${{ secrets.PROWL_AI_KEY_OPENAI }}
+          ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
+          ai-provider: ${{ inputs.ai-provider }}
+          ai-model: ${{ inputs.ai-model }}
+          min-severity: ${{ inputs.min-severity }}
+          config-path: ${{ inputs.config-path }}
+          guidelines-path: ${{ github.workspace }}/prowl-base
+          org-guidelines-path: ${{ inputs.org-guidelines-path }}
+          workspace-path: ${{ github.workspace }}/pr-head
