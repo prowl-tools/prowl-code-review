@@ -95,6 +95,8 @@ export {
   listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
+  findDefinition,
+  findReferences,
   RepoAccessError,
   DEFAULT_IGNORE,
   type ToolkitOptions,
@@ -102,7 +104,8 @@ export {
   type ReadFileResult,
   type SearchMatch,
   type SearchOptions,
-  type SearchResult
+  type SearchResult,
+  type SymbolSearchOptions
 } from "./context/tools.js";
 export {
   ContextRetrievalError,
@@ -373,6 +376,7 @@ export type {
 export {
   LANGUAGES,
   detectLanguage,
+  isLanguageId,
   isJavaScriptFamily,
   summarizeLanguages,
   type LanguageId,
