@@ -3,6 +3,7 @@ import {
   parseLearnings,
   serializeLearnings,
   mergeLearnings,
+  fitLearningsIssueBody,
   renderLearningsIssueBody,
   learningFingerprints,
   emptyLearnings,
@@ -172,6 +173,19 @@ describe("renderLearningsIssueBody", () => {
     expect(retained).toEqual(
       Array.from({ length: retained.length }, (_unused, index) => `fp-${firstRetained + index}`)
     );
+  });
+
+  it("reports the fitted persisted state and dropped count", () => {
+    const patterns = Array.from({ length: 5000 }, (_unused, index) => ({
+      fp: `fp-${index}`,
+      label: `A reasonably long finding label number ${index} to push the body past the limit`
+    }));
+    const fitted = fitLearningsIssueBody({ v: REPO_LEARNINGS_VERSION, patterns });
+
+    expect(fitted.body.length).toBeLessThanOrEqual(GITHUB_COMMENT_BODY_LIMIT);
+    expect(fitted.learnings).toEqual(parseLearnings(fitted.body));
+    expect(fitted.dropped).toBe(patterns.length - fitted.learnings.patterns.length);
+    expect(fitted.dropped).toBeGreaterThan(0);
   });
 
   it("terminates cleanly when no single pattern can fit", () => {

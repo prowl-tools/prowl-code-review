@@ -13,10 +13,11 @@ import {
 import {
   LEARNINGS_ISSUE_LABEL,
   LEARNINGS_ISSUE_TITLE,
+  REPO_LEARNINGS_VERSION,
+  fitLearningsIssueBody,
   learningFingerprints,
   mergeLearnings,
   parseLearnings,
-  renderLearningsIssueBody,
   type RepoLearningEntry,
   type RepoLearnings
 } from "../review/learnings.js";
@@ -888,7 +889,12 @@ export async function recordRepoLearnings(
   entries: RepoLearningEntry[],
   botLogin?: string
 ): Promise<{ added: number }> {
-  if (entries.length === 0) {
+  const renderableEntries = entries.filter((entry) =>
+    fitLearningsIssueBody({ v: REPO_LEARNINGS_VERSION, patterns: [entry] }).learnings.patterns.some(
+      (pattern) => pattern.fp === entry.fp
+    )
+  );
+  if (renderableEntries.length === 0) {
     return { added: 0 };
   }
   const login = await getAuthenticatedLogin(octokit, botLogin);
@@ -898,29 +904,48 @@ export async function recordRepoLearnings(
 
   for (let attempt = 1; attempt <= LEARNINGS_WRITE_ATTEMPTS; attempt += 1) {
     const existing = await findLearningsIssue(octokit, ref, login);
-    const { learnings, added } = mergeLearnings(existing?.learnings ?? null, entries);
+    const existingFingerprints = new Set(learningFingerprints(existing?.learnings));
+    const requestedFingerprints = new Set(renderableEntries.map((entry) => entry.fp));
+    const { learnings, added } = mergeLearnings(existing?.learnings ?? null, renderableEntries);
     if (added === 0) {
       return { added: 0 };
     }
-    const body = renderLearningsIssueBody(learnings);
+    const fitted = fitLearningsIssueBody(learnings);
+    const persistedFingerprints = new Set(learningFingerprints(fitted.learnings));
+    const persistedAdded = [...requestedFingerprints].filter(
+      (fingerprint) => !existingFingerprints.has(fingerprint) && persistedFingerprints.has(fingerprint)
+    ).length;
+    if (persistedAdded === 0) {
+      return { added: 0 };
+    }
 
     try {
       if (existing) {
-        await octokit.rest.issues.update({ owner: ref.owner, repo: ref.repo, issue_number: existing.number, body });
+        await octokit.rest.issues.update({
+          owner: ref.owner,
+          repo: ref.repo,
+          issue_number: existing.number,
+          body: fitted.body
+        });
       } else {
         try {
           await octokit.rest.issues.create({
             owner: ref.owner,
             repo: ref.repo,
             title: LEARNINGS_ISSUE_TITLE,
-            body,
+            body: fitted.body,
             labels: [LEARNINGS_ISSUE_LABEL]
           });
         } catch {
-          await octokit.rest.issues.create({ owner: ref.owner, repo: ref.repo, title: LEARNINGS_ISSUE_TITLE, body });
+          await octokit.rest.issues.create({
+            owner: ref.owner,
+            repo: ref.repo,
+            title: LEARNINGS_ISSUE_TITLE,
+            body: fitted.body
+          });
         }
       }
-      return { added };
+      return { added: persistedAdded };
     } catch (error) {
       if (attempt === LEARNINGS_WRITE_ATTEMPTS) {
         throw error;

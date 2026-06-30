@@ -152,20 +152,79 @@ function isBlockedIpv4(address: string): boolean {
   );
 }
 
-function isBlockedIpv6(address: string): boolean {
-  const normalized = address.toLowerCase();
-  if (normalized.startsWith("::ffff:")) {
-    const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
-    return mapped ? isBlockedIpv4(mapped[1]) : true;
+function ipv4ToIpv6Groups(address: string): [number, number] | null {
+  const parts = address.split(".").map((part) => Number(part));
+  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+    return null;
   }
+  return [(parts[0] << 8) | parts[1], (parts[2] << 8) | parts[3]];
+}
+
+function parseIpv6Groups(address: string): number[] | null {
+  const withoutZone = address.toLowerCase().split("%", 1)[0];
+  const lastColon = withoutZone.lastIndexOf(":");
+  let normalized = withoutZone;
+  if (lastColon !== -1 && withoutZone.slice(lastColon + 1).includes(".")) {
+    const embeddedIpv4 = withoutZone.slice(lastColon + 1);
+    const ipv4Groups = ipv4ToIpv6Groups(embeddedIpv4);
+    if (!ipv4Groups) {
+      return null;
+    }
+    normalized = `${withoutZone.slice(0, lastColon)}:${ipv4Groups[0].toString(16)}:${ipv4Groups[1].toString(16)}`;
+  }
+
+  const parts = normalized.split("::");
+  if (parts.length > 2) {
+    return null;
+  }
+  const hasCompression = parts.length === 2;
+  const parseSide = (side: string): number[] | null => {
+    if (!side) {
+      return [];
+    }
+    const groups = side.split(":");
+    const parsed = groups.map((group) => (/^[0-9a-f]{1,4}$/.test(group) ? Number.parseInt(group, 16) : Number.NaN));
+    return parsed.some((group) => !Number.isInteger(group) || group < 0 || group > 0xffff) ? null : parsed;
+  };
+  const left = parseSide(parts[0]);
+  const right = parseSide(parts[1] ?? "");
+  if (!left || !right) {
+    return null;
+  }
+  if (!hasCompression) {
+    return left.length === 8 ? left : null;
+  }
+  const missing = 8 - left.length - right.length;
+  if (missing < 1) {
+    return null;
+  }
+  return [...left, ...Array.from({ length: missing }, () => 0), ...right];
+}
+
+function ipv4FromIpv6Tail(groups: number[]): string {
+  return `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`;
+}
+
+function isBlockedIpv6(address: string): boolean {
+  const groups = parseIpv6Groups(address);
+  if (!groups) {
+    return true;
+  }
+  const first = groups[0];
   if (
-    normalized === "::" ||
-    normalized === "::1" ||
-    normalized.startsWith("fe80:") ||
-    normalized.startsWith("fc") ||
-    normalized.startsWith("fd") ||
-    normalized.startsWith("2001:db8:")
+    groups.every((group) => group === 0) ||
+    (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) ||
+    (first & 0xffc0) === 0xfe80 ||
+    (first & 0xfe00) === 0xfc00 ||
+    (first & 0xff00) === 0xff00 ||
+    (first === 0x2001 && groups[1] === 0x0db8)
   ) {
+    return true;
+  }
+  if (groups.slice(0, 5).every((group) => group === 0) && groups[5] === 0xffff) {
+    return isBlockedIpv4(ipv4FromIpv6Tail(groups));
+  }
+  if (groups.slice(0, 6).every((group) => group === 0)) {
     return true;
   }
   return false;
