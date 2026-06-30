@@ -105,6 +105,68 @@ describe("gatherContext", () => {
     expect(result.usage.inputTokens).toBe(2);
   });
 
+  it("resolves a definition via find_definition (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output).toBeDefined();
+    expect(output?.input).toMatchObject({ symbol: "a" });
+    expect(output?.content).toContain("src/a.ts:1");
+    // The fixture's .env is sensitive, so it's skipped (not an error).
+    expect(result.notes.every((n) => !/error/i.test(n))).toBe(true);
+  });
+
+  it("finds references via find_references (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_references", input: { symbol: "a" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    const output = result.toolOutputs.find((o) => o.tool === "find_references");
+    expect(output?.content).toContain("src/a.ts");
+  });
+
+  it("notes an unknown language hint but still resolves the symbol (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a", language: "klingon" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    expect(result.notes.some((n) => n.includes("Ignored unknown language 'klingon'"))).toBe(true);
+    expect(result.toolOutputs.find((o) => o.tool === "find_definition")?.content).toContain("src/a.ts:1");
+  });
+
+  it("surfaces an invalid-symbol error as a note without throwing (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a b" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    expect(result.notes.some((n) => n.includes("find_definition error"))).toBe(true);
+  });
+
+  it("requires a symbol for find_definition (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: {} }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+    // No tool output recorded; the model is told it needs a symbol.
+    expect(result.toolOutputs.find((o) => o.tool === "find_definition")).toBeUndefined();
+  });
+
   it("preserves accumulated usage when a later provider round fails", async () => {
     const run = vi
       .fn()
