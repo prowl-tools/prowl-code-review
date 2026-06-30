@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   detectLanguage,
   isJavaScriptFamily,
+  isLanguageId,
   summarizeLanguages,
   LANGUAGES
 } from "../src/review/language.js";
@@ -84,5 +85,20 @@ describe("summarizeLanguages (#5)", () => {
 
   it("omits inherited object keys before stable sorting", () => {
     expect(summarizeLanguages(["a.go", "b.constructor"])).toEqual([{ id: "go", label: "Go", files: 1 }]);
+  });
+});
+
+describe("isLanguageId (#5)", () => {
+  it("accepts known language ids", () => {
+    expect(isLanguageId("typescript")).toBe(true);
+    expect(isLanguageId("python")).toBe(true);
+    expect(isLanguageId("go")).toBe(true);
+  });
+
+  it("rejects unknown values and inherited keys", () => {
+    expect(isLanguageId("klingon")).toBe(false);
+    expect(isLanguageId("")).toBe(false);
+    expect(isLanguageId("constructor")).toBe(false);
+    expect(isLanguageId("hasOwnProperty")).toBe(false);
   });
 });

@@ -13,13 +13,19 @@ import {
   type TokenUsage
 } from "../providers/index.js";
 import {
+  findDefinition,
+  findReferences,
   listRepoFilesDetailed,
   readRepoFile,
   searchRepo,
+  type SearchResult,
+  type SymbolSearchOptions,
   type ToolkitOptions
 } from "./tools.js";
 import { isSensitiveFile, redactSecrets } from "../review/redact.js";
+import { isLanguageId } from "../review/language.js";
 import { totalTokens } from "../cost/pricing.js";
+import { z } from "zod";
 
 /**
  * Agentic cross-file context retrieval (backlog #4, the #1 bug-catching lever).
@@ -30,6 +36,39 @@ import { totalTokens } from "../cost/pricing.js";
  * error, or limit) is returned so it can be added to the cached review prompt
  * and reported (core principle #5).
  */
+
+const SymbolToolInputSchema = z.object({
+  symbol: z.string().min(1).describe("Symbol name to locate."),
+  dir: z.string().optional().describe("Optional subdirectory to limit the search."),
+  language: z
+    .string()
+    .optional()
+    .describe("Optional language id (e.g. typescript, python, go) to restrict the search for precision.")
+});
+
+function toolParametersFromSchema(schema: z.ZodObject<z.ZodRawShape>): Record<string, unknown> {
+  const properties: Record<string, Record<string, string>> = {};
+  const required: string[] = [];
+
+  for (const [name, field] of Object.entries(schema.shape)) {
+    const zodField = field as z.ZodTypeAny;
+    properties[name] = {
+      type: "string",
+      ...(zodField.description ? { description: zodField.description } : {})
+    };
+    if (!zodField.safeParse(undefined).success) {
+      required.push(name);
+    }
+  }
+
+  return {
+    type: "object",
+    properties,
+    ...(required.length > 0 ? { required } : {})
+  };
+}
+
+const SYMBOL_TOOL_PARAMETERS = toolParametersFromSchema(SymbolToolInputSchema);
 
 /** Tool definitions advertised to the model (provider-agnostic). */
 export const REVIEW_TOOLS: ToolDefinition[] = [
@@ -66,6 +105,18 @@ export const REVIEW_TOOLS: ToolDefinition[] = [
         dir: { type: "string", description: "Optional subdirectory (defaults to repo root)." }
       }
     }
+  },
+  {
+    name: "find_definition",
+    description:
+      "Find where a symbol (function/class/type/variable) is likely DEFINED. Sharper than search_repo for locating a declaration. Returns path:line: text matches.",
+    parameters: SYMBOL_TOOL_PARAMETERS
+  },
+  {
+    name: "find_references",
+    description:
+      "Find REFERENCES to a symbol — definitions and call sites — to see who depends on the changed code. Returns path:line: text matches.",
+    parameters: SYMBOL_TOOL_PARAMETERS
   }
 ];
 
@@ -85,7 +136,7 @@ export interface RetrievedFile {
 }
 
 export interface RetrievedToolOutput {
-  tool: "search_repo" | "list_files";
+  tool: "search_repo" | "list_files" | "find_definition" | "find_references";
   input: Record<string, string>;
   content: string;
   truncated: boolean;
@@ -104,6 +155,19 @@ export interface GatheredContext {
   reachedLimit: boolean;
   /** Human-readable notes: errors, truncations, limit hits (never silent). */
   notes: string[];
+}
+
+function formatToolOutput(output: RetrievedToolOutput): string {
+  return [`# ${output.tool} output`, `Input: ${JSON.stringify(output.input)}`, output.content].join("\n");
+}
+
+/** Format fetched files and non-file tool outputs for the reviewer prompt. */
+export function formatGatheredContext(gathered: Pick<GatheredContext, "files" | "toolOutputs">): string | undefined {
+  const sections = [
+    ...gathered.files.map((file) => `# ${file.path}\n${file.content}`),
+    ...gathered.toolOutputs.map((output) => formatToolOutput(output))
+  ];
+  return sections.length > 0 ? sections.join("\n\n") : undefined;
 }
 
 export interface GatherContextParams {
@@ -164,8 +228,10 @@ function seedPrompt(changedPaths: string[]): string {
     "",
     "Use the tools to read the definitions and callers of the changed code, plus any",
     "closely related files needed to catch broken callers, contract/interface",
-    "violations, and inconsistent patterns. Fetch only what is relevant. When you",
-    "have enough context, reply without calling any tools."
+    "violations, and inconsistent patterns. Prefer find_definition to locate where a",
+    "symbol is declared and find_references to find its call sites; fall back to",
+    "search_repo for free-form patterns. Fetch only what is relevant. When you have",
+    "enough context, reply without calling any tools."
   ].join("\n");
 }
 
@@ -264,6 +330,55 @@ function executeTool(
       toolOutputs.push({
         tool: "list_files",
         input: { dir },
+        content,
+        truncated: result.truncated
+      });
+      return toolExecution(content, result.truncated);
+    }
+
+    if (call.name === "find_definition" || call.name === "find_references") {
+      const parsedInput = SymbolToolInputSchema.safeParse(call.input);
+      if (!parsedInput.success) {
+        return toolExecution(`Error: ${call.name} requires a non-empty 'symbol'.`);
+      }
+      const { symbol } = parsedInput.data;
+      const dir = parsedInput.data.dir ?? ".";
+      const languageInput = parsedInput.data.language ?? "";
+      const language = languageInput && isLanguageId(languageInput) ? languageInput : undefined;
+      if (languageInput && !language) {
+        notes.push(`Ignored unknown language '${languageInput}' for ${call.name}`);
+      }
+      const symbolOptions: SymbolSearchOptions = {
+        dir,
+        ...(language ? { language } : {}),
+        shouldSearchFile: (path) => !isSensitiveFile(path)
+      };
+      // Symbol tools reuse searchRepo's regex-complexity + repo-root guards.
+      const result: SearchResult =
+        call.name === "find_definition"
+          ? findDefinition(options, symbol, symbolOptions)
+          : findReferences(options, symbol, symbolOptions);
+      const safeMatches = result.matches.filter((match) => !isSensitiveFile(match.path));
+      const skippedSensitive = result.matches.length - safeMatches.length;
+      if ((result.skippedFiles ?? 0) > 0) {
+        notes.push(`Skipped ${result.skippedFiles} file(s) during ${call.name} due to search filters`);
+      }
+      if (skippedSensitive > 0) {
+        notes.push(`Skipped ${skippedSensitive} ${call.name} result(s) from sensitive file(s)`);
+      }
+      const rawBody = safeMatches.map((m) => `${m.path}:${m.line}: ${m.text}`).join("\n");
+      const { text: body, count: redactions } = redactSecrets(rawBody);
+      if (redactions > 0) {
+        notes.push(`Redacted ${redactions} secret(s) from ${call.name} results`);
+      }
+      const noMatch = call.name === "find_definition" ? "(no definition found)" : "(no references found)";
+      const content = (body || noMatch) + (result.truncated ? "\n…[more matches omitted]" : "");
+      if (result.truncated) {
+        notes.push(`${call.name} results truncated for '${symbol}' under ${dir}`);
+      }
+      toolOutputs.push({
+        tool: call.name,
+        input: { symbol, dir, ...(language ? { language } : {}) },
         content,
         truncated: result.truncated
       });

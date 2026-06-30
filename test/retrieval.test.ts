@@ -22,8 +22,10 @@ const USAGE = { inputTokens: 1, outputTokens: 1, cachedInputTokens: 0 };
 beforeAll(() => {
   root = mkdtempSync(join(tmpdir(), "prowl-retrieval-"));
   mkdirSync(join(root, "src"));
+  mkdirSync(join(root, "py"));
   writeFileSync(join(root, "src", "a.ts"), "export const a = 1;\n");
   writeFileSync(join(root, "src", "b.ts"), "export const b = 2;\n");
+  writeFileSync(join(root, "py", "a.py"), "def a():\n    return 1\n");
   writeFileSync(
     join(root, ".env"),
     "API_KEY=AKIAIOSFODNN7EXAMPLE\nDATABASE_URL=postgres://user:pass@host/db\n"
@@ -103,6 +105,89 @@ describe("gatherContext", () => {
       { path: "src/a.ts", content: "export const a = 1;\n", truncated: false }
     ]);
     expect(result.usage.inputTokens).toBe(2);
+  });
+
+  it("resolves a definition via find_definition (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output).toBeDefined();
+    expect(output?.input).toMatchObject({ symbol: "a" });
+    expect(output?.content).toContain("src/a.ts:1");
+    // The fixture's .env is sensitive, so it's skipped (not an error).
+    expect(result.notes.every((n) => !/error/i.test(n))).toBe(true);
+  });
+
+  it("finds references via find_references (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_references", input: { symbol: "a" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    const output = result.toolOutputs.find((o) => o.tool === "find_references");
+    expect(output?.content).toContain("src/a.ts");
+  });
+
+  it("notes an unknown language hint but still resolves the symbol (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a", language: "klingon" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    expect(result.notes.some((n) => n.includes("Ignored unknown language 'klingon'"))).toBe(true);
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output?.content).toContain("src/a.ts:1");
+    expect(output?.input).toEqual({ symbol: "a", dir: "." });
+  });
+
+  it("records only applied language filters in symbol tool output (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a", language: "typescript" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    const output = result.toolOutputs.find((o) => o.tool === "find_definition");
+    expect(output?.input).toEqual({
+      symbol: "a",
+      dir: ".",
+      language: "typescript"
+    });
+    expect(output?.content).toContain("src/a.ts:1");
+    expect(output?.content).not.toContain("py/a.py");
+    expect(result.notes.some((n) => n.includes("due to search filters"))).toBe(true);
+  });
+
+  it("surfaces an invalid-symbol error as a note without throwing (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: { symbol: "a b" } }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+
+    expect(result.notes.some((n) => n.includes("find_definition error"))).toBe(true);
+  });
+
+  it("requires a symbol for find_definition (#5)", async () => {
+    const run = scripted([
+      toolUse([{ id: "c1", name: "find_definition", input: {} }]),
+      end()
+    ]);
+
+    const result = await gatherContext({ toolkit: { root }, changedPaths: ["src/a.ts"], config, runCompletion: run });
+    // No tool output recorded; the model is told it needs a symbol.
+    expect(result.toolOutputs.find((o) => o.tool === "find_definition")).toBeUndefined();
   });
 
   it("preserves accumulated usage when a later provider round fails", async () => {

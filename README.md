@@ -438,6 +438,30 @@ consensus too). Fetching is tolerant: a missing or inaccessible issue (or one
 that's actually a PR) is skipped with a note. Cross-tracker support
 (Linear/Jira) is a future extension.
 
+## Cross-file context (#4/#5)
+
+The biggest bug-catching lever is **agentic cross-file context**: instead of an
+embeddings index or a vector DB, the reviewer is handed sandboxed, bounded tools
+over the checked-out repo and decides what to fetch on demand — catching broken
+callers, contract/interface violations, and inconsistent patterns that a
+diff-only review misses. The tools are `read_file`, `search_repo` (regex grep),
+`list_files`, and two **language-aware symbol tools** (#5):
+
+- **`find_definition`** — locate where a symbol (function/class/type/variable) is
+  *declared*, using definition-shaped patterns per language (e.g. `function`/
+  `class`/`const`, `def`, `func`, `fn`, Go receiver methods, assigned arrow
+  functions, modifier-led typed methods) across the 23 detected languages —
+  sharper than a bare grep for "where is X defined."
+- **`find_references`** — find a symbol's call sites and other references, so the
+  agent can see who depends on the changed code.
+
+Both accept an optional `language` to narrow the search for precision and inherit
+every guard of the grep primitive (repo-root confinement, symlink/ignore
+rejection, binary skip, bounded matches, secret redaction, sensitive-file
+skipping). This deliberately delivers AST-grade caller/definition lookup
+**without a tree-sitter/WASM dependency**, keeping the "agentic grep, no heavy
+infra" design (no indexing step, nothing extra shipped).
+
 ## Semgrep SAST grounding (#16b)
 
 Alongside ESLint (JS/TS), Ruff (Python), and Gitleaks (secrets), prowl-review
