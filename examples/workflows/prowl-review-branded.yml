@@ -1,0 +1,46 @@
+# Example: auto-review posting under a BRANDED bot identity (#59).
+#
+# By default prowl-review posts as `github-actions[bot]`. To post as your own
+# `prowl-review[bot]` with a custom avatar (like CodeRabbit/Greptile), register a
+# GitHub App, install it on this repo, and store its credentials as secrets:
+#   - PROWL_APP_ID           (the App's numeric id)
+#   - PROWL_APP_PRIVATE_KEY  (the App's generated .pem private key)
+# The App needs pull-requests: write, issues: write, and (optional) checks: write.
+#
+# Copy to .github/workflows/prowl-review.yml. No core-tool change — this just
+# mints an App installation token and hands it to the Action.
+name: prowl-review
+
+on:
+  pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  review:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      # Mint a short-lived installation token so comments post as <app-slug>[bot]
+      # with the App's avatar, instead of github-actions[bot].
+      - name: Mint prowl-review app token
+        id: app-token
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PROWL_APP_ID }}
+          private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+
+      - uses: actions/checkout@v4
+
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          ai-key: ${{ secrets.PROWL_AI_KEY }}
+          # Post under the branded identity. bot-login must match the App's login
+          # (its slug + "[bot]") so update-not-duplicate finds prior comments.
+          github-token: ${{ steps.app-token.outputs.token }}
+          bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
