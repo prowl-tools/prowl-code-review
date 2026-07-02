@@ -47,6 +47,11 @@ on:
         required: false
       PROWL_AI_KEY_GEMINI:
         required: false
+      # Optional branded identity (#59): set both to reply as your <app-slug>[bot].
+      PROWL_APP_ID:
+        required: false
+      PROWL_APP_PRIVATE_KEY:
+        required: false
 
 permissions:
   pull-requests: write
@@ -78,6 +83,23 @@ jobs:
       queue: max
       cancel-in-progress: false
     steps:
+      # Branded identity (#59): mint an App token when PROWL_APP_ID is set.
+      - name: Detect branded app config
+        id: brand
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.PROWL_APP_ID }}
+        run: |
+          if [ -n "${APP_ID}" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+
+      - name: Mint prowl-review app token
+        id: app-token
+        if: steps.brand.outputs.enabled == 'true'
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PROWL_APP_ID }}
+          private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+
       - name: Resolve PR metadata
         id: pr
         env:
@@ -135,6 +157,9 @@ jobs:
           ai-provider: ${{ inputs.ai-provider }}
           ai-model: ${{ inputs.ai-model }}
           min-severity: ${{ inputs.min-severity }}
+          # Branded App token when configured; otherwise the default Actions token.
+          github-token: ${{ steps.app-token.outputs.token || github.token }}
+          bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}
           config-path: ${{ inputs.config-path }}
           guidelines-path: ${{ github.workspace }}/prowl-base
           org-guidelines-path: ${{ inputs.org-guidelines-path }}
