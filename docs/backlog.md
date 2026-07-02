@@ -44,12 +44,18 @@ _No open high-priority items._
 47. **Phase 2 — Hosted GitHub App (install-once)**
     As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
     - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Deferred until the Action path is proven.
-    - Acceptance: register the GitHub App with the **raccoon avatar + display name** so reviews post under a branded `prowl-review[bot]` identity (CodeRabbit/Codex-style branding) instead of `github-actions[bot]` — a GitHub Action can't customize the bot avatar, so this branding only lands via the App.
+    - Acceptance: managed install-once UX (no per-repo workflows). The **branded `prowl-review[bot]` identity + raccoon avatar** does *not* require this hosted service — it's achievable on the current Action path via a GitHub App token (see #59); this item is the hosted service, which would also post under that same App identity.
 
 48. **Watch & adopt delegated-API OAuth if a provider ships it**
     As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
     - Acceptance: tracking note records that no provider offers delegated-API OAuth as of 2026-06 (OpenAI "Sign in with ChatGPT" = identity only).
     - Acceptance: when a real authorization-code flow yielding delegated API access (billed to the user's own account) ships, add it as a first-class auth option behind the provider abstraction.
+
+59. **Branded bot identity via a GitHub App token (Action path)**
+    As a user, I want prowl-review's PR comments to post under a branded `prowl-review[bot]` identity with our raccoon avatar (like CodeRabbit/Greptile), so that reviews look first-class and clearly attributable — without waiting on the hosted App (#47).
+    - **Done (buildable parts):** a branded example workflow (`examples/workflows/prowl-review-branded.yml`) that mints an installation token with `actions/create-github-app-token` and passes it to the Action via `github-token` (+ `bot-login` derived from the app slug); optional App-token support in the reusable org templates (`examples/reusable/*`), gated on `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets and falling back to the default token when absent; README + docs "Branded bot identity" section. The Action already accepts `github-token` / `bot-login`, so no core code change is needed.
+    - Acceptance (remaining, operational): **register the GitHub App** ("Prowl Review" name + raccoon avatar), grant it `pull-requests` / `issues` / `checks` write, install it on the target repos/org, and add the `PROWL_APP_ID` + `PROWL_APP_PRIVATE_KEY` secrets; then use the branded workflow (or set those secrets on the reusable-template caller). Optionally wire the dogfood workflows to post branded once the App exists.
+    - Note: distinct from #47 (the *hosted* install-once App). This is the Phase-1 branding path on the existing Action; #47 remains the managed-service phase and would post under the same App identity.
 
 ---
 

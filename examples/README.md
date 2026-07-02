@@ -18,6 +18,15 @@ the recommended patterns from the [main README](../README.md).
 5. Open a pull request — prowl-review posts a walkthrough summary + inline
    comments.
 
+## Branded bot identity (#59)
+
+Want reviews to post as your own `prowl-review[bot]` with a custom avatar instead
+of `github-actions[bot]`? Register a GitHub App, add `PROWL_APP_ID` /
+`PROWL_APP_PRIVATE_KEY` secrets, and use
+[`workflows/prowl-review-branded.yml`](workflows/prowl-review-branded.yml) (it mints
+an App token and passes it to the Action). See the "Branded bot identity" section
+of the [main README](../README.md).
+
 ## Org-wide rollout (one reusable workflow, #37)
 
 Running prowl-review across many repos? Instead of copy-pasting the full workflow
