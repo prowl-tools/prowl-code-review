@@ -30,27 +30,6 @@ _No open high-priority items._
     - Acceptance: dedicated Docusaurus site (own repo) with getting-started + the differentiators + config/commands reference; **port the ready-made auth + privacy content** from [`docs/auth.md`](./auth.md) and [`docs/privacy.md`](./privacy.md) (#38/#40, done) as site pages; raccoon/brand conventions; "made for agents, controlled by humans" framing.
     - Acceptance: update `prowl-web`'s `Suite.tsx` Code Review tile to point at the new site; cross-link from this repo's README.
 
-45. **Optional OpenAI/Codex subscription backend (documented opt-in feature)**
-    As a developer already paying for ChatGPT, I want an opt-in Codex-subscription backend, so that I can run reviews on my existing OpenAI plan instead of buying separate API credits.
-    - Acceptance: implementation is blocked until documented Legal/Compliance sign-off is obtained and recorded.
-    - Acceptance: **OpenAI/Codex only.** Documented, **off by default**, enabled via an explicit flag; flagged as relying on Codex's subscription auth, against OpenAI's reverse-engineering clause, tolerated-but-not-sanctioned, liable to break/trigger enforcement; not recommended for automated org-wide CI.
-    - Acceptance: **isolated behind the provider abstraction** so it can be removed cleanly if OpenAI blocks it; never the default; no equivalent path for Claude/Gemini.
-    - Acceptance: **model backend only** — this uses Codex as an inference engine, NOT OpenAI's first-party "Codex in GitHub" app (`chatgpt-codex-connector`). We never route through that bot; the prompt, multi-pass pipeline, and presentation are `prowl-review`'s own, and comments post under our identity (`github-actions[bot]`, later `prowl-review[bot]`) — never as the Codex connector. Documented so users don't expect the canned "Codex Review" output.
-
-46. **SCM breadth (GitLab / Bitbucket) — deferred to post-v1**
-    As a non-GitHub user, I want the reviewer to work on GitLab/Bitbucket eventually, so that the tool isn't GitHub-locked.
-    - Acceptance: explicitly **deferred** — recorded as a conscious post-v1 decision; revisit after the GitHub Action path is proven. Provider/SCM seams kept clean enough not to preclude it.
-
-47. **Phase 2 — Hosted GitHub App (install-once)**
-    As a user, I want an install-once app covering all repos/orgs automatically, so that I get CodeRabbit's managed UX without per-repo workflows.
-    - Acceptance: design doc for a webhook service wrapping the same TS core (Vercel route or homelab) + GitHub App registration; optional Next.js dashboard reusing `prowl-hub` patterns. Deferred until the Action path is proven.
-    - Acceptance: managed install-once UX (no per-repo workflows). The **branded `prowl-review[bot]` identity + raccoon avatar** does *not* require this hosted service — it's achievable on the current Action path via a GitHub App token (see #59); this item is the hosted service, which would also post under that same App identity.
-
-48. **Watch & adopt delegated-API OAuth if a provider ships it**
-    As a maintainer, I want to track providers' delegated-API OAuth and adopt it when available, so that users eventually get one-click, TOS-compliant, subscription-aware auth.
-    - Acceptance: tracking note records that no provider offers delegated-API OAuth as of 2026-06 (OpenAI "Sign in with ChatGPT" = identity only).
-    - Acceptance: when a real authorization-code flow yielding delegated API access (billed to the user's own account) ships, add it as a first-class auth option behind the provider abstraction.
-
 59. **Branded bot identity via a GitHub App token (Action path)**
     As a user, I want prowl-review's PR comments to post under a branded `prowl-review[bot]` identity with our raccoon avatar (like CodeRabbit/Greptile), so that reviews look first-class and clearly attributable — without waiting on the hosted App (#47).
     - **Done (buildable parts):** a branded example workflow (`examples/workflows/prowl-review-branded.yml`) that mints an installation token with `actions/create-github-app-token` and passes it to the Action via `github-token` (+ `bot-login` derived from the app slug); optional App-token support in the reusable org templates (`examples/reusable/*`), gated on `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets and falling back to the default token when absent; README + docs "Branded bot identity" section. The Action already accepts `github-token` / `bot-login`, so no core code change is needed.
@@ -59,4 +38,7 @@ _No open high-priority items._
 
 ---
 
-Completed items live in [`docs/resolved.md`](./resolved.md).
+Completed items live in [`docs/resolved.md`](./resolved.md). Consciously
+deferred / blocked items (#45 Codex subscription, #46 GitLab/Bitbucket, #47 hosted
+App, #48 delegated-API OAuth) are parked there with dates — see the "Deferred /
+parked" section.
