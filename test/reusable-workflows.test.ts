@@ -332,4 +332,25 @@ describe("reusable org workflows (#37)", () => {
     const doc = parseWorkflow(name) as { permissions?: Record<string, string> };
     expect(doc.permissions).toMatchObject({ "pull-requests": "write", issues: "write" });
   });
+
+  it.each(REUSABLE)("%s supports the optional branded App-token identity (#59)", (name) => {
+    const doc = parseWorkflow(name) as Record<string, unknown>;
+    const on = triggers(doc);
+    const call = on.workflow_call as { secrets?: Record<string, unknown> };
+    // Optional branded-identity secrets are declared.
+    expect(call.secrets).toHaveProperty("PROWL_APP_ID");
+    expect(call.secrets).toHaveProperty("PROWL_APP_PRIVATE_KEY");
+    const text = read(name);
+    // Mints an App token and falls back to the default token when unset.
+    expect(text).toContain("uses: actions/create-github-app-token@v1");
+    expect(text).toContain("steps.app-token.outputs.token || github.token");
+  });
+
+  it("the branded standalone example wires the App token into github-token/bot-login (#59)", () => {
+    const text = readRepo("examples/workflows/prowl-review-branded.yml");
+    expect(() => parseYaml(text)).not.toThrow();
+    expect(text).toContain("uses: actions/create-github-app-token@v1");
+    expect(text).toContain("github-token: ${{ steps.app-token.outputs.token }}");
+    expect(text).toContain("bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]");
+  });
 });
