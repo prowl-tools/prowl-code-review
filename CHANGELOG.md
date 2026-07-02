@@ -5,6 +5,15 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Branded bot identity via a GitHub App token (backlog #59, buildable parts): post PR reviews under a branded
+  `prowl-review[bot]` identity with a custom avatar (like CodeRabbit/Greptile) on the existing Action path — no
+  core-tool change (the Action already accepts `github-token` / `bot-login`) and no hosted service. New
+  `examples/workflows/prowl-review-branded.yml` mints an installation token with `actions/create-github-app-token`
+  and passes it as `github-token`, deriving `bot-login` from the app slug; the reusable org templates
+  (`examples/reusable/*`) gained optional `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets and post branded when
+  set, falling back to the default token otherwise. README + examples docs get a "Branded bot identity" section;
+  the `#47` hosted-App item now points here for branding. Registering the App (name + raccoon avatar) + adding
+  the secrets is the remaining operational step.
 - Language-aware symbol resolution for cross-file context (backlog #5, completes #5): two new agentic retrieval
   tools — **`find_definition`** (locate where a symbol is declared via definition-shaped patterns per language:
   keyword-led functions/types/vars, Go receiver methods, assigned JS arrow functions, modifier-led typed
