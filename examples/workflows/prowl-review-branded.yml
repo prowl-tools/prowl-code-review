@@ -15,10 +15,14 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
+# Serialize auto reviews with bot commands for the same PR; prowl-review re-checks
+# the PR head before publishing and skips superseded runs.
+concurrency:
+  group: prowl-review-${{ github.event.pull_request.number }}
+  queue: max
+  cancel-in-progress: false
+
 permissions:
-  pull-requests: write
-  issues: write
-  checks: write
   contents: read
 
 jobs:

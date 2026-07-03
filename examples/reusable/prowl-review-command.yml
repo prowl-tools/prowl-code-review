@@ -89,8 +89,13 @@ jobs:
         shell: bash
         env:
           APP_ID: ${{ secrets.PROWL_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
         run: |
-          if [ -n "${APP_ID}" ]; then echo "enabled=true" >> "$GITHUB_OUTPUT"; else echo "enabled=false" >> "$GITHUB_OUTPUT"; fi
+          if [ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
 
       - name: Mint prowl-review app token
         id: app-token
@@ -99,6 +104,10 @@ jobs:
         with:
           app-id: ${{ secrets.PROWL_APP_ID }}
           private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: write
 
       - name: Resolve PR metadata
         id: pr

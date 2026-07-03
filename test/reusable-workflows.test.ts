@@ -344,11 +344,40 @@ describe("reusable org workflows (#37)", () => {
     // Mints an App token and falls back to the default token when unset.
     expect(text).toContain("uses: actions/create-github-app-token@v1");
     expect(text).toContain("steps.app-token.outputs.token || github.token");
+    const jobName = name === "prowl-review.yml" ? "review" : "command";
+    const steps = stepsFor(doc, jobName);
+    const brand = steps.find((step) => step.id === "brand") as { env: Record<string, unknown>; run: string };
+    const appToken = steps.find((step) => step.id === "app-token") as { with: Record<string, unknown> };
+    expect(brand.env).toMatchObject({
+      APP_ID: "${{ secrets.PROWL_APP_ID }}",
+      APP_PRIVATE_KEY: "${{ secrets.PROWL_APP_PRIVATE_KEY }}"
+    });
+    expect(brand.run).toContain('[ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]');
+    expect(appToken.with).toMatchObject({
+      "permission-contents": "read",
+      "permission-issues": "write",
+      "permission-pull-requests": "write",
+      "permission-checks": "write"
+    });
   });
 
   it("the branded standalone example wires the App token into github-token/bot-login (#59)", () => {
     const text = readRepo("examples/workflows/prowl-review-branded.yml");
+    const doc = parseYaml(text) as {
+      permissions?: Record<string, string>;
+      concurrency?: Record<string, unknown>;
+      jobs: { review: { if?: string } };
+    };
     expect(() => parseYaml(text)).not.toThrow();
+    expect(doc.permissions).toEqual({ contents: "read" });
+    expect(doc.concurrency).toMatchObject({
+      group: "prowl-review-${{ github.event.pull_request.number }}",
+      queue: "max",
+      "cancel-in-progress": false
+    });
+    expect(normalizeExpression(doc.jobs.review.if ?? "")).toBe(
+      "github.event.pull_request.head.repo.full_name == github.repository"
+    );
     expect(text).toContain("uses: actions/create-github-app-token@v1");
     expect(text).toContain("github-token: ${{ steps.app-token.outputs.token }}");
     expect(text).toContain("bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]");
