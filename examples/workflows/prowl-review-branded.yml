@@ -22,6 +22,7 @@ concurrency:
   queue: max
   cancel-in-progress: false
 
+# GITHUB_TOKEN only needs checkout scope; prowl-review receives the App token below.
 permissions:
   contents: read
 
@@ -38,6 +39,10 @@ jobs:
         with:
           app-id: ${{ secrets.PROWL_APP_ID }}
           private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: write
 
       - uses: actions/checkout@v4
 

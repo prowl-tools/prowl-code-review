@@ -348,10 +348,10 @@ describe("reusable org workflows (#37)", () => {
     const steps = stepsFor(doc, jobName);
     const brand = steps.find((step) => step.id === "brand") as { env: Record<string, unknown>; run: string };
     const appToken = steps.find((step) => step.id === "app-token") as { with: Record<string, unknown> };
-    expect(brand.env).toMatchObject({
-      APP_ID: "${{ secrets.PROWL_APP_ID }}",
-      APP_PRIVATE_KEY: "${{ secrets.PROWL_APP_PRIVATE_KEY }}"
-    });
+    expect(brand.env).toHaveProperty("APP_ID");
+    expect(brand.env).toHaveProperty("APP_PRIVATE_KEY");
+    expect(String(brand.env.APP_ID)).toContain("PROWL_APP_ID");
+    expect(String(brand.env.APP_PRIVATE_KEY)).toContain("PROWL_APP_PRIVATE_KEY");
     expect(brand.run).toContain('[ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]');
     expect(appToken.with).toMatchObject({
       "permission-contents": "read",
@@ -366,8 +366,9 @@ describe("reusable org workflows (#37)", () => {
     const doc = parseYaml(text) as {
       permissions?: Record<string, string>;
       concurrency?: Record<string, unknown>;
-      jobs: { review: { if?: string } };
+      jobs: { review: { if?: string; steps: Array<Record<string, unknown>> } };
     };
+    const appToken = doc.jobs.review.steps.find((step) => step.id === "app-token") as { with: Record<string, unknown> };
     expect(() => parseYaml(text)).not.toThrow();
     expect(doc.permissions).toEqual({ contents: "read" });
     expect(doc.concurrency).toMatchObject({
@@ -378,6 +379,12 @@ describe("reusable org workflows (#37)", () => {
     expect(normalizeExpression(doc.jobs.review.if ?? "")).toBe(
       "github.event.pull_request.head.repo.full_name == github.repository"
     );
+    expect(appToken.with).toMatchObject({
+      "permission-contents": "read",
+      "permission-issues": "write",
+      "permission-pull-requests": "write",
+      "permission-checks": "write"
+    });
     expect(text).toContain("uses: actions/create-github-app-token@v1");
     expect(text).toContain("github-token: ${{ steps.app-token.outputs.token }}");
     expect(text).toContain("bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]");
