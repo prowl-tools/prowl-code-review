@@ -344,6 +344,9 @@ describe("reusable org workflows (#37)", () => {
     // Mints an App token and falls back to the default token when unset.
     expect(text).toContain("uses: actions/create-github-app-token@v1");
     expect(text).toContain("steps.app-token.outputs.token || github.token");
+    expect(text).toContain(
+      "bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}"
+    );
     const jobName = name === "prowl-review.yml" ? "review" : "command";
     const steps = stepsFor(doc, jobName);
     const brand = steps.find((step) => step.id === "brand") as { env: Record<string, unknown>; run: string };
