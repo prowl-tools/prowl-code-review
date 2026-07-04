@@ -277,6 +277,43 @@ jobs:
 > repo's context. prowl-review never executes the fork's code, but you should not
 > add other steps that run untrusted PR code in this workflow.
 
+## Branded bot identity (#59)
+
+By default reviews post as **`github-actions[bot]`**. To post under your own
+**`prowl-review[bot]`** identity with a custom avatar (like CodeRabbit/Greptile),
+use a **GitHub App token** — no core-tool change, and no hosted service required.
+
+1. **Register a GitHub App** (Settings → Developer settings → GitHub Apps): give
+   it a name (e.g. "Prowl Review") and upload the raccoon avatar. Grant
+   **`pull requests: write`**, **`issues: write`**, and (optional) **`checks:
+   write`**. Generate a private key and **install** the App on your repo/org.
+2. **Add secrets:** `PROWL_APP_ID` (the App's id) and `PROWL_APP_PRIVATE_KEY`
+   (the `.pem`).
+3. **Mint a token in the workflow** and hand it to the Action — it already accepts
+   `github-token` + `bot-login`:
+
+```yaml
+- name: Mint prowl-review app token
+  id: app-token
+  uses: actions/create-github-app-token@v1
+  with:
+    app-id: ${{ secrets.PROWL_APP_ID }}
+    private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+- uses: prowl-tools/prowl-code-review@v1
+  with:
+    ai-key: ${{ secrets.PROWL_AI_KEY }}
+    github-token: ${{ steps.app-token.outputs.token }}
+    bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
+```
+
+`bot-login` must match the App's login (its slug + `[bot]`) so update-not-duplicate
+still finds prowl-review's prior comments/threads. A ready-to-copy workflow is in
+[`examples/workflows/prowl-review-branded.yml`](examples/workflows/prowl-review-branded.yml),
+and the [reusable org templates](examples/reusable/) pick this up automatically
+when `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` are set (falling back to the default
+token otherwise). This is the Action-path branding; the install-once **hosted**
+App is a separate, later phase (backlog #47).
+
 ## Install (CLI)
 
 ```bash
