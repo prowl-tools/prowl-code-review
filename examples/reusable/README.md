@@ -65,6 +65,11 @@ jobs:
   from the **base** checkout, never from PR code. Set `config-path:
   prowl-base/.prowl-review.yml` to use a committed config.
 - **Self-hosted runners:** pass `runs-on:` to target your own labels.
+- **Branded identity (#59):** add org secrets `PROWL_APP_ID` + `PROWL_APP_PRIVATE_KEY`
+  (from a registered GitHub App with the raccoon avatar) and the reusable workflows
+  post as your `prowl-review[bot]` automatically; without them they fall back to
+  `github-actions[bot]`. See the "Branded bot identity" section of the
+  [main README](../../README.md).
 
 For a single self-contained repo (no org `.github`), use the standalone
 templates in [`../workflows/`](../workflows) instead.

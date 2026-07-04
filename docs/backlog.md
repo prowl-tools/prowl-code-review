@@ -30,6 +30,12 @@ _No open high-priority items._
     - Acceptance: dedicated Docusaurus site (own repo) with getting-started + the differentiators + config/commands reference; **port the ready-made auth + privacy content** from [`docs/auth.md`](./auth.md) and [`docs/privacy.md`](./privacy.md) (#38/#40, done) as site pages; raccoon/brand conventions; "made for agents, controlled by humans" framing.
     - Acceptance: update `prowl-web`'s `Suite.tsx` Code Review tile to point at the new site; cross-link from this repo's README.
 
+59. **Branded bot identity via a GitHub App token (Action path)**
+    As a user, I want prowl-review's PR comments to post under a branded `prowl-review[bot]` identity with our raccoon avatar (like CodeRabbit/Greptile), so that reviews look first-class and clearly attributable — without waiting on the hosted App (#47).
+    - **Done (buildable parts):** a branded example workflow (`examples/workflows/prowl-review-branded.yml`) that mints an installation token with `actions/create-github-app-token` and passes it to the Action via `github-token` (+ `bot-login` derived from the app slug); optional App-token support in the reusable org templates (`examples/reusable/*`), gated on `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets and falling back to the default token when absent; README + docs "Branded bot identity" section. The Action already accepts `github-token` / `bot-login`, so no core code change is needed.
+    - Acceptance (remaining, operational): **register the GitHub App** ("Prowl Review" name + raccoon avatar), grant it `pull-requests` / `issues` / `checks` write, install it on the target repos/org, and add the `PROWL_APP_ID` + `PROWL_APP_PRIVATE_KEY` secrets; then use the branded workflow (or set those secrets on the reusable-template caller). Optionally wire the dogfood workflows to post branded once the App exists.
+    - Note: distinct from #47 (the *hosted* install-once App). This is the Phase-1 branding path on the existing Action; #47 remains the managed-service phase and would post under the same App identity.
+
 ---
 
 Completed items live in [`docs/resolved.md`](./resolved.md). Consciously
