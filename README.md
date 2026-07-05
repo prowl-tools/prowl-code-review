@@ -8,6 +8,17 @@ It's delivered as a **GitHub Action + local CLI** (zero hosting), and is built t
 
 > Status: **early development.** This package currently contains the project scaffold and CLI surface. See [`docs/backlog.md`](docs/backlog.md) for the roadmap and [`CLAUDE.md`](CLAUDE.md) for the design principles.
 
+## Documentation
+
+Part of the [Prowl QA suite docs](https://docs.prowl.tools). A dedicated
+`prowl-review` documentation site (`review.prowl.tools`) is coming; until it
+ships, the reference lives in this repo:
+
+- [Authentication & keys](docs/auth.md) — BYOK setup, provider keys, token scopes
+- [Privacy & data handling](docs/privacy.md) — what leaves your machine and what doesn't
+- [Example review](docs/example-review.md) — a rendered sample walkthrough
+- [Releasing](docs/releasing.md) — npm + Homebrew release process
+
 ## Usage (GitHub Action)
 
 Add a workflow that runs the review on pull requests. For single-provider
