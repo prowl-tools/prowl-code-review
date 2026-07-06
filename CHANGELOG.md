@@ -5,6 +5,14 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Docs + marketing wiring for the dedicated site (backlog #43, buildable parts): a README **"Documentation"**
+  section that anchors prowl-review in the [Prowl QA suite docs](https://docs.prowl.tools), links the in-repo
+  reference pages (auth, privacy, example review, releasing), and flags the forthcoming `review.prowl.tools`
+  site. The `prowl-web` tile/CTA wiring is staged on two branches — `fix-code-review-docs-link` retargets the
+  live `/code-review` Docs CTA to `docs.prowl.tools` (removing a dead link to the not-yet-deployed
+  `review.prowl.tools`), and `stage-review-docs-flip` flips the CTA + homepage tile / footer / docs-hub entry to
+  `review.prowl.tools` for merge once that site is deployed. Deploying the docs site (Vercel + DNS) is the
+  remaining operational step.
 - Branded bot identity via a GitHub App token (backlog #59, buildable parts): post PR reviews under a branded
   `prowl-review[bot]` identity with a custom avatar (like CodeRabbit/Greptile) on the existing Action path — no
   core-tool change (the Action already accepts `github-token` / `bot-login`) and no hosted service. New
