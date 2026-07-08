@@ -10,9 +10,12 @@ It's delivered as a **GitHub Action + local CLI** (zero hosting), and is built t
 
 ## Documentation
 
-Part of the [Prowl QA suite docs](https://docs.prowl.tools). A dedicated
-`prowl-review` documentation site (`review.prowl.tools`) is coming; until it
-ships, the reference lives in this repo:
+Full documentation lives at **[review.prowl.tools](https://review.prowl.tools)** —
+getting started, configuration, CLI + bot commands, the ensemble, grounding,
+cross-file context, and repo-wide learnings. Part of the
+[Prowl QA suite](https://prowl.tools).
+
+Key reference pages also kept in this repo:
 
 - [Authentication & keys](docs/auth.md) — BYOK setup, provider keys, token scopes
 - [Privacy & data handling](docs/privacy.md) — what leaves your machine and what doesn't
