@@ -5,6 +5,11 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Added
+- Repo hygiene — contributor ergonomics & discoverability (backlog #41, partial): README badges (CI, Apache-2.0
+  license, Node >=20, PRs welcome, docs → review.prowl.tools); an `.editorconfig` for consistent formatting; an
+  `.nvmrc` pinning Node 20; and a `.github/dependabot.yml` that opens weekly npm + github-actions update PRs
+  (grouping low-risk dev-dependency bumps). Remaining for #41: the demo capture + standalone example repo, and an
+  npm version badge once the first release publishes (#42).
 - Docs + marketing wiring for the dedicated site (backlog #43, buildable parts): a README **"Documentation"**
   section that anchors prowl-review in the [Prowl QA suite docs](https://docs.prowl.tools), links the in-repo
   reference pages (auth, privacy, example review, releasing), and flags the forthcoming `review.prowl.tools`
