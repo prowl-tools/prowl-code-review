@@ -17,7 +17,8 @@ _No open high-priority items._
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
     - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
-    - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
+    - **Done (contributor ergonomics & discoverability):** README status/license/CI/Node/PRs/docs badges, `.editorconfig`, `.nvmrc` (Node 20 pin), and `.github/dependabot.yml` (weekly npm + github-actions updates, grouped dev bumps).
+    - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end. Add an **npm version badge** to the README once #42 cuts the first published release (a badge for an unpublished package renders broken).
 
 42. **npm + Homebrew distribution (CD / release pipeline)** *(pipeline + tooling staged)*
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
