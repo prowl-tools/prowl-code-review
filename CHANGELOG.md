@@ -4,6 +4,8 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-07-13
+
 ### Added
 - Repo hygiene — contributor ergonomics & discoverability (backlog #41, partial): README badges (CI, Apache-2.0
   license, Node >=20, PRs welcome, docs → review.prowl.tools); an `.editorconfig` for consistent formatting; an
@@ -197,6 +199,8 @@ All notable changes to Prowl Review will be documented in this file.
   publish-ready (`publishConfig.access: public`). Added a Homebrew formula template
   (`packaging/homebrew/prowl-review.rb`, for the separate `homebrew-tap` repo), a `docs/releasing.md`
   maintainer guide, and a README **Install (CLI)** section (`npm i -g prowl-review` / `npx` / `brew`).
+  Excluded source maps from the published tarball (`!dist/**/*.map` in `files`), keeping the package lean
+  (~534 kB packed vs ~1.4 MB) while still emitting maps locally for debugging.
 - Repo hygiene & demo (backlog #41): OSS-credibility scaffolding for the public repo. Added
   `CONTRIBUTING.md` (setup, project layout, conventions, the Definition of Done, how to extend a
   provider/specialist/grounding runner), `SECURITY.md` (private vuln reporting + the BYOK/secret/trust model +
