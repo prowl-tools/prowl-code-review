@@ -23,7 +23,7 @@ _No open high-priority items._
 42. **npm + Homebrew distribution (CD / release pipeline)** *(pipeline + tooling staged)*
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
     - **Done:** tag-triggered `.github/workflows/publish.yml` (on `vX.Y.Z`: tag↔version guard → `npm ci` → build → lint → test → release-note verification → draft GitHub Release → `npm publish --provenance --access public` → publish GitHub Release); package made publish-ready (`publishConfig.access: public`); Homebrew formula template (`packaging/homebrew/prowl-review.rb`) + `docs/releasing.md`.
-    - **Done (first release shipped 2026-07-14):** `prowl-review@0.1.0` published to npm **with provenance** (required making the repo public — npm rejects provenance for private sources), GitHub Release `v0.1.0` published, and `Formula/prowl-review.rb` (real `url` + `sha256`, `brew style`/`audit --online` clean) added to `prowl-tools/homebrew-tap` (branch `add-prowl-review-formula`, pending merge).
+    - **Done (first release shipped 2026-07-14):** `prowl-review@0.1.0` published to npm **with provenance** (required making the repo public — npm rejects provenance for private sources), GitHub Release `v0.1.0` published, and `Formula/prowl-review.rb` (real `url` + `sha256`, `brew style`/`audit --online` clean) added to `Prowl-qa/homebrew-tap` (branch `add-prowl-review-formula`, pending merge).
     - Acceptance (remaining, operational): merge the `homebrew-tap` formula branch; the `NPM_TOKEN` automation token **expires 2026-10-12** — re-issue before then (or migrate to npm Trusted Publishing to drop the token entirely).
 
 43. **Docs + marketing integration (dedicated site)**
