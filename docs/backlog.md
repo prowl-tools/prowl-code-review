@@ -17,13 +17,14 @@ _No open high-priority items._
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
     - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
-    - **Done (contributor ergonomics & discoverability):** README status/license/CI/Node/PRs/docs badges, `.editorconfig`, `.nvmrc` (Node 20 pin), and `.github/dependabot.yml` (weekly npm + github-actions updates, grouped dev bumps).
-    - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end. Add an **npm version badge** to the README once #42 cuts the first published release (a badge for an unpublished package renders broken).
+    - **Done (contributor ergonomics & discoverability):** README status/license/CI/Node/PRs/docs badges, `.editorconfig`, `.nvmrc` (Node 20 pin), and `.github/dependabot.yml` (weekly npm + github-actions updates, grouped dev bumps). Added the **npm version badge** now that `0.1.0` is published (#42).
+    - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
 
 42. **npm + Homebrew distribution (CD / release pipeline)** *(pipeline + tooling staged)*
     As a user, I want to install via npm or `brew`, so that adoption matches the rest of Prowl QA.
     - **Done:** tag-triggered `.github/workflows/publish.yml` (on `vX.Y.Z`: tag↔version guard → `npm ci` → build → lint → test → release-note verification → draft GitHub Release → `npm publish --provenance --access public` → publish GitHub Release); package made publish-ready (`publishConfig.access: public`); Homebrew formula template (`packaging/homebrew/prowl-review.rb`) + `docs/releasing.md`.
-    - Acceptance (remaining, operational): add the `NPM_TOKEN` repo secret and cut the **first release** (push a `vX.Y.Z` tag) to actually publish; add the filled-in `Formula/prowl-review.rb` (real `url` + `sha256`) to the separate `Prowl-qa/homebrew-tap` repo.
+    - **Done (first release shipped 2026-07-14):** `prowl-review@0.1.0` published to npm **with provenance** (required making the repo public — npm rejects provenance for private sources), GitHub Release `v0.1.0` published, and `Formula/prowl-review.rb` (real `url` + `sha256`, `brew style`/`audit --online` clean) added to `Prowl-qa/homebrew-tap` (branch `add-prowl-review-formula`, pending merge).
+    - Acceptance (remaining, operational): merge the `homebrew-tap` formula branch; the `NPM_TOKEN` automation token **expires 2026-10-12** — re-issue before then (or migrate to npm Trusted Publishing to drop the token entirely).
 
 43. **Docs + marketing integration (dedicated site)**
     As a prospective user, I want docs and a landing section, so that I can discover and set up the tool.

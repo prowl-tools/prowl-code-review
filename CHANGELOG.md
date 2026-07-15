@@ -4,6 +4,9 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- README **npm version badge** now that `prowl-review@0.1.0` is published (backlog #41/#42).
+
 ## [0.1.0] - 2026-07-13
 
 ### Added
