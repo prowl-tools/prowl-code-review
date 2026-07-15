@@ -392,4 +392,30 @@ describe("reusable org workflows (#37)", () => {
     expect(text).toContain("github-token: ${{ steps.app-token.outputs.token }}");
     expect(text).toContain("bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]");
   });
+
+  it.each(DOGFOOD_WORKFLOWS)("%s dogfoods the optional branded App-token identity (#59)", (path) => {
+    const text = readRepo(path);
+    const doc = parseYaml(text) as Record<string, unknown>;
+    // Mints an App token when PROWL_APP_ID is set; falls back to the default token otherwise.
+    expect(text).toContain("uses: actions/create-github-app-token@v1");
+    expect(text).toContain("github-token: ${{ steps.app-token.outputs.token || github.token }}");
+    expect(text).toContain(
+      "bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}"
+    );
+    const jobName = path.endsWith("prowl-review.yml") ? "review" : "command";
+    const steps = stepsFor(doc, jobName);
+    const brand = steps.find((step) => step.id === "brand") as { env: Record<string, unknown>; run: string };
+    const appToken = steps.find((step) => step.id === "app-token") as { if?: string; with: Record<string, unknown> };
+    expect(String(brand.env.APP_ID)).toContain("PROWL_APP_ID");
+    expect(String(brand.env.APP_PRIVATE_KEY)).toContain("PROWL_APP_PRIVATE_KEY");
+    expect(brand.run).toContain('[ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]');
+    // Token minting is gated so the workflow still runs (unbranded) before the App exists.
+    expect(appToken.if).toBe("steps.brand.outputs.enabled == 'true'");
+    expect(appToken.with).toMatchObject({
+      "permission-contents": "read",
+      "permission-issues": "write",
+      "permission-pull-requests": "write",
+      "permission-checks": "write"
+    });
+  });
 });
