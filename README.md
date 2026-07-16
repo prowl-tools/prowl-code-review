@@ -335,6 +335,26 @@ when `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` are set (falling back to the defau
 token otherwise). This is the Action-path branding; the install-once **hosted**
 App is a separate, later phase (backlog #47).
 
+### Bring your own bot identity
+
+The branding is **not baked into the tool** — nothing "Prowl" or raccoon ships
+inside the package. The Action just posts as whatever identity you hand it via
+`github-token` / `bot-login`, so every team makes prowl-review look like their
+own in-house reviewer. Pairs naturally with BYOK: **your key, your bot.** Pick a
+tier:
+
+| Tier | Posts as | Setup |
+| --- | --- | --- |
+| **Default** | `github-actions[bot]` | Nothing — works out of the box with just your AI key. |
+| **Your own brand** | `your-app[bot]` + **your** name & avatar | Register **your own** GitHub App (any name/avatar you like), add your `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets. The steps above are identical — the identity is entirely yours. |
+| **Local CLI** | *(no bot — prints to your terminal)* | `prowl-review` locally; no GitHub identity involved. |
+
+There's no lock-in to *our* raccoon: a team can register `acme-review[bot]` with
+their own logo and nobody would know it's built on prowl-review unless they read
+the workflow. The App's power lives in its private key (kept in your secrets and
+never shared), so each adopter registers their own — which is exactly why sharing
+one App across accounts isn't a thing.
+
 ## Install (CLI)
 
 ```bash

@@ -10,6 +10,9 @@ All notable changes to Prowl Review will be documented in this file.
   `PROWL_APP_PRIVATE_KEY` secrets are set and post reviews/replies as `<app-slug>[bot]` with the App avatar,
   falling back to `github-actions[bot]` when the secrets are absent (safe to run before the App is registered).
   Mirrors the reusable-template pattern; drift tests assert the branded wiring on both dogfood workflows.
+  Documented a **"Bring your own bot identity"** tier table (default `github-actions[bot]` / your own branded App
+  / local CLI) in the README and the docs site, making explicit that branding is not baked in — each adopter
+  brings their own bot, pairing with BYOK.
 - README **npm version badge** now that `prowl-review@0.1.0` is published (backlog #41/#42).
 
 ## [0.1.0] - 2026-07-13
