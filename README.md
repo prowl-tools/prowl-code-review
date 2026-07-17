@@ -355,6 +355,27 @@ the workflow. The App's power lives in its private key (kept in your secrets and
 never shared), so each adopter registers their own — which is exactly why sharing
 one App across accounts isn't a thing.
 
+#### Reusing one App across repos and accounts
+
+A GitHub App is a **server-side identity, not a per-device install** — reuse it by
+installing it on more repos, not by copying anything to another machine. Where it
+can go depends on the App's **"Where can this GitHub App be installed?"** setting:
+
+- **More repos under the *same* owner** (the account/org that owns the App): just
+  **Install App** on those repos, or set `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY`
+  as **org-level secrets** so every repo inherits them. One App → unlimited repos.
+- **Repos under a *different* owner** (e.g. your personal account when the App is
+  org-owned): the App must be set to **"Any account"** (public) to install it
+  there — flip it via **Make public** at the bottom of the App's settings. Your
+  private key stays secret, so going public only exposes the App's profile and
+  lets others *install* it (inert without the key). The alternative is to
+  **register a separate App** under that owner — note App names are globally
+  unique, so its bot login won't be identical (e.g. `prowl-review-personal[bot]`).
+
+Running the **CLI** on another machine is unrelated: install `prowl-review` there
+and set your AI key — the App identity is a CI concept and doesn't live on the
+device.
+
 ## Install (CLI)
 
 ```bash

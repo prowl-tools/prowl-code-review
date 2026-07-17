@@ -12,7 +12,10 @@ All notable changes to Prowl Review will be documented in this file.
   Mirrors the reusable-template pattern; drift tests assert the branded wiring on both dogfood workflows.
   Documented a **"Bring your own bot identity"** tier table (default `github-actions[bot]` / your own branded App
   / local CLI) in the README and the docs site, making explicit that branding is not baked in — each adopter
-  brings their own bot, pairing with BYOK.
+  brings their own bot, pairing with BYOK. Also documented **reusing one App across repos/accounts** (same owner:
+  install more repos or use org secrets; different owner e.g. a personal account: set the App to "Any account" or
+  register a separate App — names are globally unique) and that the App is a server-side identity, not a
+  per-device install.
 - README **npm version badge** now that `prowl-review@0.1.0` is published (backlog #41/#42).
 
 ## [0.1.0] - 2026-07-13
