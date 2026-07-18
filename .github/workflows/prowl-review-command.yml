@@ -59,7 +59,7 @@ jobs:
       - name: Mint prowl-review app token
         id: app-token
         if: steps.brand.outputs.enabled == 'true'
-        uses: actions/create-github-app-token@v1
+        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.PROWL_APP_ID }}
           private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
@@ -93,10 +93,11 @@ jobs:
             echo "Skipping command from fork PR head ${head_repo}."
           fi
 
-      - name: Checkout trusted base
+      - name: Checkout trusted base (config + guidelines)
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
+          path: prowl-base
           persist-credentials: false
 
       - name: Check trusted action availability
@@ -104,10 +105,10 @@ jobs:
         shell: bash
         run: |
           action_file=""
-          if [ -f action.yml ]; then
-            action_file="action.yml"
-          elif [ -f action.yaml ]; then
-            action_file="action.yaml"
+          if [ -f prowl-base/action.yml ]; then
+            action_file="prowl-base/action.yml"
+          elif [ -f prowl-base/action.yaml ]; then
+            action_file="prowl-base/action.yaml"
           fi
 
           if [ -n "${action_file}" ] &&
@@ -131,7 +132,7 @@ jobs:
 
       - name: prowl-review command
         if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
-        uses: ./ # external repos use: prowl-tools/prowl-code-review@v1
+        uses: ./prowl-base # external repos use: prowl-tools/prowl-code-review@v1
         env:
           PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
           PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
@@ -141,9 +142,9 @@ jobs:
           # @prowl-review review command produces the cross-provider result too.
           ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
           ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
-          config-path: ${{ github.workspace }}/.prowl-review.yml
+          config-path: ${{ github.workspace }}/prowl-base/.prowl-review.yml
           workspace-path: ${{ github.workspace }}/pr-head
-          guidelines-path: ${{ github.workspace }}
+          guidelines-path: ${{ github.workspace }}/prowl-base
           # Branded App token when configured; otherwise the default Actions token.
           github-token: ${{ steps.app-token.outputs.token || github.token }}
           bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}
