@@ -843,7 +843,7 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("echo \"head_repo=${head_repo}\"");
     expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
     expect(workflow).toContain("path: prowl-base");
-    expect(workflow).toContain("action_file=\"prowl-base/action.yml\"");
+    expect(workflow).toMatch(/action_file="prowl-base\/action\.yml"/);
     expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
     expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
     // Command mode also gates on ensemble-key support so it self-bootstraps (#53).
