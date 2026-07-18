@@ -305,10 +305,10 @@ By default reviews post as **`github-actions[bot]`**. To post under your own
 use a **GitHub App token** — no core-tool change, and no hosted service required.
 
 1. **Register a GitHub App** (Settings → Developer settings → GitHub Apps): give
-   it a name (e.g. "Prowl Review") and upload the raccoon avatar. Grant
-   **`contents: read`**, **`pull requests: write`**, **`issues: write`**, and
-   **`checks: write`**. Generate a private key and **install** the App on your
-   repo/org.
+   it a name (e.g. "Prowl Review") and upload the raccoon avatar. Grant these
+   required permissions: **`contents: read`**, **`pull requests: write`**,
+   **`issues: write`**, and **`checks: write`**. Generate a private key and
+   **install** the App on your repo/org.
 2. **Add secrets:** `PROWL_APP_ID` (the App's id) and `PROWL_APP_PRIVATE_KEY`
    (the `.pem`).
 3. **Mint a token in the workflow** and hand it to the Action — it already accepts

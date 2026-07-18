@@ -426,13 +426,15 @@ describe("reusable org workflows (#37)", () => {
       "bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}"
     );
     const jobName = path.endsWith("prowl-review.yml") ? "review" : "command";
-    const steps = stepsFor(doc, jobName);
-    const brand = steps.find((step) => step.id === "brand") as { env?: Record<string, unknown>; run: string };
+    const job = (doc.jobs as Record<string, { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }>)[jobName];
+    const steps = job.steps;
     const appToken = steps.find((step) => step.id === "app-token") as { if?: string; with: Record<string, unknown> };
-    expect(brand.env).toBeUndefined();
-    expect(brand.run).toContain("secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != ''");
+    expect(job.env).toMatchObject({
+      PROWL_APP_CONFIGURED: "${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}"
+    });
+    expect(steps.some((step) => step.id === "brand")).toBe(false);
     // Token minting is gated so the workflow still runs (unbranded) before the App exists.
-    expect(appToken.if).toBe("steps.brand.outputs.enabled == 'true'");
+    expect(appToken.if).toBe("env.PROWL_APP_CONFIGURED == 'true'");
     expect(appToken.with).toMatchObject({
       "permission-contents": "read",
       "permission-issues": "write",

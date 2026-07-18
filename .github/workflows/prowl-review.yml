@@ -22,20 +22,16 @@ jobs:
     # Skip drafts and forks; forked PRs do not receive provider secrets.
     if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
+    env:
+      PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
     steps:
       # Branded identity (#59): mint an App installation token when PROWL_APP_ID
       # is set so the review posts as prowl-review[bot] with the App avatar.
-      # Gate the token step with a boolean expression so the private key is only
-      # handed to the token action; falls back to github-actions[bot].
-      - name: Detect branded app config
-        id: brand
-        shell: bash
-        run: |
-          echo "enabled=${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
-
+      # The env flag is only a boolean; the private key is only handed to the
+      # token action. Falls back to github-actions[bot].
       - name: Mint prowl-review app token
         id: app-token
-        if: steps.brand.outputs.enabled == 'true'
+        if: env.PROWL_APP_CONFIGURED == 'true'
         uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
         with:
           app-id: ${{ secrets.PROWL_APP_ID }}
