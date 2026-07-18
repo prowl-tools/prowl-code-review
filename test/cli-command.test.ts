@@ -831,6 +831,10 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:summary -->')");
     expect(workflow).toContain("!contains(github.event.comment.body, '<!-- prowl-review:finding ')");
     expect(workflow.indexOf("Resolve PR metadata")).toBeLessThan(workflow.indexOf("Checkout trusted base"));
+    expect(workflow.indexOf("Checkout trusted base (config + guidelines)")).toBeLessThan(
+      workflow.indexOf("Checkout PR head for context")
+    );
+    expect(workflow.indexOf("Check trusted action availability")).toBeLessThan(workflow.indexOf("Checkout PR head for context"));
     expect(workflow).toContain("set -euo pipefail");
     expect(workflow).toContain("gh api \"repos/${GITHUB_REPOSITORY}/pulls/${pr_number}\"");
     expect(workflow).toContain("[.base.sha, .head.sha, .head.repo.full_name] | @tsv");
@@ -838,7 +842,8 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
     expect(workflow).toContain("echo \"head_repo=${head_repo}\"");
     expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
-    expect(workflow).toContain("action_file=\"action.yml\"");
+    expect(workflow).toContain("path: prowl-base");
+    expect(workflow).toMatch(/action_file="prowl-base\/action\.yml"/);
     expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
     expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
     // Command mode also gates on ensemble-key support so it self-bootstraps (#53).
@@ -848,7 +853,12 @@ describe("command workflow metadata", () => {
     expect(reviewWorkflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
     expect(workflow).toContain("Trusted base does not support the prowl-review command-mode ensemble yet");
     expect(workflow).toContain("Checkout PR head for context");
+    expect(workflow).toContain("uses: ./prowl-base");
+    expect(workflow).toContain("config-path: ${{ github.workspace }}/prowl-base/.prowl-review.yml");
     expect(workflow).toContain("workspace-path: ${{ github.workspace }}/pr-head");
+    expect(workflow).toContain("guidelines-path: ${{ github.workspace }}/prowl-base");
+    expect(workflow).not.toContain("config-path: ${{ github.workspace }}/pr-head");
+    expect(workflow).not.toContain("guidelines-path: ${{ github.workspace }}/pr-head");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
     expect(workflow).toContain("PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}");
   });

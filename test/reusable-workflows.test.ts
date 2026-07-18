@@ -23,6 +23,7 @@ const REUSABLE = ["prowl-review.yml", "prowl-review-command.yml"] as const;
 const CALLERS = ["caller-prowl-review.yml", "caller-prowl-review-command.yml"] as const;
 const ALL_WORKFLOWS = [...REUSABLE, ...CALLERS] as const;
 const DOGFOOD_WORKFLOWS = [".github/workflows/prowl-review.yml", ".github/workflows/prowl-review-command.yml"] as const;
+const CREATE_GITHUB_APP_TOKEN_PIN = "actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547";
 
 const permissionSchema = z.record(z.enum(["read", "write", "none"]));
 const expressionOrLiteralSchema = z.union([z.string(), z.number(), z.boolean()]);
@@ -223,8 +224,29 @@ describe("reusable org workflows (#37)", () => {
 
   it.each(DOGFOOD_WORKFLOWS)("%s dogfoods the local action, never the published v1 action", (path) => {
     const text = readRepo(path);
-    expect(text).toMatch(/^\s*uses:\s*\.\/(?:\s+#.*)?$/m);
+    expect(text).toMatch(/^\s*uses:\s*\.\/prowl-base(?:\s+#.*)?$/m);
     expect(text).not.toMatch(/^\s*uses:\s*prowl-tools\/prowl-code-review@v1\b/m);
+  });
+
+  it.each(DOGFOOD_WORKFLOWS)("%s loads trusted config and guidelines from prowl-base", (path) => {
+    const doc = parseYaml(readRepo(path)) as Record<string, unknown>;
+    const jobName = path.endsWith("prowl-review.yml") ? "review" : "command";
+    const steps = stepsFor(doc, jobName);
+    const checkoutBase = steps.find((step) => step.name === "Checkout trusted base (config + guidelines)") as {
+      with: Record<string, unknown>;
+    };
+    const reviewStepName = jobName === "review" ? "prowl-review" : "prowl-review command";
+    const reviewStep = steps.find((step) => step.name === reviewStepName) as {
+      uses: string;
+      with: Record<string, unknown>;
+    };
+    expect(checkoutBase.with).toMatchObject({ path: "prowl-base" });
+    expect(reviewStep.uses).toBe("./prowl-base");
+    expect(reviewStep.with).toMatchObject({
+      "config-path": "${{ github.workspace }}/prowl-base/.prowl-review.yml",
+      "guidelines-path": "${{ github.workspace }}/prowl-base",
+      "workspace-path": "${{ github.workspace }}/pr-head"
+    });
   });
 
   it.each(REUSABLE)("%s grants the token scopes the review needs", (name) => {
@@ -391,5 +413,33 @@ describe("reusable org workflows (#37)", () => {
     expect(text).toContain("uses: actions/create-github-app-token@v1");
     expect(text).toContain("github-token: ${{ steps.app-token.outputs.token }}");
     expect(text).toContain("bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]");
+  });
+
+  it.each(DOGFOOD_WORKFLOWS)("%s dogfoods the optional branded App-token identity (#59)", (path) => {
+    const text = readRepo(path);
+    const doc = parseYaml(text) as Record<string, unknown>;
+    // Mints an App token when PROWL_APP_ID is set; falls back to the default token otherwise.
+    expect(text).toContain(`uses: ${CREATE_GITHUB_APP_TOKEN_PIN}`);
+    expect(text).not.toContain("uses: actions/create-github-app-token@v1");
+    expect(text).toContain("github-token: ${{ steps.app-token.outputs.token || github.token }}");
+    expect(text).toContain(
+      "bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}"
+    );
+    const jobName = path.endsWith("prowl-review.yml") ? "review" : "command";
+    const job = (doc.jobs as Record<string, { env?: Record<string, unknown>; steps: Array<Record<string, unknown>> }>)[jobName];
+    const steps = job.steps;
+    const appToken = steps.find((step) => step.id === "app-token") as { if?: string; with: Record<string, unknown> };
+    expect(job.env).toMatchObject({
+      PROWL_APP_CONFIGURED: "${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}"
+    });
+    expect(steps.some((step) => step.id === "brand")).toBe(false);
+    // Token minting is gated so the workflow still runs (unbranded) before the App exists.
+    expect(appToken.if).toBe("env.PROWL_APP_CONFIGURED == 'true'");
+    expect(appToken.with).toMatchObject({
+      "permission-contents": "read",
+      "permission-issues": "write",
+      "permission-pull-requests": "write",
+      "permission-checks": "write"
+    });
   });
 });

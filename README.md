@@ -305,9 +305,10 @@ By default reviews post as **`github-actions[bot]`**. To post under your own
 use a **GitHub App token** — no core-tool change, and no hosted service required.
 
 1. **Register a GitHub App** (Settings → Developer settings → GitHub Apps): give
-   it a name (e.g. "Prowl Review") and upload the raccoon avatar. Grant
-   **`pull requests: write`**, **`issues: write`**, and (optional) **`checks:
-   write`**. Generate a private key and **install** the App on your repo/org.
+   it a name (e.g. "Prowl Review") and upload the raccoon avatar. Grant these
+   required permissions: **`contents: read`**, **`pull requests: write`**,
+   **`issues: write`**, and **`checks: write`**. Generate a private key and
+   **install** the App on your repo/org.
 2. **Add secrets:** `PROWL_APP_ID` (the App's id) and `PROWL_APP_PRIVATE_KEY`
    (the `.pem`).
 3. **Mint a token in the workflow** and hand it to the Action — it already accepts
@@ -320,6 +321,10 @@ use a **GitHub App token** — no core-tool change, and no hosted service requir
   with:
     app-id: ${{ secrets.PROWL_APP_ID }}
     private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+    permission-contents: read
+    permission-issues: write
+    permission-pull-requests: write
+    permission-checks: write
 - uses: prowl-tools/prowl-code-review@v1
   with:
     ai-key: ${{ secrets.PROWL_AI_KEY }}
@@ -334,6 +339,51 @@ and the [reusable org templates](examples/reusable/) pick this up automatically
 when `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` are set (falling back to the default
 token otherwise). This is the Action-path branding; the install-once **hosted**
 App is a separate, later phase (backlog #47).
+
+### Bring your own bot identity
+
+The branding is **not baked into the tool** — nothing "Prowl" or raccoon ships
+inside the package. The Action just posts as whatever identity you hand it via
+`github-token` / `bot-login`, so every team makes prowl-review look like their
+own in-house reviewer. Pairs naturally with BYOK: **your key, your bot.** Pick a
+tier:
+
+| Tier | Posts as | Setup |
+| --- | --- | --- |
+| **Default** | `github-actions[bot]` | Nothing — works out of the box with just your AI key. |
+| **Your own brand** | `your-app[bot]` + **your** name & avatar | Register **your own** GitHub App (any name/avatar you like), add your `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets. The steps above are identical — the identity is entirely yours. |
+| **Local CLI** | *(no bot — prints to your terminal)* | `prowl-review` locally; no GitHub identity involved. |
+
+There's no lock-in to *our* raccoon: a team can register `acme-review[bot]` with
+their own logo and nobody would know it's built on prowl-review unless they read
+the workflow. The App's power lives in its private key (kept in your secrets and
+never shared), so do not copy or hand out `PROWL_APP_PRIVATE_KEY`. A public App
+can be installed across multiple owners when configured that way, but adopters
+should register their own App when they need a separate identity, credential set,
+or trust boundary.
+
+#### Reusing one App across repos and accounts
+
+A GitHub App is a **server-side identity, not a per-device install** — reuse it by
+installing it on more repos, not by copying anything to another machine. Where it
+can go depends on the App's **"Where can this GitHub App be installed?"** setting:
+
+- **More repos under the *same* owner** (the account/org that owns the App): just
+  **Install App** on those repos, or set `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY`
+  as **org-level secrets** so every repo inherits them. One App → unlimited repos.
+- **Repos under a *different* owner** (e.g. your personal account when the App is
+  org-owned): the App must be set to **"Any account"** (public) to install it
+  there — flip it via **Make public** at the bottom of the App's settings only
+  when the App owner should be trusted with the granted repository access.
+  Whoever controls `PROWL_APP_PRIVATE_KEY` can mint installation tokens for
+  repos where the App is installed with the requested permissions. The
+  alternative is to **register a separate App** under that owner — note App names
+  are globally unique, so its bot login won't be identical (e.g.
+  `prowl-review-personal[bot]`).
+
+Running the **CLI** on another machine is unrelated: install `prowl-review` there
+and set your AI key — the App identity is a CI concept and doesn't live on the
+device.
 
 ## Install (CLI)
 
