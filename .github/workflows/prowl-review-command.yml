@@ -41,20 +41,13 @@ jobs:
     steps:
       # Branded identity (#59): mint an App installation token when PROWL_APP_ID
       # is set so the command reply posts as prowl-review[bot] with the App
-      # avatar. Read the secret via env (secrets aren't available in a step
-      # `if:`) and gate the token step on it; falls back to github-actions[bot].
+      # avatar. Gate the token step with a boolean expression so the private key
+      # is only handed to the token action; falls back to github-actions[bot].
       - name: Detect branded app config
         id: brand
         shell: bash
-        env:
-          APP_ID: ${{ secrets.PROWL_APP_ID }}
-          APP_PRIVATE_KEY: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
         run: |
-          if [ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]; then
-            echo "enabled=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "enabled=false" >> "$GITHUB_OUTPUT"
-          fi
+          echo "enabled=${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}" >> "$GITHUB_OUTPUT"
 
       - name: Mint prowl-review app token
         id: app-token

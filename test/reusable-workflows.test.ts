@@ -427,11 +427,10 @@ describe("reusable org workflows (#37)", () => {
     );
     const jobName = path.endsWith("prowl-review.yml") ? "review" : "command";
     const steps = stepsFor(doc, jobName);
-    const brand = steps.find((step) => step.id === "brand") as { env: Record<string, unknown>; run: string };
+    const brand = steps.find((step) => step.id === "brand") as { env?: Record<string, unknown>; run: string };
     const appToken = steps.find((step) => step.id === "app-token") as { if?: string; with: Record<string, unknown> };
-    expect(String(brand.env.APP_ID)).toContain("PROWL_APP_ID");
-    expect(String(brand.env.APP_PRIVATE_KEY)).toContain("PROWL_APP_PRIVATE_KEY");
-    expect(brand.run).toContain('[ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]');
+    expect(brand.env).toBeUndefined();
+    expect(brand.run).toContain("secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != ''");
     // Token minting is gated so the workflow still runs (unbranded) before the App exists.
     expect(appToken.if).toBe("steps.brand.outputs.enabled == 'true'");
     expect(appToken.with).toMatchObject({
