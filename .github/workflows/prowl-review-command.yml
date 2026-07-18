@@ -83,7 +83,7 @@ jobs:
           fi
 
       - name: Checkout trusted base (config + guidelines)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: prowl-base
@@ -113,7 +113,7 @@ jobs:
 
       - name: Checkout PR head for context
         if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           path: pr-head
