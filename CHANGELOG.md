@@ -17,6 +17,13 @@ All notable changes to Prowl Review will be documented in this file.
   register a separate App — names are globally unique) and that the App is a server-side identity, not a
   per-device install.
 - README **npm version badge** now that `prowl-review@0.1.0` is published (backlog #41/#42).
+- Enabled the **branded Checks API check run** (backlog #24) in this repo's own `.prowl-review.yml`
+  (`checkRun.enabled: true`), so reviews now surface as their own row in the PR checks list — branded with the
+  App avatar via the #59 installation token, alongside the posted review comments. Informational only (no
+  `failOn`): the check conclusion is always neutral, showing severity counts but never failing or blocking a
+  merge (add `failOn: <severity>` to turn it into a gate). Because the workflow loads config from the trusted
+  base-branch checkout, the row first appears on the PR *after* this lands on `main`. Also isolated a pause-gate
+  test from the repo's live config so it asserts the checkRun-off default independently.
 
 ## [0.1.0] - 2026-07-13
 
