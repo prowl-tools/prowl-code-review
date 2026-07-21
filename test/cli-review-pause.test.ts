@@ -129,6 +129,9 @@ afterEach(() => {
 
 describe("runReviewWithOptions pause gate", () => {
   it("skips the review pipeline when auto-review is paused", async () => {
+    // Isolate config discovery from the repo's own .prowl-review.yml (which
+    // enables checkRun) so this asserts the default: checkRun off → no check.
+    isolateWorkspace();
     writeEvent(sameRepoEvent());
     mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
     const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
