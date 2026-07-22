@@ -70,14 +70,18 @@ export function loadCase(caseDir: string, id: string): BenchmarkCase {
   try {
     rawMeta = JSON.parse(readFileSync(metaPath, "utf8"));
   } catch (error) {
-    throw new Error(`Benchmark case "${id}" has invalid case.json: ${error instanceof Error ? error.message : error}`);
+    throw new Error(`Benchmark case "${id}" has invalid case.json: ${error instanceof Error ? error.message : error}`, {
+      cause: error
+    });
   }
   let meta: z.infer<typeof CaseMetaSchema>;
   try {
     meta = CaseMetaSchema.parse(rawMeta);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`);
+      throw new Error(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`, {
+        cause: error
+      });
     }
     throw error;
   }

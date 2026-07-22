@@ -38,7 +38,7 @@ export function hasSymlinkComponent(
       if (code === "ENOENT") {
         return options.allowMissingTail !== true;
       }
-      throw new Error("Debug trace path component could not be inspected.");
+      throw new Error("Debug trace path component could not be inspected.", { cause: error });
     }
   }
 

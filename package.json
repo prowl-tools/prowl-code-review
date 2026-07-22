@@ -59,7 +59,7 @@
   "scripts": {
     "build": "tsup",
     "prepublishOnly": "npm run build",
-    "lint": "eslint . --ext .ts,.cjs",
+    "lint": "eslint .",
     "test": "vitest run",
     "test:watch": "vitest"
   },
@@ -70,12 +70,13 @@
     "zod": "^4.4.3"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "^26.1.1",
-    "@typescript-eslint/eslint-plugin": "^7.18.0",
-    "@typescript-eslint/parser": "^7.18.0",
-    "eslint": "^8.57.1",
+    "eslint": "^10.7.0",
+    "globals": "^17.7.0",
     "tsup": "^8.3.5",
     "typescript": "^5.7.3",
+    "typescript-eslint": "^8.65.0",
     "vitest": "^2.1.8"
   }
 }

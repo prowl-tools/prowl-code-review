@@ -97,7 +97,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     parsed = yaml.parse(raw) ?? {};
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not parse ${path.basename(resolvedPath)}: ${message}`);
+    throw new Error(`Could not parse ${path.basename(resolvedPath)}: ${message}`, { cause: error });
   }
 
   const result = configSchema.safeParse(parsed);
