@@ -23,7 +23,7 @@ const REUSABLE = ["prowl-review.yml", "prowl-review-command.yml"] as const;
 const CALLERS = ["caller-prowl-review.yml", "caller-prowl-review-command.yml"] as const;
 const ALL_WORKFLOWS = [...REUSABLE, ...CALLERS] as const;
 const DOGFOOD_WORKFLOWS = [".github/workflows/prowl-review.yml", ".github/workflows/prowl-review-command.yml"] as const;
-const CREATE_GITHUB_APP_TOKEN_PIN = "actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547";
+const CREATE_GITHUB_APP_TOKEN_PIN = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
 
 const permissionSchema = z.record(z.enum(["read", "write", "none"]));
 const expressionOrLiteralSchema = z.union([z.string(), z.number(), z.boolean()]);
