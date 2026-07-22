@@ -4,6 +4,13 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- Dependency maintenance (Dependabot): bumped pinned GitHub Action SHAs — `actions/checkout` → v7.0.1,
+  `actions/setup-node` → v7.0.0, `actions/create-github-app-token` → v3.2.0 (drift-test pin constant updated to
+  match) — and runtime/dev npm deps: `zod` 3 → 4, `commander` 12 → 15, `@actions/github` 6 → 9, and
+  `@types/node` 22 → 26. Build, typecheck, lint, and all 1710 tests pass on the new versions. (ESLint 8 → 10 is
+  deferred — it requires the flat-config + `@typescript-eslint` v8 migration, tracked separately.)
+
 ### Added
 - Branded dogfood workflows (backlog #59): this repo's `.github/workflows/prowl-review.yml` and
   `prowl-review-command.yml` now mint a GitHub App installation token when `PROWL_APP_ID` /

@@ -64,13 +64,13 @@
     "test:watch": "vitest"
   },
   "dependencies": {
-    "@actions/github": "^6.0.1",
-    "commander": "^12.1.0",
+    "@actions/github": "^9.1.1",
+    "commander": "^15.0.0",
     "yaml": "^2.9.0",
-    "zod": "^3.25.76"
+    "zod": "^4.4.3"
   },
   "devDependencies": {
-    "@types/node": "^22.13.1",
+    "@types/node": "^26.1.1",
     "@typescript-eslint/eslint-plugin": "^7.18.0",
     "@typescript-eslint/parser": "^7.18.0",
     "eslint": "^8.57.1",
