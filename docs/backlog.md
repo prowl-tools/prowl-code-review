@@ -20,14 +20,6 @@ _No open high-priority items._
     - **Done (contributor ergonomics & discoverability):** README status/license/CI/Node/PRs/docs badges, `.editorconfig`, `.nvmrc` (Node 20 pin), and `.github/dependabot.yml` (weekly npm + github-actions updates, grouped dev bumps). Added the **npm version badge** now that `0.1.0` is published (#42).
     - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
 
-43. **Docs + marketing integration (dedicated site)**
-    As a prospective user, I want docs and a landing section, so that I can discover and set up the tool.
-    - **Decision (2026-06-30):** prowl-review gets its own **dedicated satellite site** (e.g. `review.prowl.tools`), mirroring the suite pattern — `prowl-web` already lists "Prowl Code Review" as a *coming soon* tile, and Hub/Infra each live at their own subdomain. Build a new `prowl-review-docs` Docusaurus site reusing `prowl-docs`' theme/brand (teal, raccoon, Space Grotesk), then flip the `prowl-web` Suite tile from `href: null` to the live link.
-    - Acceptance: dedicated Docusaurus site (own repo) with getting-started + the differentiators + config/commands reference; **port the ready-made auth + privacy content** from [`docs/auth.md`](./auth.md) and [`docs/privacy.md`](./privacy.md) (#38/#40, done) as site pages; raccoon/brand conventions; "made for agents, controlled by humans" framing.
-    - **Done:** dedicated Docusaurus site built in `prowl-code-review-docs` (getting-started, config, cli, bot-commands, ensemble, grounding, cross-file-context, repo-wide-learnings, auth, privacy, example-review), configured for `review.prowl.tools`, builds clean. README "Documentation" cross-link added. `prowl-web` wiring staged: `fix-code-review-docs-link` points the live `/code-review` CTA at `docs.prowl.tools` (kills the dead link now), and `stage-review-docs-flip` flips the page CTA + homepage tile / footer / docs-hub entry to `review.prowl.tools` — **merge that only after the site is deployed.**
-    - **Done:** docs site **deployed and live at `review.prowl.tools`** (Vercel, Cloudflare CNAME, Let's Encrypt cert, HTTP 200). README "Documentation" section now points at the live site (`flip-docs-link-live`).
-    - Acceptance (remaining, operational): merge `prowl-web`'s `stage-review-docs-flip` so the homepage tile / footer / docs-hub entry + `/code-review` CTA point at the now-live `review.prowl.tools` (its base `fix-code-review-docs-link` is folded in). That's the last click to fully close #43.
-
 ---
 
 Completed items live in [`docs/resolved.md`](./resolved.md). Consciously
