@@ -28,6 +28,7 @@ import {
 import {
   planCheckRun,
   submitCheckRun as defaultSubmitCheckRun,
+  startCheckRun as defaultStartCheckRun,
   type CheckRunPlan,
   type CheckConclusion
 } from "./github/check-run.js";
@@ -151,11 +152,17 @@ export interface PipelineDeps {
     payload: ReviewPayload,
     options?: SubmitReviewOptions
   ) => Promise<SubmitReviewResult | void>;
-  /** Publish the merge-gate Check Run (#24). */
+  /** Open the live in-progress Check Run when the review begins (#24 / #59 follow-up). */
+  startCheckRun?: (
+    octokit: OctokitLike,
+    ref: PullRequestRef,
+    input: { headSha: string; name?: string }
+  ) => Promise<number>;
+  /** Publish / complete the merge-gate Check Run (#24). `checkRunId` completes a live run in place. */
   submitCheckRun?: (
     octokit: OctokitLike,
     ref: PullRequestRef,
-    input: { headSha: string; plan: CheckRunPlan; name?: string }
+    input: { headSha: string; plan: CheckRunPlan; name?: string; checkRunId?: number }
   ) => Promise<void>;
   /** Detect a `@prowl-review break glass <head-sha>` override for the approval gate (#52). */
   detectBreakGlass?: (
@@ -1302,6 +1309,8 @@ async function maybeSubmitCheckRun(
     incremental: boolean;
     /** Approval rubric decision (#52); when engaged it drives the conclusion. */
     approval?: ApprovalDecision;
+    /** Live in-progress run to complete in place, if one was opened at review start. */
+    checkRunId?: number;
   }
 ): Promise<CheckConclusion | undefined> {
   if (input.dryRun || !input.checkRun?.enabled || !input.headSha) {
@@ -1314,7 +1323,7 @@ async function maybeSubmitCheckRun(
       incremental: input.incremental,
       approval: input.approval
     });
-    await submit(octokit, ref, { headSha: input.headSha, plan });
+    await submit(octokit, ref, { headSha: input.headSha, plan, checkRunId: input.checkRunId });
     return plan.conclusion;
   } catch {
     return undefined;
@@ -1456,11 +1465,58 @@ function redactGroundingNotes(notes: string[]): { notes: string[]; count: number
   return { notes: redacted, count };
 }
 
-/** Run the full review pipeline for one pull request. */
+/**
+ * Live check-run lifecycle bookkeeping (#59 follow-up). `reviewPullRequestImpl`
+ * opens the in-progress run and records its id here; the exported wrapper below
+ * guarantees the run never dangles — completing it neutrally if the pipeline
+ * throws or bails on a superseded commit before the normal completion runs.
+ */
+interface CheckRunLifecycleState {
+  /** Id of the live in-progress run, once opened. */
+  checkRunId?: number;
+  /** True once the run has been completed (success/failure/neutral) — completion is idempotent. */
+  checkRunCompleted?: boolean;
+  /** A newer commit superseded this run — pick the "superseded" close-out title. */
+  supersededByNewerCommit?: boolean;
+  /** Best-effort neutral close-out of the live run; a no-op once completed. Set once deps + head are known. */
+  completeCheckRun?: (title: string) => Promise<void>;
+}
+
+/**
+ * Run the full review pipeline for one pull request.
+ *
+ * Thin wrapper around {@link reviewPullRequestImpl} that owns the live check-run
+ * safety net (#59 follow-up): whatever exit path the impl takes — normal return,
+ * a head-advanced bail, or a thrown error — the in-progress check row is closed
+ * out (neutral) rather than left stuck "running". Completion is idempotent, so
+ * this never double-completes a run the impl already finished normally.
+ */
 export async function reviewPullRequest(
   octokit: OctokitLike,
   ref: PullRequestRef,
   options: ReviewPullRequestOptions = {}
+): Promise<ReviewPullRequestResult> {
+  const state: CheckRunLifecycleState = {};
+  try {
+    return await reviewPullRequestImpl(octokit, ref, options, state);
+  } catch (error) {
+    // The pipeline threw after opening the live run but before completing it.
+    await state.completeCheckRun?.("Review did not complete");
+    throw error;
+  } finally {
+    // Safety net for the head-advanced/cancel returns and any non-fatal
+    // completion failure inside the impl: never leave the check row running.
+    await state.completeCheckRun?.(
+      state.supersededByNewerCommit ? "Superseded by a newer commit" : "Review did not complete"
+    );
+  }
+}
+
+async function reviewPullRequestImpl(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  options: ReviewPullRequestOptions,
+  state: CheckRunLifecycleState
 ): Promise<ReviewPullRequestResult> {
   const config = options.config ?? resolveProviderConfig();
   const deps = options.deps ?? {};
@@ -1479,6 +1535,7 @@ export async function reviewPullRequest(
   const getIssue = deps.fetchIssue ?? defaultFetchIssue;
   const submit = deps.submitReview ?? defaultSubmitReview;
   const submitCheck = deps.submitCheckRun ?? defaultSubmitCheckRun;
+  const startCheck = deps.startCheckRun ?? defaultStartCheckRun;
   const detectOverride = deps.detectBreakGlass ?? defaultDetectBreakGlass;
   const detectPriorRequestChanges = deps.detectPriorRequestChanges ?? defaultHasActiveRequestChanges;
   const fetchThreads = deps.fetchReviewThreads ?? defaultFetchReviewThreads;
@@ -1536,8 +1593,8 @@ export async function reviewPullRequest(
       posted: false
     };
   }
-  const hasHeadAdvanced = () =>
-    headAdvancedPastReview({
+  const hasHeadAdvanced = async (): Promise<boolean> => {
+    const advanced = await headAdvancedPastReview({
       fetchHeadSha,
       octokit,
       ref,
@@ -1545,8 +1602,44 @@ export async function reviewPullRequest(
       enabled: staleGuardEnabled,
       dryRun: options.dryRun === true
     });
+    // Record the reason so the wrapper closes a still-open live check row as
+    // "Superseded by a newer commit" rather than "Review did not complete".
+    if (advanced) {
+      state.supersededByNewerCommit = true;
+    }
+    return advanced;
+  };
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const shouldPublishReview = async () => !(await hasHeadAdvanced());
+
+  // Live check-run lifecycle (#59 follow-up): now that the stale-head guard has
+  // passed, open the check row as in-progress so the PR shows the review running.
+  // Non-fatal — a failure to open (e.g. missing `checks: write`) never sinks the
+  // review; the row simply won't appear. `completeCheckRun` is the idempotent
+  // close-out the exported wrapper leans on so a started run never dangles.
+  if (options.checkRun?.enabled && !options.dryRun && meta.headSha) {
+    state.completeCheckRun = async (title: string): Promise<void> => {
+      if (state.checkRunId === undefined || state.checkRunCompleted) {
+        return;
+      }
+      state.checkRunCompleted = true;
+      try {
+        await submitCheck(octokit, ref, {
+          headSha: meta.headSha,
+          plan: { conclusion: "neutral", title, summary: title, annotations: [] },
+          checkRunId: state.checkRunId
+        });
+      } catch {
+        // tolerant: never let the check row sink the primary review output.
+      }
+    };
+    try {
+      state.checkRunId = await startCheck(octokit, ref, { headSha: meta.headSha });
+    } catch {
+      state.checkRunId = undefined;
+    }
+  }
+
   const fullParsed = parseDiff(diff);
 
   // Incremental re-review (#23): on a re-run, scan only the delta a push added
@@ -1819,6 +1912,7 @@ export async function reviewPullRequest(
       const latestMeta = await fetchPrMeta(octokit, ref);
       if (staleGuardEnabled && latestMeta.headSha !== reviewedHeadSha) {
         result.headAdvanced = true;
+        state.supersededByNewerCommit = true;
         result.prDescriptionUpdated = false;
       } else if (!shouldDescribePr(latestMeta.body)) {
         result.prDescriptionUpdated = false;
@@ -2081,14 +2175,20 @@ export async function reviewPullRequest(
       }
     }
     // A passing gate still posts on a no-findings run so a Required check isn't left pending.
+    // When a live run was opened, this completes it in place (running → done).
     result.checkRunConclusion = await maybeSubmitCheckRun(submitCheck, octokit, ref, {
       dryRun: options.dryRun,
       checkRun: options.checkRun,
       headSha: meta.headSha,
       findings: reviewResult.findings,
       incremental: incrementalBaseSha !== undefined,
-      approval
+      approval,
+      checkRunId: state.checkRunId
     });
+    // A defined conclusion means the run completed; the wrapper won't touch it.
+    if (result.checkRunConclusion !== undefined) {
+      state.checkRunCompleted = true;
+    }
 
     return result;
   }
@@ -2422,14 +2522,20 @@ export async function reviewPullRequest(
     return result;
   }
   // Merge gate (#24): conclusion from the approval rubric (#52) when engaged,
-  // else from the surfaced findings against `failOn`.
+  // else from the surfaced findings against `failOn`. When a live run was opened,
+  // this completes it in place (running → done).
   result.checkRunConclusion = await maybeSubmitCheckRun(submitCheck, octokit, ref, {
     dryRun: options.dryRun,
     checkRun: options.checkRun,
     headSha: meta.headSha,
     findings: reviewResult.findings,
     incremental: incrementalBaseSha !== undefined,
-    approval
+    approval,
+    checkRunId: state.checkRunId
   });
+  // A defined conclusion means the run completed; the wrapper won't touch it.
+  if (result.checkRunConclusion !== undefined) {
+    state.checkRunCompleted = true;
+  }
   return result;
 }
