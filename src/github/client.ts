@@ -204,7 +204,7 @@ export interface OctokitLike {
     };
     /** Checks API — the merge-gate Check Run (#24). */
     checks: {
-      /** Create a completed check run with a conclusion + annotations. */
+      /** Create a check run (in-progress live row, or a completed conclusion) with annotations. */
       create(params: {
         owner: string;
         repo: string;
@@ -212,6 +212,8 @@ export interface OctokitLike {
         head_sha: string;
         status?: string;
         conclusion?: string;
+        started_at?: string;
+        completed_at?: string;
         output?: {
           title: string;
           summary: string;
@@ -225,11 +227,15 @@ export interface OctokitLike {
           }>;
         };
       }): Promise<{ data: { id: number } }>;
-      /** Update a check run to attach additional annotation batches. */
+      /** Update a check run — attach more annotation batches, or complete a live in-progress run. */
       update(params: {
         owner: string;
         repo: string;
         check_run_id: number;
+        status?: string;
+        conclusion?: string;
+        started_at?: string;
+        completed_at?: string;
         output?: {
           title: string;
           summary: string;

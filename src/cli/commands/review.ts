@@ -911,7 +911,7 @@ export function resolveDryRun(
 
 /**
  * Post a neutral merge-gate check run for an auto-review that was deliberately
- * skipped (paused / on-demand-only / draft), so a Required "prowl-review" check
+ * skipped (paused / on-demand-only / draft), so a Required "Prowl Review" check
  * isn't left pending forever. No-op on dry runs, when the check is disabled, or
  * when the head SHA is unknown. Tolerant: a failure never sinks the skip.
  */

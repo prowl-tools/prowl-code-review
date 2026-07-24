@@ -111,7 +111,7 @@ the Action from seeing drafts, so `review.reviewDrafts: true` cannot take effect
 
 When an auto review is skipped (paused, drafts, or `auto: false`) and the
 merge-gate check is enabled, prowl-review posts a neutral check run so a Required
-"prowl-review" check isn't left pending.
+"Prowl Review" check isn't left pending.
 
 ### Bot commands
 

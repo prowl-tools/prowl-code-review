@@ -199,6 +199,7 @@ export {
 export {
   planCheckRun,
   submitCheckRun,
+  startCheckRun,
   annotationLevelFor,
   CHECK_RUN_NAME,
   CHECK_ANNOTATION_BATCH,
