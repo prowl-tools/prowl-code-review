@@ -4,6 +4,24 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Live, branded merge-gate check run** (follow-up to #59/#24) — the Checks API row now behaves like
+  commercial reviewers': it opens as **in-progress** ("Review in progress") the moment review work begins and
+  transitions to its final conclusion in place, instead of only appearing, already-completed, at the end.
+  `startCheckRun` creates the live run (`status: in_progress`, `started_at`); `submitCheckRun` gained an optional
+  `checkRunId` that completes that same run via `checks.update` (without it, behavior is unchanged — it still
+  creates a completed run). The pipeline starts the run right after the stale-head guard, threads the id through
+  to completion, and a wrapper around `reviewPullRequest` guarantees the run never dangles "running": it is closed
+  neutrally as **"Superseded by a newer commit"** when the head advances mid-run and **"Review did not complete"**
+  if the pipeline throws (both tolerant/non-fatal, like the rest of the check path).
+- **An ungated check run now completes green (`success`) instead of grey (`neutral`).** With no `checkRun.failOn`
+  and no engaged approval gate, the review ran to completion and any findings are informational, so the row reads
+  as done rather than skipped. `neutral` is still used for the deliberate skip/pause path and the did-not-complete/
+  superseded close-outs above.
+- **Renamed the check-run display name from `prowl-review` to `Prowl Review`** (branded). **Action required:**
+  anyone who marked the old `prowl-review` check as **Required** in branch protection must update the required-check
+  name to `Prowl Review`, or the gate will no longer be enforced.
+
 ### Added
 - Branded dogfood workflows (backlog #59): this repo's `.github/workflows/prowl-review.yml` and
   `prowl-review-command.yml` now mint a GitHub App installation token when `PROWL_APP_ID` /
@@ -20,8 +38,9 @@ All notable changes to Prowl Review will be documented in this file.
 - Enabled the **branded Checks API check run** (backlog #24) in this repo's own `.prowl-review.yml`
   (`checkRun.enabled: true`), so reviews now surface as their own row in the PR checks list — branded with the
   App avatar via the #59 installation token, alongside the posted review comments. Informational only (no
-  `failOn`): the check conclusion is always neutral, showing severity counts but never failing or blocking a
-  merge (add `failOn: <severity>` to turn it into a gate). Because the workflow loads config from the trusted
+  `failOn`): the check completes green (`success` — see the live-lifecycle change above), showing severity counts
+  but never failing or blocking a merge (add `failOn: <severity>` to turn it into a gate). Because the workflow
+  loads config from the trusted
   base-branch checkout, the row first appears on the PR *after* this lands on `main`. Also isolated a pause-gate
   test from the repo's live config so it asserts the checkRun-off default independently.
 
