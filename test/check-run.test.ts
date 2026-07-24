@@ -2,8 +2,10 @@ import { describe, expect, it, vi } from "vitest";
 import {
   planCheckRun,
   submitCheckRun,
+  startCheckRun,
   annotationLevelFor,
-  CHECK_ANNOTATION_BATCH
+  CHECK_ANNOTATION_BATCH,
+  CHECK_RUN_NAME
 } from "../src/github/check-run.js";
 import type { Finding, Severity } from "../src/review/findings.js";
 import type { ApprovalDecision } from "../src/review/approval.js";
@@ -36,9 +38,11 @@ describe("annotationLevelFor (#24)", () => {
 });
 
 describe("planCheckRun (#24)", () => {
-  it("is informational (neutral) when no failOn is set", () => {
+  it("completes green (success) — not grey (neutral) — when ungated", () => {
+    // An ungated run (no failOn, no engaged approval) ran to completion, so the
+    // row reads as done rather than a grey neutral; findings stay informational.
     const plan = planCheckRun({ findings: [finding({ severity: "critical" })] });
-    expect(plan.conclusion).toBe("neutral");
+    expect(plan.conclusion).toBe("success");
     expect(plan.summary).toContain("informational only");
   });
 
@@ -200,9 +204,55 @@ describe("submitCheckRun (#24)", () => {
 
     expect(create).toHaveBeenCalledTimes(1);
     const arg = create.mock.calls[0][0];
-    expect(arg).toMatchObject({ owner: "o", repo: "r", name: "prowl-review", head_sha: "head", status: "completed", conclusion: "failure" });
+    expect(arg).toMatchObject({
+      owner: "o",
+      repo: "r",
+      name: "Prowl Review",
+      head_sha: "head",
+      status: "completed",
+      conclusion: "failure"
+    });
+    expect(arg.name).toBe(CHECK_RUN_NAME);
     expect(arg.output.annotations).toHaveLength(1);
     expect(update).not.toHaveBeenCalled();
+  });
+
+  it("completes an existing live run in place when given a checkRunId (no new run)", async () => {
+    const { octokit, create, update } = mockOctokit();
+    const plan = planCheckRun({ findings: [finding({ severity: "critical" })], failOn: "critical" });
+    await submitCheckRun(octokit, ref, { headSha: "head", plan, checkRunId: 42 });
+
+    // The live row is completed via update, not a duplicate create.
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(1);
+    const arg = update.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      owner: "o",
+      repo: "r",
+      check_run_id: 42,
+      status: "completed",
+      conclusion: "failure"
+    });
+    expect(typeof arg.completed_at).toBe("string");
+    expect(arg.output.annotations).toHaveLength(1);
+  });
+
+  it("completes an existing live run and still batches overflow annotations via update", async () => {
+    const { octokit, create, update } = mockOctokit();
+    const findings = Array.from({ length: CHECK_ANNOTATION_BATCH + 5 }, (_, i) =>
+      finding({ line: i + 1, file: `src/f${i}.ts` })
+    );
+    const plan = planCheckRun({ findings, failOn: "critical" });
+    await submitCheckRun(octokit, ref, { headSha: "head", plan, checkRunId: 7 });
+
+    expect(create).not.toHaveBeenCalled();
+    // One update completes the run (first batch), a second attaches the overflow.
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[0][0].check_run_id).toBe(7);
+    expect(update.mock.calls[0][0].status).toBe("completed");
+    expect(update.mock.calls[0][0].output.annotations).toHaveLength(CHECK_ANNOTATION_BATCH);
+    expect(update.mock.calls[1][0].check_run_id).toBe(7);
+    expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
   });
 
   it("batches annotations beyond the per-request cap via update calls", async () => {
@@ -217,5 +267,42 @@ describe("submitCheckRun (#24)", () => {
     expect(update).toHaveBeenCalledTimes(1);
     expect(update.mock.calls[0][0].output.annotations).toHaveLength(20);
     expect(update.mock.calls[0][0].check_run_id).toBe(99);
+  });
+});
+
+describe("startCheckRun (#59 follow-up)", () => {
+  const ref = { owner: "o", repo: "r", pull_number: 7 };
+
+  function mockOctokit() {
+    const create = vi.fn(async () => ({ data: { id: 123 } }));
+    const update = vi.fn(async () => ({ data: {} }));
+    const octokit = { rest: { checks: { create, update } } } as unknown as OctokitLike;
+    return { octokit, create, update };
+  }
+
+  it("opens an in-progress run with a started_at and returns its id", async () => {
+    const { octokit, create, update } = mockOctokit();
+    const id = await startCheckRun(octokit, ref, { headSha: "head" });
+
+    expect(id).toBe(123);
+    expect(create).toHaveBeenCalledTimes(1);
+    const arg = create.mock.calls[0][0];
+    expect(arg).toMatchObject({
+      owner: "o",
+      repo: "r",
+      name: "Prowl Review",
+      head_sha: "head",
+      status: "in_progress"
+    });
+    expect(typeof arg.started_at).toBe("string");
+    expect(arg.output.title).toBe("Review in progress");
+    expect(arg.conclusion).toBeUndefined();
+    expect(update).not.toHaveBeenCalled();
+  });
+
+  it("honors a custom check-run name", async () => {
+    const { octokit, create } = mockOctokit();
+    await startCheckRun(octokit, ref, { headSha: "head", name: "Custom" });
+    expect(create.mock.calls[0][0].name).toBe("Custom");
   });
 });

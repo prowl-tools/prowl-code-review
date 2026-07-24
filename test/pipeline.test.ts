@@ -797,6 +797,123 @@ ${DELTA_DIFF}`;
     expect(result.checkRunConclusion).toBeUndefined(); // gate failure swallowed
   });
 
+  describe("live check-run lifecycle (#59 follow-up)", () => {
+    it("opens an in-progress run at start and completes it in place", async () => {
+      const startCheckRun = vi.fn(async () => 555);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" } // default finding is major → fails
+      });
+
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      expect(startCheckRun.mock.calls[0][2]).toMatchObject({ headSha: "head" });
+      // The final publish completes the SAME live run rather than creating a new one.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(555);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("does not open a live run on a dry run or when the check is disabled", async () => {
+      const startCheckRun = vi.fn(async () => 1);
+      const dryDeps = { ...makeDeps(), startCheckRun };
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps: dryDeps,
+        dryRun: true,
+        checkRun: { enabled: true, failOn: "critical" }
+      });
+      expect(startCheckRun).not.toHaveBeenCalled();
+
+      const offStart = vi.fn(async () => 1);
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps: { ...makeDeps(), startCheckRun: offStart }
+      });
+      expect(offStart).not.toHaveBeenCalled();
+    });
+
+    it("still completes the review (fresh run) when opening the live run fails", async () => {
+      const startCheckRun = vi.fn(async () => {
+        throw new Error("missing checks: write");
+      });
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.posted).toBe(true);
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // No live id to complete → falls back to the legacy create path.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      expect(submitCheckRun.mock.calls[0][2].checkRunId).toBeUndefined();
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("completes the live run as neutral when the pipeline throws", async () => {
+      const startCheckRun = vi.fn(async () => 999);
+      const submitCheckRun = vi.fn(async () => {});
+      const submitReview = vi.fn(async () => {
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow();
+
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // The dangling in-progress run is closed out, not left running forever.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(999);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Review did not complete");
+    });
+
+    it("completes the live run as superseded when the head advances mid-run", async () => {
+      const startCheckRun = vi.fn(async () => 321);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // Closed as superseded rather than left in progress.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(321);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+  });
+
   describe("approval rubric + break-glass (#52)", () => {
     it("only comments by default (gate off): no override lookup, COMMENT event", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: false }));
