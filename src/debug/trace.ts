@@ -5,6 +5,8 @@ import { prepareDebugLogPathForWrite } from "./paths.js";
 import { redactSecrets } from "../review/redact.js";
 import type { Finding } from "../review/findings.js";
 
+const DEFAULT_MAX_QUEUED_TRACE_LINES = 4096;
+
 /**
  * Debug/verbose run tracing (backlog #49).
  *
@@ -217,9 +219,13 @@ async function appendJsonlLine(path: string, line: string, workspace?: string): 
  * hot path on per-event disk I/O. Parent directories are created best-effort for
  * explicit nested paths such as `traces/run.jsonl`.
  */
-export function createJsonlSink(path: string, options: { now?: () => number; workspace?: string } = {}): DebugSink {
+export function createJsonlSink(
+  path: string,
+  options: { now?: () => number; workspace?: string; maxQueueLines?: number } = {}
+): DebugSink {
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
+  const maxQueueLines = Math.max(1, Math.floor(options.maxQueueLines ?? DEFAULT_MAX_QUEUED_TRACE_LINES));
   const queue: string[] = [];
   let flushing = false;
 
@@ -237,24 +243,34 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     }
     flushing = true;
     void (async () => {
-      for (;;) {
-        const batch = queue.splice(0);
-        if (batch.length === 0) {
-          flushing = false;
-          if (queue.length > 0) {
-            startFlush();
+      try {
+        // Re-check the queue after every awaited batch so events emitted during a write
+        // are drained by this worker without starting concurrent file writes.
+        while (queue.length > 0) {
+          const batch = queue.splice(0);
+          for (const queuedLine of batch) {
+            try {
+              await appendJsonlLine(path, queuedLine, options.workspace);
+            } catch {
+              // Debug writes must never fail the review run.
+            }
           }
-          return;
         }
-        for (const queuedLine of batch) {
-          try {
-            await appendJsonlLine(path, queuedLine, options.workspace);
-          } catch {
-            // Debug writes must never fail the review run.
-          }
+      } finally {
+        flushing = false;
+        if (queue.length > 0) {
+          startFlush();
         }
       }
     })();
+  };
+
+  const enqueueLine = (line: string) => {
+    if (queue.length >= maxQueueLines) {
+      queue.splice(0, queue.length - maxQueueLines + 1);
+    }
+    queue.push(line);
+    startFlush();
   };
 
   return (event: DebugEvent) => {
@@ -264,7 +280,6 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     } catch {
       return;
     }
-    queue.push(line);
-    startFlush();
+    enqueueLine(line);
   };
 }
