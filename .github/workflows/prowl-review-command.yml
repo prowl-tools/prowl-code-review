@@ -48,7 +48,7 @@ jobs:
       - name: Mint prowl-review app token
         id: app-token
         if: env.PROWL_APP_CONFIGURED == 'true'
-        uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
         with:
           app-id: ${{ secrets.PROWL_APP_ID }}
           private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
@@ -83,7 +83,7 @@ jobs:
           fi
 
       - name: Checkout trusted base (config + guidelines)
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ steps.pr.outputs.base_sha }}
           path: prowl-base
@@ -113,7 +113,7 @@ jobs:
 
       - name: Checkout PR head for context
         if: steps.trusted-action.outputs.available == 'true' && steps.pr.outputs.trusted_head == 'true'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ steps.pr.outputs.head_sha }}
           path: pr-head
