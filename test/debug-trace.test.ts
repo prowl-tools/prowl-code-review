@@ -147,7 +147,10 @@ describe("debug trace", () => {
     }
 
     const records = (await waitForTrace(path, 3)).map((line) => JSON.parse(line) as DebugRecord);
-    expect(records.map((record) => record.seq)).toEqual([0, 3, 4]);
+    const seqs = records.map((record) => record.seq);
+    expect(seqs).toEqual([0, 3, 4]);
+    expect(seqs).not.toContain(1);
+    expect(seqs).not.toContain(2);
     expect(records.map((record) => (record.event as Extract<DebugEvent, { type: "grounding" }>).findings)).toEqual([
       0, 3, 4
     ]);

@@ -247,13 +247,14 @@ export function createJsonlSink(
         // Re-check the queue after every awaited batch so events emitted during a write
         // are drained by this worker without starting concurrent file writes.
         while (queue.length > 0) {
-          const batch = queue.splice(0);
-          for (const queuedLine of batch) {
-            try {
-              await appendJsonlLine(path, queuedLine, options.workspace);
-            } catch {
-              // Debug writes must never fail the review run.
-            }
+          const queuedLine = queue.shift();
+          if (queuedLine === undefined) {
+            continue;
+          }
+          try {
+            await appendJsonlLine(path, queuedLine, options.workspace);
+          } catch {
+            // Debug writes must never fail the review run.
           }
         }
       } finally {
@@ -266,8 +267,8 @@ export function createJsonlSink(
   };
 
   const enqueueLine = (line: string) => {
-    if (queue.length >= maxQueueLines) {
-      queue.splice(0, queue.length - maxQueueLines + 1);
+    while (queue.length >= maxQueueLines) {
+      queue.shift();
     }
     queue.push(line);
     startFlush();

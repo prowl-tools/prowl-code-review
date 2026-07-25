@@ -31,7 +31,11 @@ export function findConfigPath(startDir: string): string | null {
     let entries: Set<string>;
     try {
       entries = new Set(fs.readdirSync(current));
-    } catch {
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw error;
+      }
       entries = new Set();
     }
     for (const name of CONFIG_FILENAMES) {
