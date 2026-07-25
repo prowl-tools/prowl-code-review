@@ -22,7 +22,7 @@ class ProwlReview < Formula
   sha256 TARBALL_SHA256
   license "Apache-2.0"
 
-  depends_on "node@20"
+  depends_on "node@22"
 
   def install
     if TARBALL_VERSION == "0.0.0" || TARBALL_SHA256 == "REPLACE_WITH_TARBALL_SHA256"
