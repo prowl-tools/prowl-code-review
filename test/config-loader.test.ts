@@ -3,6 +3,7 @@ import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "yaml";
+import { z } from "zod";
 import { CONFIG_FILENAME, findConfigPath, loadConfig } from "../src/config/loader.js";
 
 let tempDirs: string[] = [];
@@ -66,7 +67,18 @@ describe("loadConfig (#29)", () => {
   it("throws a readable error on a schema violation", () => {
     const dir = tempDir();
     writeFileSync(join(dir, CONFIG_FILENAME), "review:\n  minSeverity: urgent\n");
-    expect(() => loadConfig({ cwd: dir })).toThrow(/Invalid .*review\.minSeverity/s);
+
+    let thrown: unknown;
+    try {
+      loadConfig({ cwd: dir });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const thrownError = thrown as Error;
+    expect(thrownError.message).toMatch(/Invalid .*review\.minSeverity/s);
+    expect(thrownError.cause).toBeInstanceOf(z.ZodError);
   });
 
   it("throws on a malformed YAML document", () => {

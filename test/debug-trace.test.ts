@@ -121,6 +121,22 @@ describe("debug trace", () => {
     expect(records.map((r) => r.seq)).toEqual([0, 1]);
   });
 
+  it("drains burst writes in FIFO order", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
+    const path = join(dir, "trace.jsonl");
+    const sink = createJsonlSink(path, { now: clock([0, 10, 20, 30, 40, 50]) });
+
+    for (let index = 0; index < 5; index += 1) {
+      sink({ type: "grounding", findings: index, notes: 0 });
+    }
+
+    const records = (await waitForTrace(path, 5)).map((line) => JSON.parse(line) as DebugRecord);
+    expect(records.map((record) => record.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(records.map((record) => (record.event as Extract<DebugEvent, { type: "grounding" }>).findings)).toEqual([
+      0, 1, 2, 3, 4
+    ]);
+  });
+
   it("creates parent directories for nested trace paths", async () => {
     const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
     const path = join(dir, "traces", "run.jsonl");
