@@ -3,7 +3,7 @@
 [![npm version](https://img.shields.io/npm/v/prowl-review.svg)](https://www.npmjs.com/package/prowl-review)
 [![CI](https://github.com/prowl-tools/prowl-code-review/actions/workflows/ci.yml/badge.svg)](https://github.com/prowl-tools/prowl-code-review/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
-[![Node](https://img.shields.io/badge/node-%3E%3D20-brightgreen.svg)](package.json)
+[![Node](https://img.shields.io/badge/node-%3E%3D22.12-brightgreen.svg)](package.json)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
 [![Docs](https://img.shields.io/badge/docs-review.prowl.tools-06b6d4.svg)](https://review.prowl.tools)
 
