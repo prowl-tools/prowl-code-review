@@ -25,7 +25,7 @@ const ALL_WORKFLOWS = [...REUSABLE, ...CALLERS] as const;
 const DOGFOOD_WORKFLOWS = [".github/workflows/prowl-review.yml", ".github/workflows/prowl-review-command.yml"] as const;
 const CREATE_GITHUB_APP_TOKEN_PIN = "actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547";
 
-const permissionSchema = z.record(z.enum(["read", "write", "none"]));
+const permissionSchema = z.record(z.string(), z.enum(["read", "write", "none"]));
 const expressionOrLiteralSchema = z.union([z.string(), z.number(), z.boolean()]);
 const workflowCallInputSchema = z
   .object({
@@ -43,9 +43,9 @@ const workflowCallSecretSchema = z
   .strict();
 const workflowCallSchema = z
   .object({
-    inputs: z.record(workflowCallInputSchema).optional(),
-    secrets: z.record(workflowCallSecretSchema).optional(),
-    outputs: z.record(z.unknown()).optional()
+    inputs: z.record(z.string(), workflowCallInputSchema).optional(),
+    secrets: z.record(z.string(), workflowCallSecretSchema).optional(),
+    outputs: z.record(z.string(), z.unknown()).optional()
   })
   .strict();
 const eventTriggerSchema = z.union([
@@ -57,7 +57,7 @@ const eventTriggerSchema = z.union([
     })
     .passthrough()
 ]);
-const onSchema = z.record(z.unknown()).superRefine((value, ctx) => {
+const onSchema = z.record(z.string(), z.unknown()).superRefine((value, ctx) => {
   for (const [name, config] of Object.entries(value)) {
     const schema = name === "workflow_call" ? workflowCallSchema : eventTriggerSchema;
     const result = schema.safeParse(config);
@@ -78,8 +78,8 @@ const stepSchema = z
     uses: z.string().optional(),
     run: z.string().optional(),
     shell: z.string().optional(),
-    env: z.record(z.unknown()).optional(),
-    with: z.record(z.unknown()).optional(),
+    env: z.record(z.string(), z.unknown()).optional(),
+    with: z.record(z.string(), z.unknown()).optional(),
     "working-directory": z.string().optional(),
     "continue-on-error": expressionOrLiteralSchema.optional(),
     "timeout-minutes": expressionOrLiteralSchema.optional()
@@ -102,10 +102,10 @@ const reusableJobSchema = z
     "runs-on": z.union([z.string(), z.array(z.string())]),
     concurrency: concurrencySchema.optional(),
     steps: z.array(stepSchema),
-    env: z.record(z.unknown()).optional(),
-    defaults: z.record(z.unknown()).optional(),
-    outputs: z.record(z.unknown()).optional(),
-    strategy: z.record(z.unknown()).optional(),
+    env: z.record(z.string(), z.unknown()).optional(),
+    defaults: z.record(z.string(), z.unknown()).optional(),
+    outputs: z.record(z.string(), z.unknown()).optional(),
+    strategy: z.record(z.string(), z.unknown()).optional(),
     "timeout-minutes": expressionOrLiteralSchema.optional()
   })
   .strict();
@@ -116,8 +116,8 @@ const callerJobSchema = z
     needs: z.union([z.string(), z.array(z.string())]).optional(),
     permissions: permissionSchema.optional(),
     uses: z.string(),
-    with: z.record(z.unknown()).optional(),
-    secrets: z.union([z.literal("inherit"), z.record(z.unknown())]).optional()
+    with: z.record(z.string(), z.unknown()).optional(),
+    secrets: z.union([z.literal("inherit"), z.record(z.string(), z.unknown())]).optional()
   })
   .strict();
 const workflowSchema = z
@@ -126,7 +126,7 @@ const workflowSchema = z
     on: onSchema.optional(),
     true: onSchema.optional(),
     permissions: permissionSchema.optional(),
-    jobs: z.record(z.union([reusableJobSchema, callerJobSchema]))
+    jobs: z.record(z.string(), z.union([reusableJobSchema, callerJobSchema]))
   })
   .strict()
   .refine((workflow) => workflow.on !== undefined || workflow.true !== undefined, "workflow must declare triggers");
