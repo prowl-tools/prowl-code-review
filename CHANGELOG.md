@@ -27,7 +27,6 @@ All notable changes to Prowl Review will be documented in this file.
   `@types/node` 22 → 26. Raised the supported Node.js floor to `>=22.12.0` to match `commander` 15.
   Build, typecheck, lint, and all 1710 tests pass on the new versions. (ESLint 8 → 10 is deferred — it requires
   the flat-config + `@typescript-eslint` v8 migration, tracked separately.)
->>>>>>> main
 
 ### Added
 - Branded dogfood workflows (backlog #59): this repo's `.github/workflows/prowl-review.yml` and
