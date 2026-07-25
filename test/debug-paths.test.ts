@@ -36,6 +36,24 @@ describe("debug path helpers", () => {
     expect(hasSymlinkComponent("missing/trace.jsonl", workspace)).toBe(true);
   });
 
+  it("preserves the original inspection error as the cause", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
+    writeFileSync(join(workspace, "traces"), "not a directory");
+
+    let thrown: unknown;
+    try {
+      hasSymlinkComponent("traces/run.jsonl", workspace);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const thrownError = thrown as Error;
+    expect(thrownError.message).toMatch(/could not be inspected/);
+    expect(thrownError.cause).toBeInstanceOf(Error);
+    expect((thrownError.cause as NodeJS.ErrnoException).code).toBe("ENOTDIR");
+  });
+
   it("creates nested parent directories and returns the resolved path", () => {
     const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
     const resolvedPath = prepareDebugLogPathForWrite("traces/nested/run.jsonl", workspace);
