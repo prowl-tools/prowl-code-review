@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import fs, { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "yaml";
@@ -56,6 +56,17 @@ describe("loadConfig (#29)", () => {
     mkdirSync(nested, { recursive: true });
     expect(findConfigPath(nested)).toBe(join(root, CONFIG_FILENAME));
     expect(loadConfig({ cwd: nested }).config).toEqual({ review: { maxFindings: 5 } });
+  });
+
+  it("rejects a symlinked config discovered during search", () => {
+    const root = tempDir();
+    const outside = tempDir();
+    const outsideConfig = join(outside, CONFIG_FILENAME);
+    writeFileSync(outsideConfig, "provider: openai\n");
+    symlinkSync(outsideConfig, join(root, CONFIG_FILENAME), "file");
+
+    expect(() => findConfigPath(root)).toThrow(/symlink/);
+    expect(() => loadConfig({ cwd: root })).toThrow(/symlink/);
   });
 
   it("surfaces unexpected directory read errors while searching", () => {
@@ -140,5 +151,16 @@ describe("loadConfig (#29)", () => {
     const dir = tempDir();
     const missing = join(dir, CONFIG_FILENAME);
     expect(() => loadConfig({ configPath: missing })).toThrow(/not found/);
+  });
+
+  it("rejects an explicit symlinked config path", () => {
+    const root = tempDir();
+    const outside = tempDir();
+    const outsideConfig = join(outside, CONFIG_FILENAME);
+    const symlinkedConfig = join(root, CONFIG_FILENAME);
+    writeFileSync(outsideConfig, "provider: openai\n");
+    symlinkSync(outsideConfig, symlinkedConfig, "file");
+
+    expect(() => loadConfig({ configPath: symlinkedConfig })).toThrow(/symlink/);
   });
 });
