@@ -9,7 +9,7 @@ All notable changes to Prowl Review will be documented in this file.
   `actions/setup-node` → v7.0.0, `actions/create-github-app-token` → v3.2.0 (drift-test pin constant updated to
   match) — and runtime/dev npm deps: `zod` 3 → 4, `commander` 12 → 15, `@actions/github` 6 → 9, and
   `@types/node` 22 → 26. Updated the supported Node.js range to `^22.13.0 || >=24` to match `commander` 15
-  while excluding Node 23, which ESLint 10 does not support. Build, typecheck, lint, and all 1712 tests pass on
+  while excluding Node 23, which ESLint 10 does not support. Build, typecheck, lint, and all 1713 tests pass on
   the new versions.
 - Migrated ESLint 8 → 10: replaced the legacy `.eslintrc.cjs` + `.eslintignore` with a flat
   `eslint.config.mjs`, swapped `@typescript-eslint/*` v7 for the unified `typescript-eslint` v8 (plus

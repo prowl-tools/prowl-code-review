@@ -70,8 +70,10 @@ export function loadCase(caseDir: string, id: string): BenchmarkCase {
   try {
     rawMeta = JSON.parse(readFileSync(metaPath, "utf8"));
   } catch (error) {
-    throw new Error(`Benchmark case "${id}" has invalid case.json: ${error instanceof Error ? error.message : error}`, {
-      cause: error
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`Benchmark case "${id}" has invalid case.json: ${message}`, {
+      // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized into Error causes.
+      cause: error instanceof Error ? error : new Error(String(error))
     });
   }
   let meta: z.infer<typeof CaseMetaSchema>;

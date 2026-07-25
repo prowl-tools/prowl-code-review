@@ -98,8 +98,8 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     throw new Error(`Could not parse ${path.basename(resolvedPath)}: ${message}`, {
-      // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized while retaining the caught value.
-      cause: error instanceof Error ? error : new Error(message, { cause: error })
+      // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized into Error causes.
+      cause: error instanceof Error ? error : new Error(String(error))
     });
   }
 
