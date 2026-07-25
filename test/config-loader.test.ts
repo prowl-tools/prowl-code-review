@@ -70,7 +70,18 @@ describe("loadConfig (#29)", () => {
   it("throws on a malformed YAML document", () => {
     const dir = tempDir();
     writeFileSync(join(dir, CONFIG_FILENAME), "review: [unclosed\n");
-    expect(() => loadConfig({ cwd: dir })).toThrow(/Could not parse/);
+
+    let thrown: unknown;
+    try {
+      loadConfig({ cwd: dir });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const thrownError = thrown as Error;
+    expect(thrownError.message).toMatch(/Could not parse/);
+    expect(thrownError.cause).toBeInstanceOf(Error);
   });
 
   it("throws when an explicit config path does not exist", () => {

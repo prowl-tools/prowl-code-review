@@ -133,7 +133,18 @@ describe("loadBenchmark", () => {
       mkdirSync(dir);
       writeFileSync(join(dir, "case.json"), "{not json");
       writeFileSync(join(dir, "input.diff"), "diff --git a/x b/x\n+y");
-      expect(() => loadCase(dir, "badjson")).toThrow(/badjson.*invalid case\.json/);
+
+      let thrown: unknown;
+      try {
+        loadCase(dir, "badjson");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/badjson.*invalid case\.json/);
+      expect(thrownError.cause).toBeInstanceOf(SyntaxError);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -159,7 +170,18 @@ describe("loadBenchmark", () => {
         { description: "d", kind: "clean", expected: [{ file: "x.ts", line: 1, note: "n" }] },
         "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,2 @@\n x\n+y"
       );
-      expect(() => loadCase(join(root, "noisy-clean"), "noisy-clean")).toThrow(/noisy-clean.*must not list expected defects/);
+
+      let thrown: unknown;
+      try {
+        loadCase(join(root, "noisy-clean"), "noisy-clean");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/noisy-clean.*must not list expected defects/);
+      expect(thrownError.cause).toBeInstanceOf(Error);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
