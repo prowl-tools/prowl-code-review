@@ -38,7 +38,10 @@ export function hasSymlinkComponent(
       if (code === "ENOENT") {
         return options.allowMissingTail !== true;
       }
-      throw new Error("Debug trace path component could not be inspected.", { cause: error });
+      throw new Error("Debug trace path component could not be inspected.", {
+        // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized while retaining the caught value.
+        cause: error instanceof Error ? error : new Error(String(error), { cause: error })
+      });
     }
   }
 

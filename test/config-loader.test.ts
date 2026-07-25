@@ -1,12 +1,14 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import yaml from "yaml";
 import { CONFIG_FILENAME, findConfigPath, loadConfig } from "../src/config/loader.js";
 
 let tempDirs: string[] = [];
 
 afterEach(() => {
+  vi.restoreAllMocks();
   for (const dir of tempDirs) {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -82,6 +84,27 @@ describe("loadConfig (#29)", () => {
     const thrownError = thrown as Error;
     expect(thrownError.message).toMatch(/Could not parse/);
     expect(thrownError.cause).toBeInstanceOf(Error);
+  });
+
+  it("normalizes non-Error YAML parse failures into an Error cause", () => {
+    const dir = tempDir();
+    writeFileSync(join(dir, CONFIG_FILENAME), "review:\n  minSeverity: major\n");
+    vi.spyOn(yaml, "parse").mockImplementationOnce(() => {
+      throw "parser failed";
+    });
+
+    let thrown: unknown;
+    try {
+      loadConfig({ cwd: dir });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    const thrownError = thrown as Error;
+    expect(thrownError.message).toMatch(/parser failed/);
+    expect(thrownError.cause).toBeInstanceOf(Error);
+    expect((thrownError.cause as Error).message).toBe("parser failed");
   });
 
   it("throws when an explicit config path does not exist", () => {
