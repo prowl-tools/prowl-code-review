@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createDebugRecorder,
   createJsonlSink,
+  normalizeMaxQueueLines,
   toDebugFindings,
   type DebugEvent,
   type DebugRecord
@@ -154,6 +155,16 @@ describe("debug trace", () => {
     expect(records.map((record) => (record.event as Extract<DebugEvent, { type: "grounding" }>).findings)).toEqual([
       0, 3, 4
     ]);
+  });
+
+  it("falls back to the default queue limit for non-finite limits", () => {
+    const defaultLimit = normalizeMaxQueueLines(undefined);
+
+    expect(normalizeMaxQueueLines(Number.NaN)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(Number.POSITIVE_INFINITY)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(Number.NEGATIVE_INFINITY)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(2.9)).toBe(2);
+    expect(normalizeMaxQueueLines(0)).toBe(1);
   });
 
   it("creates parent directories for nested trace paths", async () => {

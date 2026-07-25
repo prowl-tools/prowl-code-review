@@ -7,6 +7,16 @@ import type { Finding } from "../review/findings.js";
 
 const DEFAULT_MAX_QUEUED_TRACE_LINES = 4096;
 
+export function normalizeMaxQueueLines(maxQueueLines: number | undefined): number {
+  if (maxQueueLines === undefined) {
+    return DEFAULT_MAX_QUEUED_TRACE_LINES;
+  }
+  if (!Number.isFinite(maxQueueLines)) {
+    return DEFAULT_MAX_QUEUED_TRACE_LINES;
+  }
+  return Math.max(1, Math.floor(maxQueueLines));
+}
+
 /**
  * Debug/verbose run tracing (backlog #49).
  *
@@ -225,7 +235,7 @@ export function createJsonlSink(
 ): DebugSink {
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
-  const maxQueueLines = Math.max(1, Math.floor(options.maxQueueLines ?? DEFAULT_MAX_QUEUED_TRACE_LINES));
+  const maxQueueLines = normalizeMaxQueueLines(options.maxQueueLines);
   let queue: string[] = [];
   let flushing = false;
 
