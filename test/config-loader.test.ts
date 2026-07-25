@@ -49,6 +49,21 @@ describe("loadConfig (#29)", () => {
     expect(loaded.configPath).toBe(join(dir, CONFIG_FILENAME));
   });
 
+  it("opens config files without following symlinks", () => {
+    const dir = tempDir();
+    const configPath = join(dir, CONFIG_FILENAME);
+    writeFileSync(configPath, "provider: openai\n");
+    const openSpy = vi.spyOn(fs, "openSync");
+
+    loadConfig({ cwd: dir });
+
+    const openCall = openSpy.mock.calls.find(([target]) => target === configPath);
+    expect(openCall).toBeDefined();
+    const flags = openCall?.[1];
+    expect(typeof flags).toBe("number");
+    expect((flags as number) & fs.constants.O_NOFOLLOW).toBe(fs.constants.O_NOFOLLOW);
+  });
+
   it("finds the config by searching upward from a nested directory", () => {
     const root = tempDir();
     writeFileSync(join(root, CONFIG_FILENAME), "review:\n  maxFindings: 5\n");
