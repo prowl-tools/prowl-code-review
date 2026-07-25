@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import fs, { mkdtempSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import yaml from "yaml";
@@ -56,6 +56,23 @@ describe("loadConfig (#29)", () => {
     mkdirSync(nested, { recursive: true });
     expect(findConfigPath(nested)).toBe(join(root, CONFIG_FILENAME));
     expect(loadConfig({ cwd: nested }).config).toEqual({ review: { maxFindings: 5 } });
+  });
+
+  it("surfaces unexpected directory read errors while searching", () => {
+    const dir = tempDir();
+    const readError = Object.assign(new Error("blocked"), { code: "EACCES" });
+    vi.spyOn(fs, "readdirSync").mockImplementationOnce(() => {
+      throw readError;
+    });
+
+    let thrown: unknown;
+    try {
+      findConfigPath(dir);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBe(readError);
   });
 
   it("accepts the .yaml extension too", () => {
