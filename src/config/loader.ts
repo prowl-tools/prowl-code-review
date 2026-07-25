@@ -1,4 +1,4 @@
-import fs from "node:fs";
+import fs, { type Stats } from "node:fs";
 import path from "node:path";
 import yaml from "yaml";
 import { z } from "zod";
@@ -24,6 +24,38 @@ export const CONFIG_FILENAMES = [".prowl-review.yml", ".prowl-review.yaml"] as c
 /** The canonical filename written by `prowl-review init`. */
 export const CONFIG_FILENAME = CONFIG_FILENAMES[0];
 
+const NO_FOLLOW_FLAG = (fs.constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+
+function assertRegularConfigFile(resolvedPath: string): Stats {
+  const stat = fs.lstatSync(resolvedPath);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Config file must not be a symlink: ${resolvedPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Config path is not a file: ${resolvedPath}`);
+  }
+  return stat;
+}
+
+function sameFile(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function readConfigFile(resolvedPath: string): string {
+  const beforeOpen = assertRegularConfigFile(resolvedPath);
+  const fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | NO_FOLLOW_FLAG);
+  try {
+    const opened = fs.fstatSync(fd);
+    const afterOpen = assertRegularConfigFile(resolvedPath);
+    if (!sameFile(beforeOpen, opened) || !sameFile(opened, afterOpen)) {
+      throw new Error(`Config file changed while being opened: ${resolvedPath}`);
+    }
+    return fs.readFileSync(fd, "utf-8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Search `startDir` and its ancestors for a config file; return its path or null. */
 export function findConfigPath(startDir: string): string | null {
   let current = path.resolve(startDir);
@@ -40,7 +72,16 @@ export function findConfigPath(startDir: string): string | null {
     }
     for (const name of CONFIG_FILENAMES) {
       if (entries.has(name)) {
-        return path.join(current, name);
+        const candidate = path.join(current, name);
+        try {
+          assertRegularConfigFile(candidate);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            continue;
+          }
+          throw error;
+        }
+        return candidate;
       }
     }
     const parent = path.dirname(current);
@@ -101,7 +142,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     }
   }
 
-  const raw = fs.readFileSync(resolvedPath, "utf-8");
+  const raw = readConfigFile(resolvedPath);
   let parsed: unknown;
   try {
     parsed = yaml.parse(raw) ?? {};
