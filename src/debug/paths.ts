@@ -1,5 +1,6 @@
 import { lstatSync, mkdirSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { errorWithCause } from "../errors.js";
 
 /** Default directory for prowl-review local/debug artifacts, relative to a workspace root. */
 export const DEFAULT_DEBUG_LOG_DIR = ".prowl-review";
@@ -38,10 +39,7 @@ export function hasSymlinkComponent(
       if (code === "ENOENT") {
         return options.allowMissingTail !== true;
       }
-      throw new Error("Debug trace path component could not be inspected.", {
-        // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized into Error causes.
-        cause: error instanceof Error ? error : new Error(String(error))
-      });
+      throw errorWithCause("Debug trace path component could not be inspected.", error);
     }
   }
 
