@@ -4,6 +4,10 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Breaking
+- Dropped Node 22.12.x and Node 23 from the supported install/runtime range. Supported versions are now
+  `^22.13.0 || >=24`, matching ESLint 10's Node 22 floor and Node 23 exclusion.
+
 ### Changed
 - Dependency maintenance (Dependabot): bumped pinned GitHub Action SHAs — `actions/checkout` → v7.0.1,
   `actions/setup-node` → v7.0.0, `actions/create-github-app-token` → v3.2.0 (drift-test pin constant updated to
