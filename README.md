@@ -393,7 +393,7 @@ npm install -g prowl-review     # or run ad hoc with: npx prowl-review …
 brew install Prowl-qa/tap/prowl-review
 ```
 
-npm and npx require Node.js >= 20; Homebrew installs node@20 automatically. The GitHub Action (above) needs no install.
+npm and npx require Node.js >= 22.12.0; Homebrew installs node@22 automatically. The GitHub Action (above) needs no install.
 
 ## Local pre-push review (CLI)
 
