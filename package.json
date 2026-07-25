@@ -51,7 +51,7 @@
     "NOTICE"
   ],
   "engines": {
-    "node": ">=22.13.0"
+    "node": "^22.13.0 || >=24"
   },
   "publishConfig": {
     "access": "public"
