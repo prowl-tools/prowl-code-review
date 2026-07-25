@@ -275,7 +275,7 @@ export function createJsonlSink(
 
   const enqueueLine = (line: string) => {
     if (queue.length >= maxQueueLines) {
-      queue = queue.slice(queue.length - maxQueueLines + 1);
+      queue.splice(0, queue.length - maxQueueLines + 1);
     }
     queue.push(line);
     startFlush();
