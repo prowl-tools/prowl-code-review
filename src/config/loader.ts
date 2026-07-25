@@ -47,13 +47,26 @@ function sameFile(left: Stats, right: Stats): boolean {
   return left.dev === right.dev && left.ino === right.ino;
 }
 
+function openConfigFile(resolvedPath: string): number {
+  try {
+    return fs.openSync(resolvedPath, fs.constants.O_RDONLY | noFollowFlag());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw errorWithCause(`Config file must not be a symlink: ${resolvedPath}`, error);
+    }
+    throw error;
+  }
+}
+
 function readConfigFile(resolvedPath: string): string {
-  const beforeOpen = assertRegularConfigFile(resolvedPath);
-  const fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | noFollowFlag());
+  const fd = openConfigFile(resolvedPath);
   try {
     const opened = fs.fstatSync(fd);
+    if (!opened.isFile()) {
+      throw new Error(`Config path is not a file: ${resolvedPath}`);
+    }
     const afterOpen = assertRegularConfigFile(resolvedPath);
-    if (!sameFile(beforeOpen, opened) || !sameFile(opened, afterOpen)) {
+    if (!sameFile(opened, afterOpen)) {
       throw new Error(`Config file changed while being opened: ${resolvedPath}`);
     }
     return fs.readFileSync(fd, "utf-8");
