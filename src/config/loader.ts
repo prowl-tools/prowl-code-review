@@ -24,7 +24,13 @@ export const CONFIG_FILENAMES = [".prowl-review.yml", ".prowl-review.yaml"] as c
 /** The canonical filename written by `prowl-review init`. */
 export const CONFIG_FILENAME = CONFIG_FILENAMES[0];
 
-const NO_FOLLOW_FLAG = (fs.constants as { O_NOFOLLOW?: number }).O_NOFOLLOW ?? 0;
+function noFollowFlag(): number {
+  const flag = (fs.constants as { O_NOFOLLOW?: number }).O_NOFOLLOW;
+  if (typeof flag !== "number") {
+    throw new Error("Config loading requires O_NOFOLLOW support.");
+  }
+  return flag;
+}
 
 function assertRegularConfigFile(resolvedPath: string): Stats {
   const stat = fs.lstatSync(resolvedPath);
@@ -43,7 +49,7 @@ function sameFile(left: Stats, right: Stats): boolean {
 
 function readConfigFile(resolvedPath: string): string {
   const beforeOpen = assertRegularConfigFile(resolvedPath);
-  const fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | NO_FOLLOW_FLAG);
+  const fd = fs.openSync(resolvedPath, fs.constants.O_RDONLY | noFollowFlag());
   try {
     const opened = fs.fstatSync(fd);
     const afterOpen = assertRegularConfigFile(resolvedPath);

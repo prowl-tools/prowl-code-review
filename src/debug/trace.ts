@@ -226,7 +226,7 @@ export function createJsonlSink(
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
   const maxQueueLines = Math.max(1, Math.floor(options.maxQueueLines ?? DEFAULT_MAX_QUEUED_TRACE_LINES));
-  const queue: string[] = [];
+  let queue: string[] = [];
   let flushing = false;
 
   if (!options.workspace) {
@@ -243,33 +243,31 @@ export function createJsonlSink(
     }
     flushing = true;
     void (async () => {
-      try {
-        // Re-check the queue after every awaited batch so events emitted during a write
-        // are drained by this worker without starting concurrent file writes.
-        while (queue.length > 0) {
-          const batch = queue.splice(0, queue.length);
-          for (const queuedLine of batch) {
-            try {
-              await appendJsonlLine(path, queuedLine, options.workspace);
-            } catch {
-              // Debug writes must never fail the review run.
-            }
-          }
+      // Re-check the queue after every awaited batch so events emitted during a write
+      // are drained by this worker without starting concurrent file writes.
+      for (;;) {
+        const batch = queue;
+        queue = [];
+        if (batch.length === 0) {
+          flushing = false;
+          return;
         }
-      } finally {
-        flushing = false;
-        if (queue.length > 0) {
-          startFlush();
+        for (const queuedLine of batch) {
+          try {
+            await appendJsonlLine(path, queuedLine, options.workspace);
+          } catch {
+            // Debug writes must never fail the review run.
+          }
         }
       }
     })();
   };
 
   const enqueueLine = (line: string) => {
-    queue.push(line);
-    if (queue.length > maxQueueLines) {
-      queue.splice(0, queue.length - maxQueueLines);
+    if (queue.length >= maxQueueLines) {
+      queue = queue.slice(queue.length - maxQueueLines + 1);
     }
+    queue.push(line);
     startFlush();
   };
 
