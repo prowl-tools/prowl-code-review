@@ -108,7 +108,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
 
   const result = configSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error(formatValidationError(result.error, resolvedPath));
+    throw errorWithCause(formatValidationError(result.error, resolvedPath), result.error);
   }
 
   return { config: result.data, configPath: resolvedPath };

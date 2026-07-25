@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import { loadBenchmark, loadCase } from "../src/eval/load.js";
 import { runBenchmark } from "../src/eval/runner.js";
 import { parseDiff } from "../src/review/parse-diff.js";
@@ -211,7 +212,7 @@ describe("loadBenchmark", () => {
       expect(thrown).toBeInstanceOf(Error);
       const thrownError = thrown as Error;
       expect(thrownError.message).toMatch(/noisy-clean.*must not list expected defects/);
-      expect(thrownError.cause).toBeInstanceOf(Error);
+      expect(thrownError.cause).toBeInstanceOf(z.ZodError);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

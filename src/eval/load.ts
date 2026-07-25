@@ -79,9 +79,7 @@ export function loadCase(caseDir: string, id: string): BenchmarkCase {
     meta = CaseMetaSchema.parse(rawMeta);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`, {
-        cause: error
-      });
+      throw errorWithCause(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`, error);
     }
     throw error;
   }

@@ -220,7 +220,8 @@ async function appendJsonlLine(path: string, line: string, workspace?: string): 
 export function createJsonlSink(path: string, options: { now?: () => number; workspace?: string } = {}): DebugSink {
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
-  let pending: Promise<void> = Promise.resolve();
+  const queue: string[] = [];
+  let flushing = false;
 
   if (!options.workspace) {
     try {
@@ -230,6 +231,32 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     }
   }
 
+  const startFlush = () => {
+    if (flushing) {
+      return;
+    }
+    flushing = true;
+    void (async () => {
+      for (;;) {
+        const batch = queue.splice(0);
+        if (batch.length === 0) {
+          flushing = false;
+          if (queue.length > 0) {
+            startFlush();
+          }
+          return;
+        }
+        for (const queuedLine of batch) {
+          try {
+            await appendJsonlLine(path, queuedLine, options.workspace);
+          } catch {
+            // Debug writes must never fail the review run.
+          }
+        }
+      }
+    })();
+  };
+
   return (event: DebugEvent) => {
     let line: string;
     try {
@@ -237,7 +264,7 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     } catch {
       return;
     }
-    pending = pending.then(() => appendJsonlLine(path, line, options.workspace)).catch(() => {});
-    void pending;
+    queue.push(line);
+    startFlush();
   };
 }
