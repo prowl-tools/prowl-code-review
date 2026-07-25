@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import yaml from "yaml";
 import { z } from "zod";
+import { errorWithCause } from "../errors.js";
 import { configSchema, type ProwlReviewConfig } from "./schema.js";
 
 /**
@@ -27,10 +28,15 @@ export const CONFIG_FILENAME = CONFIG_FILENAMES[0];
 export function findConfigPath(startDir: string): string | null {
   let current = path.resolve(startDir);
   for (;;) {
+    let entries: Set<string>;
+    try {
+      entries = new Set(fs.readdirSync(current));
+    } catch {
+      entries = new Set();
+    }
     for (const name of CONFIG_FILENAMES) {
-      const candidate = path.join(current, name);
-      if (fs.existsSync(candidate)) {
-        return candidate;
+      if (entries.has(name)) {
+        return path.join(current, name);
       }
     }
     const parent = path.dirname(current);
@@ -97,10 +103,7 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     parsed = yaml.parse(raw) ?? {};
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not parse ${path.basename(resolvedPath)}: ${message}`, {
-      // eslint-disable-next-line preserve-caught-error -- Non-Error throws are normalized into Error causes.
-      cause: error instanceof Error ? error : new Error(String(error))
-    });
+    throw errorWithCause(`Could not parse ${path.basename(resolvedPath)}: ${message}`, error);
   }
 
   const result = configSchema.safeParse(parsed);
