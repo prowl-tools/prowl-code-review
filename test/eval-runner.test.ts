@@ -150,6 +150,35 @@ describe("loadBenchmark", () => {
     }
   });
 
+  it("normalizes non-Error JSON parse failures into an Error cause", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    try {
+      const dir = join(root, "badjson");
+      mkdirSync(dir);
+      writeFileSync(join(dir, "case.json"), JSON.stringify({ description: "d", kind: "clean" }));
+      writeFileSync(join(dir, "input.diff"), "diff --git a/x b/x\n+y");
+      vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+        throw "json parser failed";
+      });
+
+      let thrown: unknown;
+      try {
+        loadCase(dir, "badjson");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/json parser failed/);
+      expect(thrownError.cause).toBeInstanceOf(Error);
+      expect((thrownError.cause as Error).message).toBe("json parser failed");
+    } finally {
+      vi.restoreAllMocks();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   it("throws when two case directories declare the same id", () => {
     const root = mkdtempSync(join(tmpdir(), "bench-"));
     try {
