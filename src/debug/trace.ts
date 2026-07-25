@@ -236,7 +236,9 @@ export function createJsonlSink(
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
   const maxQueueLines = normalizeMaxQueueLines(options.maxQueueLines);
-  let queue: string[] = [];
+  const queue: Array<string | undefined> = [];
+  let queueStart = 0;
+  let queueLength = 0;
   let flushing = false;
 
   if (!options.workspace) {
@@ -256,8 +258,17 @@ export function createJsonlSink(
       // Re-check the queue after every awaited batch so events emitted during a write
       // are drained by this worker without starting concurrent file writes.
       for (;;) {
-        const batch = queue;
-        queue = [];
+        const batch: string[] = [];
+        for (let offset = 0; offset < queueLength; offset += 1) {
+          const index = (queueStart + offset) % maxQueueLines;
+          const queuedLine = queue[index];
+          queue[index] = undefined;
+          if (queuedLine !== undefined) {
+            batch.push(queuedLine);
+          }
+        }
+        queueStart = 0;
+        queueLength = 0;
         if (batch.length === 0) {
           flushing = false;
           return;
@@ -274,10 +285,13 @@ export function createJsonlSink(
   };
 
   const enqueueLine = (line: string) => {
-    if (queue.length >= maxQueueLines) {
-      queue.splice(0, queue.length - maxQueueLines + 1);
+    if (queueLength === maxQueueLines) {
+      queue[queueStart] = line;
+      queueStart = (queueStart + 1) % maxQueueLines;
+    } else {
+      queue[(queueStart + queueLength) % maxQueueLines] = line;
+      queueLength += 1;
     }
-    queue.push(line);
     startFlush();
   };
 
