@@ -820,6 +820,26 @@ ${DELTA_DIFF}`;
       expect(result.checkRunConclusion).toBe("failure");
     });
 
+    it("does not run the neutral safety net after normal live completion", async () => {
+      const startCheckRun = vi.fn(async () => 556);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.checkRunConclusion).toBe("failure");
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(556);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(input.plan.title).not.toBe("Review did not complete");
+    });
+
     it("does not open a live run on a dry run or when the check is disabled", async () => {
       const startCheckRun = vi.fn(async () => 1);
       const dryDeps = { ...makeDeps(), startCheckRun };
@@ -909,6 +929,37 @@ ${DELTA_DIFF}`;
       expect(submitCheckRun).toHaveBeenCalledTimes(1);
       const [, , input] = submitCheckRun.mock.calls[0];
       expect(input.checkRunId).toBe(321);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
+    it("keeps the superseded title when a publish error follows a stale-head check", async () => {
+      const startCheckRun = vi.fn(async () => 654);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const submitReview = vi.fn(async (
+        _octokit: OctokitLike,
+        _ref: typeof ref,
+        _payload: unknown,
+        options?: { shouldPublish?: () => Promise<boolean> }
+      ) => {
+        await options?.shouldPublish?.();
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow(ReviewPublishError);
+
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(654);
       expect(input.plan.conclusion).toBe("neutral");
       expect(input.plan.title).toBe("Superseded by a newer commit");
     });
@@ -2223,6 +2274,19 @@ diff --git a/src/b.ts b/src/b.ts
 
       const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
+      expect(result.posted).toBe(true);
+      expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes tolerantly when the head re-check throws", async () => {
+      const fetchHeadSha = vi.fn(async () => {
+        throw new Error("head lookup failed");
+      });
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBeUndefined();
       expect(result.posted).toBe(true);
       expect(deps.submitReview).toHaveBeenCalledTimes(1);
     });

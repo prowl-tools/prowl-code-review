@@ -41,9 +41,13 @@ describe("planCheckRun (#24)", () => {
   it("completes green (success) — not grey (neutral) — when ungated", () => {
     // An ungated run (no failOn, no engaged approval) ran to completion, so the
     // row reads as done rather than a grey neutral; findings stay informational.
-    const plan = planCheckRun({ findings: [finding({ severity: "critical" })] });
+    const input: Parameters<typeof planCheckRun>[0] = { findings: [finding({ severity: "critical" })] };
+    expect(input.failOn).toBeUndefined();
+    expect(input.approval).toBeUndefined();
+    const plan = planCheckRun(input);
     expect(plan.conclusion).toBe("success");
     expect(plan.summary).toContain("informational only");
+    expect(plan.summary).toContain("set checkRun.failOn or approval.enabled");
   });
 
   it("fails when a finding is at or above failOn", () => {
@@ -252,6 +256,27 @@ describe("submitCheckRun (#24)", () => {
     expect(update.mock.calls[0][0].status).toBe("completed");
     expect(update.mock.calls[0][0].output.annotations).toHaveLength(CHECK_ANNOTATION_BATCH);
     expect(update.mock.calls[1][0].check_run_id).toBe(7);
+    expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
+  });
+
+  it("preserves a completed live-run conclusion when an overflow annotation batch fails", async () => {
+    const { octokit, create, update } = mockOctokit();
+    update.mockResolvedValueOnce({ data: {} }).mockRejectedValueOnce(new Error("temporary checks API failure"));
+    const findings = Array.from({ length: CHECK_ANNOTATION_BATCH + 5 }, (_, i) =>
+      finding({ line: i + 1, file: `src/f${i}.ts` })
+    );
+    const plan = planCheckRun({ findings, failOn: "major" });
+
+    await expect(submitCheckRun(octokit, ref, { headSha: "head", plan, checkRunId: 7 })).resolves.toBeUndefined();
+
+    expect(create).not.toHaveBeenCalled();
+    expect(update).toHaveBeenCalledTimes(2);
+    expect(update.mock.calls[0][0]).toMatchObject({
+      check_run_id: 7,
+      status: "completed",
+      conclusion: "failure"
+    });
+    expect(update.mock.calls[0][0].output.title).toBe(plan.title);
     expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
   });
 

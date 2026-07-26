@@ -292,16 +292,24 @@ export async function submitCheckRun(
     checkRunId = created.data.id;
   }
 
+  const completedLiveRun = input.checkRunId !== undefined;
   for (let i = 1; i < batches.length; i += 1) {
-    await octokit.rest.checks.update({
-      owner: ref.owner,
-      repo: ref.repo,
-      check_run_id: checkRunId,
-      output: {
-        title: plan.title,
-        summary: plan.summary,
-        annotations: batches[i]
+    try {
+      await octokit.rest.checks.update({
+        owner: ref.owner,
+        repo: ref.repo,
+        check_run_id: checkRunId,
+        output: {
+          title: plan.title,
+          summary: plan.summary,
+          annotations: batches[i]
+        }
+      });
+    } catch (error) {
+      if (completedLiveRun) {
+        break;
       }
-    });
+      throw error;
+    }
   }
 }
