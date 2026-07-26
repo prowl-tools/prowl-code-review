@@ -254,8 +254,10 @@ describe("submitCheckRun (#24)", () => {
     expect(update).toHaveBeenCalledTimes(2);
     expect(update.mock.calls[0][0].check_run_id).toBe(7);
     expect(update.mock.calls[0][0].status).toBe("completed");
+    expect(typeof update.mock.calls[0][0].completed_at).toBe("string");
     expect(update.mock.calls[0][0].output.annotations).toHaveLength(CHECK_ANNOTATION_BATCH);
     expect(update.mock.calls[1][0].check_run_id).toBe(7);
+    expect(update.mock.calls[1][0].completed_at).toBe(update.mock.calls[0][0].completed_at);
     expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
   });
 
@@ -277,6 +279,7 @@ describe("submitCheckRun (#24)", () => {
       conclusion: "failure"
     });
     expect(update.mock.calls[0][0].output.title).toBe(plan.title);
+    expect(update.mock.calls[1][0].completed_at).toBe(update.mock.calls[0][0].completed_at);
     expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
   });
 

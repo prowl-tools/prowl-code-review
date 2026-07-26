@@ -255,6 +255,7 @@ export async function submitCheckRun(
   const name = input.name ?? CHECK_RUN_NAME;
   const { plan } = input;
   const batches = batchAnnotations(plan.annotations);
+  const completedAt = new Date().toISOString();
 
   let checkRunId: number;
   if (input.checkRunId !== undefined) {
@@ -264,7 +265,7 @@ export async function submitCheckRun(
       check_run_id: input.checkRunId,
       status: "completed",
       conclusion: plan.conclusion,
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
       output: {
         title: plan.title,
         summary: plan.summary,
@@ -280,7 +281,7 @@ export async function submitCheckRun(
       head_sha: input.headSha,
       status: "completed",
       conclusion: plan.conclusion,
-      completed_at: new Date().toISOString(),
+      completed_at: completedAt,
       output: {
         title: plan.title,
         summary: plan.summary,
@@ -297,6 +298,7 @@ export async function submitCheckRun(
         owner: ref.owner,
         repo: ref.repo,
         check_run_id: checkRunId,
+        ...(completedLiveRun ? { completed_at: completedAt } : {}),
         output: {
           title: plan.title,
           summary: plan.summary,
