@@ -160,7 +160,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # needs the workflow to grant "checks: write". With failOn set, findings at or
 # above that severity fail the check (and can block merge once the org marks the
 # "Prowl Review" check Required in branch protection); omit failOn for an
-# informational check that completes green (success) and never fails.
+# informational neutral check that never fails.
 # checkRun:
 #   enabled: false
 #   failOn: critical         # critical | major | minor | trivial | info

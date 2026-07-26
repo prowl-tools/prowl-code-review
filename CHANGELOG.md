@@ -16,12 +16,11 @@ All notable changes to Prowl Review will be documented in this file.
   `checkRunId` that completes that same run via `checks.update` (without it, behavior is unchanged — it still
   creates a completed run). The pipeline starts the run right after the stale-head guard, threads the id through
   to completion, and a wrapper around `reviewPullRequest` guarantees the run never dangles "running": it is closed
-  neutrally as **"Superseded by a newer commit"** when the head advances mid-run and **"Review did not complete"**
-  if the pipeline throws (both tolerant/non-fatal, like the rest of the check path).
-- **An ungated check run now completes green (`success`) instead of grey (`neutral`).** With no `checkRun.failOn`
-  and no engaged approval gate, the review ran to completion and any findings are informational, so the row reads
-  as done rather than skipped. `neutral` is still used for the deliberate skip/pause path and the did-not-complete/
-  superseded close-outs above.
+  neutrally as **"Superseded by a newer commit"** when the head advances mid-run and as **`failure`** with
+  **"Review did not complete"** if the pipeline throws (both tolerant/non-fatal, like the rest of the check path).
+- **Ungated check runs remain informational (`neutral`).** With no `checkRun.failOn` and no engaged approval gate,
+  findings are surfaced as informational output rather than implying a passing merge gate. `neutral` is also used
+  for deliberate skip/pause and superseded close-outs; non-superseded aborts fail closed.
 - **Renamed the check-run display name from `prowl-review` to `Prowl Review`** (branded). **Action required:**
   anyone who marked the old `prowl-review` check as **Required** in branch protection must update the required-check
   name to `Prowl Review`, or the gate will no longer be enforced.
@@ -54,8 +53,8 @@ All notable changes to Prowl Review will be documented in this file.
 - Enabled the **branded Checks API check run** (backlog #24) in this repo's own `.prowl-review.yml`
   (`checkRun.enabled: true`), so reviews now surface as their own row in the PR checks list — branded with the
   App avatar via the #59 installation token, alongside the posted review comments. Informational only (no
-  `failOn`): the check completes green (`success` — see the live-lifecycle change above), showing severity counts
-  but never failing or blocking a merge (add `failOn: <severity>` to turn it into a gate). Because the workflow
+  `failOn`): the check completes `neutral`, showing severity counts but never failing or blocking a merge
+  (add `failOn: <severity>` to turn it into a gate). Because the workflow
   loads config from the trusted
   base-branch checkout, the row first appears on the PR *after* this lands on `main`. Also isolated a pause-gate
   test from the repo's live config so it asserts the checkRun-off default independently.
