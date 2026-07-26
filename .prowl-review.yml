@@ -26,11 +26,14 @@ issueValidation:
   enabled: true
 
 # Publish the review as a Checks API check run (#24) so it appears as its own
-# branded row in the PR checks list (raccoon avatar via the #59 App token).
-# Informational only: no `failOn`, so the conclusion is always neutral — it shows
-# severity counts but never fails or blocks a merge. Add `failOn: major` to gate.
+# branded "Prowl Review" row in the PR checks list (raccoon avatar via the #59
+# App token), live in-progress while the review runs. Gated on `critical`: the
+# row completes green (`success`) when no critical findings exist and red
+# (`failure`) when one does — a visual verdict only; it never blocks a merge
+# unless the check is marked Required in branch protection.
 checkRun:
   enabled: true
+  failOn: critical
 
 # Survive sustained provider overload by falling back to an older same-family
 # model (#17); only triggers after retries are exhausted on a retryable error.
