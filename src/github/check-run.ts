@@ -304,9 +304,12 @@ export async function submitCheckRun(
           summary: plan.summary,
           annotations: batches[i]
         }
-      });
+    });
     } catch (error) {
       if (completedLiveRun) {
+        console.warn(
+          "prowl-review: failed to attach overflow check-run annotations after completing the live run; continuing."
+        );
         break;
       }
       throw error;

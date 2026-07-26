@@ -264,6 +264,7 @@ describe("submitCheckRun (#24)", () => {
   it("preserves a completed live-run conclusion when an overflow annotation batch fails", async () => {
     const { octokit, create, update } = mockOctokit();
     update.mockResolvedValueOnce({ data: {} }).mockRejectedValueOnce(new Error("temporary checks API failure"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     const findings = Array.from({ length: CHECK_ANNOTATION_BATCH + 5 }, (_, i) =>
       finding({ line: i + 1, file: `src/f${i}.ts` })
     );
@@ -281,6 +282,8 @@ describe("submitCheckRun (#24)", () => {
     expect(update.mock.calls[0][0].output.title).toBe(plan.title);
     expect(update.mock.calls[1][0].completed_at).toBe(update.mock.calls[0][0].completed_at);
     expect(update.mock.calls[1][0].output.annotations).toHaveLength(5);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("failed to attach overflow check-run annotations"));
+    warn.mockRestore();
   });
 
   it("batches annotations beyond the per-request cap via update calls", async () => {

@@ -912,6 +912,32 @@ ${DELTA_DIFF}`;
       expect(input.plan.title).toBe("Review did not complete");
     });
 
+    it("does not let a non-superseded safety-net close-out failure mask the pipeline error", async () => {
+      const startCheckRun = vi.fn(async () => 1002);
+      const submitCheckRun = vi.fn(async () => {
+        throw new Error("checks update failed");
+      });
+      const submitReview = vi.fn(async () => {
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow(ReviewPublishError);
+
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1002);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(input.plan.title).toBe("Review did not complete");
+    });
+
     it("does not let a safety-net close-out failure mask a superseded return", async () => {
       const startCheckRun = vi.fn(async () => 1000);
       const submitCheckRun = vi.fn(async () => {
