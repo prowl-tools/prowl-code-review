@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { lookup } from "node:dns/promises";
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, realpathSync } from "node:fs";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
@@ -124,6 +124,10 @@ export function loadLearnedPatterns(root: string): string | undefined {
  */
 export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.PROWL_ORG_GUIDELINES_PATH?.trim() || undefined;
+}
+
+function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string {
+  return resolveGuidelinesWorkspace(env) ?? resolveTrustedConfigBase(env);
 }
 
 /** Cap on fetched org-guidelines size so a runaway URL can't bloat the prompt (#30). */
@@ -412,6 +416,8 @@ export async function loadOrgGuidelines(
     fetchImpl?: typeof fetch;
     readFile?: (filePath: string) => string | undefined;
     resolveHost?: HostResolver;
+    workspaceRoot?: string;
+    env?: NodeJS.ProcessEnv;
   } = {}
 ): Promise<string | undefined> {
   const value = pathOrUrl?.trim();
@@ -419,7 +425,39 @@ export async function loadOrgGuidelines(
     return undefined;
   }
   if (!/^https?:\/\//i.test(value)) {
-    return (deps.readFile ?? readOptionalFile)(value);
+    const workspaceRoot = resolve(deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env));
+    const resolvedPath = resolve(workspaceRoot, value);
+    const safePath = redactSecrets(resolvedPath).text;
+    const safeRoot = redactSecrets(workspaceRoot).text;
+    if (!isWorkspaceConfinedPath(resolvedPath, workspaceRoot)) {
+      console.warn(`prowl-review: org guidelines path ${safePath} escapes ${safeRoot}; continuing without them.`);
+      return undefined;
+    }
+    if (!existsSync(resolvedPath)) {
+      return undefined;
+    }
+    try {
+      if (hasSymlinkComponent(resolvedPath, workspaceRoot)) {
+        console.warn(`prowl-review: org guidelines path ${safePath} includes a symlink; continuing without them.`);
+        return undefined;
+      }
+      const realWorkspace = realpathSync(workspaceRoot);
+      const realPath = realpathSync(resolvedPath);
+      if (!isWorkspaceConfinedPath(realPath, realWorkspace)) {
+        console.warn(
+          `prowl-review: org guidelines path ${safePath} resolves outside ${safeRoot}; continuing without them.`
+        );
+        return undefined;
+      }
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(
+        `prowl-review: could not validate org guidelines path ${safePath} (${redactSecrets(reason).text}); ` +
+          "continuing without them."
+      );
+      return undefined;
+    }
+    return (deps.readFile ?? readOptionalFile)(resolvedPath);
   }
 
   const fetchImpl = deps.fetchImpl;

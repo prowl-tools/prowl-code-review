@@ -1291,7 +1291,12 @@ async function headAdvancedPastReview(params: {
   try {
     const current = await params.fetchHeadSha(params.octokit, params.ref);
     return current !== undefined && current !== params.reviewedSha;
-  } catch {
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `prowl-review: failed to re-check PR head before publishing (${redactSecrets(reason).text}); ` +
+        "continuing without stale-head cancellation."
+    );
     return false;
   }
 }
