@@ -34,6 +34,10 @@ on:
         type: string
         required: false
         default: ""
+      org-guidelines-workspace:
+        type: string
+        required: false
+        default: ""
       runs-on:
         type: string
         required: false
@@ -172,4 +176,5 @@ jobs:
           config-path: ${{ inputs.config-path }}
           guidelines-path: ${{ github.workspace }}/prowl-base
           org-guidelines-path: ${{ inputs.org-guidelines-path }}
+          org-guidelines-workspace: ${{ inputs.org-guidelines-workspace }}
           workspace-path: ${{ github.workspace }}/pr-head

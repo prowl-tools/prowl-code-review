@@ -39,6 +39,11 @@ on:
         type: string
         required: false
         default: ""
+      org-guidelines-workspace:
+        description: "Trusted root used to validate org-guidelines-path file paths; defaults to the Actions workspace."
+        type: string
+        required: false
+        default: ""
       runs-on:
         description: "Runner label(s) for the job."
         type: string
@@ -138,5 +143,6 @@ jobs:
           config-path: ${{ inputs.config-path }}
           guidelines-path: ${{ github.workspace }}/prowl-base
           org-guidelines-path: ${{ inputs.org-guidelines-path }}
+          org-guidelines-workspace: ${{ inputs.org-guidelines-workspace }}
           # Context retrieval reads the PR checkout (the code under review).
           workspace-path: ${{ github.workspace }}

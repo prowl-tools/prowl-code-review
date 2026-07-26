@@ -59,7 +59,8 @@ jobs:
 - **`secrets: inherit`** passes all caller/org secrets through. To be explicit
   instead, map them: `secrets: { PROWL_AI_KEY: ${{ secrets.PROWL_AI_KEY }} }`.
 - **Tunables** ride as `with:` inputs on the caller — `min-severity`,
-  `ai-provider`, `ai-model`, `config-path`, `org-guidelines-path`, `runs-on`.
+  `ai-provider`, `ai-model`, `config-path`, `org-guidelines-path`,
+  `org-guidelines-workspace`, `runs-on`.
 - **Config & guidelines stay trusted.** The reusable workflows load
   `.prowl-review.yml` and `REVIEW_GUIDELINES.md`/`CLAUDE.md`/`LEARNED_PATTERNS.md`
   from the **base** checkout, never from PR code. Set `config-path:

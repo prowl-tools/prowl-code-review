@@ -126,8 +126,8 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
   return env.PROWL_ORG_GUIDELINES_PATH?.trim() || undefined;
 }
 
-function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string {
-  return resolveTrustedConfigBase(env);
+export function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PROWL_ORG_GUIDELINES_WORKSPACE?.trim() || resolveTrustedConfigBase(env);
 }
 
 const orgGuidelinesWorkspaceRealpathCache = new Map<string, string>();

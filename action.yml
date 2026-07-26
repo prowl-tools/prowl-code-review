@@ -57,6 +57,10 @@ inputs:
     description: "Optional trusted path to an org-wide guidelines file injected into every repo's review (added to per-repo guidelines)."
     required: false
     default: ""
+  org-guidelines-workspace:
+    description: "Trusted root used to validate org-guidelines-path file paths; defaults to the GitHub Actions workspace."
+    required: false
+    default: ""
   trust-workspace:
     description: "Allow repo-local linter/SAST tools to execute in workspace-path. Disabled automatically for fork PR events; use only for trusted checkouts."
     required: false
@@ -118,6 +122,7 @@ runs:
         PROWL_WORKSPACE: ${{ inputs.workspace-path }}
         PROWL_GUIDELINES_WORKSPACE: ${{ inputs.guidelines-path }}
         PROWL_ORG_GUIDELINES_PATH: ${{ inputs.org-guidelines-path }}
+        PROWL_ORG_GUIDELINES_WORKSPACE: ${{ inputs.org-guidelines-workspace }}
         PROWL_TRUST_WORKSPACE: ${{ inputs.trust-workspace }}
         PROWL_REVIEWED_HEAD_SHA: ${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}
       # 'review' reviews the PR; 'command' handles an @prowl-review comment (#26).
