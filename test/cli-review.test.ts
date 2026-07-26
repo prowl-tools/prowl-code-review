@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -210,8 +210,31 @@ describe("review command helpers", () => {
           workspaceRoot: root
         })
       ).toBe("file rules");
-      expect(readFile).toHaveBeenCalledWith(guidePath);
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("confines org guidelines to the trusted action workspace, not the repo guidelines root", async () => {
+      const workspace = tempDir();
+      const repoGuidelinesRoot = join(workspace, "repo-guidelines");
+      const orgGuidelinesRoot = join(workspace, "org-guidelines");
+      mkdirSync(repoGuidelinesRoot);
+      mkdirSync(orgGuidelinesRoot);
+      const guidePath = join(orgGuidelinesRoot, "guide.md");
+      writeFileSync(guidePath, "unused");
+      const readFile = vi.fn(() => "org rules");
+
+      expect(
+        await loadOrgGuidelines(guidePath, {
+          readFile,
+          env: {
+            GITHUB_WORKSPACE: workspace,
+            PROWL_GUIDELINES_WORKSPACE: repoGuidelinesRoot
+          } as NodeJS.ProcessEnv
+        })
+      ).toBe("org rules");
+
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
     });
 
     it("rejects local org-guidelines paths that escape the trusted workspace", async () => {

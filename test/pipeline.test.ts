@@ -935,6 +935,32 @@ ${DELTA_DIFF}`;
       expect(input.plan.title).toBe("Superseded by a newer commit");
     });
 
+    it("refreshes the stale-head state before safety-net close-out after an early error", async () => {
+      const startCheckRun = vi.fn(async () => 1001);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const runReview = vi.fn(async () => {
+        throw new Error("provider failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha, runReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow("provider failed");
+
+      expect(fetchHeadSha).toHaveBeenCalledTimes(1);
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1001);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
     it("completes the live run as superseded when the head advances mid-run", async () => {
       const startCheckRun = vi.fn(async () => 321);
       const submitCheckRun = vi.fn(async () => {});

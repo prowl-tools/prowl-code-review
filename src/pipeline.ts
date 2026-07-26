@@ -1489,6 +1489,8 @@ interface CheckRunLifecycleState {
   checkRunCompleted?: boolean;
   /** A newer commit superseded this run — pick the "superseded" close-out title. */
   supersededByNewerCommit?: boolean;
+  /** Best-effort final stale-head refresh before safety-net close-out. */
+  refreshSupersededByNewerCommit?: () => Promise<void>;
   /** Best-effort close-out of the live run; a no-op once completed. Set once deps + head are known. */
   completeCheckRun?: (closeOut: CheckRunCloseOut) => Promise<void>;
 }
@@ -1511,6 +1513,9 @@ export async function reviewPullRequest(
   try {
     return await reviewPullRequestImpl(octokit, ref, options, state);
   } finally {
+    if (state.checkRunId !== undefined && !state.checkRunCompleted) {
+      await state.refreshSupersededByNewerCommit?.();
+    }
     // Safety net for the head-advanced/cancel returns, a thrown error, and any
     // non-fatal completion failure inside the impl: never leave the check row
     // running, and always use the most accurate close-out reason.
@@ -1632,6 +1637,9 @@ async function reviewPullRequestImpl(
       state.supersededByNewerCommit = true;
     }
     return advanced;
+  };
+  state.refreshSupersededByNewerCommit = async (): Promise<void> => {
+    await hasHeadAdvanced();
   };
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const shouldPublishReview = async () => !(await hasHeadAdvanced());
