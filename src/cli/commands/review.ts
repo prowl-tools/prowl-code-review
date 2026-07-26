@@ -127,7 +127,7 @@ export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): 
 }
 
 function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string {
-  return resolveGuidelinesWorkspace(env) ?? resolveTrustedConfigBase(env);
+  return resolveTrustedConfigBase(env);
 }
 
 const orgGuidelinesWorkspaceRealpathCache = new Map<string, string>();
@@ -157,11 +157,8 @@ function resolveOrgGuidelinesFilePath(path: string, workspaceRoot: string): stri
     warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "escapes");
     return undefined;
   }
-  if (!existsSync(resolvedPath)) {
-    return undefined;
-  }
   try {
-    if (hasSymlinkComponent(resolvedPath, resolvedRoot)) {
+    if (hasSymlinkComponent(resolvedPath, resolvedRoot, { allowMissingTail: true })) {
       warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "includes a symlink under");
       return undefined;
     }
@@ -171,7 +168,11 @@ function resolveOrgGuidelinesFilePath(path: string, workspaceRoot: string): stri
       warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "resolves outside");
       return undefined;
     }
+    return realPath;
   } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
     const reason = error instanceof Error ? error.message : String(error);
     console.warn(
       `prowl-review: could not validate org guidelines path ${redactSecrets(resolvedPath).text} ` +
@@ -179,7 +180,6 @@ function resolveOrgGuidelinesFilePath(path: string, workspaceRoot: string): stri
     );
     return undefined;
   }
-  return resolvedPath;
 }
 
 /** Cap on fetched org-guidelines size so a runaway URL can't bloat the prompt (#30). */
@@ -477,7 +477,10 @@ export async function loadOrgGuidelines(
     return undefined;
   }
   if (!/^https?:\/\//i.test(value)) {
-    const resolvedPath = resolveOrgGuidelinesFilePath(value, deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env));
+    const resolvedPath = resolveOrgGuidelinesFilePath(
+      value,
+      deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env)
+    );
     if (resolvedPath === undefined) {
       return undefined;
     }
