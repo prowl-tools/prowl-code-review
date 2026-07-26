@@ -820,7 +820,7 @@ ${DELTA_DIFF}`;
       expect(result.checkRunConclusion).toBe("failure");
     });
 
-    it("does not run the neutral safety net after normal live completion", async () => {
+    it("uses completeCheckRun idempotency to skip the neutral safety net after normal live completion", async () => {
       const startCheckRun = vi.fn(async () => 556);
       const submitCheckRun = vi.fn(async () => {});
       const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
@@ -833,6 +833,9 @@ ${DELTA_DIFF}`;
       });
 
       expect(result.checkRunConclusion).toBe("failure");
+      // reviewPullRequest always runs the final safety net; after normal
+      // completion, completeCheckRun must be a no-op rather than posting a
+      // second neutral update over the completed gate conclusion.
       expect(submitCheckRun).toHaveBeenCalledTimes(1);
       const [, , input] = submitCheckRun.mock.calls[0];
       expect(input.checkRunId).toBe(556);
