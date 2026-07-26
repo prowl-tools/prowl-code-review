@@ -9,16 +9,21 @@ import type { ApprovalDecision } from "../review/approval.js";
  * Publishes a GitHub Check Run summarizing the review: a conclusion derived from
  * the worst finding severity against a configurable `failOn` threshold, a summary,
  * and per-line annotations. A `failure` conclusion only blocks merge when the org
- * marks the check Required in branch protection — so this is safe to enable; it is
- * informational until someone opts into gating. Needs the `checks: write`
- * permission, so it is **opt-in** (`checkRun.enabled`).
+ * marks the check Required in branch protection — so this is safe to enable; an
+ * ungated run completes `neutral` with findings surfaced as information.
+ * Needs the `checks: write` permission, so it is **opt-in** (`checkRun.enabled`).
  *
- * `planCheckRun` is pure and unit-tested; `submitCheckRun` performs the GitHub
- * writes (batched, since the Checks API caps annotations per request).
+ * The check row is **live**: `startCheckRun` opens it as `in_progress` when the
+ * review begins so the PR shows it running, and `submitCheckRun` completes that
+ * same run (via `checkRunId`) at the end — mirroring how commercial reviewers
+ * render their status row.
+ *
+ * `planCheckRun` is pure and unit-tested; `startCheckRun`/`submitCheckRun` perform
+ * the GitHub writes (batched, since the Checks API caps annotations per request).
  */
 
 /** The default Check Run name shown on the PR. */
-export const CHECK_RUN_NAME = "prowl-review";
+export const CHECK_RUN_NAME = "Prowl Review";
 
 /** GitHub caps annotations at 50 per check-run create/update request. */
 export const CHECK_ANNOTATION_BATCH = 50;
@@ -26,7 +31,10 @@ export const CHECK_ANNOTATION_BATCH = 50;
 /** GitHub annotation levels. */
 export type AnnotationLevel = "notice" | "warning" | "failure";
 
-/** GitHub check-run conclusions prowl-review emits. */
+/**
+ * GitHub check-run conclusions prowl-review emits. `failure` is a blocking gate;
+ * `neutral` is used for informational runs, deliberate skips, and superseded runs.
+ */
 export type CheckConclusion = "success" | "failure" | "neutral";
 
 /** One per-line annotation attached to the check run. */
@@ -124,9 +132,10 @@ function gateSummaryLine(input: {
  * coverage → `failure`, comment/approve → `success`, and a break-glass override
  * → `success` — so the gate and the review can never disagree. Otherwise it falls back to `failOn`:
  * any finding at or above that severity makes the conclusion `failure`, else
- * `success`; with `failOn` omitted too, the check is purely informational
- * (`neutral`). Findings without a line can't be annotated, so they are reported
- * in the summary count but not as annotations (no silent drop, #5).
+ * `success`; with `failOn` omitted too, an ungated run completes `neutral` —
+ * findings are informational and do not imply a passing merge gate. Findings
+ * without a line can't be annotated, so they are reported in the summary count but
+ * not as annotations (no silent drop, #5).
  */
 export function planCheckRun(input: {
   findings: Finding[];
@@ -203,44 +212,107 @@ function batchAnnotations(annotations: CheckAnnotation[]): CheckAnnotation[][] {
 }
 
 /**
- * Create the Check Run and attach annotations. The first batch (≤50) goes on the
- * create call; any remaining batches are added via update calls, since the Checks
- * API caps annotations per request.
+ * Open a **live** Check Run as `in_progress` so the PR shows the review running
+ * while it works. Returns the created run's id, which `submitCheckRun` later
+ * completes. Needs the `checks: write` permission; callers keep it non-fatal.
  */
-export async function submitCheckRun(
+export async function startCheckRun(
   octokit: OctokitLike,
   ref: PullRequestRef,
-  input: { headSha: string; plan: CheckRunPlan; name?: string }
-): Promise<void> {
+  input: { headSha: string; name?: string }
+): Promise<number> {
   const name = input.name ?? CHECK_RUN_NAME;
-  const { plan } = input;
-  const batches = batchAnnotations(plan.annotations);
-
   const created = await octokit.rest.checks.create({
     owner: ref.owner,
     repo: ref.repo,
     name,
     head_sha: input.headSha,
-    status: "completed",
-    conclusion: plan.conclusion,
+    status: "in_progress",
+    started_at: new Date().toISOString(),
     output: {
-      title: plan.title,
-      summary: plan.summary,
-      annotations: batches[0]
+      title: "Review in progress",
+      summary: "Prowl Review is analyzing the changes in this pull request."
     }
   });
+  return created.data.id;
+}
 
-  const checkRunId = created.data.id;
-  for (let i = 1; i < batches.length; i += 1) {
+/**
+ * Publish the Check Run's conclusion and annotations. When `checkRunId` is given,
+ * the existing live (in-progress) run is **completed in place** via `checks.update`
+ * — status `completed`, the conclusion, `completed_at`, and the first annotation
+ * batch — so the row transitions running → done without creating a duplicate.
+ * Without `checkRunId`, a fresh completed run is created (unchanged legacy path).
+ * Either way the first batch (≤50) rides the initial write and any remaining
+ * batches are attached via follow-up update calls (the Checks API caps annotations
+ * per request).
+ */
+export async function submitCheckRun(
+  octokit: OctokitLike,
+  ref: PullRequestRef,
+  input: { headSha: string; plan: CheckRunPlan; name?: string; checkRunId?: number }
+): Promise<void> {
+  const name = input.name ?? CHECK_RUN_NAME;
+  const { plan } = input;
+  const batches = batchAnnotations(plan.annotations);
+  const completedAt = new Date().toISOString();
+
+  let checkRunId: number;
+  if (input.checkRunId !== undefined) {
     await octokit.rest.checks.update({
       owner: ref.owner,
       repo: ref.repo,
-      check_run_id: checkRunId,
+      check_run_id: input.checkRunId,
+      status: "completed",
+      conclusion: plan.conclusion,
+      completed_at: completedAt,
       output: {
         title: plan.title,
         summary: plan.summary,
-        annotations: batches[i]
+        annotations: batches[0]
       }
     });
+    checkRunId = input.checkRunId;
+  } else {
+    const created = await octokit.rest.checks.create({
+      owner: ref.owner,
+      repo: ref.repo,
+      name,
+      head_sha: input.headSha,
+      status: "completed",
+      conclusion: plan.conclusion,
+      completed_at: completedAt,
+      output: {
+        title: plan.title,
+        summary: plan.summary,
+        annotations: batches[0]
+      }
+    });
+    checkRunId = created.data.id;
+  }
+
+  const completedLiveRun = input.checkRunId !== undefined;
+  for (let i = 1; i < batches.length; i += 1) {
+    try {
+      await octokit.rest.checks.update({
+        owner: ref.owner,
+        repo: ref.repo,
+        check_run_id: checkRunId,
+        ...(completedLiveRun ? { completed_at: completedAt } : {}),
+        output: {
+          title: plan.title,
+          summary: plan.summary,
+          annotations: batches[i]
+        }
+    });
+    } catch (error) {
+      if (completedLiveRun) {
+        console.warn(
+          "prowl-review: failed to attach overflow check-run annotations after completing the live run; continuing."
+        );
+        break;
+      }
+      throw error;
+    }
   }
 }

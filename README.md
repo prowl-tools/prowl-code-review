@@ -111,7 +111,7 @@ the Action from seeing drafts, so `review.reviewDrafts: true` cannot take effect
 
 When an auto review is skipped (paused, drafts, or `auto: false`) and the
 merge-gate check is enabled, prowl-review posts a neutral check run so a Required
-"prowl-review" check isn't left pending.
+"Prowl Review" check isn't left pending.
 
 ### Bot commands
 
@@ -181,6 +181,9 @@ to share one org-wide standard across repos — it accepts a **file path or an
 `http(s)` URL** (host the file once and point every repo at it). The fetched
 content is treated as untrusted prompt data just like a local file; a failed,
 non-OK, or oversized fetch is skipped with a warning and the review proceeds.
+Local org-guidelines file paths are confined to `PROWL_ORG_GUIDELINES_WORKSPACE`
+when set, otherwise to the trusted Actions workspace, so a separately checked-out
+org policy can be allowed without trusting arbitrary paths.
 
 ```yaml
 # .github/workflows/prowl-review-command.yml

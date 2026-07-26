@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -17,6 +17,7 @@ import {
   resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
+  resolveOrgGuidelinesWorkspace,
   resolveConfigLoadOptions,
   resolveDryRun,
   resolveProviderDefaults,
@@ -198,13 +199,90 @@ describe("review command helpers", () => {
     });
 
     it("reads a local file path via the injected reader", async () => {
+      const root = tempDir();
+      const guidePath = join(root, "guide.md");
+      writeFileSync(guidePath, "unused");
       const readFile = vi.fn(() => "file rules");
       const fetchImpl = vi.fn();
-      expect(await loadOrgGuidelines("/org/guide.md", { readFile, fetchImpl: fetchImpl as unknown as typeof fetch })).toBe(
-        "file rules"
-      );
-      expect(readFile).toHaveBeenCalledWith("/org/guide.md");
+      expect(
+        await loadOrgGuidelines("guide.md", {
+          readFile,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          workspaceRoot: root
+        })
+      ).toBe("file rules");
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("confines org guidelines to the trusted action workspace, not the repo guidelines root", async () => {
+      const workspace = tempDir();
+      const repoGuidelinesRoot = join(workspace, "repo-guidelines");
+      const orgGuidelinesRoot = join(workspace, "org-guidelines");
+      mkdirSync(repoGuidelinesRoot);
+      mkdirSync(orgGuidelinesRoot);
+      const guidePath = join(orgGuidelinesRoot, "guide.md");
+      writeFileSync(guidePath, "unused");
+      const readFile = vi.fn(() => "org rules");
+
+      expect(
+        await loadOrgGuidelines(guidePath, {
+          readFile,
+          env: {
+            GITHUB_WORKSPACE: workspace,
+            PROWL_GUIDELINES_WORKSPACE: repoGuidelinesRoot
+          } as NodeJS.ProcessEnv
+        })
+      ).toBe("org rules");
+
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
+    });
+
+    it("allows a separate trusted org-guidelines workspace", async () => {
+      const actionWorkspace = tempDir();
+      const orgGuidelinesRoot = tempDir();
+      const guidePath = join(orgGuidelinesRoot, "guide.md");
+      writeFileSync(guidePath, "unused");
+      const readFile = vi.fn(() => "org rules");
+
+      expect(
+        await loadOrgGuidelines(guidePath, {
+          readFile,
+          env: {
+            GITHUB_WORKSPACE: actionWorkspace,
+            PROWL_ORG_GUIDELINES_WORKSPACE: orgGuidelinesRoot
+          } as NodeJS.ProcessEnv
+        })
+      ).toBe("org rules");
+
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
+    });
+
+    it("rejects local org-guidelines paths that escape the trusted workspace", async () => {
+      const root = tempDir();
+      const outsidePath = join(tempDir(), "guide.md");
+      writeFileSync(outsidePath, "outside rules");
+      const readFile = vi.fn(() => "outside rules");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await loadOrgGuidelines(outsidePath, { readFile, workspaceRoot: root })).toBeUndefined();
+
+      expect(readFile).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("escapes"));
+    });
+
+    it("rejects local org-guidelines paths with symlinked components", async () => {
+      const root = tempDir();
+      const outsidePath = join(tempDir(), "guide.md");
+      writeFileSync(outsidePath, "outside rules");
+      symlinkSync(outsidePath, join(root, "guide.md"), "file");
+      const readFile = vi.fn(() => "outside rules");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await loadOrgGuidelines("guide.md", { readFile, workspaceRoot: root })).toBeUndefined();
+
+      expect(readFile).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("includes a symlink"));
     });
 
     it("fetches an http(s) URL and returns the trimmed body", async () => {
@@ -502,6 +580,22 @@ describe("review command helpers", () => {
     expect(resolveGuidelinesWorkspace({ PROWL_GUIDELINES_WORKSPACE: "/injected-guidelines" } as NodeJS.ProcessEnv)).toBe(
       "/injected-guidelines"
     );
+  });
+
+  it("keeps org guidelines confined to an explicit trusted org workspace when provided", () => {
+    expect(
+      resolveOrgGuidelinesWorkspace({
+        GITHUB_WORKSPACE: "/action-workspace",
+        PROWL_GUIDELINES_WORKSPACE: "/repo-guidelines",
+        PROWL_ORG_GUIDELINES_WORKSPACE: "/org-guidelines"
+      } as NodeJS.ProcessEnv)
+    ).toBe("/org-guidelines");
+    expect(
+      resolveOrgGuidelinesWorkspace({
+        GITHUB_WORKSPACE: "/action-workspace",
+        PROWL_GUIDELINES_WORKSPACE: "/repo-guidelines"
+      } as NodeJS.ProcessEnv)
+    ).toBe("/action-workspace");
   });
 
   it("resolves workspace execution trust from explicit truthy env values", () => {
@@ -1571,6 +1665,7 @@ describe("GitHub Action provider metadata", () => {
     expect(action.inputs?.["ai-provider"]?.default).toBe("");
     expect(action.inputs?.["ai-provider"]?.description).toContain("Leave blank");
     expect(action.inputs?.["config-path"]?.default).toBe("");
+    expect(action.inputs?.["org-guidelines-workspace"]?.default).toBe("");
     expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
     expect(reviewStep?.env?.PROWL_INPUT_AI_KEY).toBe("${{ inputs.ai-key }}");
     expect(reviewStep?.env?.PROWL_INPUT_AI_KEY_ANTHROPIC).toBe("${{ inputs.ai-key-anthropic }}");
@@ -1579,6 +1674,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.env?.PROWL_ORG_GUIDELINES_WORKSPACE).toBe("${{ inputs.org-guidelines-workspace }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
       "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"
     );

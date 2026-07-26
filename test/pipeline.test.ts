@@ -797,6 +797,252 @@ ${DELTA_DIFF}`;
     expect(result.checkRunConclusion).toBeUndefined(); // gate failure swallowed
   });
 
+  describe("live check-run lifecycle (#59 follow-up)", () => {
+    it("opens an in-progress run at start and completes it in place", async () => {
+      const startCheckRun = vi.fn(async () => 555);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" } // default finding is major → fails
+      });
+
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      expect(startCheckRun.mock.calls[0][2]).toMatchObject({ headSha: "head" });
+      // The final publish completes the SAME live run rather than creating a new one.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(555);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("uses completeCheckRun idempotency to skip the neutral safety net after normal live completion", async () => {
+      const startCheckRun = vi.fn(async () => 556);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.checkRunConclusion).toBe("failure");
+      // reviewPullRequest always runs the final safety net; after normal
+      // completion, completeCheckRun must be a no-op rather than posting a
+      // fallback update over the completed gate conclusion.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(556);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(input.plan.title).not.toBe("Review did not complete");
+    });
+
+    it("does not open a live run on a dry run or when the check is disabled", async () => {
+      const startCheckRun = vi.fn(async () => 1);
+      const dryDeps = { ...makeDeps(), startCheckRun };
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps: dryDeps,
+        dryRun: true,
+        checkRun: { enabled: true, failOn: "critical" }
+      });
+      expect(startCheckRun).not.toHaveBeenCalled();
+
+      const offStart = vi.fn(async () => 1);
+      await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps: { ...makeDeps(), startCheckRun: offStart }
+      });
+      expect(offStart).not.toHaveBeenCalled();
+    });
+
+    it("still completes the review (fresh run) when opening the live run fails", async () => {
+      const startCheckRun = vi.fn(async () => {
+        throw new Error("missing checks: write");
+      });
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.posted).toBe(true);
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // No live id to complete → falls back to the legacy create path.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      expect(submitCheckRun.mock.calls[0][2].checkRunId).toBeUndefined();
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("fails the live run when the pipeline throws before review completion", async () => {
+      const startCheckRun = vi.fn(async () => 999);
+      const submitCheckRun = vi.fn(async () => {});
+      const submitReview = vi.fn(async () => {
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow();
+
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // The dangling in-progress run is closed out, not left running forever.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(999);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(input.plan.title).toBe("Review did not complete");
+    });
+
+    it("does not let a non-superseded safety-net close-out failure mask the pipeline error", async () => {
+      const startCheckRun = vi.fn(async () => 1002);
+      const submitCheckRun = vi.fn(async () => {
+        throw new Error("checks update failed");
+      });
+      const submitReview = vi.fn(async () => {
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow(ReviewPublishError);
+
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1002);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(input.plan.title).toBe("Review did not complete");
+    });
+
+    it("does not let a safety-net close-out failure mask a superseded return", async () => {
+      const startCheckRun = vi.fn(async () => 1000);
+      const submitCheckRun = vi.fn(async () => {
+        throw new Error("checks update failed");
+      });
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1000);
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
+    it("refreshes the stale-head state before safety-net close-out after an early error", async () => {
+      const startCheckRun = vi.fn(async () => 1001);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const runReview = vi.fn(async () => {
+        throw new Error("provider failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha, runReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow("provider failed");
+
+      expect(fetchHeadSha).toHaveBeenCalledTimes(1);
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1001);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
+    it("completes the live run as superseded when the head advances mid-run", async () => {
+      const startCheckRun = vi.fn(async () => 321);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+      expect(startCheckRun).toHaveBeenCalledTimes(1);
+      // Closed as superseded rather than left in progress.
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(321);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
+    it("keeps the superseded title when a publish error follows a stale-head check", async () => {
+      const startCheckRun = vi.fn(async () => 654);
+      const submitCheckRun = vi.fn(async () => {});
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const submitReview = vi.fn(async (
+        _octokit: OctokitLike,
+        _ref: typeof ref,
+        _payload: unknown,
+        options?: { shouldPublish?: () => Promise<boolean> }
+      ) => {
+        await options?.shouldPublish?.();
+        throw new Error("publish failed");
+      });
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha, submitReview };
+
+      await expect(
+        reviewPullRequest(octokit, ref, {
+          config,
+          toolkitRoot: "/repo",
+          deps,
+          checkRun: { enabled: true, failOn: "major" }
+        })
+      ).rejects.toThrow(ReviewPublishError);
+
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(654);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+  });
+
   describe("approval rubric + break-glass (#52)", () => {
     it("only comments by default (gate off): no override lookup, COMMENT event", async () => {
       const detectBreakGlass = vi.fn(async () => ({ active: false }));
@@ -2100,6 +2346,17 @@ diff --git a/src/b.ts b/src/b.ts
       expect(deps.submitReview).toHaveBeenCalledTimes(1);
     });
 
+    it("rechecks after an unchanged head so a later push is still caught", async () => {
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(fetchHeadSha).toHaveBeenCalledTimes(2);
+      expect(result.headAdvanced).toBe(true);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
     it("publishes tolerantly when the head re-check is unavailable", async () => {
       const fetchHeadSha = vi.fn(async () => undefined);
       const deps = { ...makeDeps(), fetchHeadSha };
@@ -2108,6 +2365,22 @@ diff --git a/src/b.ts b/src/b.ts
 
       expect(result.posted).toBe(true);
       expect(deps.submitReview).toHaveBeenCalledTimes(1);
+    });
+
+    it("publishes tolerantly when the head re-check throws", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const fetchHeadSha = vi.fn(async () => {
+        throw new Error("head lookup failed");
+      });
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(result.headAdvanced).toBeUndefined();
+      expect(result.posted).toBe(true);
+      expect(deps.submitReview).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("head lookup failed"));
+      warn.mockRestore();
     });
 
     it("does not run the guard (or skip) on a dry run", async () => {

@@ -1,6 +1,6 @@
 import { Command } from "commander";
 import { lookup } from "node:dns/promises";
-import { existsSync, readFileSync, appendFileSync } from "node:fs";
+import { existsSync, readFileSync, appendFileSync, realpathSync } from "node:fs";
 import { request as httpRequest, type IncomingHttpHeaders } from "node:http";
 import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
@@ -124,6 +124,62 @@ export function loadLearnedPatterns(root: string): string | undefined {
  */
 export function resolveOrgGuidelinesPath(env: NodeJS.ProcessEnv = process.env): string | undefined {
   return env.PROWL_ORG_GUIDELINES_PATH?.trim() || undefined;
+}
+
+export function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PROWL_ORG_GUIDELINES_WORKSPACE?.trim() || resolveTrustedConfigBase(env);
+}
+
+const orgGuidelinesWorkspaceRealpathCache = new Map<string, string>();
+
+function cachedOrgGuidelinesWorkspaceRealpath(workspaceRoot: string): string {
+  const resolvedRoot = resolve(workspaceRoot);
+  const cached = orgGuidelinesWorkspaceRealpathCache.get(resolvedRoot);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const realRoot = realpathSync(resolvedRoot);
+  orgGuidelinesWorkspaceRealpathCache.set(resolvedRoot, realRoot);
+  return realRoot;
+}
+
+function warnInvalidOrgGuidelinesPath(path: string, workspaceRoot: string, reason: string): void {
+  console.warn(
+    `prowl-review: org guidelines path ${redactSecrets(path).text} ${reason} ` +
+      `${redactSecrets(workspaceRoot).text}; continuing without them.`
+  );
+}
+
+function resolveOrgGuidelinesFilePath(path: string, workspaceRoot: string): string | undefined {
+  const resolvedRoot = resolve(workspaceRoot);
+  const resolvedPath = resolve(resolvedRoot, path);
+  if (!isWorkspaceConfinedPath(resolvedPath, resolvedRoot)) {
+    warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "escapes");
+    return undefined;
+  }
+  try {
+    if (hasSymlinkComponent(resolvedPath, resolvedRoot, { allowMissingTail: true })) {
+      warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "includes a symlink under");
+      return undefined;
+    }
+    const realRoot = cachedOrgGuidelinesWorkspaceRealpath(resolvedRoot);
+    const realPath = realpathSync(resolvedPath);
+    if (!isWorkspaceConfinedPath(realPath, realRoot)) {
+      warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "resolves outside");
+      return undefined;
+    }
+    return realPath;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return undefined;
+    }
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `prowl-review: could not validate org guidelines path ${redactSecrets(resolvedPath).text} ` +
+        `(${redactSecrets(reason).text}); continuing without them.`
+    );
+    return undefined;
+  }
 }
 
 /** Cap on fetched org-guidelines size so a runaway URL can't bloat the prompt (#30). */
@@ -412,6 +468,8 @@ export async function loadOrgGuidelines(
     fetchImpl?: typeof fetch;
     readFile?: (filePath: string) => string | undefined;
     resolveHost?: HostResolver;
+    workspaceRoot?: string;
+    env?: NodeJS.ProcessEnv;
   } = {}
 ): Promise<string | undefined> {
   const value = pathOrUrl?.trim();
@@ -419,7 +477,14 @@ export async function loadOrgGuidelines(
     return undefined;
   }
   if (!/^https?:\/\//i.test(value)) {
-    return (deps.readFile ?? readOptionalFile)(value);
+    const resolvedPath = resolveOrgGuidelinesFilePath(
+      value,
+      deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env)
+    );
+    if (resolvedPath === undefined) {
+      return undefined;
+    }
+    return (deps.readFile ?? readOptionalFile)(resolvedPath);
   }
 
   const fetchImpl = deps.fetchImpl;
@@ -911,7 +976,7 @@ export function resolveDryRun(
 
 /**
  * Post a neutral merge-gate check run for an auto-review that was deliberately
- * skipped (paused / on-demand-only / draft), so a Required "prowl-review" check
+ * skipped (paused / on-demand-only / draft), so a Required "Prowl Review" check
  * isn't left pending forever. No-op on dry runs, when the check is disabled, or
  * when the head SHA is unknown. Tolerant: a failure never sinks the skip.
  */

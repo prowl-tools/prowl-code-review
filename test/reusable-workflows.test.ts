@@ -213,6 +213,7 @@ describe("reusable org workflows (#37)", () => {
     expect(call.inputs).toHaveProperty("min-severity");
     expect(call.inputs).toHaveProperty("config-path");
     expect(call.inputs).toHaveProperty("org-guidelines-path");
+    expect(call.inputs).toHaveProperty("org-guidelines-workspace");
     expect(call.inputs).toHaveProperty("runs-on");
   });
 
@@ -327,6 +328,7 @@ describe("reusable org workflows (#37)", () => {
       "config-path": "${{ inputs.config-path }}",
       "guidelines-path": "${{ github.workspace }}/prowl-base",
       "org-guidelines-path": "${{ inputs.org-guidelines-path }}",
+      "org-guidelines-workspace": "${{ inputs.org-guidelines-workspace }}",
       "workspace-path": "${{ github.workspace }}/pr-head"
     });
   });
