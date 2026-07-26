@@ -1613,6 +1613,8 @@ async function reviewPullRequestImpl(
     if (state.supersededByNewerCommit) {
       return true;
     }
+    // Coalesce concurrent checks only. A completed "not advanced" result must
+    // not be reused because a later push should still cancel publishing.
     const check =
       headAdvancedCheckInFlight ??
       (headAdvancedCheckInFlight = headAdvancedPastReview({

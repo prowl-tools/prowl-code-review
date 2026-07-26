@@ -17,6 +17,7 @@ import {
   resolveOrgGuidelinesPath,
   parseMinSeverity,
   resolveGuidelinesWorkspace,
+  resolveOrgGuidelinesWorkspace,
   resolveConfigLoadOptions,
   resolveDryRun,
   resolveProviderDefaults,
@@ -230,6 +231,26 @@ describe("review command helpers", () => {
           env: {
             GITHUB_WORKSPACE: workspace,
             PROWL_GUIDELINES_WORKSPACE: repoGuidelinesRoot
+          } as NodeJS.ProcessEnv
+        })
+      ).toBe("org rules");
+
+      expect(readFile).toHaveBeenCalledWith(realpathSync(guidePath));
+    });
+
+    it("allows a separate trusted org-guidelines workspace", async () => {
+      const actionWorkspace = tempDir();
+      const orgGuidelinesRoot = tempDir();
+      const guidePath = join(orgGuidelinesRoot, "guide.md");
+      writeFileSync(guidePath, "unused");
+      const readFile = vi.fn(() => "org rules");
+
+      expect(
+        await loadOrgGuidelines(guidePath, {
+          readFile,
+          env: {
+            GITHUB_WORKSPACE: actionWorkspace,
+            PROWL_ORG_GUIDELINES_WORKSPACE: orgGuidelinesRoot
           } as NodeJS.ProcessEnv
         })
       ).toBe("org rules");
@@ -559,6 +580,22 @@ describe("review command helpers", () => {
     expect(resolveGuidelinesWorkspace({ PROWL_GUIDELINES_WORKSPACE: "/injected-guidelines" } as NodeJS.ProcessEnv)).toBe(
       "/injected-guidelines"
     );
+  });
+
+  it("keeps org guidelines confined to an explicit trusted org workspace when provided", () => {
+    expect(
+      resolveOrgGuidelinesWorkspace({
+        GITHUB_WORKSPACE: "/action-workspace",
+        PROWL_GUIDELINES_WORKSPACE: "/repo-guidelines",
+        PROWL_ORG_GUIDELINES_WORKSPACE: "/org-guidelines"
+      } as NodeJS.ProcessEnv)
+    ).toBe("/org-guidelines");
+    expect(
+      resolveOrgGuidelinesWorkspace({
+        GITHUB_WORKSPACE: "/action-workspace",
+        PROWL_GUIDELINES_WORKSPACE: "/repo-guidelines"
+      } as NodeJS.ProcessEnv)
+    ).toBe("/action-workspace");
   });
 
   it("resolves workspace execution trust from explicit truthy env values", () => {
@@ -1628,6 +1665,7 @@ describe("GitHub Action provider metadata", () => {
     expect(action.inputs?.["ai-provider"]?.default).toBe("");
     expect(action.inputs?.["ai-provider"]?.description).toContain("Leave blank");
     expect(action.inputs?.["config-path"]?.default).toBe("");
+    expect(action.inputs?.["org-guidelines-workspace"]?.default).toBe("");
     expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
     expect(reviewStep?.env?.PROWL_INPUT_AI_KEY).toBe("${{ inputs.ai-key }}");
     expect(reviewStep?.env?.PROWL_INPUT_AI_KEY_ANTHROPIC).toBe("${{ inputs.ai-key-anthropic }}");
@@ -1636,6 +1674,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.env?.PROWL_ORG_GUIDELINES_WORKSPACE).toBe("${{ inputs.org-guidelines-workspace }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
       "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"
     );
