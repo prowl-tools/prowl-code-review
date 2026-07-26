@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
+import { z } from "zod";
 import { loadBenchmark, loadCase } from "../src/eval/load.js";
 import { runBenchmark } from "../src/eval/runner.js";
 import { parseDiff } from "../src/review/parse-diff.js";
@@ -133,8 +134,49 @@ describe("loadBenchmark", () => {
       mkdirSync(dir);
       writeFileSync(join(dir, "case.json"), "{not json");
       writeFileSync(join(dir, "input.diff"), "diff --git a/x b/x\n+y");
-      expect(() => loadCase(dir, "badjson")).toThrow(/badjson.*invalid case\.json/);
+
+      let thrown: unknown;
+      try {
+        loadCase(dir, "badjson");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/badjson.*invalid case\.json/);
+      expect(thrownError.cause).toBeInstanceOf(SyntaxError);
     } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  it("normalizes non-Error JSON parse failures into an Error cause", () => {
+    const root = mkdtempSync(join(tmpdir(), "bench-"));
+    let parseSpy: { mockRestore(): void } | undefined;
+    try {
+      const dir = join(root, "badjson");
+      mkdirSync(dir);
+      writeFileSync(join(dir, "case.json"), JSON.stringify({ description: "d", kind: "clean" }));
+      writeFileSync(join(dir, "input.diff"), "diff --git a/x b/x\n+y");
+      parseSpy = vi.spyOn(JSON, "parse").mockImplementationOnce(() => {
+        throw "json parser failed";
+      });
+
+      let thrown: unknown;
+      try {
+        loadCase(dir, "badjson");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/json parser failed/);
+      expect(thrownError.cause).toBeInstanceOf(Error);
+      expect((thrownError.cause as Error).message).toBe("json parser failed");
+    } finally {
+      parseSpy?.mockRestore();
       rmSync(root, { recursive: true, force: true });
     }
   });
@@ -159,7 +201,18 @@ describe("loadBenchmark", () => {
         { description: "d", kind: "clean", expected: [{ file: "x.ts", line: 1, note: "n" }] },
         "diff --git a/x.ts b/x.ts\n--- a/x.ts\n+++ b/x.ts\n@@ -1,1 +1,2 @@\n x\n+y"
       );
-      expect(() => loadCase(join(root, "noisy-clean"), "noisy-clean")).toThrow(/noisy-clean.*must not list expected defects/);
+
+      let thrown: unknown;
+      try {
+        loadCase(join(root, "noisy-clean"), "noisy-clean");
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/noisy-clean.*must not list expected defects/);
+      expect(thrownError.cause).toBeInstanceOf(z.ZodError);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

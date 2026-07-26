@@ -12,7 +12,7 @@ const read = (path: string): string => {
     return readFileSync(join(process.cwd(), path), "utf8");
   } catch (error) {
     const reason = error instanceof Error ? error.message : String(error);
-    throw new Error(`Expected policy doc at ${path} to be readable: ${reason}`);
+    throw new Error(`Expected policy doc at ${path} to be readable: ${reason}`, { cause: error });
   }
 };
 

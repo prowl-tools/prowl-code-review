@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { z } from "zod";
+import { errorWithCause } from "../errors.js";
 import { BenchmarkCaseSchema, CASE_KINDS, ExpectedBugSchema, type BenchmarkCase } from "./types.js";
 
 /**
@@ -70,14 +71,15 @@ export function loadCase(caseDir: string, id: string): BenchmarkCase {
   try {
     rawMeta = JSON.parse(readFileSync(metaPath, "utf8"));
   } catch (error) {
-    throw new Error(`Benchmark case "${id}" has invalid case.json: ${error instanceof Error ? error.message : error}`);
+    const message = error instanceof Error ? error.message : String(error);
+    throw errorWithCause(`Benchmark case "${id}" has invalid case.json: ${message}`, error);
   }
   let meta: z.infer<typeof CaseMetaSchema>;
   try {
     meta = CaseMetaSchema.parse(rawMeta);
   } catch (error) {
     if (error instanceof z.ZodError) {
-      throw new Error(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`);
+      throw errorWithCause(`Benchmark case "${id}" has invalid case.json schema: ${summarizeZodError(error)}`, error);
     }
     throw error;
   }

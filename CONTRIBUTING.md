@@ -23,7 +23,7 @@ participating you are expected to uphold it.
 
 ## Prerequisites
 
-- **Node.js ≥ 22.12.0** (matches `engines` in `package.json` and CI).
+- **Node.js 22.13.0+ on Node 22, or Node 24+** (matches `engines` in `package.json`; CI pins 22.13.0).
 - npm (bundled with Node).
 
 ## Setup
