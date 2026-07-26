@@ -130,6 +130,58 @@ function resolveOrgGuidelinesWorkspace(env: NodeJS.ProcessEnv = process.env): st
   return resolveGuidelinesWorkspace(env) ?? resolveTrustedConfigBase(env);
 }
 
+const orgGuidelinesWorkspaceRealpathCache = new Map<string, string>();
+
+function cachedOrgGuidelinesWorkspaceRealpath(workspaceRoot: string): string {
+  const resolvedRoot = resolve(workspaceRoot);
+  const cached = orgGuidelinesWorkspaceRealpathCache.get(resolvedRoot);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const realRoot = realpathSync(resolvedRoot);
+  orgGuidelinesWorkspaceRealpathCache.set(resolvedRoot, realRoot);
+  return realRoot;
+}
+
+function warnInvalidOrgGuidelinesPath(path: string, workspaceRoot: string, reason: string): void {
+  console.warn(
+    `prowl-review: org guidelines path ${redactSecrets(path).text} ${reason} ` +
+      `${redactSecrets(workspaceRoot).text}; continuing without them.`
+  );
+}
+
+function resolveOrgGuidelinesFilePath(path: string, workspaceRoot: string): string | undefined {
+  const resolvedRoot = resolve(workspaceRoot);
+  const resolvedPath = resolve(resolvedRoot, path);
+  if (!isWorkspaceConfinedPath(resolvedPath, resolvedRoot)) {
+    warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "escapes");
+    return undefined;
+  }
+  if (!existsSync(resolvedPath)) {
+    return undefined;
+  }
+  try {
+    if (hasSymlinkComponent(resolvedPath, resolvedRoot)) {
+      warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "includes a symlink under");
+      return undefined;
+    }
+    const realRoot = cachedOrgGuidelinesWorkspaceRealpath(resolvedRoot);
+    const realPath = realpathSync(resolvedPath);
+    if (!isWorkspaceConfinedPath(realPath, realRoot)) {
+      warnInvalidOrgGuidelinesPath(resolvedPath, resolvedRoot, "resolves outside");
+      return undefined;
+    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `prowl-review: could not validate org guidelines path ${redactSecrets(resolvedPath).text} ` +
+        `(${redactSecrets(reason).text}); continuing without them.`
+    );
+    return undefined;
+  }
+  return resolvedPath;
+}
+
 /** Cap on fetched org-guidelines size so a runaway URL can't bloat the prompt (#30). */
 export const ORG_GUIDELINES_MAX_BYTES = 256 * 1024;
 /** Timeout for fetching org-guidelines over the network (#30). */
@@ -425,36 +477,8 @@ export async function loadOrgGuidelines(
     return undefined;
   }
   if (!/^https?:\/\//i.test(value)) {
-    const workspaceRoot = resolve(deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env));
-    const resolvedPath = resolve(workspaceRoot, value);
-    const safePath = redactSecrets(resolvedPath).text;
-    const safeRoot = redactSecrets(workspaceRoot).text;
-    if (!isWorkspaceConfinedPath(resolvedPath, workspaceRoot)) {
-      console.warn(`prowl-review: org guidelines path ${safePath} escapes ${safeRoot}; continuing without them.`);
-      return undefined;
-    }
-    if (!existsSync(resolvedPath)) {
-      return undefined;
-    }
-    try {
-      if (hasSymlinkComponent(resolvedPath, workspaceRoot)) {
-        console.warn(`prowl-review: org guidelines path ${safePath} includes a symlink; continuing without them.`);
-        return undefined;
-      }
-      const realWorkspace = realpathSync(workspaceRoot);
-      const realPath = realpathSync(resolvedPath);
-      if (!isWorkspaceConfinedPath(realPath, realWorkspace)) {
-        console.warn(
-          `prowl-review: org guidelines path ${safePath} resolves outside ${safeRoot}; continuing without them.`
-        );
-        return undefined;
-      }
-    } catch (error) {
-      const reason = error instanceof Error ? error.message : String(error);
-      console.warn(
-        `prowl-review: could not validate org guidelines path ${safePath} (${redactSecrets(reason).text}); ` +
-          "continuing without them."
-      );
+    const resolvedPath = resolveOrgGuidelinesFilePath(value, deps.workspaceRoot ?? resolveOrgGuidelinesWorkspace(deps.env));
+    if (resolvedPath === undefined) {
       return undefined;
     }
     return (deps.readFile ?? readOptionalFile)(resolvedPath);
