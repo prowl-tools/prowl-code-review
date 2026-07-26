@@ -912,6 +912,29 @@ ${DELTA_DIFF}`;
       expect(input.plan.title).toBe("Review did not complete");
     });
 
+    it("does not let a safety-net close-out failure mask a superseded return", async () => {
+      const startCheckRun = vi.fn(async () => 1000);
+      const submitCheckRun = vi.fn(async () => {
+        throw new Error("checks update failed");
+      });
+      const fetchHeadSha = vi.fn(async () => "newer-sha");
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun, fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" }
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(result.posted).toBe(false);
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(1000);
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
     it("completes the live run as superseded when the head advances mid-run", async () => {
       const startCheckRun = vi.fn(async () => 321);
       const submitCheckRun = vi.fn(async () => {});
