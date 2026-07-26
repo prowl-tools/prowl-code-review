@@ -1,7 +1,8 @@
-import fs from "node:fs";
+import fs, { type Stats } from "node:fs";
 import path from "node:path";
 import yaml from "yaml";
 import { z } from "zod";
+import { errorWithCause } from "../errors.js";
 import { configSchema, type ProwlReviewConfig } from "./schema.js";
 
 /**
@@ -23,13 +24,82 @@ export const CONFIG_FILENAMES = [".prowl-review.yml", ".prowl-review.yaml"] as c
 /** The canonical filename written by `prowl-review init`. */
 export const CONFIG_FILENAME = CONFIG_FILENAMES[0];
 
+function noFollowFlag(): number {
+  const flag = (fs.constants as { O_NOFOLLOW?: number }).O_NOFOLLOW;
+  if (typeof flag !== "number") {
+    throw new Error("Config loading requires O_NOFOLLOW support.");
+  }
+  return flag;
+}
+
+function assertRegularConfigFile(resolvedPath: string): Stats {
+  const stat = fs.lstatSync(resolvedPath);
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Config file must not be a symlink: ${resolvedPath}`);
+  }
+  if (!stat.isFile()) {
+    throw new Error(`Config path is not a file: ${resolvedPath}`);
+  }
+  return stat;
+}
+
+function sameFile(left: Stats, right: Stats): boolean {
+  return left.dev === right.dev && left.ino === right.ino;
+}
+
+function openConfigFile(resolvedPath: string): number {
+  try {
+    return fs.openSync(resolvedPath, fs.constants.O_RDONLY | noFollowFlag());
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ELOOP") {
+      throw errorWithCause(`Config file must not be a symlink: ${resolvedPath}`, error);
+    }
+    throw error;
+  }
+}
+
+function readConfigFile(resolvedPath: string): string {
+  const fd = openConfigFile(resolvedPath);
+  try {
+    const opened = fs.fstatSync(fd);
+    if (!opened.isFile()) {
+      throw new Error(`Config path is not a file: ${resolvedPath}`);
+    }
+    const afterOpen = assertRegularConfigFile(resolvedPath);
+    if (!sameFile(opened, afterOpen)) {
+      throw new Error(`Config file changed while being opened: ${resolvedPath}`);
+    }
+    return fs.readFileSync(fd, "utf-8");
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
 /** Search `startDir` and its ancestors for a config file; return its path or null. */
 export function findConfigPath(startDir: string): string | null {
   let current = path.resolve(startDir);
   for (;;) {
+    let entries: Set<string>;
+    try {
+      entries = new Set(fs.readdirSync(current));
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") {
+        throw error;
+      }
+      entries = new Set();
+    }
     for (const name of CONFIG_FILENAMES) {
-      const candidate = path.join(current, name);
-      if (fs.existsSync(candidate)) {
+      if (entries.has(name)) {
+        const candidate = path.join(current, name);
+        try {
+          assertRegularConfigFile(candidate);
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+            continue;
+          }
+          throw error;
+        }
         return candidate;
       }
     }
@@ -91,18 +161,18 @@ export function loadConfig(options: LoadConfigOptions = {}): LoadedConfig {
     }
   }
 
-  const raw = fs.readFileSync(resolvedPath, "utf-8");
+  const raw = readConfigFile(resolvedPath);
   let parsed: unknown;
   try {
     parsed = yaml.parse(raw) ?? {};
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new Error(`Could not parse ${path.basename(resolvedPath)}: ${message}`);
+    throw errorWithCause(`Could not parse ${path.basename(resolvedPath)}: ${message}`, error);
   }
 
   const result = configSchema.safeParse(parsed);
   if (!result.success) {
-    throw new Error(formatValidationError(result.error, resolvedPath));
+    throw errorWithCause(formatValidationError(result.error, resolvedPath), result.error);
   }
 
   return { config: result.data, configPath: resolvedPath };

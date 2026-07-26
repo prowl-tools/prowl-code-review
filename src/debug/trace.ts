@@ -5,6 +5,18 @@ import { prepareDebugLogPathForWrite } from "./paths.js";
 import { redactSecrets } from "../review/redact.js";
 import type { Finding } from "../review/findings.js";
 
+const DEFAULT_MAX_QUEUED_TRACE_LINES = 4096;
+
+export function normalizeMaxQueueLines(maxQueueLines: number | undefined): number {
+  if (maxQueueLines === undefined) {
+    return DEFAULT_MAX_QUEUED_TRACE_LINES;
+  }
+  if (!Number.isFinite(maxQueueLines)) {
+    return DEFAULT_MAX_QUEUED_TRACE_LINES;
+  }
+  return Math.max(1, Math.floor(maxQueueLines));
+}
+
 /**
  * Debug/verbose run tracing (backlog #49).
  *
@@ -217,10 +229,17 @@ async function appendJsonlLine(path: string, line: string, workspace?: string): 
  * hot path on per-event disk I/O. Parent directories are created best-effort for
  * explicit nested paths such as `traces/run.jsonl`.
  */
-export function createJsonlSink(path: string, options: { now?: () => number; workspace?: string } = {}): DebugSink {
+export function createJsonlSink(
+  path: string,
+  options: { now?: () => number; workspace?: string; maxQueueLines?: number } = {}
+): DebugSink {
   const now = options.now ?? (() => Date.now());
   const state = { seq: 0, start: now() };
-  let pending: Promise<void> = Promise.resolve();
+  const maxQueueLines = normalizeMaxQueueLines(options.maxQueueLines);
+  const queue: Array<string | undefined> = [];
+  let queueStart = 0;
+  let queueLength = 0;
+  let flushing = false;
 
   if (!options.workspace) {
     try {
@@ -230,6 +249,52 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     }
   }
 
+  const startFlush = () => {
+    if (flushing) {
+      return;
+    }
+    flushing = true;
+    void (async () => {
+      // Re-check the queue after every awaited batch so events emitted during a write
+      // are drained by this worker without starting concurrent file writes.
+      for (;;) {
+        const batch: string[] = [];
+        for (let offset = 0; offset < queueLength; offset += 1) {
+          const index = (queueStart + offset) % maxQueueLines;
+          const queuedLine = queue[index];
+          queue[index] = undefined;
+          if (queuedLine !== undefined) {
+            batch.push(queuedLine);
+          }
+        }
+        queueStart = 0;
+        queueLength = 0;
+        if (batch.length === 0) {
+          flushing = false;
+          return;
+        }
+        for (const queuedLine of batch) {
+          try {
+            await appendJsonlLine(path, queuedLine, options.workspace);
+          } catch {
+            // Debug writes must never fail the review run.
+          }
+        }
+      }
+    })();
+  };
+
+  const enqueueLine = (line: string) => {
+    if (queueLength === maxQueueLines) {
+      queue[queueStart] = line;
+      queueStart = (queueStart + 1) % maxQueueLines;
+    } else {
+      queue[(queueStart + queueLength) % maxQueueLines] = line;
+      queueLength += 1;
+    }
+    startFlush();
+  };
+
   return (event: DebugEvent) => {
     let line: string;
     try {
@@ -237,7 +302,6 @@ export function createJsonlSink(path: string, options: { now?: () => number; wor
     } catch {
       return;
     }
-    pending = pending.then(() => appendJsonlLine(path, line, options.workspace)).catch(() => {});
-    void pending;
+    enqueueLine(line);
   };
 }

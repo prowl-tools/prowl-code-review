@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   createDebugRecorder,
   createJsonlSink,
+  normalizeMaxQueueLines,
   toDebugFindings,
   type DebugEvent,
   type DebugRecord
@@ -119,6 +120,51 @@ describe("debug trace", () => {
     expect(records[0].event.type).toBe("diff");
     expect(records[1].event.type).toBe("run-end");
     expect(records.map((r) => r.seq)).toEqual([0, 1]);
+  });
+
+  it("drains burst writes in FIFO order", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
+    const path = join(dir, "trace.jsonl");
+    const sink = createJsonlSink(path, { now: clock([0, 10, 20, 30, 40, 50]) });
+
+    for (let index = 0; index < 5; index += 1) {
+      sink({ type: "grounding", findings: index, notes: 0 });
+    }
+
+    const records = (await waitForTrace(path, 5)).map((line) => JSON.parse(line) as DebugRecord);
+    expect(records.map((record) => record.seq)).toEqual([0, 1, 2, 3, 4]);
+    expect(records.map((record) => (record.event as Extract<DebugEvent, { type: "grounding" }>).findings)).toEqual([
+      0, 1, 2, 3, 4
+    ]);
+  });
+
+  it("bounds queued burst writes by dropping the oldest queued lines", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "prowl-debug-"));
+    const path = join(dir, "trace.jsonl");
+    const sink = createJsonlSink(path, { now: clock([0, 10, 20, 30, 40, 50]), maxQueueLines: 2 });
+
+    for (let index = 0; index < 5; index += 1) {
+      sink({ type: "grounding", findings: index, notes: 0 });
+    }
+
+    const records = (await waitForTrace(path, 3)).map((line) => JSON.parse(line) as DebugRecord);
+    const seqs = records.map((record) => record.seq);
+    expect(seqs).toEqual([0, 3, 4]);
+    expect(seqs).not.toContain(1);
+    expect(seqs).not.toContain(2);
+    expect(records.map((record) => (record.event as Extract<DebugEvent, { type: "grounding" }>).findings)).toEqual([
+      0, 3, 4
+    ]);
+  });
+
+  it("falls back to the default queue limit for non-finite limits", () => {
+    const defaultLimit = normalizeMaxQueueLines(undefined);
+
+    expect(normalizeMaxQueueLines(Number.NaN)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(Number.POSITIVE_INFINITY)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(Number.NEGATIVE_INFINITY)).toBe(defaultLimit);
+    expect(normalizeMaxQueueLines(2.9)).toBe(2);
+    expect(normalizeMaxQueueLines(0)).toBe(1);
   });
 
   it("creates parent directories for nested trace paths", async () => {

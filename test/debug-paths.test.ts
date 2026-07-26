@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -34,6 +34,28 @@ describe("debug path helpers", () => {
 
     expect(hasSymlinkComponent("missing/trace.jsonl", workspace, { allowMissingTail: true })).toBe(false);
     expect(hasSymlinkComponent("missing/trace.jsonl", workspace)).toBe(true);
+  });
+
+  it("preserves the original inspection error as the cause", () => {
+    const workspace = mkdtempSync(join(tmpdir(), "prowl-debug-paths-"));
+    try {
+      writeFileSync(join(workspace, "traces"), "not a directory");
+
+      let thrown: unknown;
+      try {
+        hasSymlinkComponent("traces/run.jsonl", workspace);
+      } catch (error) {
+        thrown = error;
+      }
+
+      expect(thrown).toBeInstanceOf(Error);
+      const thrownError = thrown as Error;
+      expect(thrownError.message).toMatch(/could not be inspected/);
+      expect(thrownError.cause).toBeInstanceOf(Error);
+      expect((thrownError.cause as NodeJS.ErrnoException).code).toBe("ENOTDIR");
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
   });
 
   it("creates nested parent directories and returns the resolved path", () => {
