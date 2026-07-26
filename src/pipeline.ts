@@ -1472,9 +1472,11 @@ function redactGroundingNotes(notes: string[]): { notes: string[]; count: number
 /**
  * Live check-run lifecycle bookkeeping (#59 follow-up). `reviewPullRequestImpl`
  * opens the in-progress run and records its id here; the exported wrapper below
- * guarantees the run never dangles — completing it neutrally if the pipeline
- * throws or bails on a superseded commit before the normal completion runs.
+ * guarantees the run never dangles — completing it as failed when the pipeline
+ * throws, or neutral when a newer commit supersedes it before normal completion.
  */
+type CheckRunCloseOut = { conclusion: CheckConclusion; title: string };
+
 interface CheckRunLifecycleState {
   /** Id of the live in-progress run, once opened. */
   checkRunId?: number;
@@ -1482,8 +1484,8 @@ interface CheckRunLifecycleState {
   checkRunCompleted?: boolean;
   /** A newer commit superseded this run — pick the "superseded" close-out title. */
   supersededByNewerCommit?: boolean;
-  /** Best-effort neutral close-out of the live run; a no-op once completed. Set once deps + head are known. */
-  completeCheckRun?: (title: string) => Promise<void>;
+  /** Best-effort close-out of the live run; a no-op once completed. Set once deps + head are known. */
+  completeCheckRun?: (closeOut: CheckRunCloseOut) => Promise<void>;
 }
 
 /**
@@ -1492,8 +1494,8 @@ interface CheckRunLifecycleState {
  * Thin wrapper around {@link reviewPullRequestImpl} that owns the live check-run
  * safety net (#59 follow-up): whatever exit path the impl takes — normal return,
  * a head-advanced bail, or a thrown error — the in-progress check row is closed
- * out (neutral) rather than left stuck "running". Completion is idempotent, so
- * this never double-completes a run the impl already finished normally.
+ * out rather than left stuck "running". Completion is idempotent, so this never
+ * double-completes a run the impl already finished normally.
  */
 export async function reviewPullRequest(
   octokit: OctokitLike,
@@ -1508,7 +1510,9 @@ export async function reviewPullRequest(
     // non-fatal completion failure inside the impl: never leave the check row
     // running, and always use the most accurate close-out reason.
     await state.completeCheckRun?.(
-      state.supersededByNewerCommit ? "Superseded by a newer commit" : "Review did not complete"
+      state.supersededByNewerCommit
+        ? { conclusion: "neutral", title: "Superseded by a newer commit" }
+        : { conclusion: "failure", title: "Review did not complete" }
     );
   }
 }
@@ -1594,15 +1598,29 @@ async function reviewPullRequestImpl(
       posted: false
     };
   }
+  let headAdvancedCheckInFlight: Promise<boolean> | undefined;
   const hasHeadAdvanced = async (): Promise<boolean> => {
-    const advanced = await headAdvancedPastReview({
-      fetchHeadSha,
-      octokit,
-      ref,
-      reviewedSha: reviewedHeadSha,
-      enabled: staleGuardEnabled,
-      dryRun: options.dryRun === true
-    });
+    if (state.supersededByNewerCommit) {
+      return true;
+    }
+    const check =
+      headAdvancedCheckInFlight ??
+      (headAdvancedCheckInFlight = headAdvancedPastReview({
+        fetchHeadSha,
+        octokit,
+        ref,
+        reviewedSha: reviewedHeadSha,
+        enabled: staleGuardEnabled,
+        dryRun: options.dryRun === true
+      }));
+    let advanced: boolean;
+    try {
+      advanced = await check;
+    } finally {
+      if (headAdvancedCheckInFlight === check) {
+        headAdvancedCheckInFlight = undefined;
+      }
+    }
     // Record the reason so the wrapper closes a still-open live check row as
     // "Superseded by a newer commit" rather than "Review did not complete".
     if (advanced) {
@@ -1619,7 +1637,7 @@ async function reviewPullRequestImpl(
   // review; the row simply won't appear. `completeCheckRun` is the idempotent
   // close-out the exported wrapper leans on so a started run never dangles.
   if (options.checkRun?.enabled && !options.dryRun && meta.headSha) {
-    state.completeCheckRun = async (title: string): Promise<void> => {
+    state.completeCheckRun = async (closeOut: CheckRunCloseOut): Promise<void> => {
       if (state.checkRunId === undefined || state.checkRunCompleted) {
         return;
       }
@@ -1627,7 +1645,12 @@ async function reviewPullRequestImpl(
       try {
         await submitCheck(octokit, ref, {
           headSha: meta.headSha,
-          plan: { conclusion: "neutral", title, summary: title, annotations: [] },
+          plan: {
+            conclusion: closeOut.conclusion,
+            title: closeOut.title,
+            summary: closeOut.title,
+            annotations: []
+          },
           checkRunId: state.checkRunId
         });
       } catch {

@@ -10,7 +10,7 @@ import type { ApprovalDecision } from "../review/approval.js";
  * the worst finding severity against a configurable `failOn` threshold, a summary,
  * and per-line annotations. A `failure` conclusion only blocks merge when the org
  * marks the check Required in branch protection — so this is safe to enable; an
- * ungated run completes green (`success`) with findings surfaced as information.
+ * ungated run completes `neutral` with findings surfaced as information.
  * Needs the `checks: write` permission, so it is **opt-in** (`checkRun.enabled`).
  *
  * The check row is **live**: `startCheckRun` opens it as `in_progress` when the
@@ -32,9 +32,8 @@ export const CHECK_ANNOTATION_BATCH = 50;
 export type AnnotationLevel = "notice" | "warning" | "failure";
 
 /**
- * GitHub check-run conclusions prowl-review emits. An ungated completed review is
- * `success`; `failure` is a blocking gate; `neutral` is reserved for the
- * skip/pause path and for closing a run that never finished (see the pipeline).
+ * GitHub check-run conclusions prowl-review emits. `failure` is a blocking gate;
+ * `neutral` is used for informational runs, deliberate skips, and superseded runs.
  */
 export type CheckConclusion = "success" | "failure" | "neutral";
 
@@ -133,11 +132,10 @@ function gateSummaryLine(input: {
  * coverage → `failure`, comment/approve → `success`, and a break-glass override
  * → `success` — so the gate and the review can never disagree. Otherwise it falls back to `failOn`:
  * any finding at or above that severity makes the conclusion `failure`, else
- * `success`; with `failOn` omitted too, an ungated run still completes green
- * (`success`) — the review ran to completion and any findings are informational,
- * so the check row reads as done rather than a grey `neutral`. Findings without a
- * line can't be annotated, so they are reported in the summary count but not as
- * annotations (no silent drop, #5).
+ * `success`; with `failOn` omitted too, an ungated run completes `neutral` —
+ * findings are informational and do not imply a passing merge gate. Findings
+ * without a line can't be annotated, so they are reported in the summary count but
+ * not as annotations (no silent drop, #5).
  */
 export function planCheckRun(input: {
   findings: Finding[];
@@ -165,7 +163,7 @@ export function planCheckRun(input: {
       ? "success"
       : "failure"
     : !gated
-      ? "success"
+      ? "neutral"
       : blocking.length > 0
         ? "failure"
         : "success";

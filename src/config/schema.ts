@@ -202,8 +202,8 @@ const checkRunSchema = z
     enabled: z.boolean().optional(),
     /**
      * Severity at/above which the check fails (and can block merge via branch
-     * protection). Omit for an informational check that completes green
-     * (`success`) and never fails — findings are surfaced but don't block.
+     * protection). Omit for an informational `neutral` check — findings are
+     * surfaced but don't block.
      */
     failOn: severityEnum.optional()
   })

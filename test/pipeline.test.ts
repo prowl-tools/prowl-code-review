@@ -835,7 +835,7 @@ ${DELTA_DIFF}`;
       expect(result.checkRunConclusion).toBe("failure");
       // reviewPullRequest always runs the final safety net; after normal
       // completion, completeCheckRun must be a no-op rather than posting a
-      // second neutral update over the completed gate conclusion.
+      // fallback update over the completed gate conclusion.
       expect(submitCheckRun).toHaveBeenCalledTimes(1);
       const [, , input] = submitCheckRun.mock.calls[0];
       expect(input.checkRunId).toBe(556);
@@ -886,7 +886,7 @@ ${DELTA_DIFF}`;
       expect(result.checkRunConclusion).toBe("failure");
     });
 
-    it("completes the live run as neutral when the pipeline throws", async () => {
+    it("fails the live run when the pipeline throws before review completion", async () => {
       const startCheckRun = vi.fn(async () => 999);
       const submitCheckRun = vi.fn(async () => {});
       const submitReview = vi.fn(async () => {
@@ -908,7 +908,7 @@ ${DELTA_DIFF}`;
       expect(submitCheckRun).toHaveBeenCalledTimes(1);
       const [, , input] = submitCheckRun.mock.calls[0];
       expect(input.checkRunId).toBe(999);
-      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.conclusion).toBe("failure");
       expect(input.plan.title).toBe("Review did not complete");
     });
 

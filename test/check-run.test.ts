@@ -38,14 +38,14 @@ describe("annotationLevelFor (#24)", () => {
 });
 
 describe("planCheckRun (#24)", () => {
-  it("completes green (success) — not grey (neutral) — when ungated", () => {
-    // An ungated run (no failOn, no engaged approval) ran to completion, so the
-    // row reads as done rather than a grey neutral; findings stay informational.
+  it("completes neutral when ungated", () => {
+    // No failOn and no engaged approval gate means this is informational, not a
+    // passing merge gate.
     const input: Parameters<typeof planCheckRun>[0] = { findings: [finding({ severity: "critical" })] };
     expect(input.failOn).toBeUndefined();
     expect(input.approval).toBeUndefined();
     const plan = planCheckRun(input);
-    expect(plan.conclusion).toBe("success");
+    expect(plan.conclusion).toBe("neutral");
     expect(plan.summary).toContain("informational only");
     expect(plan.summary).toContain("set checkRun.failOn or approval.enabled");
   });
