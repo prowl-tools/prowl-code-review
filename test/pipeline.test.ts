@@ -2271,6 +2271,17 @@ diff --git a/src/b.ts b/src/b.ts
       expect(deps.submitReview).toHaveBeenCalledTimes(1);
     });
 
+    it("rechecks after an unchanged head so a later push is still caught", async () => {
+      const fetchHeadSha = vi.fn().mockResolvedValueOnce("head").mockResolvedValue("newer-sha");
+      const deps = { ...makeDeps(), fetchHeadSha };
+
+      const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
+
+      expect(fetchHeadSha).toHaveBeenCalledTimes(2);
+      expect(result.headAdvanced).toBe(true);
+      expect(deps.submitReview).not.toHaveBeenCalled();
+    });
+
     it("publishes tolerantly when the head re-check is unavailable", async () => {
       const fetchHeadSha = vi.fn(async () => undefined);
       const deps = { ...makeDeps(), fetchHeadSha };
@@ -2282,6 +2293,7 @@ diff --git a/src/b.ts b/src/b.ts
     });
 
     it("publishes tolerantly when the head re-check throws", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
       const fetchHeadSha = vi.fn(async () => {
         throw new Error("head lookup failed");
       });
@@ -2292,6 +2304,8 @@ diff --git a/src/b.ts b/src/b.ts
       expect(result.headAdvanced).toBeUndefined();
       expect(result.posted).toBe(true);
       expect(deps.submitReview).toHaveBeenCalledTimes(1);
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("head lookup failed"));
+      warn.mockRestore();
     });
 
     it("does not run the guard (or skip) on a dry run", async () => {

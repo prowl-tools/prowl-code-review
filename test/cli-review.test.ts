@@ -198,13 +198,47 @@ describe("review command helpers", () => {
     });
 
     it("reads a local file path via the injected reader", async () => {
+      const root = tempDir();
+      const guidePath = join(root, "guide.md");
+      writeFileSync(guidePath, "unused");
       const readFile = vi.fn(() => "file rules");
       const fetchImpl = vi.fn();
-      expect(await loadOrgGuidelines("/org/guide.md", { readFile, fetchImpl: fetchImpl as unknown as typeof fetch })).toBe(
-        "file rules"
-      );
-      expect(readFile).toHaveBeenCalledWith("/org/guide.md");
+      expect(
+        await loadOrgGuidelines("guide.md", {
+          readFile,
+          fetchImpl: fetchImpl as unknown as typeof fetch,
+          workspaceRoot: root
+        })
+      ).toBe("file rules");
+      expect(readFile).toHaveBeenCalledWith(guidePath);
       expect(fetchImpl).not.toHaveBeenCalled();
+    });
+
+    it("rejects local org-guidelines paths that escape the trusted workspace", async () => {
+      const root = tempDir();
+      const outsidePath = join(tempDir(), "guide.md");
+      writeFileSync(outsidePath, "outside rules");
+      const readFile = vi.fn(() => "outside rules");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await loadOrgGuidelines(outsidePath, { readFile, workspaceRoot: root })).toBeUndefined();
+
+      expect(readFile).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("escapes"));
+    });
+
+    it("rejects local org-guidelines paths with symlinked components", async () => {
+      const root = tempDir();
+      const outsidePath = join(tempDir(), "guide.md");
+      writeFileSync(outsidePath, "outside rules");
+      symlinkSync(outsidePath, join(root, "guide.md"), "file");
+      const readFile = vi.fn(() => "outside rules");
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+      expect(await loadOrgGuidelines("guide.md", { readFile, workspaceRoot: root })).toBeUndefined();
+
+      expect(readFile).not.toHaveBeenCalled();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining("includes a symlink"));
     });
 
     it("fetches an http(s) URL and returns the trimmed body", async () => {
