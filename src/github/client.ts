@@ -1,5 +1,8 @@
 import { getOctokit } from "@actions/github";
+import type { CheckConclusion } from "./check-run.js";
 import type { ReviewEvent, ReviewSide } from "../review/inline.js";
+
+type CheckRunStatus = "in_progress" | "completed";
 
 /**
  * Minimal structural view of the Octokit REST methods prowl-review uses.
@@ -210,8 +213,8 @@ export interface OctokitLike {
         repo: string;
         name: string;
         head_sha: string;
-        status?: string;
-        conclusion?: string;
+        status?: CheckRunStatus;
+        conclusion?: CheckConclusion;
         started_at?: string;
         completed_at?: string;
         output?: {
@@ -232,8 +235,8 @@ export interface OctokitLike {
         owner: string;
         repo: string;
         check_run_id: number;
-        status?: string;
-        conclusion?: string;
+        status?: CheckRunStatus;
+        conclusion?: CheckConclusion;
         started_at?: string;
         completed_at?: string;
         output?: {
