@@ -1288,8 +1288,12 @@ async function headAdvancedPastReview(params: {
   if (!params.enabled || params.dryRun) {
     return false;
   }
-  const current = await params.fetchHeadSha(params.octokit, params.ref);
-  return current !== undefined && current !== params.reviewedSha;
+  try {
+    const current = await params.fetchHeadSha(params.octokit, params.ref);
+    return current !== undefined && current !== params.reviewedSha;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1499,13 +1503,10 @@ export async function reviewPullRequest(
   const state: CheckRunLifecycleState = {};
   try {
     return await reviewPullRequestImpl(octokit, ref, options, state);
-  } catch (error) {
-    // The pipeline threw after opening the live run but before completing it.
-    await state.completeCheckRun?.("Review did not complete");
-    throw error;
   } finally {
-    // Safety net for the head-advanced/cancel returns and any non-fatal
-    // completion failure inside the impl: never leave the check row running.
+    // Safety net for the head-advanced/cancel returns, a thrown error, and any
+    // non-fatal completion failure inside the impl: never leave the check row
+    // running, and always use the most accurate close-out reason.
     await state.completeCheckRun?.(
       state.supersededByNewerCommit ? "Superseded by a newer commit" : "Review did not complete"
     );
