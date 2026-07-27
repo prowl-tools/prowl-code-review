@@ -393,7 +393,7 @@ device.
 ```bash
 npm install -g prowl-review     # or run ad hoc with: npx prowl-review …
 # Homebrew:
-brew install Prowl-qa/tap/prowl-review
+brew install prowl-tools/tap/prowl-review
 ```
 
 npm and npx require Node.js 22.13.0 or newer within Node 22, or Node 24+; Homebrew installs node@22 automatically. The GitHub Action (above) needs no install.
