@@ -10,7 +10,11 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## High Priority
 
-_No open high-priority items._
+60. **Cut and publish v0.2.0 (npm + Homebrew + Action tag)**
+    As a prowl-review user installing from npm/Homebrew or pinning the Action, I want the accumulated post-0.1.0 work released, so that branded reviews, the live "Prowl Review" check run, and the dependency/toolchain upgrades reach real installs instead of living only in this repo's dogfood.
+    - Context: `## [Unreleased]` has ~76 entries since `0.1.0` (2026-07-13), including a **breaking** Node floor change (`>=22.13.0 <23 || >=24`) — still fine as `0.2.0` under 0.x semver, but call it out prominently in the release notes.
+    - Acceptance: run the `release-prep-npm` flow (version bump, changelog section cut, tag-triggered `publish.yml`, GitHub Release); bump `Formula/prowl-review.rb` in `prowl-tools/homebrew-tap` (new tarball `url` + `sha256`); move/advance the Action's floating `v1` tag (or document the versioning policy if we choose immutable tags only); README/docs version references current.
+    - Operational note: the `NPM_TOKEN` automation token expires **2026-10-12** — re-issue or migrate to npm Trusted Publishing at or before this release.
 
 ## Medium Priority
 
@@ -19,6 +23,18 @@ _No open high-priority items._
     - **Done:** `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue/PR templates, an `examples/` quickstart (workflows + starter config), a documented no-telemetry policy (opt-in if ever added), and `docs/example-review.md` (a rendered sample walkthrough standing in for screenshots).
     - **Done (contributor ergonomics & discoverability):** README status/license/CI/Node/PRs/docs badges, `.editorconfig`, `.nvmrc` (Node 20 pin), and `.github/dependabot.yml` (weekly npm + github-actions updates, grouped dev bumps). Added the **npm version badge** now that `0.1.0` is published (#42).
     - Acceptance (remaining): a **demo GIF / screen capture** of a live review (binary asset), and a standalone **example/demo repo** (separate repository) that shows prowl-review running end-to-end.
+
+61. **Single branded checks row — hide the Actions workflow row (`workflow_run` chaining)**
+    As a maintainer viewing a PR, I want prowl-review to appear exactly once in the checks list — the branded **Prowl Review** row — so that the presentation matches hosted reviewers (CodeRabbit shows one row; we currently show the branded row *plus* an octocat `prowl-review / review` Actions row).
+    - Mechanism: workflows triggered by `workflow_run` (chained off CI completing) don't attach a row to the PR checks list — the same reason the `@prowl-review` command workflow is already invisible. Rewire the auto-review workflow (and the reusable template) to trigger off CI instead of `pull_request`.
+    - Known tradeoffs to design around: review starts only after CI completes (~1 min latency); PR number/head/base must be derived from the `workflow_run` payload (including the `synchronize` delta path); the trusted-base config/guidelines checkout security wiring must be preserved; the branded check run becomes the **only** failure surface, so its error/superseded close-outs (#107) are load-bearing.
+    - Acceptance: on a test PR, the only prowl-review presence in the checks list is the branded "Prowl Review" check run (live yellow → green/red); command mode unaffected; `examples/reusable/` templates + `prowl-code-review-docs` updated; drift tests adjusted.
+
+62. **Hosted GitHub App design doc (revival gate for parked #47)**
+    As the product owner, I want the three open Phase-2 decisions resolved on paper before any code, so that #47 (install-once hosted App) can be revived with a clear, mission-consistent build plan.
+    - The three decisions: (1) **key custody** — hosted BYOK means holding user provider keys (encrypted at rest) vs. the mission's self-sovereignty stance; evaluate shipping the App service **open-source with a one-click self-host path** (hosted for convenience, self-hostable for sovereignty, same TS core); (2) **retrieval strategy** — GitHub API-based agentic retrieval vs. ephemeral sandboxed clones (linter/SAST grounding needs a real filesystem); (3) **free/paid boundary** — Action/CLI/self-host stay free forever; decide whether the managed tier is free, capped, or the eventual monetization.
+    - Also cover: webhook receiver architecture (e.g. Cloudflare Workers + Queues for near-zero marginal cost), abuse controls (per-PR budget cap), state/persistence (installations, keys, review state), and the migration path from the Action (same core, second delivery wrapper).
+    - Acceptance: a `docs/design/hosted-app.md` with a decision log covering the above; #47 stays parked until the doc is reviewed/approved — this item is the doc, not the build.
 
 ---
 
