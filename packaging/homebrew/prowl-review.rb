@@ -1,8 +1,8 @@
 # Homebrew formula template for prowl-review (#42).
 #
 # This file lives here as the canonical source; copy it to
-# `Formula/prowl-review.rb` in the Prowl-qa/homebrew-tap repo (tap name:
-# `Prowl-qa/tap`) on each release, then set `TARBALL_VERSION` and
+# `Formula/prowl-review.rb` in the prowl-tools/homebrew-tap repo (tap name:
+# `prowl-tools/tap`) on each release, then set `TARBALL_VERSION` and
 # `TARBALL_SHA256` below for the just-published npm tarball:
 #
 #   version=0.1.0
