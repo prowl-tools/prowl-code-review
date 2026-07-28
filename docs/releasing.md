@@ -5,9 +5,31 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 
 ## Prerequisites (one-time)
 
-- An npm **automation token** with publish rights to `prowl-review`, stored as the
-  `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions).
+- Until backlog #63 removes token auth, an npm **granular access token** with publish
+  rights to `prowl-review`, stored as the `NPM_TOKEN` repository secret (Settings →
+  Secrets and variables → Actions). The token belongs to the npm account that owns
+  the `prowl-review` package; the current token **expires 2026-10-12**. Prioritize
+  migrating to **npm Trusted Publishing** (OIDC, no stored token) before expiry. If an
+  urgent release cannot wait for #63 and no alternative that preserves 2FA can meet
+  the release need, rotate only as a temporary fallback: create a granular access
+  token scoped to package publishing for `prowl-review`, enable 2FA bypass for
+  noninteractive CI publishing while npm still permits direct token publishing, set
+  the shortest possible expiry, replace the repository secret, and verify with the
+  next tag-triggered publish. Treat direct token publishing and 2FA bypass as an
+  interim risk accepted only until #63 lands; do not create or document
+  legacy/classic automation tokens.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
+
+## Trusted Publishing migration (#63)
+
+Before removing `NPM_TOKEN`, update `.github/workflows/publish.yml` to run a
+Trusted Publishing-compatible toolchain: Node >=22.14.0 and npm >=11.5.1 (prefer
+the current stable Node line from npm's GitHub Actions example). Then configure
+the `prowl-review` package on npmjs.com with this repository and `publish.yml` as
+the GitHub Actions trusted publisher, keep `id-token: write`, remove
+`NODE_AUTH_TOKEN` and every `secrets.NPM_TOKEN` reference from
+`.github/workflows/publish.yml`, and verify the next tag-triggered release publishes
+through OIDC before deleting the npm token and repository secret.
 
 ## Cut a release
 
@@ -29,6 +51,31 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
    public`, and publishes the GitHub Release after npm succeeds.
    - The version guard fails the run if the tag and `package.json` disagree, so a
      mismatched tag never publishes.
+5. **Verify the publish completed before moving `v1`.** Do not advance the floating
+   tag until the tag-triggered `publish` workflow succeeded and the GitHub Release
+   is published:
+   ```bash
+   release_commit="$(git rev-parse vX.Y.Z^{commit})"
+   publish_run="$(
+     gh run list --workflow publish.yml --event push --commit "${release_commit}" \
+       --json databaseId,status,conclusion \
+       --jq 'map(select(.status == "completed" and .conclusion == "success")) | .[0].databaseId // ""'
+   )"
+   test -n "${publish_run}"
+   test "$(gh release view vX.Y.Z --json isDraft --jq .isDraft)" = "false"
+   ```
+6. **Advance the Action's floating `v1` tag** to the release commit, so
+   `uses: prowl-tools/prowl-code-review@v1` workflows get the new release:
+   ```bash
+   git tag -f v1 vX.Y.Z
+   git push origin v1 --force
+   ```
+   Confirm the remote tags now point at the same release commit before continuing:
+   ```bash
+   remote_v1="$(git ls-remote --tags origin refs/tags/v1 | awk '{print $1}')"
+   remote_release="$(git ls-remote --tags origin refs/tags/vX.Y.Z | awk '{print $1}')"
+   test -n "${remote_v1}" && test "${remote_v1}" = "${remote_release}"
+   ```
 
 ## Update the Homebrew tap
 
