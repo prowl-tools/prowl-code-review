@@ -56,6 +56,12 @@ through OIDC before deleting the npm token and repository secret.
    git tag -f v1 vX.Y.Z
    git push origin v1 --force
    ```
+   Confirm the remote tags now point at the same release commit before continuing:
+   ```bash
+   remote_v1="$(git ls-remote --tags origin refs/tags/v1 | awk '{print $1}')"
+   remote_release="$(git ls-remote --tags origin refs/tags/vX.Y.Z | awk '{print $1}')"
+   test -n "${remote_v1}" && test "${remote_v1}" = "${remote_release}"
+   ```
 
 ## Update the Homebrew tap
 
