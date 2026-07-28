@@ -25,8 +25,9 @@ Trusted Publishing-compatible toolchain: Node >=22.14.0 and npm >=11.5.1 (prefer
 the current stable Node line from npm's GitHub Actions example). Then configure
 the `prowl-review` package on npmjs.com with this repository and `publish.yml` as
 the GitHub Actions trusted publisher, keep `id-token: write`, remove
-`NODE_AUTH_TOKEN`, and verify the next tag-triggered release publishes through OIDC
-before deleting the npm token and repository secret.
+`NODE_AUTH_TOKEN` and every `secrets.NPM_TOKEN` reference from
+`.github/workflows/publish.yml`, and verify the next tag-triggered release publishes
+through OIDC before deleting the npm token and repository secret.
 
 ## Cut a release
 
