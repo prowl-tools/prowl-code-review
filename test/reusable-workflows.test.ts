@@ -175,6 +175,17 @@ function hasCompletePrMetadata(input: { baseSha: string; headSha: string; headRe
   return Object.values(input).every((value) => value !== "" && value !== "null");
 }
 
+// Single branded checks row (#61): a review starts only when CI, triggered by a
+// pull_request, completed successfully. Every other event/conclusion is skipped.
+function shouldStartReviewFromWorkflowRun(input: { event: string; conclusion: string }): boolean {
+  return input.event === "pull_request" && input.conclusion === "success";
+}
+
+// PR resolution (#61): a review starts only with EXACTLY ONE open PR/ref match.
+function resolveSinglePr(matches: readonly number[]): number | undefined {
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
 describe("reusable org workflows (#37)", () => {
   it.each(ALL_WORKFLOWS)("%s is valid GitHub Actions workflow YAML", (name) => {
     expect(() => parseWorkflow(name)).not.toThrow();
@@ -263,13 +274,18 @@ describe("reusable org workflows (#37)", () => {
   it("the auto-review workflow loads config/guidelines from the trusted base, not PR code", () => {
     const doc = parseWorkflow("prowl-review.yml");
     const text = read("prowl-review.yml");
-    // Fork guard stays at the workflow layer; draft policy stays inside the action.
+    // Chained off CI via workflow_run (#61): gate on the triggering event type +
+    // the CI conclusion. Fork/draft gates moved into the PR-resolution step.
     const review = (doc.jobs as { review: { if: string } }).review;
-    expect(normalizeExpression(review.if)).toBe("github.event.pull_request.head.repo.full_name == github.repository");
-    expect(review.if).not.toContain("draft");
-    // Base checkout feeds guidelines; PR checkout feeds context.
-    expect(text).toContain("ref: ${{ github.event.pull_request.base.sha }}");
+    expect(normalizeExpression(review.if)).toBe(
+      "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
+    );
+    // Base checkout feeds guidelines from the RESOLVED PR; PR checkout feeds context.
+    expect(text).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
+    expect(text).toContain("ref: ${{ steps.pr.outputs.head_sha }}");
     expect(text).toContain("guidelines-path: ${{ github.workspace }}/prowl-base");
+    // The trusted base SHA is never taken from the PR-controlled event payload.
+    expect(text).not.toContain("github.event.pull_request.base.sha");
   });
 
   it.each([
@@ -443,5 +459,119 @@ describe("reusable org workflows (#37)", () => {
       "permission-pull-requests": "write",
       "permission-checks": "write"
     });
+  });
+});
+
+// Single branded checks row via workflow_run chaining (#61). The auto-review is
+// triggered by CI COMPLETING, not by pull_request, so it attaches no octocat row
+// to the PR checks list — the branded "Prowl Review" check run is the only
+// prowl-review presence. These guard the trigger shape, the conclusion/event
+// gating, and the single-PR resolution across the dogfood + reusable templates.
+describe("single branded checks row (#61)", () => {
+  const AUTO_REVIEW_TEMPLATES = [
+    { label: "dogfood", read: () => readRepo(".github/workflows/prowl-review.yml") },
+    { label: "reusable", read: () => read("prowl-review.yml") }
+  ] as const;
+  const TRIGGERED_ON_CI = [
+    { label: "dogfood", read: () => readRepo(".github/workflows/prowl-review.yml") },
+    { label: "caller", read: () => read("caller-prowl-review.yml") }
+  ] as const;
+
+  it("CI subscribes to the PR transitions workflow_run cannot preserve", () => {
+    const ci = parseYaml(readRepo(".github/workflows/ci.yml")) as Record<string, unknown>;
+    const on = triggers(ci);
+    const pullRequest = on.pull_request as { types?: string[] };
+    // workflow_run drops the original PR action, so CI itself must fire on each one.
+    expect(pullRequest.types).toEqual(expect.arrayContaining(["opened", "synchronize", "ready_for_review", "reopened"]));
+  });
+
+  it.each(TRIGGERED_ON_CI)("$label auto-review triggers off the CI workflow completing, not pull_request", ({ read: readFn }) => {
+    const doc = parseYaml(readFn()) as Record<string, unknown>;
+    const on = triggers(doc);
+    expect(on).toHaveProperty("workflow_run");
+    expect(on).not.toHaveProperty("pull_request");
+    const workflowRun = on.workflow_run as { workflows?: string[]; types?: string[] };
+    expect(workflowRun.workflows).toContain("CI");
+    expect(workflowRun.types).toContain("completed");
+  });
+
+  it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review job gates on the workflow_run event type and CI conclusion", ({ read: readFn }) => {
+    const doc = parseYaml(readFn()) as { jobs: { review: { if: string } } };
+    // Skip push-triggered CI completions; start only on a green pull_request CI run.
+    expect(normalizeExpression(doc.jobs.review.if)).toBe(
+      "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
+    );
+  });
+
+  it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review resolves exactly one open PR before reviewing", ({ read: readFn }) => {
+    const text = readFn();
+    const doc = parseYaml(text) as { jobs: { review: { steps: Array<Record<string, unknown>> } } };
+    const steps = doc.jobs.review.steps;
+    const resolve = steps.find((step) => step.id === "pr") as { run: string } | undefined;
+    expect(resolve).toBeDefined();
+    // Prefer the payload's pull_requests, fall back to a completed-run API lookup.
+    expect(resolve!.run).toContain("jq -r '.[]?.number // empty'");
+    expect(resolve!.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"');
+    // Require EXACTLY ONE match; a missing/ambiguous match skips (resolved=false).
+    expect(resolve!.run).toContain('[ "${count}" -ne 1 ]');
+    expect(resolve!.run).toContain("resolved=false");
+    expect(resolve!.run).toContain("resolved=true");
+    // Re-derive trusted base/head + reapply fork/draft gates from the resolved PR.
+    expect(resolve!.run).toContain("[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv");
+    expect(resolve!.run).toContain('[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]');
+    expect(resolve!.run).toContain('[ "${is_draft}" = "true" ]');
+    // The action only runs once a single PR resolved, and gets its number handed in.
+    const reviewStep = steps.find((step) => (step.name as string | undefined)?.startsWith("prowl-review")) as {
+      if: string;
+      with: Record<string, unknown>;
+    };
+    expect(reviewStep.if).toContain("steps.pr.outputs.resolved == 'true'");
+    expect(reviewStep.with["pr-number"]).toBe("${{ steps.pr.outputs.pr_number }}");
+  });
+
+  it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review keys concurrency off the resolved PR number", ({ read: readFn }) => {
+    const text = readFn();
+    expect(text).toContain(
+      "group: prowl-review-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}"
+    );
+  });
+
+  it.each([
+    ["pull_request CI success", { event: "pull_request", conclusion: "success" }, true],
+    ["push CI success", { event: "push", conclusion: "success" }, false],
+    ["pull_request CI failure", { event: "pull_request", conclusion: "failure" }, false],
+    ["pull_request CI cancelled", { event: "pull_request", conclusion: "cancelled" }, false],
+    ["pull_request CI timed_out", { event: "pull_request", conclusion: "timed_out" }, false],
+    ["pull_request CI skipped", { event: "pull_request", conclusion: "skipped" }, false],
+    ["pull_request CI action_required", { event: "pull_request", conclusion: "action_required" }, false],
+    ["pull_request CI neutral", { event: "pull_request", conclusion: "neutral" }, false]
+  ])("the workflow_run start gate handles %s", (_name, input, expected) => {
+    expect(shouldStartReviewFromWorkflowRun(input)).toBe(expected);
+  });
+
+  it.each([
+    ["single open match", [42], 42],
+    ["no match", [], undefined],
+    ["ambiguous match", [42, 43], undefined]
+  ])("the single-PR resolution gate handles %s", (_name, matches, expected) => {
+    expect(resolveSinglePr(matches)).toBe(expected);
+  });
+
+  it("the action declares pr-number and forwards it as --pr", () => {
+    const action = parseYaml(readRepo("action.yml")) as { inputs: Record<string, unknown> };
+    // The workflow_run PR handoff input the availability gate greps for (#61).
+    expect(action.inputs).toHaveProperty("pr-number");
+    const text = readRepo("action.yml");
+    expect(text).toContain("PROWL_INPUT_PR_NUMBER: ${{ inputs.pr-number }}");
+    expect(text).toContain("pr_args+=(--pr");
+  });
+
+  it("the dogfood availability gate self-bootstraps on the workflow_run handoff", () => {
+    const text = readRepo(".github/workflows/prowl-review.yml");
+    // Won't run an old base action that lacks the pr-number handoff (#61) or the
+    // ensemble keys (#53) — it self-bootstraps once this PR merges to the base.
+    expect(text).toContain("grep -q 'pr-number' \"${action_file}\"");
+    expect(text).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
+    expect(text).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
   });
 });
