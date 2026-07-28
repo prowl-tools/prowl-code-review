@@ -4,17 +4,17 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
-### Changed
-- Dogfood config: the **Prowl Review** check run is now gated with `checkRun.failOn: critical` — the row
-  completes green (`success`) when the review finds nothing at critical severity and red (`failure`) when it
-  does, instead of always finishing grey (`neutral`) as an ungated informational run. Visual verdict only —
-  it does not block merges unless the check is marked Required in branch protection.
+## [0.2.0] - 2026-07-27
 
 ### Breaking
 - Dropped Node 22.12.x and Node 23 from the supported install/runtime range. Supported versions are now
   `>=22.13.0 <23 || >=24`, matching ESLint 10's Node 22 floor and Node 23 exclusion.
 
 ### Changed
+- Dogfood config: the **Prowl Review** check run is now gated with `checkRun.failOn: critical` — the row
+  completes green (`success`) when the review finds nothing at critical severity and red (`failure`) when it
+  does, instead of always finishing grey (`neutral`) as an ungated informational run. Visual verdict only —
+  it does not block merges unless the check is marked Required in branch protection.
 - **Live, branded merge-gate check run** (follow-up to #59/#24) — the Checks API row now behaves like
   commercial reviewers': it opens as **in-progress** ("Review in progress") the moment review work begins and
   transitions to its final conclusion in place, instead of only appearing, already-completed, at the end.
