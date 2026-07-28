@@ -821,7 +821,12 @@ describe("command workflow metadata", () => {
     // Triggers on both top-level and inline PR comments (#27).
     expect(workflow).toContain("issue_comment:");
     expect(workflow).toContain("pull_request_review_comment:");
-    expect(reviewWorkflow).toContain("group: prowl-review-${{ github.event.pull_request.number }}");
+    // Auto-review chains off CI via workflow_run (#61): keyed by the resolved PR
+    // number the CI run carries (matching this command workflow's group so they
+    // serialize), else the head branch.
+    expect(reviewWorkflow).toContain(
+      "group: prowl-review-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}"
+    );
     expect(reviewWorkflow).toContain("queue: max");
     expect(reviewWorkflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");

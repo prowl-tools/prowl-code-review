@@ -4,6 +4,26 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Single branded checks row (#61).** A PR now shows prowl-review exactly once — the branded **Prowl
+  Review** check run — instead of that row *plus* an octocat `prowl-review / review` Actions row. The
+  auto-review workflow is now triggered by the **CI workflow completing** (`workflow_run`) rather than by
+  `pull_request`; a `workflow_run`-triggered workflow attaches no row to the PR checks list (the same reason
+  the `@prowl-review` command workflow is invisible). Tradeoff: the review starts ~1 min after CI finishes.
+  - `ci.yml` now subscribes to `pull_request` types `opened, synchronize, ready_for_review, reopened`
+    (`workflow_run` does not preserve the original PR action, so CI must fire on each transition itself).
+  - The review path gates on `workflow_run.event == 'pull_request'` **and** `conclusion == 'success'`
+    (push CI and any non-success conclusion never start a review), resolves **exactly one** open PR from the
+    `workflow_run` payload — falling back to a completed-run API lookup — re-derives the trusted base/head
+    from that PR, and reapplies the fork + draft gates. Missing/ambiguous matches are skipped.
+  - The Action gains a `pr-number` input (forwarded as `--pr`) so the review targets the resolved PR under
+    the context-free `workflow_run` event. The branded check run is now the **only** failure surface on the
+    PR — a review that does not complete closes the run out (neutral "Superseded by a newer commit" / failure
+    "Review did not complete") rather than surfacing as a red Actions row.
+  - **Reusable org templates updated (#37):** `examples/reusable/` (the reusable workflow + its caller) move
+    to the same `workflow_run` pattern. **Org users must** point the caller's `workflows:` at their CI
+    workflow's name and ensure that CI workflow subscribes to the four `pull_request` types above.
+
 ### Added
 - Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the
   documented `uses: prowl-tools/prowl-code-review@v1` reference now resolves). `docs/releasing.md` gains the
