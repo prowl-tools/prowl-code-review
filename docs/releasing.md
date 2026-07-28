@@ -7,7 +7,7 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 
 - An npm **automation token** with publish rights to `prowl-review`, stored as the
   `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions).
-- Publish access to the [`Prowl-qa/homebrew-tap`](https://github.com/Prowl-qa/homebrew-tap) repo.
+- Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
 ## Cut a release
 
@@ -41,7 +41,7 @@ curl -sL "$url" | shasum -a 256
 ```
 
 Copy [`packaging/homebrew/prowl-review.rb`](../packaging/homebrew/prowl-review.rb)
-to `Formula/prowl-review.rb` in `Prowl-qa/homebrew-tap` (tap name: `Prowl-qa/tap`),
+to `Formula/prowl-review.rb` in `prowl-tools/homebrew-tap` (tap name: `prowl-tools/tap`),
 set `TARBALL_VERSION` to the released version and `TARBALL_SHA256` to the hash above,
 and open a PR on the tap. The template raises during install if either placeholder is
 left in place.
@@ -57,5 +57,5 @@ brew test prowl-review
 ```bash
 npm view prowl-review version          # the new version is live
 npx prowl-review@latest --version      # X.Y.Z
-brew install Prowl-qa/tap/prowl-review && prowl-review --version
+brew install prowl-tools/tap/prowl-review && prowl-review --version
 ```
