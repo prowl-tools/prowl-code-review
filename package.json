@@ -1,6 +1,6 @@
 {
   "name": "prowl-review",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "BYOK AI code review for pull requests — summary, inline comments, and chat, powered by your own LLM key (Claude/OpenAI/Gemini).",
   "type": "module",
   "license": "Apache-2.0",
