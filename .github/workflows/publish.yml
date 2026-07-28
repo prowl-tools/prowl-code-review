@@ -3,7 +3,8 @@ name: publish
 # Tag-triggered release (#42): on a `vX.Y.Z` tag, build + lint + test, prepare
 # a draft GitHub Release from the matching CHANGELOG section, publish to npm
 # with provenance, then publish the GitHub Release.
-# Requires an `NPM_TOKEN` repository secret (an npm automation token).
+# Token fallback requires an `NPM_TOKEN` repository secret (an npm granular access
+# token) until backlog #63 migrates publishing to npm Trusted Publishing.
 on:
   push:
     tags:
