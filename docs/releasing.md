@@ -50,7 +50,20 @@ through OIDC before deleting the npm token and repository secret.
    public`, and publishes the GitHub Release after npm succeeds.
    - The version guard fails the run if the tag and `package.json` disagree, so a
      mismatched tag never publishes.
-5. **Advance the Action's floating `v1` tag** to the release commit, so
+5. **Verify the publish completed before moving `v1`.** Do not advance the floating
+   tag until the tag-triggered `publish` workflow succeeded and the GitHub Release
+   is published:
+   ```bash
+   release_commit="$(git rev-parse vX.Y.Z^{commit})"
+   publish_run="$(
+     gh run list --workflow publish.yml --event push --commit "${release_commit}" \
+       --json databaseId,status,conclusion \
+       --jq 'map(select(.status == "completed" and .conclusion == "success")) | .[0].databaseId // ""'
+   )"
+   test -n "${publish_run}"
+   test "$(gh release view vX.Y.Z --json isDraft --jq .isDraft)" = "false"
+   ```
+6. **Advance the Action's floating `v1` tag** to the release commit, so
    `uses: prowl-tools/prowl-code-review@v1` workflows get the new release:
    ```bash
    git tag -f v1 vX.Y.Z
