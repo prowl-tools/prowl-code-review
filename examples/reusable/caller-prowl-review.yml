@@ -3,9 +3,20 @@
 # This is the whole per-repo file — the heavy lifting lives in the org workflow.
 name: prowl-review
 
+# Single branded checks row (#61): trigger off your CI workflow COMPLETING, not
+# `pull_request`, so this auto-review adds NO row to the PR checks list — the
+# branded "Prowl Review" check run is the only prowl-review presence on the PR.
+#
+# Set `workflows:` to the NAME of your repo's CI workflow (the `name:` in its YAML).
+# That CI workflow MUST itself subscribe to the PR transitions that should trigger a
+# review — `workflow_run` does not preserve the original pull_request action:
+#   on:
+#     pull_request:
+#       types: [opened, synchronize, ready_for_review, reopened]
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 # A reusable workflow's token scopes are capped by the caller, so grant them here.
 permissions:
@@ -13,6 +24,7 @@ permissions:
   issues: write
   checks: write
   contents: read
+  actions: read # read the completed CI run for the PR-resolution fallback (#61)
 
 jobs:
   review:

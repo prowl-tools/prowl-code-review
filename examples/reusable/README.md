@@ -35,19 +35,46 @@ workflow with `secrets: inherit`:
 
 ```yaml
 name: prowl-review
+# Single branded checks row (#61): trigger off your CI workflow COMPLETING, not
+# `pull_request`, so the auto-review adds no row to the PR checks list.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_run:
+    workflows: [CI] # your CI workflow's `name:`
+    types: [completed]
 permissions:
   pull-requests: write
   issues: write
   checks: write
   contents: read
+  actions: read # PR-resolution fallback reads the completed CI run
 jobs:
   review:
     uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
 ```
+
+### Single branded checks row (#61)
+
+The auto-review is triggered by your **CI workflow completing** (`workflow_run`)
+rather than by `pull_request`. A `workflow_run`-triggered workflow does not attach a
+row to the PR checks list, so prowl-review shows up **exactly once** — as the branded
+**Prowl Review** check run — instead of that row *plus* an octocat Actions row.
+
+Two things this requires:
+
+- **Your CI workflow must subscribe to the PR transitions** that should trigger a
+  review. `workflow_run` does not preserve the original pull_request action, so CI
+  itself has to fire on them:
+  ```yaml
+  on:
+    pull_request:
+      types: [opened, synchronize, ready_for_review, reopened]
+  ```
+- **Point `workflows:` at your CI workflow's `name:`.** The review then starts after
+  CI finishes (≈1 min later). The reusable workflow resolves exactly one open PR from
+  the `workflow_run` payload (falling back to a completed-run API lookup), skips fork
+  and draft PRs, and hands the PR number to the action — so the branded check run is
+  the only failure surface on the PR.
 
 ## Notes
 
