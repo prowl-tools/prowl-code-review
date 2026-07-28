@@ -5,14 +5,28 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 
 ## Prerequisites (one-time)
 
-- An npm **automation token** with publish rights to `prowl-review`, stored as the
-  `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). The
-  token belongs to the npm account that owns the `prowl-review` package; the current
-  token **expires 2026-10-12**. To rotate: generate a new automation token on
-  npmjs.com and replace the repository secret — verify with the next tag-triggered
-  publish. Migrating to **npm Trusted Publishing** (OIDC, no stored token) is the
-  preferred replacement before expiry — tracked as backlog #63.
+- Until backlog #63 removes token auth, an npm **granular access token** with publish
+  rights to `prowl-review`, stored as the `NPM_TOKEN` repository secret (Settings →
+  Secrets and variables → Actions). The token belongs to the npm account that owns
+  the `prowl-review` package; the current token **expires 2026-10-12**. To rotate as
+  a temporary fallback: create a granular access token scoped to package publishing
+  for `prowl-review`, enable 2FA bypass for noninteractive CI publishing while npm
+  still permits direct token publishing, set the shortest practical expiry, replace
+  the repository secret, and verify with the next tag-triggered publish. Do not create
+  or document legacy/classic automation tokens. Migrating to **npm Trusted Publishing**
+  (OIDC, no stored token) is the preferred replacement before expiry — tracked as
+  backlog #63.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
+
+## Trusted Publishing migration (#63)
+
+Before removing `NPM_TOKEN`, update `.github/workflows/publish.yml` to run a
+Trusted Publishing-compatible toolchain: Node >=22.14.0 and npm >=11.5.1 (prefer
+the current stable Node line from npm's GitHub Actions example). Then configure
+the `prowl-review` package on npmjs.com with this repository and `publish.yml` as
+the GitHub Actions trusted publisher, keep `id-token: write`, remove
+`NODE_AUTH_TOKEN`, and verify the next tag-triggered release publishes through OIDC
+before deleting the npm token and repository secret.
 
 ## Cut a release
 

@@ -16,8 +16,8 @@ _No open high-priority items._
 
 63. **Migrate npm publishing to Trusted Publishing (OIDC)**
     As the release maintainer, I want `publish.yml` to authenticate via npm Trusted Publishing instead of a stored `NPM_TOKEN`, so that releases stop depending on a manually rotated secret. Deferred out of the v0.2.0 release (#60), which published on the token per its fallback clause.
-    - Deadline pressure: the current `NPM_TOKEN` **expires 2026-10-12** — land this (or rotate the token as a stopgap) before then.
-    - Acceptance: configure the `prowl-review` package for Trusted Publishing on npmjs.com (GitHub Actions publisher: this repo + `publish.yml`); drop `NPM_TOKEN` from the workflow env (keep OIDC `id-token: write`, already present for provenance); verify with the next tag-triggered release; update `docs/releasing.md` prerequisites; then delete the npm token and the repository secret.
+    - Deadline pressure: the current `NPM_TOKEN` **expires 2026-10-12** — land this before then. If a temporary token fallback is unavoidable, rotate only to an npm granular access token scoped to `prowl-review` publishing, with the shortest practical expiry; do not document or recreate legacy/classic automation tokens.
+    - Acceptance: first upgrade `.github/workflows/publish.yml` to a Trusted Publishing-compatible toolchain (Node >=22.14.0 with npm >=11.5.1; prefer the current stable Node line used by npm's GitHub Actions example) before removing token auth; configure the `prowl-review` package for Trusted Publishing on npmjs.com (GitHub Actions publisher: this repo + `publish.yml`); drop `NPM_TOKEN` from the workflow env (keep OIDC `id-token: write`, already present for provenance); verify with the next tag-triggered release; update `docs/releasing.md` prerequisites; then delete the npm token and the repository secret.
 
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.
