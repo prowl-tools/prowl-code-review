@@ -1,13 +1,22 @@
 name: prowl-review
 
+# Single branded checks row (#61): trigger off the CI workflow COMPLETING rather
+# than `pull_request`. A `workflow_run`-triggered workflow attaches no row to the
+# PR checks list (same reason the @prowl-review command workflow is invisible), so
+# the only prowl-review presence on the PR is the branded "Prowl Review" check run
+# the action posts — matching hosted reviewers. Tradeoff: the review starts ~1 min
+# after CI finishes. `workflow_run` workflows always run from the DEFAULT branch.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
-# Queue auto reviews with manual commands for the same PR so pushes do not
-# cancel command side effects; stale-head checks prevent outdated publishes.
+# Serialize auto reviews with @prowl-review commands for the same PR so pushes do
+# not cancel command side effects; the action's stale-head checks prevent outdated
+# publishes. Keyed by the resolved PR number the CI run carries (matching the
+# command workflow's group), falling back to the head branch when it is absent.
 concurrency:
-  group: prowl-review-${{ github.event.pull_request.number }}
+  group: prowl-review-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}
   queue: max
   cancel-in-progress: false
 
@@ -16,11 +25,19 @@ permissions:
   issues: write
   checks: write
   contents: read
+  actions: read # read the completed CI run for the PR-resolution fallback
 
 jobs:
   review:
-    # Skip drafts and forks; forked PRs do not receive provider secrets.
-    if: github.event.pull_request.draft == false && github.event.pull_request.head.repo.full_name == github.repository
+    # Only same-repo pull_request CI runs that SUCCEEDED start a review.
+    # `workflow_run` does not preserve the original PR action, so gate on the
+    # triggering event type first (skip push CI), then require a green CI run.
+    # Failure/cancelled/timed_out/skipped/etc. conclusions never start a review;
+    # any future non-success override must come from a separate repo-controlled
+    # signal, never a workflow_run conclusion.
+    if: >
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     env:
       PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
@@ -41,22 +58,105 @@ jobs:
           permission-pull-requests: write
           permission-checks: write
 
+      - name: Resolve PR from the CI run
+        id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Payload PR list first; API fallback needs the run id + head SHA. Passed
+          # via env (never inlined) so nothing from the event reaches the shell.
+          PR_PAYLOAD: ${{ toJSON(github.event.workflow_run.pull_requests) }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # PR resolution (#61): prefer the workflow_run payload's pull_requests;
+          # when empty, fall back to a completed-run API lookup. Then keep only OPEN
+          # PRs whose head SHA matches this CI run, and require EXACTLY ONE — never
+          # start a review on a missing or ambiguous match.
+          candidates="$(printf '%s' "${PR_PAYLOAD}" | jq -r '.[]?.number // empty')"
+          if [ -z "${candidates}" ]; then
+            candidates="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[]?.number' || true)"
+          fi
+
+          matches=""
+          for pr in ${candidates}; do
+            info="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '[.state, .head.sha] | @tsv' 2>/dev/null || true)"
+            state="$(printf '%s' "${info}" | cut -f1)"
+            pr_head="$(printf '%s' "${info}" | cut -f2)"
+            if [ "${state}" = "open" ] && [ "${pr_head}" = "${HEAD_SHA}" ]; then
+              case " ${matches} " in
+                *" ${pr} "*) ;;
+                *) matches="${matches}${matches:+ }${pr}" ;;
+              esac
+            fi
+          done
+
+          set -- ${matches}
+          count=$#
+          if [ "${count}" -ne 1 ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: expected exactly one open PR at CI head ${HEAD_SHA}, found ${count} (${matches:-none})."
+            exit 0
+          fi
+          pr_number="$1"
+
+          # Re-derive trusted base/head from the resolved PR (never from the CI
+          # payload) so the config/guidelines checkout stays anchored to base code.
+          meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv')"
+          base_sha="$(printf '%s' "${meta}" | cut -f1)"
+          head_sha="$(printf '%s' "${meta}" | cut -f2)"
+          head_repo="$(printf '%s' "${meta}" | cut -f3)"
+          is_draft="$(printf '%s' "${meta}" | cut -f4)"
+          if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] ||
+            [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] ||
+            [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: incomplete PR metadata for #${pr_number}."
+            exit 0
+          fi
+
+          # Fork + draft gates (the same policy the pull_request trigger enforced):
+          # forks never receive provider secrets; drafts wait until marked ready.
+          if [ "${head_repo}" != "${GITHUB_REPOSITORY}" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
+            exit 0
+          fi
+          if [ "${is_draft}" = "true" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping draft PR #${pr_number}; mark it ready for review to run."
+            exit 0
+          fi
+
+          {
+            echo "resolved=true"
+            echo "pr_number=${pr_number}"
+            echo "base_sha=${base_sha}"
+            echo "head_sha=${head_sha}"
+            echo "head_repo=${head_repo}"
+          } >> "$GITHUB_OUTPUT"
+
       - name: Checkout trusted base (config + guidelines)
+        if: steps.pr.outputs.resolved == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ steps.pr.outputs.base_sha }}
           path: prowl-base
           persist-credentials: false
 
       - name: Check trusted action availability
         id: trusted-action
+        if: steps.pr.outputs.resolved == 'true'
         shell: bash
         run: |
-          # Require the base action to support per-provider ensemble keys (#53), so
-          # the new workflow never runs against an old base action that would ignore
-          # the scoped keys/config and fail on a missing key. Self-bootstraps once
-          # this PR merges (the new action.yml + .prowl-review.yml land together on
-          # the base branch).
+          # Require the base action to support the per-provider ensemble keys (#53)
+          # AND the workflow_run PR handoff (#61, the pr-number input) before running,
+          # so the new trigger never drives an old base action that would ignore the
+          # explicit PR and fail on the empty workflow_run event context.
+          # Self-bootstraps once this PR merges (the new action.yml + config land
+          # together on the base branch).
           action_file=""
           if [ -f prowl-base/action.yml ]; then
             action_file="prowl-base/action.yml"
@@ -66,25 +166,34 @@ jobs:
 
           if [ -n "${action_file}" ] &&
             grep -q 'ai-key-anthropic' "${action_file}" &&
-            grep -q 'ai-key-gemini' "${action_file}"; then
+            grep -q 'ai-key-gemini' "${action_file}" &&
+            grep -q 'pr-number' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
-            echo "Trusted base does not support the prowl-review ensemble yet; skipping bootstrap run."
+            echo "Trusted base does not support the prowl-review workflow_run handoff yet; skipping bootstrap run."
           fi
 
       - name: Checkout PR head for context
-        if: steps.trusted-action.outputs.available == 'true'
+        if: steps.pr.outputs.resolved == 'true' && steps.trusted-action.outputs.available == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ steps.pr.outputs.head_sha }}
           path: pr-head
           persist-credentials: false
 
       - name: prowl-review
-        if: steps.trusted-action.outputs.available == 'true'
+        if: steps.pr.outputs.resolved == 'true' && steps.trusted-action.outputs.available == 'true'
         uses: ./prowl-base # external repos use: prowl-tools/prowl-code-review@v1
+        env:
+          # Trusted head identity re-derived from the resolved PR; the action reads
+          # these for stale-head detection and same-repo (non-fork) confirmation.
+          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
+          PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
         with:
+          # workflow_run carries no pull_request context, so hand the resolved PR
+          # number to the action explicitly (#61).
+          pr-number: ${{ steps.pr.outputs.pr_number }}
           # Claude + Gemini ensemble (#53); per-provider keys, models pinned in
           # the trusted base-branch config. Provider/model come from config-path,
           # not inputs, so the primary stays Claude.
