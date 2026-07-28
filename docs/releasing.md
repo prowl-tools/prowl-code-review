@@ -8,15 +8,16 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 - Until backlog #63 removes token auth, an npm **granular access token** with publish
   rights to `prowl-review`, stored as the `NPM_TOKEN` repository secret (Settings →
   Secrets and variables → Actions). The token belongs to the npm account that owns
-  the `prowl-review` package; the current token **expires 2026-10-12**. To rotate as
-  a temporary fallback: create a granular access token scoped to package publishing
-  for `prowl-review`, enable 2FA bypass for noninteractive CI publishing while npm
-  still permits direct token publishing, set the shortest practical expiry, replace
-  the repository secret, and verify with the next tag-triggered publish. Treat direct
-  token publishing and 2FA bypass as an interim risk accepted only until #63 lands;
-  do not create or document legacy/classic automation tokens. Migrating to **npm
-  Trusted Publishing** (OIDC, no stored token) is the preferred replacement before
-  expiry — tracked as backlog #63.
+  the `prowl-review` package; the current token **expires 2026-10-12**. Prioritize
+  migrating to **npm Trusted Publishing** (OIDC, no stored token) before expiry. If an
+  urgent release cannot wait for #63 and no alternative that preserves 2FA can meet
+  the release need, rotate only as a temporary fallback: create a granular access
+  token scoped to package publishing for `prowl-review`, enable 2FA bypass for
+  noninteractive CI publishing while npm still permits direct token publishing, set
+  the shortest possible expiry, replace the repository secret, and verify with the
+  next tag-triggered publish. Treat direct token publishing and 2FA bypass as an
+  interim risk accepted only until #63 lands; do not create or document
+  legacy/classic automation tokens.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
 ## Trusted Publishing migration (#63)
