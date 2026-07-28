@@ -10,13 +10,14 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 
 ## High Priority
 
-60. **Cut and publish v0.2.0 (npm + Homebrew + Action tag)**
-    As a prowl-review user installing from npm/Homebrew or pinning the Action, I want the accumulated post-0.1.0 work released, so that branded reviews, the live "Prowl Review" check run, and the dependency/toolchain upgrades reach real installs instead of living only in this repo's dogfood.
-    - Context: `## [Unreleased]` has 10 top-level entries since `0.1.0` (2026-07-13), including a **breaking** Node floor change (`>=22.13.0 <23 || >=24`) — still fine as `0.2.0` under 0.x semver, but call it out prominently in the release notes.
-    - Acceptance: follow the maintained release checklist in `docs/releasing.md` (version bump, changelog section cut, tag-triggered `publish.yml`, GitHub Release); before tagging, align `.nvmrc`, CI/publish workflows, examples, Homebrew packaging, and README/docs runtime/toolchain references with the declared Node floor (`>=22.13.0 <23 || >=24`) so contributors and automation no longer default to unsupported Node 20; make npm Trusted Publishing the default publish path; bump `Formula/prowl-review.rb` in `prowl-tools/homebrew-tap` (tap `prowl-tools/tap`, new tarball `url` + `sha256`); move/advance the Action's floating `v1` tag (or document the versioning policy if we choose immutable tags only); README/docs version references current; release workflows verified under the supported Node toolchain.
-    - Operational note: treat re-issuing `NPM_TOKEN` as a temporary fallback only if Trusted Publishing cannot land before v0.2.0; if token publishing remains supported, document the token owner, npm scope, expiry, and rotation validation in `docs/releasing.md`.
+_No open high-priority items._
 
 ## Medium Priority
+
+63. **Migrate npm publishing to Trusted Publishing (OIDC)**
+    As the release maintainer, I want `publish.yml` to authenticate via npm Trusted Publishing instead of a stored `NPM_TOKEN`, so that releases stop depending on a manually rotated secret. Deferred out of the v0.2.0 release (#60), which published on the token per its fallback clause.
+    - Deadline pressure: the current `NPM_TOKEN` **expires 2026-10-12** — land this (or rotate the token as a stopgap) before then.
+    - Acceptance: configure the `prowl-review` package for Trusted Publishing on npmjs.com (GitHub Actions publisher: this repo + `publish.yml`); drop `NPM_TOKEN` from the workflow env (keep OIDC `id-token: write`, already present for provenance); verify with the next tag-triggered release; update `docs/releasing.md` prerequisites; then delete the npm token and the repository secret.
 
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
     As a prospective contributor/user, I want a polished OSS repo, so that the project is credible and easy to adopt.

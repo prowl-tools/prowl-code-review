@@ -6,7 +6,12 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 ## Prerequisites (one-time)
 
 - An npm **automation token** with publish rights to `prowl-review`, stored as the
-  `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions).
+  `NPM_TOKEN` repository secret (Settings → Secrets and variables → Actions). The
+  token belongs to the npm account that owns the `prowl-review` package; the current
+  token **expires 2026-10-12**. To rotate: generate a new automation token on
+  npmjs.com and replace the repository secret — verify with the next tag-triggered
+  publish. Migrating to **npm Trusted Publishing** (OIDC, no stored token) is the
+  preferred replacement before expiry — tracked as backlog #63.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
 ## Cut a release
@@ -29,6 +34,12 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
    public`, and publishes the GitHub Release after npm succeeds.
    - The version guard fails the run if the tag and `package.json` disagree, so a
      mismatched tag never publishes.
+5. **Advance the Action's floating `v1` tag** to the release commit, so
+   `uses: prowl-tools/prowl-code-review@v1` workflows get the new release:
+   ```bash
+   git tag -f v1 vX.Y.Z
+   git push origin v1 --force
+   ```
 
 ## Update the Homebrew tap
 

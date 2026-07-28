@@ -4,6 +4,11 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the
+  documented `uses: prowl-tools/prowl-code-review@v1` reference now resolves). `docs/releasing.md` gains the
+  advance-on-release step plus `NPM_TOKEN` expiry/rotation notes and the Trusted Publishing migration plan (#63).
+
 ## [0.2.0] - 2026-07-27
 
 ### Breaking
