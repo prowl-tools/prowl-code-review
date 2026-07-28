@@ -3,7 +3,13 @@ name: CI
 on:
   push:
     branches: [main]
+  # Auto-review chains off this workflow via `workflow_run` (#61). `workflow_run`
+  # does not preserve the original pull_request action, so CI must itself subscribe
+  # to every transition that should trigger a review — opened, synchronize (new
+  # pushes), ready_for_review (draft → ready), and reopened — or that review would
+  # never fire.
   pull_request:
+    types: [opened, synchronize, ready_for_review, reopened]
     branches: [main]
 
 permissions:
