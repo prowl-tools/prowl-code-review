@@ -51,14 +51,14 @@ jobs:
         run: |
           set -euo pipefail
 
-          # PR resolution (#61): prefer the workflow_run payload's pull_requests;
-          # when empty, fall back to a completed-run API lookup. Then keep only OPEN
-          # PRs whose head SHA matches this CI run, and require EXACTLY ONE — never
-          # start a review on a missing or ambiguous match.
-          candidates="$(printf '%s' "${PR_PAYLOAD}" | jq -r '.[]?.number // empty')"
-          if [ -z "${candidates}" ]; then
-            candidates="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[]?.number' || true)"
-          fi
+          # PR resolution (#61): merge workflow_run payload candidates with the
+          # completed-run API lookup. Payloads can be present but incomplete, so the
+          # API is not only an empty-payload fallback. Then keep only OPEN PRs whose
+          # head SHA matches this CI run, and require EXACTLY ONE — never start a
+          # review on a missing or ambiguous match.
+          payload_candidates="$(printf '%s' "${PR_PAYLOAD}" | jq -r '.[]?.number // empty')"
+          api_candidates="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[]?.number' || true)"
+          candidates="${payload_candidates}${payload_candidates:+ }${api_candidates}"
 
           matches=""
           for pr in ${candidates}; do

@@ -74,7 +74,7 @@ Two things this requires:
   ```
 - **Point `workflows:` at your CI workflow's `name:`.** The review then starts after
   CI finishes (≈1 min later). The reusable workflow resolves exactly one open PR from
-  the `workflow_run` payload (falling back to a completed-run API lookup), skips fork
+  the `workflow_run` payload plus a completed-run API lookup, skips fork
   PRs, and hands the PR number and draft state to the action — so the branded check
   run is the only failure surface on the PR.
 - **Leave the branded replacement check enabled.** Because `workflow_run` hides this

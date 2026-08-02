@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { execFileSync } from "node:child_process";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, join } from "node:path";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 
@@ -132,6 +134,18 @@ const workflowSchema = z
 
 function parseWorkflow(name: (typeof ALL_WORKFLOWS)[number]): Record<string, unknown> {
   return parseYaml(read(name)) as Record<string, unknown>;
+}
+
+function outputMap(path: string): Record<string, string> {
+  return Object.fromEntries(
+    readFileSync(path, "utf8")
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => {
+        const separator = line.indexOf("=");
+        return [line.slice(0, separator), line.slice(separator + 1)];
+      })
+  );
 }
 
 function expectValidWorkflowSchema(name: string, doc: unknown): void {
@@ -528,8 +542,11 @@ describe("single branded checks row (#61)", () => {
       head_repo: "${{ steps.pr.outputs.head_repo }}",
       is_draft: "${{ steps.pr.outputs.is_draft }}"
     });
-    // Prefer the payload's pull_requests, fall back to a completed-run API lookup.
+    // Merge the payload's pull_requests with a completed-run API lookup.
     expect(resolve!.run).toContain("jq -r '.[]?.number // empty'");
+    expect(resolve!.run).toContain("payload_candidates=");
+    expect(resolve!.run).toContain("api_candidates=");
+    expect(resolve!.run).toContain('candidates="${payload_candidates}${payload_candidates:+ }${api_candidates}"');
     expect(resolve!.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"');
     // Require EXACTLY ONE match; a missing/ambiguous match skips (resolved=false).
     expect(resolve!.run).toContain('[ "${count}" -ne 1 ]');
@@ -553,6 +570,89 @@ describe("single branded checks row (#61)", () => {
     expect(reviewStep.with["pr-number"]).toBe("${{ needs.resolve.outputs.pr_number }}");
     expect(reviewStep.with["pr-draft"]).toBe("${{ needs.resolve.outputs.is_draft }}");
   });
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review uses API candidates when the workflow_run payload is non-empty but incomplete",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-resolve-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        const log = join(temp, "gh.log");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '1\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+printf '%s\\n' "$url" >> "$GH_LOG"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    printf '2\\n'
+    ;;
+  repos/Prowl-qa/app/pulls/1)
+    printf 'open\\tpayload-head\\n'
+    ;;
+  repos/Prowl-qa/app/pulls/2)
+    if [[ "$*" == *'.base.sha'* ]]; then
+      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\n'
+    else
+      printf 'open\\tci-head\\n'
+    fi
+    ;;
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            GH_LOG: log,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 1 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({
+          resolved: "true",
+          pr_number: "2",
+          base_sha: "base-sha",
+          head_sha: "ci-head",
+          head_repo: "Prowl-qa/app",
+          is_draft: "false"
+        });
+        expect(readFileSync(log, "utf8")).toContain("repos/Prowl-qa/app/actions/runs/123");
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review keys concurrency off the resolved PR number", ({ read: readFn }) => {
     const text = readFn();

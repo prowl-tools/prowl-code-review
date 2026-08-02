@@ -14,7 +14,7 @@ All notable changes to Prowl Review will be documented in this file.
     (`workflow_run` does not preserve the original PR action, so CI must fire on each transition itself).
   - The review path gates on `workflow_run.event == 'pull_request'` **and** `conclusion == 'success'`
     (push CI and any non-success conclusion never start a review), resolves **exactly one** open PR from the
-    `workflow_run` payload — falling back to a completed-run API lookup — re-derives the trusted base/head
+    `workflow_run` payload plus a completed-run API lookup — re-derives the trusted base/head
     from that PR, and reapplies the fork + draft gates. Missing/ambiguous matches are skipped.
   - The Action gains a `pr-number` input (forwarded as `--pr`) so the review targets the resolved PR under
     the context-free `workflow_run` event. The branded check run is now the **only** failure surface on the
