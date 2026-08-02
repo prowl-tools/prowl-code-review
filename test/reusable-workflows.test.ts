@@ -523,7 +523,7 @@ describe("single branded checks row (#61)", () => {
     expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
   });
 
-  it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review resolves exactly one open PR before reviewing", ({ read: readFn }) => {
+  it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review resolves exactly one open PR before reviewing", ({ label, read: readFn }) => {
     const text = readFn();
     const doc = parseYaml(text) as {
       jobs: {
@@ -532,8 +532,9 @@ describe("single branded checks row (#61)", () => {
       };
     };
     const steps = doc.jobs.resolve.steps;
-    const resolve = steps.find((step) => step.id === "pr") as { run: string } | undefined;
+    const resolve = steps.find((step) => step.id === "pr") as { env: Record<string, unknown>; run: string } | undefined;
     expect(resolve).toBeDefined();
+    expect(resolve!.env.CHECK_RUN).toBe(label === "dogfood" ? "true" : "${{ inputs.check-run }}");
     expect(doc.jobs.resolve.outputs).toMatchObject({
       resolved: "${{ steps.pr.outputs.resolved }}",
       pr_number: "${{ steps.pr.outputs.pr_number }}",
@@ -558,6 +559,8 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).toContain("head moved from CI head");
     // Forks are rejected before secrets; drafts are passed to the action's config-aware policy.
     expect(resolve!.run).toContain('[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]');
+    expect(resolve!.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
+    expect(resolve!.run).toContain("Fork pull request - review skipped");
     expect(resolve!.run).toContain("is_draft=${is_draft}");
     expect(resolve!.run).not.toContain('[ "${is_draft}" = "true" ]');
     // The action only runs once a single PR resolved, and gets its number handed in.
@@ -648,6 +651,86 @@ esac
           is_draft: "false"
         });
         expect(readFileSync(log, "utf8")).toContain("repos/Prowl-qa/app/actions/runs/123");
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review publishes a neutral replacement check before skipping fork PRs",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-fork-skip-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        const checkLog = join(temp, "check.log");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '7\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    ;;
+  repos/Prowl-qa/app/pulls/7)
+    if [[ "$*" == *'.base.sha'* ]]; then
+      printf 'base-sha\\tci-head\\tcontributor/app\\tfalse\\n'
+    else
+      printf 'open\\tci-head\\n'
+    fi
+    ;;
+  repos/Prowl-qa/app/check-runs)
+    printf '%s\\n' "$*" >> "$CHECK_LOG"
+    ;;
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            CHECK_LOG: checkLog,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 7 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head",
+            CHECK_RUN: "true"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({ resolved: "false" });
+        const check = readFileSync(checkLog, "utf8");
+        expect(check).toContain("repos/Prowl-qa/app/check-runs");
+        expect(check).toContain("name=Prowl Review");
+        expect(check).toContain("head_sha=ci-head");
+        expect(check).toContain("conclusion=neutral");
+        expect(check).toContain("Fork pull request - review skipped");
       } finally {
         rmSync(temp, { recursive: true, force: true });
       }
