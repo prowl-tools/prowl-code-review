@@ -33,6 +33,10 @@ inputs:
     description: "Explicit trusted .prowl-review.yml path. Leave empty to ignore repo config in the Action."
     required: false
     default: ""
+  check-run:
+    description: "Publish the branded Prowl Review check run. Leave blank to use config; set true/false to override."
+    required: false
+    default: ""
   min-severity:
     description: "Drop findings below this severity (critical|major|minor|trivial|info)."
     required: false
@@ -77,6 +81,14 @@ inputs:
     description: "What to run: 'review' (default) for a PR review, or 'command' to handle an @prowl-review comment (#26)."
     required: false
     default: "review"
+  pr-number:
+    description: "Explicit pull request number to review. Required when the workflow is triggered by `workflow_run` (#61) — that event carries no pull_request context, so the number must be resolved in the workflow and handed in. Leave empty to resolve from the GitHub event (pull_request triggers)."
+    required: false
+    default: ""
+  pr-draft:
+    description: "Explicit pull request draft state for `workflow_run` review runs. Leave empty to resolve from the GitHub event (pull_request triggers)."
+    required: false
+    default: ""
 
 outputs:
   findings:
@@ -114,8 +126,14 @@ runs:
         PROWL_AI_MODEL: ${{ inputs.ai-model }}
         # Staged separately so PROWL_BOT_LOGIN is only exported when the input is explicit.
         PROWL_INPUT_BOT_LOGIN: ${{ inputs.bot-login }}
+        # Explicit PR number for `workflow_run` review runs (#61); forwarded as --pr
+        # only when set, so pull_request-triggered runs still resolve from the event.
+        PROWL_INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        PROWL_REVIEWED_PR_DRAFT: ${{ inputs.pr-draft || env.PROWL_REVIEWED_PR_DRAFT }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
+        PROWL_CHECK_RUN: ${{ inputs.check-run }}
+        PROWL_CHECK_RUN_ID: ${{ env.PROWL_CHECK_RUN_ID }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_DEBUG: ${{ inputs.debug }}
@@ -142,4 +160,8 @@ runs:
         if [ -n "${PROWL_INPUT_BOT_LOGIN}" ]; then
           export PROWL_BOT_LOGIN="${PROWL_INPUT_BOT_LOGIN}"
         fi
-        node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}"
+        pr_args=()
+        if [ -n "${PROWL_INPUT_PR_NUMBER}" ]; then
+          pr_args+=(--pr "${PROWL_INPUT_PR_NUMBER}")
+        fi
+        node "${{ github.action_path }}/dist/cli.js" "${{ inputs.mode == 'command' && 'command' || 'review' }}" "${pr_args[@]}"

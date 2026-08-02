@@ -35,19 +35,55 @@ workflow with `secrets: inherit`:
 
 ```yaml
 name: prowl-review
+# Single branded checks row (#61): trigger off your CI workflow COMPLETING, not
+# `pull_request`, so the auto-review adds no row to the PR checks list.
 on:
-  pull_request:
-    types: [opened, synchronize, ready_for_review, reopened]
+  workflow_run:
+    workflows: [CI] # your CI workflow's `name:`
+    types: [completed]
 permissions:
   pull-requests: write
   issues: write
   checks: write
   contents: read
+  actions: read # PR-resolution fallback reads the completed CI run
 jobs:
   review:
     uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
+    with:
+      check-run: true # default for the reusable auto-review path
 ```
+
+### Single branded checks row (#61)
+
+The auto-review is triggered by your **CI workflow completing** (`workflow_run`)
+rather than by `pull_request`. A `workflow_run`-triggered workflow does not attach a
+row to the PR checks list, so prowl-review shows up **exactly once** — as the branded
+**Prowl Review** check run — instead of that row *plus* an octocat Actions row.
+
+Two things this requires:
+
+- **Your CI workflow must subscribe to the PR transitions** that should trigger a
+  review. `workflow_run` does not preserve the original pull_request action, so CI
+  itself has to fire on them:
+  ```yaml
+  on:
+    pull_request:
+      types: [opened, synchronize, ready_for_review, reopened]
+  ```
+- **Point `workflows:` at your CI workflow's `name:`.** The review then starts after
+  CI finishes (≈1 min later). The reusable workflow resolves exactly one open PR from
+  the `workflow_run` payload plus a completed-run API lookup, skips fork
+  PRs, and hands the PR number and draft state to the action — so the branded check
+  run is the only failure surface on the PR.
+- **Leave the branded replacement check enabled.** Because `workflow_run` hides this
+  workflow's Actions row, the reusable auto-review path passes `check-run: true` by
+  default. Set it to `false` only when another required status owns the gate.
+- **Merge the caller to your default branch first.** GitHub only runs
+  `workflow_run` workflows when the caller file exists on the repository's default
+  branch. Adding it solely on a feature branch is a silent no-op: no workflow
+  execution and no error.
 
 ## Notes
 
@@ -59,7 +95,7 @@ jobs:
 - **`secrets: inherit`** passes all caller/org secrets through. To be explicit
   instead, map them: `secrets: { PROWL_AI_KEY: ${{ secrets.PROWL_AI_KEY }} }`.
 - **Tunables** ride as `with:` inputs on the caller — `min-severity`,
-  `ai-provider`, `ai-model`, `config-path`, `org-guidelines-path`,
+  `ai-provider`, `ai-model`, `check-run`, `config-path`, `org-guidelines-path`,
   `org-guidelines-workspace`, `runs-on`.
 - **Config & guidelines stay trusted.** The reusable workflows load
   `.prowl-review.yml` and `REVIEW_GUIDELINES.md`/`CLAUDE.md`/`LEARNED_PATTERNS.md`

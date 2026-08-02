@@ -10,7 +10,6 @@ on:
 # the PR head before publishing and skips superseded runs.
 concurrency:
   group: prowl-review-${{ github.event.pull_request.number }}
-  queue: max
   cancel-in-progress: false
 
 permissions:

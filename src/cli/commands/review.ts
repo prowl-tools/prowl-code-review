@@ -853,11 +853,15 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
 }
 
 /**
- * Resolve whether the PR under review is a draft, from the GitHub event payload
- * (#28). Returns undefined when there's no event (manual/local runs) so the
- * caller treats "unknown" as not-a-draft and reviews normally.
+ * Resolve whether the PR under review is a draft, from an explicit workflow_run
+ * handoff or the GitHub event payload (#28, #61). Returns undefined when there's
+ * no signal (manual/local runs) so the caller treats "unknown" as not-a-draft.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const explicit = booleanEnv(env.PROWL_REVIEWED_PR_DRAFT);
+  if (explicit !== undefined) {
+    return explicit;
+  }
   return readGitHubEventPayload(env)?.pull_request?.draft;
 }
 
@@ -906,6 +910,7 @@ type ResolvedReviewOptions = Pick<
   | "rejustifyDisputed"
   | "repoLearnings"
   | "checkRun"
+  | "checkRunId"
   | "approval"
   | "prDescription"
   | "issueValidation"
@@ -923,6 +928,24 @@ function compact<T extends Record<string, unknown>>(obj: T): T | undefined {
 function truthyEnv(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function booleanEnv(value: string | undefined): boolean | undefined {
+  const parsed = z.enum(["true", "false"]).safeParse(value?.trim().toLowerCase());
+  return parsed.success ? parsed.data === "true" : undefined;
+}
+
+export function resolveCheckRunId(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const parsed = z.coerce.number().int().positive().safeParse(env.PROWL_CHECK_RUN_ID?.trim());
+  return parsed.success && Number.isSafeInteger(parsed.data) ? parsed.data : undefined;
+}
+
+function resolveCheckRunOption(
+  config: ProwlReviewConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ProwlReviewConfig["checkRun"] {
+  const enabled = booleanEnv(env.PROWL_CHECK_RUN);
+  return enabled === undefined ? config.checkRun : { ...config.checkRun, enabled };
 }
 
 function envString(value: string | undefined): string | undefined {
@@ -985,6 +1008,7 @@ async function maybeSubmitSkipCheckRun(
   ref: PullRequestRef,
   input: {
     checkRun?: ProwlReviewConfig["checkRun"];
+    checkRunId?: number;
     dryRun: boolean;
     headSha?: string;
     title: string;
@@ -1003,7 +1027,7 @@ async function maybeSubmitSkipCheckRun(
   };
 
   try {
-    await submitCheckRun(octokit, ref, { headSha: input.headSha, plan });
+    await submitCheckRun(octokit, ref, { headSha: input.headSha, plan, checkRunId: input.checkRunId });
     return plan.conclusion;
   } catch {
     return undefined;
@@ -1095,6 +1119,7 @@ export function resolveReviewOptions(
 ): ResolvedReviewOptions {
   const minSeverity = envString(cli.minSeverity) ?? envString(env.PROWL_MIN_SEVERITY);
   const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
+  const checkRun = resolveCheckRunOption(config, env);
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
@@ -1149,8 +1174,9 @@ export function resolveReviewOptions(
     specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined,
     // Omitted → tiering on with built-in thresholds; config can tune or disable it (#31).
     riskTiering: config.riskTiering,
-    // Merge gate (#24); opt-in via config (needs checks: write).
-    checkRun: config.checkRun,
+    // Merge gate (#24); opt-in via config, or trusted Action input for reusable workflow defaults.
+    checkRun,
+    checkRunId: resolveCheckRunId(env),
     // Approval rubric + break-glass (#52); opt-in via config.
     approval: config.approval,
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.
@@ -1487,6 +1513,8 @@ export async function runReviewWithOptions(
   );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
+  const checkRunId = resolveCheckRunId();
+  const checkRun = (): ProwlReviewConfig["checkRun"] => resolveCheckRunOption(config);
 
   let fork = eventFork;
   const resolveForkForReview = async (): Promise<ForkReviewDecision> => {
@@ -1505,7 +1533,8 @@ export async function runReviewWithOptions(
       return false;
     }
     const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-      checkRun: config.checkRun,
+      checkRun: checkRun(),
+      checkRunId,
       dryRun,
       headSha: reviewedHeadSha,
       title: "Fork pull request — review skipped",
@@ -1537,7 +1566,8 @@ export async function runReviewWithOptions(
     const prior = await fetchPriorReviewState(octokit, ref);
     if (prior?.paused) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review paused",
@@ -1571,7 +1601,8 @@ export async function runReviewWithOptions(
     // On-demand only (#28): auto-review disabled by config.
     if (config.review?.auto === false) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review disabled",
@@ -1592,7 +1623,8 @@ export async function runReviewWithOptions(
     // Skip drafts (#28): default behavior until the PR is marked ready for review.
     if (config.review?.reviewDrafts !== true && resolveIsDraftEvent() === true) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Draft pull request — review skipped",

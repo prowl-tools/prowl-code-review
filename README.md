@@ -42,12 +42,11 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
-# Queue reviews and bot commands for the same PR so command side effects are not
-# lost when new commits arrive. prowl-review re-checks the PR head before
-# publishing and skips if it advanced, so queued stale reviews do not post.
+# Serialize reviews and bot commands for the same PR so command side effects are
+# not interrupted when new commits arrive. prowl-review re-checks the PR head
+# before publishing and skips if it advanced, so stale reviews do not post.
 concurrency:
   group: prowl-review-${{ github.event.pull_request.number }}
-  queue: max
   cancel-in-progress: false
 
 permissions:
@@ -83,9 +82,9 @@ For ensemble reviews with provider-specific keys, omit `ai-key` and pass
 step env vars instead.
 
 The `concurrency` block is the recommended pattern: keying the group to the PR
-number serializes auto reviews with bot commands. `queue: max` and
-`cancel-in-progress: false` preserve maintainer-requested side effects such as
-`pause`, `resume`, and `break glass`; stale queued auto reviews skip publishing
+number serializes auto reviews with bot commands. `cancel-in-progress: false`
+keeps in-progress maintainer-requested side effects such as `pause`, `resume`,
+and `break glass` from being interrupted; stale auto reviews skip publishing
 when the PR head has advanced.
 
 ### Draft PRs & on-demand review (#28)
@@ -209,7 +208,6 @@ jobs:
       contains(github.event.comment.body, '@prowl-review')
     concurrency:
       group: prowl-review-${{ github.event.issue.number }}
-      queue: max
       cancel-in-progress: false
     runs-on: ubuntu-latest
     steps:

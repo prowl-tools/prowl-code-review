@@ -185,6 +185,50 @@ describe("runReviewWithOptions pause gate", () => {
     }
   });
 
+  it("publishes a neutral paused check run when the trusted action input enables it", async () => {
+    isolateWorkspace();
+    writeEvent(sameRepoEvent());
+    process.env.PROWL_CHECK_RUN = "true";
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      expect.objectContaining({
+        headSha: "head-paused",
+        plan: expect.objectContaining({ conclusion: "neutral", title: "Auto-review paused" })
+      })
+    );
+  });
+
+  it("completes the workflow-opened check run when a paused review is skipped", async () => {
+    isolateWorkspace();
+    writeEvent(sameRepoEvent());
+    process.env.PROWL_CHECK_RUN = "true";
+    process.env.PROWL_CHECK_RUN_ID = "4242";
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      expect.objectContaining({
+        checkRunId: 4242,
+        headSha: "head-paused",
+        plan: expect.objectContaining({ conclusion: "neutral", title: "Auto-review paused" })
+      })
+    );
+  });
+
   it("does not fail the skip when neutral check-run submission fails", async () => {
     isolateWorkspace();
     writeEvent(sameRepoEvent());
@@ -316,6 +360,24 @@ describe("runReviewWithOptions draft + auto controls (#28)", () => {
         plan: expect.objectContaining({ conclusion: "neutral", title: "Draft pull request — review skipped" })
       })
     );
+  });
+
+  it("does not post a draft skip check when the trusted action input disables it", async () => {
+    isolateWorkspace();
+    mocks.fetchPriorReviewState.mockResolvedValue(null);
+    writeEvent(sameRepoEvent(true));
+    process.env.PROWL_CHECK_RUN = "false";
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-draft";
+    vi.spyOn(console, "log").mockImplementation(() => {});
+    const config = writeConfig("checkRun:\n  enabled: true\n");
+
+    await runReviewWithOptions(
+      { pr: "7", repo: "prowl-tools/prowl-code-review", config },
+      { respectPause: true }
+    );
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).not.toHaveBeenCalled();
   });
 });
 

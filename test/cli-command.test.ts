@@ -816,13 +816,16 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain(
       "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
     );
-    expect(workflow).toContain("queue: max");
+    expect(workflow).not.toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
     // Triggers on both top-level and inline PR comments (#27).
     expect(workflow).toContain("issue_comment:");
     expect(workflow).toContain("pull_request_review_comment:");
-    expect(reviewWorkflow).toContain("group: prowl-review-${{ github.event.pull_request.number }}");
-    expect(reviewWorkflow).toContain("queue: max");
+    // Auto-review chains off CI via workflow_run (#61): resolve first, then key by
+    // the same PR number as this command workflow so publish/dedupe serializes.
+    expect(reviewWorkflow).toContain("needs: resolve");
+    expect(reviewWorkflow).toContain("group: prowl-review-${{ needs.resolve.outputs.pr_number }}");
+    expect(reviewWorkflow).not.toContain("queue: max");
     expect(reviewWorkflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
@@ -851,6 +854,7 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
     expect(reviewWorkflow).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
     expect(reviewWorkflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'pr-draft' \"${action_file}\"");
     expect(workflow).toContain("Trusted base does not support the prowl-review command-mode ensemble yet");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("uses: ./prowl-base");
