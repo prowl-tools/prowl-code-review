@@ -296,6 +296,12 @@ export interface ReviewPullRequestOptions {
    */
   checkRun?: { enabled?: boolean; failOn?: Severity };
   /**
+   * Id of a workflow-opened in-progress Check Run to complete in place. Internal
+   * Action handoff for workflow_run setup coverage; omitted means the pipeline
+   * opens the live check itself.
+   */
+  checkRunId?: number;
+  /**
    * Approval rubric + break-glass override (#52). Opt-in (`approval.enabled`).
    * When engaged, the findings map to the published review event (and the #24
    * check conclusion); a trusted `@prowl-review break glass <head-sha>` comment overrides a
@@ -1580,7 +1586,47 @@ async function reviewPullRequestImpl(
   const reviewedHeadSha = options.reviewedHeadSha ?? meta.headSha;
   const reviewedHeadAlreadyStale =
     staleGuardEnabled && options.dryRun !== true && reviewedHeadSha !== meta.headSha;
+
+  // Live check-run lifecycle (#59 follow-up): open or adopt the check row before
+  // any fallible review work after PR metadata resolution. Workflow_run callers
+  // can pre-open the row before checkout/action setup and pass its id here; normal
+  // library/CLI callers still open it in the pipeline. Non-fatal — a failure to
+  // open/update never sinks the primary review output.
+  if (options.checkRun?.enabled && !options.dryRun && meta.headSha) {
+    state.completeCheckRun = async (closeOut: CheckRunCloseOut): Promise<void> => {
+      if (state.checkRunId === undefined || state.checkRunCompleted) {
+        return;
+      }
+      state.checkRunCompleted = true;
+      try {
+        await submitCheck(octokit, ref, {
+          headSha: meta.headSha,
+          plan: {
+            conclusion: closeOut.conclusion,
+            title: closeOut.title,
+            summary: closeOut.title,
+            annotations: []
+          },
+          checkRunId: state.checkRunId
+        });
+      } catch {
+        // tolerant: never let the check row sink the primary review output.
+      }
+    };
+
+    if (options.checkRunId !== undefined) {
+      state.checkRunId = options.checkRunId;
+    } else if (!reviewedHeadAlreadyStale) {
+      try {
+        state.checkRunId = await startCheck(octokit, ref, { headSha: meta.headSha });
+      } catch {
+        state.checkRunId = undefined;
+      }
+    }
+  }
+
   if (reviewedHeadAlreadyStale) {
+    state.supersededByNewerCommit = true;
     const reviewResult = emptyReviewResult();
     const summaryBody = buildWalkthrough({
       findings: reviewResult.findings,
@@ -1645,39 +1691,6 @@ async function reviewPullRequestImpl(
   };
   const shouldResolveThread = async () => !(await hasHeadAdvanced());
   const shouldPublishReview = async () => !(await hasHeadAdvanced());
-
-  // Live check-run lifecycle (#59 follow-up): now that the stale-head guard has
-  // passed, open the check row as in-progress so the PR shows the review running.
-  // Non-fatal — a failure to open (e.g. missing `checks: write`) never sinks the
-  // review; the row simply won't appear. `completeCheckRun` is the idempotent
-  // close-out the exported wrapper leans on so a started run never dangles.
-  if (options.checkRun?.enabled && !options.dryRun && meta.headSha) {
-    state.completeCheckRun = async (closeOut: CheckRunCloseOut): Promise<void> => {
-      if (state.checkRunId === undefined || state.checkRunCompleted) {
-        return;
-      }
-      state.checkRunCompleted = true;
-      try {
-        await submitCheck(octokit, ref, {
-          headSha: meta.headSha,
-          plan: {
-            conclusion: closeOut.conclusion,
-            title: closeOut.title,
-            summary: closeOut.title,
-            annotations: []
-          },
-          checkRunId: state.checkRunId
-        });
-      } catch {
-        // tolerant: never let the check row sink the primary review output.
-      }
-    };
-    try {
-      state.checkRunId = await startCheck(octokit, ref, { headSha: meta.headSha });
-    } catch {
-      state.checkRunId = undefined;
-    }
-  }
 
   const fullParsed = parseDiff(diff);
 
