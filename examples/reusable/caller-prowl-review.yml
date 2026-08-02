@@ -29,7 +29,7 @@ permissions:
 jobs:
   review:
     # Point at your org's `.github` repo; pin a version (e.g. @v1).
-    uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
+    uses: YOUR-ORG/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
     with:
       # workflow_run hides this workflow's Actions row, so keep the branded
