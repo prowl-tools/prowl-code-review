@@ -58,6 +58,14 @@ describe("verify npm version script (#63)", () => {
     expect(result.stderr).toContain("need >=11.5.1");
   });
 
+  it("suppresses error output in quiet mode", () => {
+    const result = spawnSync(process.execPath, [SCRIPT_PATH, "--quiet", "11.5.0", "11.5.1"], {
+      encoding: "utf8",
+    });
+    expect(result.status).toBe(1);
+    expect(result.stderr).toBe("");
+  });
+
   it("prints usage when CLI arguments are missing", () => {
     const result = spawnSync(process.execPath, [SCRIPT_PATH], { encoding: "utf8" });
     expect(result.status).toBe(2);

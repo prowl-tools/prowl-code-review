@@ -33,8 +33,13 @@ export function satisfiesMinimumVersion(actual, minimum) {
 }
 
 function main() {
-  const actual = process.argv[2];
-  const minimum = process.argv[3];
+  const args = process.argv.slice(2);
+  const quiet = args[0] === "--quiet";
+  if (quiet) {
+    args.shift();
+  }
+  const actual = args[0];
+  const minimum = args[1];
   if (!actual || !minimum) {
     console.error("usage: verify-npm-version.mjs <actual-version> <minimum-version>");
     process.exit(2);
@@ -42,11 +47,15 @@ function main() {
 
   try {
     if (!satisfiesMinimumVersion(actual, minimum)) {
-      console.error(`::error::npm upgrade failed or incomplete; got ${actual}, need >=${minimum}.`);
+      if (!quiet) {
+        console.error(`::error::npm upgrade failed or incomplete; got ${actual}, need >=${minimum}.`);
+      }
       process.exit(1);
     }
   } catch (error) {
-    console.error(`::error::${error.message}`);
+    if (!quiet) {
+      console.error(`::error::${error.message}`);
+    }
     process.exit(1);
   }
 }
