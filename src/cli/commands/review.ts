@@ -934,6 +934,14 @@ function booleanEnv(value: string | undefined): boolean | undefined {
   return parsed.success ? parsed.data === "true" : undefined;
 }
 
+function resolveCheckRunOption(
+  config: ProwlReviewConfig,
+  env: NodeJS.ProcessEnv = process.env
+): ProwlReviewConfig["checkRun"] {
+  const enabled = booleanEnv(env.PROWL_CHECK_RUN);
+  return enabled === undefined ? config.checkRun : { ...config.checkRun, enabled };
+}
+
 function envString(value: string | undefined): string | undefined {
   return value?.trim() || undefined;
 }
@@ -1104,9 +1112,7 @@ export function resolveReviewOptions(
 ): ResolvedReviewOptions {
   const minSeverity = envString(cli.minSeverity) ?? envString(env.PROWL_MIN_SEVERITY);
   const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
-  const checkRunEnabled = booleanEnv(env.PROWL_CHECK_RUN);
-  const checkRun =
-    checkRunEnabled === undefined ? config.checkRun : { ...config.checkRun, enabled: checkRunEnabled };
+  const checkRun = resolveCheckRunOption(config, env);
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
@@ -1499,6 +1505,7 @@ export async function runReviewWithOptions(
   );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
+  const checkRun = (): ProwlReviewConfig["checkRun"] => resolveCheckRunOption(config);
 
   let fork = eventFork;
   const resolveForkForReview = async (): Promise<ForkReviewDecision> => {
@@ -1517,7 +1524,7 @@ export async function runReviewWithOptions(
       return false;
     }
     const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-      checkRun: config.checkRun,
+      checkRun: checkRun(),
       dryRun,
       headSha: reviewedHeadSha,
       title: "Fork pull request — review skipped",
@@ -1549,7 +1556,7 @@ export async function runReviewWithOptions(
     const prior = await fetchPriorReviewState(octokit, ref);
     if (prior?.paused) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review paused",
@@ -1583,7 +1590,7 @@ export async function runReviewWithOptions(
     // On-demand only (#28): auto-review disabled by config.
     if (config.review?.auto === false) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review disabled",
@@ -1604,7 +1611,7 @@ export async function runReviewWithOptions(
     // Skip drafts (#28): default behavior until the PR is marked ready for review.
     if (config.review?.reviewDrafts !== true && resolveIsDraftEvent() === true) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
-        checkRun: config.checkRun,
+        checkRun: checkRun(),
         dryRun,
         headSha: reviewedHeadSha,
         title: "Draft pull request — review skipped",
