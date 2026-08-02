@@ -55,8 +55,18 @@ jobs:
         run: |
           npm install -g "npm@${MIN_NPM_VERSION}"
           actual_npm="$(npm --version)"
-          if [ "${actual_npm}" != "${MIN_NPM_VERSION}" ]; then
-            echo "::error::npm upgrade failed or incomplete; got ${actual_npm}, need ${MIN_NPM_VERSION}." >&2
+          IFS=. read -r actual_major actual_minor actual_patch _ <<< "${actual_npm}"
+          IFS=. read -r min_major min_minor min_patch _ <<< "${MIN_NPM_VERSION}"
+          if ! [[ "${actual_major}" =~ ^[0-9]+$ && "${actual_minor}" =~ ^[0-9]+$ && "${actual_patch}" =~ ^[0-9]+$ ]]; then
+            echo "::error::Unable to parse npm version after upgrade: ${actual_npm}." >&2
+            exit 1
+          fi
+          if ((
+            actual_major < min_major ||
+            (actual_major == min_major && actual_minor < min_minor) ||
+            (actual_major == min_major && actual_minor == min_minor && actual_patch < min_patch)
+          )); then
+            echo "::error::npm upgrade failed or incomplete; got ${actual_npm}, need >=${MIN_NPM_VERSION}." >&2
             exit 1
           fi
 
@@ -156,14 +166,7 @@ jobs:
 
       - name: Validate npm Trusted Publishing prerequisites
         if: steps.npm-status.outputs.already_published != 'true'
-        env:
-          MIN_NPM_VERSION: 11.5.1
         run: |
-          actual_npm="$(npm --version)"
-          if [ "${actual_npm}" != "${MIN_NPM_VERSION}" ]; then
-            echo "::error::npm ${actual_npm} does not support Trusted Publishing; need ${MIN_NPM_VERSION}." >&2
-            exit 1
-          fi
           if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
             echo "::error::NODE_AUTH_TOKEN must not be set for Trusted Publishing releases." >&2
             exit 1
