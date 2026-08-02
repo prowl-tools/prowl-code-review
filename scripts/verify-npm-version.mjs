@@ -2,7 +2,10 @@
 
 import { fileURLToPath } from "node:url";
 
-const VERSION_RE = /^(\d+)\.(\d+)\.(\d+)$/;
+const NUMERIC_IDENTIFIER = "(0|[1-9]\\d*)";
+const VERSION_RE = new RegExp(
+  `^${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}\\.${NUMERIC_IDENTIFIER}$`,
+);
 
 export function parseVersion(value) {
   const version = String(value).trim();

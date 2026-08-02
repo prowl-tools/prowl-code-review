@@ -37,7 +37,17 @@ describe("verify npm version script (#63)", () => {
   });
 
   it("rejects malformed, incomplete, and prerelease versions", () => {
-    for (const version of ["", "11", "11.5", "11.5.x", "11.5.1-rc.1", "npm 11.5.1"]) {
+    for (const version of [
+      "",
+      "11",
+      "11.5",
+      "11.5.x",
+      "11.5.1-rc.1",
+      "01.5.1",
+      "1.05.1",
+      "1.5.01",
+      "npm 11.5.1",
+    ]) {
       expect(() => parseVersion(version)).toThrow("unable to parse npm version");
     }
   });
