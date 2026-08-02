@@ -568,11 +568,12 @@ describe("single branded checks row (#61)", () => {
     const openCheckIndex = reviewSteps.findIndex((step) => step.id === "open-check");
     const appTokenIndex = reviewSteps.findIndex((step) => step.id === "app-token");
     const firstCheckoutIndex = reviewSteps.findIndex((step) => String(step.name ?? "").startsWith("Checkout"));
-    expect(openCheckIndex).toBe(0);
-    expect(appTokenIndex).toBeGreaterThan(openCheckIndex);
+    expect(appTokenIndex).toBeGreaterThanOrEqual(0);
+    expect(openCheckIndex).toBeGreaterThan(appTokenIndex);
     expect(openCheckIndex).toBeLessThan(firstCheckoutIndex);
+    expect(reviewSteps[appTokenIndex]["continue-on-error"]).toBe(true);
     const openCheck = reviewSteps[openCheckIndex] as { env: Record<string, unknown>; run: string };
-    expect(openCheck.env.GH_TOKEN).toBe("${{ github.token }}");
+    expect(openCheck.env.GH_TOKEN).toBe("${{ steps.app-token.outputs.token || github.token }}");
     expect(openCheck.env.HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
     if (label === "reusable") {
       expect(openCheck.env.CHECK_RUN).toBe("${{ inputs.check-run }}");
@@ -591,6 +592,7 @@ describe("single branded checks row (#61)", () => {
     };
     expect(closeCheck.if).toContain("always()");
     expect(closeCheck.if).toContain("steps.open-check.outputs.check_run_id");
+    expect(closeCheck.env.GH_TOKEN).toBe("${{ steps.app-token.outputs.token || github.token }}");
     expect(closeCheck.env.CHECK_RUN_ID).toBe("${{ steps.open-check.outputs.check_run_id }}");
     expect(closeCheck.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_RUN_ID}" --jq');
     expect(closeCheck.run).toContain('[ "${status}" = "completed" ]');
