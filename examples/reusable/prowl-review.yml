@@ -107,6 +107,10 @@ jobs:
       head_sha: ${{ steps.pr.outputs.head_sha }}
       head_repo: ${{ steps.pr.outputs.head_repo }}
       is_draft: ${{ steps.pr.outputs.is_draft }}
+      check_head_sha: ${{ steps.pr.outputs.check_head_sha }}
+      check_conclusion: ${{ steps.pr.outputs.check_conclusion }}
+      check_title: ${{ steps.pr.outputs.check_title }}
+      check_summary: ${{ steps.pr.outputs.check_summary }}
     steps:
       - name: Resolve PR from the CI run
         id: pr
@@ -122,19 +126,23 @@ jobs:
         run: |
           set -euo pipefail
 
-          submit_fork_skip_check() {
-            if [ "${CHECK_RUN}" != "true" ]; then
-              return 0
-            fi
-            gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
-              --method POST \
-              -f "name=Prowl Review" \
-              -f "head_sha=${HEAD_SHA}" \
-              -f "status=completed" \
-              -f "conclusion=neutral" \
-              -f "output[title]=Fork pull request - review skipped" \
-              -f "output[summary]=prowl-review skipped this fork pull request because provider secrets are unavailable to fork pull_request runs. No review was run for this commit." \
-              >/dev/null 2>&1 || true
+          report_check() {
+            local conclusion="$1"
+            local title="$2"
+            local summary="$3"
+            {
+              echo "resolved=false"
+              echo "head_sha=${HEAD_SHA}"
+              echo "check_head_sha=${HEAD_SHA}"
+              if [ -n "${pr_number:-}" ]; then
+                echo "pr_number=${pr_number}"
+              fi
+              if [ "${CHECK_RUN}" = "true" ]; then
+                echo "check_conclusion=${conclusion}"
+                echo "check_title=${title}"
+                echo "check_summary=${summary}"
+              fi
+            } >> "$GITHUB_OUTPUT"
           }
 
           # PR resolution (#61): merge workflow_run payload candidates with the
@@ -143,12 +151,21 @@ jobs:
           # head SHA matches this CI run, and require EXACTLY ONE — never start a
           # review on a missing or ambiguous match.
           payload_candidates="$(printf '%s' "${PR_PAYLOAD}" | jq -r '.[]?.number // empty')"
-          api_candidates="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[]?.number' || true)"
+          if ! api_candidates="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}" --jq '.pull_requests[]?.number')"; then
+            report_check "failure" "Review setup failed" "prowl-review could not inspect the completed CI run while resolving a pull request. Inspect this workflow run for API, rate-limit, or permissions errors."
+            echo "Skipping: failed to inspect completed CI run ${RUN_ID}."
+            exit 0
+          fi
           candidates="${payload_candidates}${payload_candidates:+ }${api_candidates}"
 
           matches=""
           for pr in ${candidates}; do
-            info="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '[.state, .head.sha] | @tsv' 2>/dev/null || true)"
+            if ! info="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr}" --jq '[.state, .head.sha] | @tsv' 2>/dev/null)"; then
+              pr_number="${pr}"
+              report_check "failure" "Review setup failed" "prowl-review could not load pull request #${pr} while resolving the completed CI run. Inspect this workflow run for API, rate-limit, or permissions errors."
+              echo "Skipping: failed to load PR #${pr} metadata during resolution."
+              exit 0
+            fi
             state="$(printf '%s' "${info}" | cut -f1)"
             pr_head="$(printf '%s' "${info}" | cut -f2)"
             if [ "${state}" = "open" ] && [ "${pr_head}" = "${HEAD_SHA}" ]; then
@@ -170,7 +187,11 @@ jobs:
 
           # Re-derive trusted base/head from the resolved PR (never from the CI
           # payload) so the config/guidelines checkout stays anchored to base code.
-          meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv')"
+          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv' 2>/dev/null)"; then
+            report_check "failure" "Review setup failed" "prowl-review could not load pull request #${pr_number} metadata after resolving the completed CI run. Inspect this workflow run for API, rate-limit, or permissions errors."
+            echo "Skipping: failed to load complete PR metadata for #${pr_number}."
+            exit 0
+          fi
           base_sha="$(printf '%s' "${meta}" | cut -f1)"
           head_sha="$(printf '%s' "${meta}" | cut -f2)"
           head_repo="$(printf '%s' "${meta}" | cut -f3)"
@@ -178,7 +199,7 @@ jobs:
           if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] ||
             [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] ||
             [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
-            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            report_check "failure" "Review setup failed" "prowl-review could not resolve complete metadata for pull request #${pr_number}. Inspect this workflow run for API, rate-limit, or permissions errors."
             echo "Skipping: incomplete PR metadata for #${pr_number}."
             exit 0
           fi
@@ -192,8 +213,7 @@ jobs:
           # deferred to the action so trusted `review.reviewDrafts` config and the
           # neutral skip check run still apply.
           if [ "${head_repo}" != "${GITHUB_REPOSITORY}" ]; then
-            submit_fork_skip_check
-            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            report_check "neutral" "Fork pull request - review skipped" "prowl-review skipped this fork pull request because provider secrets are unavailable to fork pull_request runs. No review was run for this commit."
             echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
             exit 0
           fi
@@ -206,6 +226,65 @@ jobs:
             echo "head_repo=${head_repo}"
             echo "is_draft=${is_draft}"
           } >> "$GITHUB_OUTPUT"
+
+  report-unreviewable:
+    needs: resolve
+    if: needs.resolve.outputs.check_conclusion != ''
+    runs-on: ${{ inputs.runs-on }}
+    concurrency:
+      group: prowl-review-${{ needs.resolve.outputs.pr_number || needs.resolve.outputs.check_head_sha }}
+      cancel-in-progress: false
+    steps:
+      - name: Detect branded app config
+        id: brand
+        shell: bash
+        env:
+          APP_ID: ${{ secrets.PROWL_APP_ID }}
+          APP_PRIVATE_KEY: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+        run: |
+          if [ -n "${APP_ID}" ] && [ -n "${APP_PRIVATE_KEY}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Mint prowl-review app token
+        id: app-token
+        if: steps.brand.outputs.enabled == 'true'
+        continue-on-error: true
+        uses: actions/create-github-app-token@v1
+        with:
+          app-id: ${{ secrets.PROWL_APP_ID }}
+          private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: write
+
+      - name: Publish Prowl Review setup result
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          HEAD_SHA: ${{ needs.resolve.outputs.check_head_sha }}
+          CHECK_CONCLUSION: ${{ needs.resolve.outputs.check_conclusion }}
+          CHECK_TITLE: ${{ needs.resolve.outputs.check_title }}
+          CHECK_SUMMARY: ${{ needs.resolve.outputs.check_summary }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${HEAD_SHA}" ] || [ -z "${CHECK_CONCLUSION}" ]; then
+            exit 0
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
+            --method POST \
+            -f "name=Prowl Review" \
+            -f "head_sha=${HEAD_SHA}" \
+            -f "status=completed" \
+            -f "conclusion=${CHECK_CONCLUSION}" \
+            -f "completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -f "output[title]=${CHECK_TITLE}" \
+            -f "output[summary]=${CHECK_SUMMARY}" \
+            >/dev/null 2>&1 || true
 
   review:
     needs: resolve

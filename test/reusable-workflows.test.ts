@@ -528,6 +528,7 @@ describe("single branded checks row (#61)", () => {
     const doc = parseYaml(text) as {
       jobs: {
         resolve: { outputs: Record<string, unknown>; steps: Array<Record<string, unknown>> };
+        "report-unreviewable": { if: string; needs: string; steps: Array<Record<string, unknown>> };
         review: { if: string; steps: Array<Record<string, unknown>> };
       };
     };
@@ -541,7 +542,11 @@ describe("single branded checks row (#61)", () => {
       base_sha: "${{ steps.pr.outputs.base_sha }}",
       head_sha: "${{ steps.pr.outputs.head_sha }}",
       head_repo: "${{ steps.pr.outputs.head_repo }}",
-      is_draft: "${{ steps.pr.outputs.is_draft }}"
+      is_draft: "${{ steps.pr.outputs.is_draft }}",
+      check_head_sha: "${{ steps.pr.outputs.check_head_sha }}",
+      check_conclusion: "${{ steps.pr.outputs.check_conclusion }}",
+      check_title: "${{ steps.pr.outputs.check_title }}",
+      check_summary: "${{ steps.pr.outputs.check_summary }}"
     });
     // Merge the payload's pull_requests with a completed-run API lookup.
     expect(resolve!.run).toContain("jq -r '.[]?.number // empty'");
@@ -559,10 +564,29 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).toContain("head moved from CI head");
     // Forks are rejected before secrets; drafts are passed to the action's config-aware policy.
     expect(resolve!.run).toContain('[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]');
-    expect(resolve!.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
+    expect(resolve!.run).not.toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
+    expect(resolve!.run).toContain('report_check "neutral" "Fork pull request - review skipped"');
     expect(resolve!.run).toContain("Fork pull request - review skipped");
     expect(resolve!.run).toContain("is_draft=${is_draft}");
     expect(resolve!.run).not.toContain('[ "${is_draft}" = "true" ]');
+
+    const reportJob = doc.jobs["report-unreviewable"];
+    expect(reportJob.needs).toBe("resolve");
+    expect(reportJob.if).toBe("needs.resolve.outputs.check_conclusion != ''");
+    const reportSteps = reportJob.steps;
+    const reportAppTokenIndex = reportSteps.findIndex((step) => step.id === "app-token");
+    const reportPublishIndex = reportSteps.findIndex((step) => step.name === "Publish Prowl Review setup result");
+    expect(reportAppTokenIndex).toBeGreaterThanOrEqual(0);
+    expect(reportPublishIndex).toBeGreaterThan(reportAppTokenIndex);
+    expect(reportSteps[reportAppTokenIndex]["continue-on-error"]).toBe(true);
+    const publishReport = reportSteps[reportPublishIndex] as { env: Record<string, unknown>; run: string };
+    expect(publishReport.env.GH_TOKEN).toBe("${{ steps.app-token.outputs.token || github.token }}");
+    expect(publishReport.env.HEAD_SHA).toBe("${{ needs.resolve.outputs.check_head_sha }}");
+    expect(publishReport.env.CHECK_CONCLUSION).toBe("${{ needs.resolve.outputs.check_conclusion }}");
+    expect(publishReport.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
+    expect(publishReport.run).toContain("status=completed");
+    expect(publishReport.run).toContain("conclusion=${CHECK_CONCLUSION}");
+
     // The action only runs once a single PR resolved, and gets its number handed in.
     const reviewSteps = doc.jobs.review.steps;
     const openCheckIndex = reviewSteps.findIndex((step) => step.id === "open-check");
@@ -694,7 +718,7 @@ esac
   );
 
   it.each(AUTO_REVIEW_TEMPLATES)(
-    "$label auto-review publishes a neutral replacement check before skipping fork PRs",
+    "$label auto-review records a neutral replacement check before skipping fork PRs",
     ({ read: readFn }) => {
       const doc = parseYaml(readFn()) as {
         jobs: { resolve: { steps: Array<Record<string, unknown>> } };
@@ -706,7 +730,6 @@ esac
       try {
         const bin = join(temp, "bin");
         const output = join(temp, "github-output");
-        const checkLog = join(temp, "check.log");
         mkdirSync(bin);
         writeFileSync(
           join(bin, "jq"),
@@ -731,8 +754,77 @@ case "$url" in
       printf 'open\\tci-head\\n'
     fi
     ;;
-  repos/Prowl-qa/app/check-runs)
-    printf '%s\\n' "$*" >> "$CHECK_LOG"
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 7 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head",
+            CHECK_RUN: "true"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({
+          resolved: "false",
+          pr_number: "7",
+          head_sha: "ci-head",
+          check_head_sha: "ci-head",
+          check_conclusion: "neutral",
+          check_title: "Fork pull request - review skipped"
+        });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review records a failed replacement check when PR metadata lookup fails",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-api-failure-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '7\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    ;;
+  repos/Prowl-qa/app/pulls/7)
+    exit 22
     ;;
   *)
     echo "unexpected gh call: $*" >&2
@@ -749,7 +841,6 @@ esac
           env: {
             ...process.env,
             PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
-            CHECK_LOG: checkLog,
             GITHUB_OUTPUT: output,
             GITHUB_REPOSITORY: "Prowl-qa/app",
             PR_PAYLOAD: JSON.stringify([{ number: 7 }]),
@@ -760,13 +851,14 @@ esac
           stdio: "pipe"
         });
 
-        expect(outputMap(output)).toMatchObject({ resolved: "false" });
-        const check = readFileSync(checkLog, "utf8");
-        expect(check).toContain("repos/Prowl-qa/app/check-runs");
-        expect(check).toContain("name=Prowl Review");
-        expect(check).toContain("head_sha=ci-head");
-        expect(check).toContain("conclusion=neutral");
-        expect(check).toContain("Fork pull request - review skipped");
+        expect(outputMap(output)).toMatchObject({
+          resolved: "false",
+          pr_number: "7",
+          head_sha: "ci-head",
+          check_head_sha: "ci-head",
+          check_conclusion: "failure",
+          check_title: "Review setup failed"
+        });
       } finally {
         rmSync(temp, { recursive: true, force: true });
       }
@@ -775,10 +867,20 @@ esac
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review keys concurrency off the resolved PR number", ({ read: readFn }) => {
     const text = readFn();
-    const doc = parseYaml(text) as { jobs: { review: { needs: string; concurrency: Record<string, unknown> } } };
+    const doc = parseYaml(text) as {
+      jobs: {
+        review: { needs: string; concurrency: Record<string, unknown> };
+        "report-unreviewable": { needs: string; concurrency: Record<string, unknown> };
+      };
+    };
     expect(doc.jobs.review.needs).toBe("resolve");
     expect(doc.jobs.review.concurrency).toMatchObject({
       group: "prowl-review-${{ needs.resolve.outputs.pr_number }}",
+      "cancel-in-progress": false
+    });
+    expect(doc.jobs["report-unreviewable"].needs).toBe("resolve");
+    expect(doc.jobs["report-unreviewable"].concurrency).toMatchObject({
+      group: "prowl-review-${{ needs.resolve.outputs.pr_number || needs.resolve.outputs.check_head_sha }}",
       "cancel-in-progress": false
     });
   });
