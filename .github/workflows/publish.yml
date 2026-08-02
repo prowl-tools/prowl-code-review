@@ -44,7 +44,6 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: "22.14.0"
-          registry-url: https://registry.npmjs.org
           package-manager-cache: false
 
       # npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum
@@ -53,22 +52,8 @@ jobs:
         env:
           MIN_NPM_VERSION: 11.5.1
         run: |
-          npm install -g "npm@${MIN_NPM_VERSION}"
-          actual_npm="$(npm --version)"
-          IFS=. read -r actual_major actual_minor actual_patch _ <<< "${actual_npm}"
-          IFS=. read -r min_major min_minor min_patch _ <<< "${MIN_NPM_VERSION}"
-          if ! [[ "${actual_major}" =~ ^[0-9]+$ && "${actual_minor}" =~ ^[0-9]+$ && "${actual_patch}" =~ ^[0-9]+$ ]]; then
-            echo "::error::Unable to parse npm version after upgrade: ${actual_npm}." >&2
-            exit 1
-          fi
-          if ((
-            actual_major < min_major ||
-            (actual_major == min_major && actual_minor < min_minor) ||
-            (actual_major == min_major && actual_minor == min_minor && actual_patch < min_patch)
-          )); then
-            echo "::error::npm upgrade failed or incomplete; got ${actual_npm}, need >=${MIN_NPM_VERSION}." >&2
-            exit 1
-          fi
+          npm install -g --ignore-scripts "npm@${MIN_NPM_VERSION}"
+          node scripts/verify-npm-version.mjs "$(npm --version)" "${MIN_NPM_VERSION}"
 
       - run: npm ci
 
@@ -158,7 +143,7 @@ jobs:
             echo "::error::package.json must define a package name." >&2
             exit 1
           fi
-          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
+          if npm view "${pkg_name}@${RELEASE_VERSION}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
           else
             echo "already_published=false" >> "$GITHUB_OUTPUT"
@@ -183,9 +168,17 @@ jobs:
       - name: Publish to npm
         if: steps.npm-status.outputs.already_published != 'true'
         run: |
-          if ! npm publish --provenance --access public; then
-            echo "::error::npm Trusted Publishing failed. Confirm the npmjs.com trusted publisher for prowl-review is configured for repo prowl-tools/prowl-code-review, workflow publish.yml, and allowed action npm publish." >&2
-            exit 1
+          publish_log="$(mktemp)"
+          trap 'rm -f "${publish_log}"' EXIT
+          npm publish --provenance --access public --registry https://registry.npmjs.org 2>&1 | tee "${publish_log}"
+          publish_status="${PIPESTATUS[0]}"
+          if [ "${publish_status}" -ne 0 ]; then
+            if grep -Eiq '(auth|oidc|token|trusted[ -]publisher|trusted publishing|E401|ENEEDAUTH|EOTP)' "${publish_log}"; then
+              echo "::error::npm publish failed with an authentication/OIDC error. Confirm the npmjs.com trusted publisher for prowl-review is configured for repo prowl-tools/prowl-code-review, workflow publish.yml, and allowed action npm publish." >&2
+            else
+              echo "::error::npm publish failed; see npm output above." >&2
+            fi
+            exit "${publish_status}"
           fi
 
       - name: Publish GitHub Release
