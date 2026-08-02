@@ -8,25 +8,45 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 - **npm Trusted Publishing (OIDC) — no stored token (#63).** `prowl-review` publishes
   to npm via **Trusted Publishing**: `.github/workflows/publish.yml` authenticates
   through GitHub's OIDC (`id-token: write`) and npm mints a short-lived token at
-  publish time — there is no `NPM_TOKEN` secret. This requires a **one-time npmjs.com
-  config**: on the [`prowl-review` package](https://www.npmjs.com/package/prowl-review)
-  → *Settings → Trusted Publishing*, add a **GitHub Actions** trusted publisher for
-  this repository (`prowl-tools/prowl-code-review`) with workflow filename
-  `publish.yml`. The workflow already carries `id-token: write` and pins a
-  Trusted-Publishing-capable toolchain (Node 22.14.0, npm 11.5.1 — OIDC support landed
-  in npm 11.5.1). Until this config exists the `Publish to npm` step fails the run;
-  that is expected and safely re-runnable once the trusted publisher is configured.
-  **There is no token fallback** — removing token dependence is the point of #63.
+  publish time. The workflow does not read or use `NPM_TOKEN`. This requires a
+  **one-time npmjs.com config**: on the
+  [`prowl-review` package](https://www.npmjs.com/package/prowl-review) -> *Settings
+  -> Trusted Publishing*, add a **GitHub Actions** trusted publisher for this
+  repository (`prowl-tools/prowl-code-review`) with workflow filename `publish.yml`
+  and allowed action `npm publish` selected. Selecting only `npm stage publish` does
+  not authorize this workflow's direct publish. The workflow already carries
+  `id-token: write` and pins a Trusted-Publishing-capable toolchain (Node 22.14.0,
+  npm 11.5.1; npm 11.5.0 introduced OIDC publishing support, and npm 11.5.1 is the
+  minimum compatible version). Until this config exists the `Publish to npm` step
+  fails the run; that is expected and safely re-runnable once the trusted publisher
+  is configured. **The standard workflow has no token fallback** — removing token
+  dependence is the point of #63.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
 ### Retiring the legacy npm token (do this after the first OIDC release)
 
 The pre-#63 flow authenticated with an npm **granular access token** stored as the
 `NPM_TOKEN` repository secret (expires **2026-10-12**). Once the first tag-triggered
-release publishes through OIDC — verify the version is live and provenance-attested
-(`npm view prowl-review version`) — **delete the npm token and remove the `NPM_TOKEN`
-repository secret** (Settings → Secrets and variables → Actions). No release path uses
-it anymore.
+release publishes through OIDC, verify the exact tagged version is live and
+provenance-attested:
+
+```bash
+version=X.Y.Z
+test "$(npm view "prowl-review@${version}" version)" = "${version}"
+
+tmpdir="$(mktemp -d)"
+trap 'rm -rf "${tmpdir}"' EXIT
+(
+  cd "${tmpdir}"
+  npm init -y >/dev/null 2>&1
+  npm install --ignore-scripts "prowl-review@${version}" >/dev/null
+  npm audit signatures
+)
+```
+
+After that passes, **delete the npm token and remove the `NPM_TOKEN` repository
+secret** (Settings -> Secrets and variables -> Actions). The standard release path
+does not use it anymore.
 
 Last-resort fallback (only until the trusted publisher is configured): if an urgent
 release cannot wait for the npmjs.com config and OIDC cannot be used, rotate **only**
@@ -111,7 +131,8 @@ brew test prowl-review
 ## Verify
 
 ```bash
-npm view prowl-review version          # the new version is live
-npx prowl-review@latest --version      # X.Y.Z
+version=X.Y.Z
+npm view "prowl-review@${version}" version  # the new version is live
+npx "prowl-review@${version}" --version     # X.Y.Z
 brew install prowl-tools/tap/prowl-review && prowl-review --version
 ```

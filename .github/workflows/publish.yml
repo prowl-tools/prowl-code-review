@@ -4,12 +4,14 @@ name: publish
 # a draft GitHub Release from the matching CHANGELOG section, publish to npm
 # with provenance via npm Trusted Publishing (OIDC), then publish the GitHub Release.
 #
-# Auth is npm Trusted Publishing (#63): no stored `NPM_TOKEN`. PREREQUISITE — a
+# Auth is npm Trusted Publishing (#63): no stored `NPM_TOKEN`. PREREQUISITE - a
 # one-time npmjs.com config: the `prowl-review` package must list this repository
-# and `publish.yml` as its GitHub Actions trusted publisher (npmjs.com → package →
-# Settings → Trusted Publishing). Until that config exists the `npm publish` step
-# fails the run (a failed publish is safely re-runnable once configured). There is
-# deliberately NO token fallback — removing token dependence is the point of #63.
+# and `publish.yml` as its GitHub Actions trusted publisher (npmjs.com -> package ->
+# Settings -> Trusted Publishing) with the allowed action `npm publish` selected.
+# Selecting only `npm stage publish` does not authorize this workflow's direct
+# `npm publish` command. Until that config exists the `npm publish` step fails the
+# run (safely re-runnable once configured). There is deliberately NO token fallback
+# - removing token dependence is the point of #63.
 on:
   push:
     tags:
@@ -43,11 +45,20 @@ jobs:
         with:
           node-version: "22.14.0"
           registry-url: https://registry.npmjs.org
+          package-manager-cache: false
 
-      # Trusted Publishing (OIDC) requires npm >= 11.5.1 (the release that introduced
-      # it). Node 22.14 bundles npm 10, so upgrade the CLI before any publish.
+      # npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum
+      # compatible version. Node 22.14 bundles npm 10, so upgrade before publishing.
       - name: Upgrade npm to a Trusted Publishing-capable version
-        run: npm install -g npm@11.5.1
+        env:
+          MIN_NPM_VERSION: 11.5.1
+        run: |
+          npm install -g "npm@${MIN_NPM_VERSION}"
+          actual_npm="$(npm --version)"
+          if [ "${actual_npm}" != "${MIN_NPM_VERSION}" ]; then
+            echo "::error::npm upgrade failed or incomplete; got ${actual_npm}, need ${MIN_NPM_VERSION}." >&2
+            exit 1
+          fi
 
       - run: npm ci
 
@@ -143,13 +154,36 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate npm Trusted Publishing prerequisites
+        if: steps.npm-status.outputs.already_published != 'true'
+        env:
+          MIN_NPM_VERSION: 11.5.1
+        run: |
+          actual_npm="$(npm --version)"
+          if [ "${actual_npm}" != "${MIN_NPM_VERSION}" ]; then
+            echo "::error::npm ${actual_npm} does not support Trusted Publishing; need ${MIN_NPM_VERSION}." >&2
+            exit 1
+          fi
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NODE_AUTH_TOKEN must not be set for Trusted Publishing releases." >&2
+            exit 1
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::GitHub OIDC request environment is unavailable; ensure id-token: write is set on the publish job." >&2
+            exit 1
+          fi
+
       # Publishes via npm Trusted Publishing (OIDC) using the `id-token: write`
-      # permission — no NODE_AUTH_TOKEN. Requires the npmjs.com trusted-publisher
+      # permission - no NODE_AUTH_TOKEN. Requires the npmjs.com trusted-publisher
       # config (see header); without it the OIDC exchange fails and the run stops
       # here. Re-run after configuring; no token fallback by design (#63).
       - name: Publish to npm
         if: steps.npm-status.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
+        run: |
+          if ! npm publish --provenance --access public; then
+            echo "::error::npm Trusted Publishing failed. Confirm the npmjs.com trusted publisher for prowl-review is configured for repo prowl-tools/prowl-code-review, workflow publish.yml, and allowed action npm publish." >&2
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         if: steps.github-release.outputs.draft == 'true'
