@@ -117,9 +117,25 @@ jobs:
           PR_PAYLOAD: ${{ toJSON(github.event.workflow_run.pull_requests) }}
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          CHECK_RUN: ${{ inputs.check-run }}
         shell: bash
         run: |
           set -euo pipefail
+
+          submit_fork_skip_check() {
+            if [ "${CHECK_RUN}" != "true" ]; then
+              return 0
+            fi
+            gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
+              --method POST \
+              -f "name=Prowl Review" \
+              -f "head_sha=${HEAD_SHA}" \
+              -f "status=completed" \
+              -f "conclusion=neutral" \
+              -f "output[title]=Fork pull request - review skipped" \
+              -f "output[summary]=prowl-review skipped this fork pull request because provider secrets are unavailable to fork pull_request runs. No review was run for this commit." \
+              >/dev/null 2>&1 || true
+          }
 
           # PR resolution (#61): merge workflow_run payload candidates with the
           # completed-run API lookup. Payloads can be present but incomplete, so the
@@ -176,6 +192,7 @@ jobs:
           # deferred to the action so trusted `review.reviewDrafts` config and the
           # neutral skip check run still apply.
           if [ "${head_repo}" != "${GITHUB_REPOSITORY}" ]; then
+            submit_fork_skip_check
             echo "resolved=false" >> "$GITHUB_OUTPUT"
             echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
             exit 0
