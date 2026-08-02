@@ -40,6 +40,13 @@ on:
         type: string
         required: false
         default: ""
+      check-run:
+        description: >
+          Publish the branded Prowl Review check run. Default true because workflow_run hides
+          the Actions workflow row; set false if another required status owns the gate.
+        type: boolean
+        required: false
+        default: true
       org-guidelines-path:
         description: "Path to an org-wide guidelines file or an http(s) URL, injected into every review (#30)."
         type: string
@@ -260,6 +267,7 @@ jobs:
           bot-login: ${{ steps.app-token.outputs.app-slug != '' && format('{0}[bot]', steps.app-token.outputs.app-slug) || '' }}
           # Config + guidelines come from the TRUSTED base checkout, never PR code.
           config-path: ${{ inputs.config-path }}
+          check-run: ${{ inputs.check-run }}
           guidelines-path: ${{ github.workspace }}/prowl-base
           org-guidelines-path: ${{ inputs.org-guidelines-path }}
           org-guidelines-workspace: ${{ inputs.org-guidelines-workspace }}

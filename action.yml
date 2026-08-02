@@ -33,6 +33,10 @@ inputs:
     description: "Explicit trusted .prowl-review.yml path. Leave empty to ignore repo config in the Action."
     required: false
     default: ""
+  check-run:
+    description: "Publish the branded Prowl Review check run. Leave blank to use config; set true/false to override."
+    required: false
+    default: ""
   min-severity:
     description: "Drop findings below this severity (critical|major|minor|trivial|info)."
     required: false
@@ -128,6 +132,7 @@ runs:
         PROWL_REVIEWED_PR_DRAFT: ${{ inputs.pr-draft || env.PROWL_REVIEWED_PR_DRAFT }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
+        PROWL_CHECK_RUN: ${{ inputs.check-run }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_DEBUG: ${{ inputs.debug }}

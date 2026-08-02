@@ -23,6 +23,9 @@ All notable changes to Prowl Review will be documented in this file.
   - **Reusable org templates updated (#37):** `examples/reusable/` (the reusable workflow + its caller) move
     to the same `workflow_run` pattern. **Org users must** point the caller's `workflows:` at their CI
     workflow's name and ensure that CI workflow subscribes to the four `pull_request` types above.
+  - The reusable auto-review caller now passes `check-run: true` by default, backed by a new blank-by-default
+    Action input that can override `checkRun.enabled` for trusted workflow paths without changing standalone
+    Action users.
 
 ### Added
 - Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the

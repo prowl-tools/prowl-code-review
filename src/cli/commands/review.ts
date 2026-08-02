@@ -858,9 +858,9 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
  * no signal (manual/local runs) so the caller treats "unknown" as not-a-draft.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
-  const explicit = z.enum(["true", "false"]).safeParse(env.PROWL_REVIEWED_PR_DRAFT?.trim().toLowerCase());
-  if (explicit.success) {
-    return explicit.data === "true";
+  const explicit = booleanEnv(env.PROWL_REVIEWED_PR_DRAFT);
+  if (explicit !== undefined) {
+    return explicit;
   }
   return readGitHubEventPayload(env)?.pull_request?.draft;
 }
@@ -927,6 +927,11 @@ function compact<T extends Record<string, unknown>>(obj: T): T | undefined {
 function truthyEnv(value: string | undefined): boolean {
   const normalized = value?.trim().toLowerCase();
   return normalized === "true" || normalized === "1" || normalized === "yes";
+}
+
+function booleanEnv(value: string | undefined): boolean | undefined {
+  const parsed = z.enum(["true", "false"]).safeParse(value?.trim().toLowerCase());
+  return parsed.success ? parsed.data === "true" : undefined;
 }
 
 function envString(value: string | undefined): string | undefined {
@@ -1099,6 +1104,9 @@ export function resolveReviewOptions(
 ): ResolvedReviewOptions {
   const minSeverity = envString(cli.minSeverity) ?? envString(env.PROWL_MIN_SEVERITY);
   const requestedTrustWorkspace = cli.trustWorkspace ?? resolveTrustWorkspace(env);
+  const checkRunEnabled = booleanEnv(env.PROWL_CHECK_RUN);
+  const checkRun =
+    checkRunEnabled === undefined ? config.checkRun : { ...config.checkRun, enabled: checkRunEnabled };
 
   return {
     minSeverity: parseMinSeverity(minSeverity) ?? config.review?.minSeverity,
@@ -1153,8 +1161,8 @@ export function resolveReviewOptions(
     specialists: config.specialists ? resolveSpecialists(config.specialists) : undefined,
     // Omitted → tiering on with built-in thresholds; config can tune or disable it (#31).
     riskTiering: config.riskTiering,
-    // Merge gate (#24); opt-in via config (needs checks: write).
-    checkRun: config.checkRun,
+    // Merge gate (#24); opt-in via config, or trusted Action input for reusable workflow defaults.
+    checkRun,
     // Approval rubric + break-glass (#52); opt-in via config.
     approval: config.approval,
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.
