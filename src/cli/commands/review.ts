@@ -858,12 +858,9 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
  * no signal (manual/local runs) so the caller treats "unknown" as not-a-draft.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
-  const explicit = env.PROWL_REVIEWED_PR_DRAFT?.trim().toLowerCase();
-  if (explicit === "true") {
-    return true;
-  }
-  if (explicit === "false") {
-    return false;
+  const explicit = z.enum(["true", "false"]).safeParse(env.PROWL_REVIEWED_PR_DRAFT?.trim().toLowerCase());
+  if (explicit.success) {
+    return explicit.data === "true";
   }
   return readGitHubEventPayload(env)?.pull_request?.draft;
 }
