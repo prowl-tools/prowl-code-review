@@ -1010,7 +1010,12 @@ describe("review command helpers", () => {
     const readyPath = join(dir, "ready.json");
     writeFileSync(readyPath, JSON.stringify({ pull_request: { draft: false } }));
     expect(resolveIsDraftEvent({ GITHUB_EVENT_PATH: readyPath } as NodeJS.ProcessEnv)).toBe(false);
-    expect(resolveIsDraftEvent({ PROWL_REVIEWED_PR_DRAFT: "TRUE" } as NodeJS.ProcessEnv)).toBe(true);
+    expect(
+      resolveIsDraftEvent({
+        GITHUB_EVENT_PATH: readyPath,
+        PROWL_REVIEWED_PR_DRAFT: "TRUE"
+      } as NodeJS.ProcessEnv)
+    ).toBe(true);
 
     // No event / no pull_request / unreadable → undefined (treated as not-a-draft).
     expect(resolveIsDraftEvent({} as NodeJS.ProcessEnv)).toBeUndefined();
