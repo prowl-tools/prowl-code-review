@@ -31,6 +31,7 @@ release publishes through OIDC, verify the exact tagged version is live and
 provenance-attested:
 
 ```bash
+set -euo pipefail
 version=X.Y.Z
 test "$(npm view "prowl-review@${version}" version)" = "${version}"
 
@@ -131,6 +132,7 @@ brew test prowl-review
 ## Verify
 
 ```bash
+set -euo pipefail
 version=X.Y.Z
 npm view "prowl-review@${version}" version  # the new version is live
 npx "prowl-review@${version}" --version     # X.Y.Z
