@@ -2,9 +2,14 @@ name: publish
 
 # Tag-triggered release (#42): on a `vX.Y.Z` tag, build + lint + test, prepare
 # a draft GitHub Release from the matching CHANGELOG section, publish to npm
-# with provenance, then publish the GitHub Release.
-# Token fallback requires an `NPM_TOKEN` repository secret (an npm granular access
-# token) until backlog #63 migrates publishing to npm Trusted Publishing.
+# with provenance via npm Trusted Publishing (OIDC), then publish the GitHub Release.
+#
+# Auth is npm Trusted Publishing (#63): no stored `NPM_TOKEN`. PREREQUISITE — a
+# one-time npmjs.com config: the `prowl-review` package must list this repository
+# and `publish.yml` as its GitHub Actions trusted publisher (npmjs.com → package →
+# Settings → Trusted Publishing). Until that config exists the `npm publish` step
+# fails the run (a failed publish is safely re-runnable once configured). There is
+# deliberately NO token fallback — removing token dependence is the point of #63.
 on:
   push:
     tags:
@@ -33,11 +38,16 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Use Node.js 22.13
+      - name: Use Node.js 22.14
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "22.13.0"
+          node-version: "22.14.0"
           registry-url: https://registry.npmjs.org
+
+      # Trusted Publishing (OIDC) requires npm >= 11.5.1 (the release that introduced
+      # it). Node 22.14 bundles npm 10, so upgrade the CLI before any publish.
+      - name: Upgrade npm to a Trusted Publishing-capable version
+        run: npm install -g npm@11.5.1
 
       - run: npm ci
 
@@ -133,11 +143,13 @@ jobs:
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Publishes via npm Trusted Publishing (OIDC) using the `id-token: write`
+      # permission — no NODE_AUTH_TOKEN. Requires the npmjs.com trusted-publisher
+      # config (see header); without it the OIDC exchange fails and the run stops
+      # here. Re-run after configuring; no token fallback by design (#63).
       - name: Publish to npm
         if: steps.npm-status.outputs.already_published != 'true'
         run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Publish GitHub Release
         if: steps.github-release.outputs.draft == 'true'
