@@ -19,7 +19,7 @@ permissions:
 
 jobs:
   command:
-    uses: Prowl-qa/.github/.github/workflows/prowl-review-command.yml@v1
+    uses: YOUR-ORG/.github/.github/workflows/prowl-review-command.yml@v1
     secrets: inherit
     # with:
     #   min-severity: major

@@ -49,7 +49,7 @@ permissions:
   actions: read # PR-resolution fallback reads the completed CI run
 jobs:
   review:
-    uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
+    uses: YOUR-ORG/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
     with:
       check-run: true # default for the reusable auto-review path
