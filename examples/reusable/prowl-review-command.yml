@@ -84,7 +84,6 @@ jobs:
     # `pull_request` (pull_request_review_comment).
     concurrency:
       group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
-      queue: max
       cancel-in-progress: false
     steps:
       # Branded identity (#59): mint an App token when PROWL_APP_ID is set.

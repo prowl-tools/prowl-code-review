@@ -8,12 +8,11 @@ on:
     types: [created]
 
 # Serialize commands with auto reviews for the same PR so review publishing and
-# inline finding dedupe cannot race. Keep command runs queued instead of
-# replacing pending maintainer requests. The PR number comes from `issue`
-# (issue_comment) or `pull_request` (pull_request_review_comment).
+# inline finding dedupe cannot race. Keep in-progress maintainer requests from
+# being cancelled. The PR number comes from `issue` (issue_comment) or
+# `pull_request` (pull_request_review_comment).
 concurrency:
   group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}
-  queue: max
   cancel-in-progress: false
 
 permissions:

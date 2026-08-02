@@ -193,7 +193,6 @@ jobs:
     # PR-number key as the command workflow.
     concurrency:
       group: prowl-review-${{ needs.resolve.outputs.pr_number }}
-      queue: max
       cancel-in-progress: false
     steps:
       # Branded identity (#59): mint an App token when PROWL_APP_ID is set, so
