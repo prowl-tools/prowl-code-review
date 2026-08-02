@@ -367,7 +367,7 @@ describe("reusable org workflows (#37)", () => {
   it.each(CALLERS)("%s invokes the org workflow with inherited secrets in a few lines", (name) => {
     const doc = parseWorkflow(name) as { jobs: Record<string, { uses?: string; secrets?: unknown }> };
     const job = Object.values(doc.jobs)[0];
-    expect(job.uses).toMatch(/^Prowl-qa\/\.github\/\.github\/workflows\/.+@v1$/);
+    expect(job.uses).toMatch(/^YOUR-ORG\/\.github\/\.github\/workflows\/.+@v1$/);
     expect(job.secrets).toBe("inherit");
   });
 
