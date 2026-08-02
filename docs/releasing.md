@@ -5,31 +5,37 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 
 ## Prerequisites (one-time)
 
-- Until backlog #63 removes token auth, an npm **granular access token** with publish
-  rights to `prowl-review`, stored as the `NPM_TOKEN` repository secret (Settings →
-  Secrets and variables → Actions). The token belongs to the npm account that owns
-  the `prowl-review` package; the current token **expires 2026-10-12**. Prioritize
-  migrating to **npm Trusted Publishing** (OIDC, no stored token) before expiry. If an
-  urgent release cannot wait for #63 and no alternative that preserves 2FA can meet
-  the release need, rotate only as a temporary fallback: create a granular access
-  token scoped to package publishing for `prowl-review`, enable 2FA bypass for
-  noninteractive CI publishing while npm still permits direct token publishing, set
-  the shortest possible expiry, replace the repository secret, and verify with the
-  next tag-triggered publish. Treat direct token publishing and 2FA bypass as an
-  interim risk accepted only until #63 lands; do not create or document
-  legacy/classic automation tokens.
+- **npm Trusted Publishing (OIDC) — no stored token (#63).** `prowl-review` publishes
+  to npm via **Trusted Publishing**: `.github/workflows/publish.yml` authenticates
+  through GitHub's OIDC (`id-token: write`) and npm mints a short-lived token at
+  publish time — there is no `NPM_TOKEN` secret. This requires a **one-time npmjs.com
+  config**: on the [`prowl-review` package](https://www.npmjs.com/package/prowl-review)
+  → *Settings → Trusted Publishing*, add a **GitHub Actions** trusted publisher for
+  this repository (`prowl-tools/prowl-code-review`) with workflow filename
+  `publish.yml`. The workflow already carries `id-token: write` and pins a
+  Trusted-Publishing-capable toolchain (Node 22.14.0, npm 11.5.1 — OIDC support landed
+  in npm 11.5.1). Until this config exists the `Publish to npm` step fails the run;
+  that is expected and safely re-runnable once the trusted publisher is configured.
+  **There is no token fallback** — removing token dependence is the point of #63.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
-## Trusted Publishing migration (#63)
+### Retiring the legacy npm token (do this after the first OIDC release)
 
-Before removing `NPM_TOKEN`, update `.github/workflows/publish.yml` to run a
-Trusted Publishing-compatible toolchain: Node >=22.14.0 and npm >=11.5.1 (prefer
-the current stable Node line from npm's GitHub Actions example). Then configure
-the `prowl-review` package on npmjs.com with this repository and `publish.yml` as
-the GitHub Actions trusted publisher, keep `id-token: write`, remove
-`NODE_AUTH_TOKEN` and every `secrets.NPM_TOKEN` reference from
-`.github/workflows/publish.yml`, and verify the next tag-triggered release publishes
-through OIDC before deleting the npm token and repository secret.
+The pre-#63 flow authenticated with an npm **granular access token** stored as the
+`NPM_TOKEN` repository secret (expires **2026-10-12**). Once the first tag-triggered
+release publishes through OIDC — verify the version is live and provenance-attested
+(`npm view prowl-review version`) — **delete the npm token and remove the `NPM_TOKEN`
+repository secret** (Settings → Secrets and variables → Actions). No release path uses
+it anymore.
+
+Last-resort fallback (only until the trusted publisher is configured): if an urgent
+release cannot wait for the npmjs.com config and OIDC cannot be used, rotate **only**
+to an npm granular access token scoped to package publishing for `prowl-review`, enable
+2FA bypass for noninteractive CI publishing while npm still permits direct token
+publishing, set the shortest possible expiry, wire it back into the publish step
+temporarily, and verify with the next tag-triggered publish. Treat direct token
+publishing and 2FA bypass as an interim risk; do not create or document legacy/classic
+automation tokens, and remove the secret again once OIDC is confirmed working.
 
 ## Cut a release
 
@@ -48,9 +54,12 @@ through OIDC before deleting the npm token and repository secret.
 4. The **`publish` workflow** runs automatically: it verifies the `vX.Y.Z` tag matches
    `package.json`, builds + lints + tests, verifies the versioned CHANGELOG section,
    prepares a draft GitHub Release from those notes, runs `npm publish --provenance --access
-   public`, and publishes the GitHub Release after npm succeeds.
+   public` via **Trusted Publishing (OIDC)** — no npm token — and publishes the GitHub
+   Release after npm succeeds.
    - The version guard fails the run if the tag and `package.json` disagree, so a
      mismatched tag never publishes.
+   - If the npmjs.com trusted publisher is not yet configured (see Prerequisites), the
+     publish step fails; add the config and re-run the workflow — nothing else is burned.
 5. **Verify the publish completed before moving `v1`.** Do not advance the floating
    tag until the tag-triggered `publish` workflow succeeded and the GitHub Release
    is published:
