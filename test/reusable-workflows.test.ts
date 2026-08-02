@@ -89,7 +89,6 @@ const stepSchema = z
 const concurrencySchema = z
   .object({
     group: z.string(),
-    queue: z.enum(["single", "max"]).optional(),
     "cancel-in-progress": expressionOrLiteralSchema.optional()
   })
   .strict();
@@ -406,7 +405,6 @@ describe("reusable org workflows (#37)", () => {
     expect(doc.permissions).toEqual({ contents: "read" });
     expect(doc.concurrency).toMatchObject({
       group: "prowl-review-${{ github.event.pull_request.number }}",
-      queue: "max",
       "cancel-in-progress": false
     });
     expect(normalizeExpression(doc.jobs.review.if ?? "")).toBe(
@@ -546,7 +544,6 @@ describe("single branded checks row (#61)", () => {
     expect(doc.jobs.review.needs).toBe("resolve");
     expect(doc.jobs.review.concurrency).toMatchObject({
       group: "prowl-review-${{ needs.resolve.outputs.pr_number }}",
-      queue: "max",
       "cancel-in-progress": false
     });
   });

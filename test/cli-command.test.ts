@@ -816,7 +816,7 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain(
       "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
     );
-    expect(workflow).toContain("queue: max");
+    expect(workflow).not.toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
     // Triggers on both top-level and inline PR comments (#27).
     expect(workflow).toContain("issue_comment:");
@@ -825,7 +825,7 @@ describe("command workflow metadata", () => {
     // the same PR number as this command workflow so publish/dedupe serializes.
     expect(reviewWorkflow).toContain("needs: resolve");
     expect(reviewWorkflow).toContain("group: prowl-review-${{ needs.resolve.outputs.pr_number }}");
-    expect(reviewWorkflow).toContain("queue: max");
+    expect(reviewWorkflow).not.toContain("queue: max");
     expect(reviewWorkflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");

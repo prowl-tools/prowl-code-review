@@ -130,7 +130,6 @@ jobs:
     # the same PR-number key as the command workflow.
     concurrency:
       group: prowl-review-${{ needs.resolve.outputs.pr_number }}
-      queue: max
       cancel-in-progress: false
     env:
       PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
