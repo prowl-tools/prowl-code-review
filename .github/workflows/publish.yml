@@ -2,9 +2,16 @@ name: publish
 
 # Tag-triggered release (#42): on a `vX.Y.Z` tag, build + lint + test, prepare
 # a draft GitHub Release from the matching CHANGELOG section, publish to npm
-# with provenance, then publish the GitHub Release.
-# Token fallback requires an `NPM_TOKEN` repository secret (an npm granular access
-# token) until backlog #63 migrates publishing to npm Trusted Publishing.
+# with provenance via npm Trusted Publishing (OIDC), then publish the GitHub Release.
+#
+# Auth is npm Trusted Publishing (#63): no stored `NPM_TOKEN`. PREREQUISITE - a
+# one-time npmjs.com config: the `prowl-review` package must list this repository
+# and `publish.yml` as its GitHub Actions trusted publisher (npmjs.com -> package ->
+# Settings -> Trusted Publishing) with the allowed action `npm publish` selected.
+# Selecting only `npm stage publish` does not authorize this workflow's direct
+# `npm publish` command. Until that config exists the `npm publish` step fails the
+# run (safely re-runnable once configured). There is deliberately NO token fallback
+# - removing token dependence is the point of #63.
 on:
   push:
     tags:
@@ -33,11 +40,25 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Use Node.js 22.13
+      - name: Use Node.js 22.14
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: "22.13.0"
-          registry-url: https://registry.npmjs.org
+          node-version: "22.14.0"
+          package-manager-cache: false
+
+      # npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum
+      # compatible version. Node 22.14 bundles npm 10, so upgrade before publishing.
+      - name: Ensure npm is Trusted Publishing-capable
+        env:
+          MIN_NPM_VERSION: 11.5.1
+        run: |
+          current_npm="$(npm --version)"
+          if node scripts/verify-npm-version.mjs --quiet "${current_npm}" "${MIN_NPM_VERSION}"; then
+            echo "npm ${current_npm} already satisfies Trusted Publishing minimum ${MIN_NPM_VERSION}."
+          else
+            npm install -g --ignore-scripts --registry https://registry.npmjs.org "npm@${MIN_NPM_VERSION}"
+            node scripts/verify-npm-version.mjs "$(npm --version)" "${MIN_NPM_VERSION}"
+          fi
 
       - run: npm ci
 
@@ -127,17 +148,45 @@ jobs:
             echo "::error::package.json must define a package name." >&2
             exit 1
           fi
-          if npm view "${pkg_name}@${RELEASE_VERSION}" version >/dev/null 2>&1; then
+          if npm view "${pkg_name}@${RELEASE_VERSION}" version --registry https://registry.npmjs.org >/dev/null 2>&1; then
             echo "already_published=true" >> "$GITHUB_OUTPUT"
           else
             echo "already_published=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Validate npm Trusted Publishing prerequisites
+        if: steps.npm-status.outputs.already_published != 'true'
+        run: |
+          if [ -n "${NODE_AUTH_TOKEN:-}" ]; then
+            echo "::error::NODE_AUTH_TOKEN must not be set for Trusted Publishing releases." >&2
+            exit 1
+          fi
+          if [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ]; then
+            echo "::error::GitHub OIDC request environment is unavailable; ensure id-token: write is set on the publish job." >&2
+            exit 1
+          fi
+
+      # Publishes via npm Trusted Publishing (OIDC) using the `id-token: write`
+      # permission - no NODE_AUTH_TOKEN. Requires the npmjs.com trusted-publisher
+      # config (see header); without it the OIDC exchange fails and the run stops
+      # here. Re-run after configuring; no token fallback by design (#63).
       - name: Publish to npm
         if: steps.npm-status.outputs.already_published != 'true'
-        run: npm publish --provenance --access public
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          publish_log="$(mktemp)"
+          trap 'rm -f "${publish_log}"' EXIT
+          set +e
+          npm publish --provenance --access public --registry https://registry.npmjs.org 2>&1 | tee "${publish_log}"
+          publish_status="${PIPESTATUS[0]}"
+          set -e
+          if [ "${publish_status}" -ne 0 ]; then
+            if grep -Eiq '(auth|oidc|token|trusted[ -]publisher|trusted publishing|E401|ENEEDAUTH|EOTP)' "${publish_log}"; then
+              echo "::error::npm publish failed with an authentication/OIDC error. Confirm the npmjs.com trusted publisher for prowl-review is configured for repo prowl-tools/prowl-code-review, workflow publish.yml, and allowed action npm publish." >&2
+            else
+              echo "::error::npm publish failed; see npm output above." >&2
+            fi
+            exit "${publish_status}"
+          fi
 
       - name: Publish GitHub Release
         if: steps.github-release.outputs.draft == 'true'
