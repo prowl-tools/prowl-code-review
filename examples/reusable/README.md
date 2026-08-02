@@ -31,7 +31,8 @@ In each repo to review, add the tiny callers:
 | `.github/workflows/prowl-review-command.yml` | [`caller-prowl-review-command.yml`](caller-prowl-review-command.yml) |
 
 Each caller just declares the trigger + token permissions and points at the org
-workflow with `secrets: inherit`:
+workflow with `secrets: inherit`. Replace `YOUR-ORG` with the organization that
+owns the `.github` repo before copying the snippets:
 
 ```yaml
 name: prowl-review
@@ -49,6 +50,7 @@ permissions:
   actions: read # PR-resolution fallback reads the completed CI run
 jobs:
   review:
+    # TODO: replace YOUR-ORG with your GitHub organization before copying.
     uses: YOUR-ORG/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
     with:
