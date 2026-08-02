@@ -4,6 +4,12 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Hosted GitHub App design doc** (`docs/design/hosted-app.md`, backlog #62) — proposed resolutions for the
+  three Phase-2 decisions (key custody via an open-source self-hostable service, API-first retrieval with a
+  later sandbox tier, free/paid boundary that never gates BYOK), plus architecture, isolation/abuse controls,
+  migration path, and a build plan. Status: proposed; #47 stays parked until the doc is approved.
+
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
   `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
