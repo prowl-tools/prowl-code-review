@@ -566,11 +566,13 @@ describe("single branded checks row (#61)", () => {
     // The action only runs once a single PR resolved, and gets its number handed in.
     const reviewSteps = doc.jobs.review.steps;
     const openCheckIndex = reviewSteps.findIndex((step) => step.id === "open-check");
+    const appTokenIndex = reviewSteps.findIndex((step) => step.id === "app-token");
     const firstCheckoutIndex = reviewSteps.findIndex((step) => String(step.name ?? "").startsWith("Checkout"));
-    expect(openCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(openCheckIndex).toBe(0);
+    expect(appTokenIndex).toBeGreaterThan(openCheckIndex);
     expect(openCheckIndex).toBeLessThan(firstCheckoutIndex);
     const openCheck = reviewSteps[openCheckIndex] as { env: Record<string, unknown>; run: string };
-    expect(openCheck.env.GH_TOKEN).toBe("${{ steps.app-token.outputs.token || github.token }}");
+    expect(openCheck.env.GH_TOKEN).toBe("${{ github.token }}");
     expect(openCheck.env.HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
     if (label === "reusable") {
       expect(openCheck.env.CHECK_RUN).toBe("${{ inputs.check-run }}");

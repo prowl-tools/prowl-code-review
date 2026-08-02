@@ -1008,6 +1008,7 @@ async function maybeSubmitSkipCheckRun(
   ref: PullRequestRef,
   input: {
     checkRun?: ProwlReviewConfig["checkRun"];
+    checkRunId?: number;
     dryRun: boolean;
     headSha?: string;
     title: string;
@@ -1026,7 +1027,7 @@ async function maybeSubmitSkipCheckRun(
   };
 
   try {
-    await submitCheckRun(octokit, ref, { headSha: input.headSha, plan });
+    await submitCheckRun(octokit, ref, { headSha: input.headSha, plan, checkRunId: input.checkRunId });
     return plan.conclusion;
   } catch {
     return undefined;
@@ -1512,6 +1513,7 @@ export async function runReviewWithOptions(
   );
   const reviewedHeadSha = resolveReviewedHeadSha();
   const dryRun = resolveDryRun(options);
+  const checkRunId = resolveCheckRunId();
   const checkRun = (): ProwlReviewConfig["checkRun"] => resolveCheckRunOption(config);
 
   let fork = eventFork;
@@ -1532,6 +1534,7 @@ export async function runReviewWithOptions(
     }
     const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
       checkRun: checkRun(),
+      checkRunId,
       dryRun,
       headSha: reviewedHeadSha,
       title: "Fork pull request — review skipped",
@@ -1564,6 +1567,7 @@ export async function runReviewWithOptions(
     if (prior?.paused) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
         checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review paused",
@@ -1598,6 +1602,7 @@ export async function runReviewWithOptions(
     if (config.review?.auto === false) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
         checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Auto-review disabled",
@@ -1619,6 +1624,7 @@ export async function runReviewWithOptions(
     if (config.review?.reviewDrafts !== true && resolveIsDraftEvent() === true) {
       const conclusion = await maybeSubmitSkipCheckRun(octokit, ref, {
         checkRun: checkRun(),
+        checkRunId,
         dryRun,
         headSha: reviewedHeadSha,
         title: "Draft pull request — review skipped",

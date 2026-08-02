@@ -206,6 +206,29 @@ describe("runReviewWithOptions pause gate", () => {
     );
   });
 
+  it("completes the workflow-opened check run when a paused review is skipped", async () => {
+    isolateWorkspace();
+    writeEvent(sameRepoEvent());
+    process.env.PROWL_CHECK_RUN = "true";
+    process.env.PROWL_CHECK_RUN_ID = "4242";
+    process.env.PROWL_REVIEWED_HEAD_SHA = "head-paused";
+    mocks.fetchPriorReviewState.mockResolvedValue({ v: 1, paused: true, postedFindings: [] });
+    vi.spyOn(console, "log").mockImplementation(() => {});
+
+    await runReviewWithOptions({ pr: "7", repo: "prowl-tools/prowl-code-review" }, { respectPause: true });
+
+    expect(mocks.reviewPullRequest).not.toHaveBeenCalled();
+    expect(mocks.submitCheckRun).toHaveBeenCalledWith(
+      expect.anything(),
+      { owner: "prowl-tools", repo: "prowl-code-review", pull_number: 7 },
+      expect.objectContaining({
+        checkRunId: 4242,
+        headSha: "head-paused",
+        plan: expect.objectContaining({ conclusion: "neutral", title: "Auto-review paused" })
+      })
+    );
+  });
+
   it("does not fail the skip when neutral check-run submission fails", async () => {
     isolateWorkspace();
     writeEvent(sameRepoEvent());
