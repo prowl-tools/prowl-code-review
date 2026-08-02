@@ -9,7 +9,8 @@ All notable changes to Prowl Review will be documented in this file.
   `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
   it authenticates to npm through GitHub OIDC (`id-token: write`, already present for provenance) and keeps
   `npm publish --provenance --access public`. The workflow toolchain moves to Node 22.14.0 with an explicit
-  npm upgrade to 11.5.1 (the release that introduced OIDC trusted publishing). Package `engines`, `.nvmrc`,
+  npm upgrade to 11.5.1 (npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum compatible
+  version). Package `engines`, `.nvmrc`,
   and CI are unchanged — a workflow-only bump satisfies the `>=22.13.0 <23 || >=24` range. **Requires a
   one-time npmjs.com config** (the `prowl-review` package's GitHub Actions trusted publisher: this repo +
   `publish.yml`) before the next release; until then the publish step fails loudly and re-runnably, with no
