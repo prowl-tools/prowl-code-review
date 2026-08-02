@@ -26,6 +26,7 @@ import {
   resolveReviewedHeadSha,
   resolveIsDraftEvent,
   resolveReviewOptions,
+  resolveCheckRunId,
   resolveTrustWorkspace,
   resolveUsageLogPath,
   resolveDebugLogPath,
@@ -1221,6 +1222,15 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     ).toEqual({ enabled: false, failOn: "critical" });
   });
 
+  it("resolves the workflow-opened check run id from trusted action env (#61)", () => {
+    expect(resolveCheckRunId({ PROWL_CHECK_RUN_ID: " 12345 " } as NodeJS.ProcessEnv)).toBe(12345);
+    expect(resolveCheckRunId({ PROWL_CHECK_RUN_ID: "0" } as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(resolveCheckRunId({ PROWL_CHECK_RUN_ID: "not-a-number" } as NodeJS.ProcessEnv)).toBeUndefined();
+    expect(
+      resolveReviewOptions({}, {}, { PROWL_CHECK_RUN_ID: "67890" } as NodeJS.ProcessEnv).checkRunId
+    ).toBe(67890);
+  });
+
   it("passes the riskTiering config straight through (#31)", () => {
     expect(resolveReviewOptions({}, {}, env).riskTiering).toBeUndefined(); // → tiering on with built-in thresholds
     const cfg = { riskTiering: { enabled: false } };
@@ -1694,6 +1704,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
     expect(reviewStep?.env?.PROWL_CHECK_RUN).toBe("${{ inputs.check-run }}");
+    expect(reviewStep?.env?.PROWL_CHECK_RUN_ID).toBe("${{ env.PROWL_CHECK_RUN_ID }}");
     expect(reviewStep?.env?.PROWL_ORG_GUIDELINES_WORKSPACE).toBe("${{ inputs.org-guidelines-workspace }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
       "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"

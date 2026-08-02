@@ -910,6 +910,7 @@ type ResolvedReviewOptions = Pick<
   | "rejustifyDisputed"
   | "repoLearnings"
   | "checkRun"
+  | "checkRunId"
   | "approval"
   | "prDescription"
   | "issueValidation"
@@ -932,6 +933,11 @@ function truthyEnv(value: string | undefined): boolean {
 function booleanEnv(value: string | undefined): boolean | undefined {
   const parsed = z.enum(["true", "false"]).safeParse(value?.trim().toLowerCase());
   return parsed.success ? parsed.data === "true" : undefined;
+}
+
+export function resolveCheckRunId(env: NodeJS.ProcessEnv = process.env): number | undefined {
+  const parsed = z.coerce.number().int().positive().safeParse(env.PROWL_CHECK_RUN_ID?.trim());
+  return parsed.success && Number.isSafeInteger(parsed.data) ? parsed.data : undefined;
 }
 
 function resolveCheckRunOption(
@@ -1169,6 +1175,7 @@ export function resolveReviewOptions(
     riskTiering: config.riskTiering,
     // Merge gate (#24); opt-in via config, or trusted Action input for reusable workflow defaults.
     checkRun,
+    checkRunId: resolveCheckRunId(env),
     // Approval rubric + break-glass (#52); opt-in via config.
     approval: config.approval,
     // Auto-generate a PR description when the body is empty (#33); opt-in via config.

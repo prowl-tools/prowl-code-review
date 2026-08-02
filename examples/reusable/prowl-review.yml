@@ -247,6 +247,31 @@ jobs:
           permission-pull-requests: write
           permission-checks: write
 
+      - name: Open Prowl Review check
+        id: open-check
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          CHECK_RUN: ${{ inputs.check-run }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${CHECK_RUN}" != "true" ]; then
+            exit 0
+          fi
+          check_run_id="$(gh api "repos/${GITHUB_REPOSITORY}/check-runs" \
+            --method POST \
+            -f "name=Prowl Review" \
+            -f "head_sha=${HEAD_SHA}" \
+            -f "status=in_progress" \
+            -f "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -f "output[title]=Review in progress" \
+            -f "output[summary]=Prowl Review is preparing to analyze the changes in this pull request." \
+            --jq '.id' 2>/dev/null || true)"
+          if [ -n "${check_run_id}" ] && [ "${check_run_id}" != "null" ]; then
+            echo "check_run_id=${check_run_id}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Checkout PR head (context)
         uses: actions/checkout@v4
         with:
@@ -267,6 +292,7 @@ jobs:
           # these for stale-head detection and same-repo (non-fork) confirmation.
           PROWL_REVIEWED_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
           PROWL_REVIEWED_HEAD_REPOSITORY: ${{ needs.resolve.outputs.head_repo }}
+          PROWL_CHECK_RUN_ID: ${{ steps.open-check.outputs.check_run_id }}
         with:
           # workflow_run carries no pull_request context, so hand the resolved PR
           # number and draft state to the action explicitly (#61).
@@ -290,3 +316,33 @@ jobs:
           org-guidelines-workspace: ${{ inputs.org-guidelines-workspace }}
           # Context retrieval reads the PR checkout (the code under review).
           workspace-path: ${{ github.workspace }}
+
+      - name: Complete unfinished Prowl Review check
+        if: ${{ always() && steps.open-check.outputs.check_run_id != '' }}
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token || github.token }}
+          CHECK_RUN_ID: ${{ steps.open-check.outputs.check_run_id }}
+          JOB_STATUS: ${{ job.status }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          status="$(gh api "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_RUN_ID}" --jq '.status' 2>/dev/null || true)"
+          if [ "${status}" = "completed" ]; then
+            exit 0
+          fi
+
+          title="Review workflow failed"
+          summary="prowl-review could not complete because the GitHub Actions workflow failed before the review finished. Inspect this workflow run for setup, checkout, configuration, or provider errors."
+          if [ "${JOB_STATUS}" = "success" ]; then
+            title="Review did not complete"
+            summary="prowl-review finished without completing the Prowl Review check run. Inspect this workflow run for details."
+          fi
+
+          gh api "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_RUN_ID}" \
+            --method PATCH \
+            -f "status=completed" \
+            -f "conclusion=failure" \
+            -f "completed_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -f "output[title]=${title}" \
+            -f "output[summary]=${summary}" \
+            >/dev/null 2>&1 || true
