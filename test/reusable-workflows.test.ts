@@ -371,7 +371,11 @@ describe("reusable org workflows (#37)", () => {
   it.each(CALLERS)("%s keeps the org workflow placeholder explicit and substitutes to a valid ref", (name) => {
     const doc = parseWorkflow(name) as { jobs: Record<string, { uses?: string; secrets?: unknown }> };
     const job = Object.values(doc.jobs)[0];
-    const uses = job.uses ?? "";
+    const uses = job.uses;
+    expect(typeof uses).toBe("string");
+    if (typeof uses !== "string") {
+      throw new Error(`${name} must define a reusable workflow reference`);
+    }
     expect(uses.startsWith(CALLER_ORG_PLACEHOLDER + "/.github/.github/workflows/")).toBe(true);
     expect(uses.endsWith("@v1")).toBe(true);
     expect(uses).not.toMatch(PRODUCTION_ORG_WORKFLOW_REF);
