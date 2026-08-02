@@ -357,6 +357,22 @@ describe("reusable org workflows (#37)", () => {
     expect(job.secrets).toBe("inherit");
   });
 
+  it("the reusable auto-review caller enables the branded replacement check by default", () => {
+    const caller = parseWorkflow("caller-prowl-review.yml") as {
+      jobs: { review: { with?: Record<string, unknown> } };
+    };
+    const reusable = parseWorkflow("prowl-review.yml") as Record<string, unknown>;
+    const on = triggers(reusable);
+    const call = on.workflow_call as { inputs?: Record<string, { default?: unknown }> };
+    const reviewStep = stepsFor(reusable, "review").find((step) => step.name === "prowl-review") as {
+      with: Record<string, unknown>;
+    };
+
+    expect(caller.jobs.review.with).toMatchObject({ "check-run": true });
+    expect(call.inputs?.["check-run"]?.default).toBe(true);
+    expect(reviewStep.with["check-run"]).toBe("${{ inputs.check-run }}");
+  });
+
   it.each(CALLERS)("%s grants caller token scopes (a reusable workflow can only reduce them)", (name) => {
     const doc = parseWorkflow(name) as { permissions?: Record<string, string> };
     expect(doc.permissions).toMatchObject({ "pull-requests": "write", issues: "write" });

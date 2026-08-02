@@ -51,6 +51,8 @@ jobs:
   review:
     uses: Prowl-qa/.github/.github/workflows/prowl-review.yml@v1
     secrets: inherit
+    with:
+      check-run: true # default for the reusable auto-review path
 ```
 
 ### Single branded checks row (#61)
@@ -75,6 +77,9 @@ Two things this requires:
   the `workflow_run` payload (falling back to a completed-run API lookup), skips fork
   PRs, and hands the PR number and draft state to the action — so the branded check
   run is the only failure surface on the PR.
+- **Leave the branded replacement check enabled.** Because `workflow_run` hides this
+  workflow's Actions row, the reusable auto-review path passes `check-run: true` by
+  default. Set it to `false` only when another required status owns the gate.
 - **Merge the caller to your default branch first.** GitHub only runs
   `workflow_run` workflows when the caller file exists on the repository's default
   branch. Adding it solely on a feature branch is a silent no-op: no workflow
@@ -90,7 +95,7 @@ Two things this requires:
 - **`secrets: inherit`** passes all caller/org secrets through. To be explicit
   instead, map them: `secrets: { PROWL_AI_KEY: ${{ secrets.PROWL_AI_KEY }} }`.
 - **Tunables** ride as `with:` inputs on the caller — `min-severity`,
-  `ai-provider`, `ai-model`, `config-path`, `org-guidelines-path`,
+  `ai-provider`, `ai-model`, `check-run`, `config-path`, `org-guidelines-path`,
   `org-guidelines-workspace`, `runs-on`.
 - **Config & guidelines stay trusted.** The reusable workflows load
   `.prowl-review.yml` and `REVIEW_GUIDELINES.md`/`CLAUDE.md`/`LEARNED_PATTERNS.md`

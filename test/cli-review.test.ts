@@ -1213,6 +1213,12 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveReviewOptions({}, {}, env).checkRun).toBeUndefined();
     const cfg = { checkRun: { enabled: true, failOn: "critical" as const } };
     expect(resolveReviewOptions({}, cfg, env).checkRun).toEqual({ enabled: true, failOn: "critical" });
+    expect(resolveReviewOptions({}, {}, { PROWL_CHECK_RUN: "true" } as NodeJS.ProcessEnv).checkRun).toEqual({
+      enabled: true
+    });
+    expect(
+      resolveReviewOptions({}, cfg, { PROWL_CHECK_RUN: " false " } as NodeJS.ProcessEnv).checkRun
+    ).toEqual({ enabled: false, failOn: "critical" });
   });
 
   it("passes the riskTiering config straight through (#31)", () => {
@@ -1677,6 +1683,7 @@ describe("GitHub Action provider metadata", () => {
     expect(action.inputs?.["ai-provider"]?.default).toBe("");
     expect(action.inputs?.["ai-provider"]?.description).toContain("Leave blank");
     expect(action.inputs?.["config-path"]?.default).toBe("");
+    expect(action.inputs?.["check-run"]?.default).toBe("");
     expect(action.inputs?.["org-guidelines-workspace"]?.default).toBe("");
     expect(action.inputs?.["trust-workspace"]?.description).toContain("fork PR");
     expect(reviewStep?.env?.PROWL_INPUT_AI_KEY).toBe("${{ inputs.ai-key }}");
@@ -1686,6 +1693,7 @@ describe("GitHub Action provider metadata", () => {
     expect(reviewStep?.env?.PROWL_AI_PROVIDER).toBe("${{ inputs.ai-provider }}");
     expect(reviewStep?.env?.PROWL_CONFIG_PATH).toBe("${{ inputs.config-path }}");
     expect(reviewStep?.env?.PROWL_NO_CONFIG).toBe("${{ inputs.config-path == '' }}");
+    expect(reviewStep?.env?.PROWL_CHECK_RUN).toBe("${{ inputs.check-run }}");
     expect(reviewStep?.env?.PROWL_ORG_GUIDELINES_WORKSPACE).toBe("${{ inputs.org-guidelines-workspace }}");
     expect(reviewStep?.env?.PROWL_REVIEWED_HEAD_SHA).toBe(
       "${{ env.PROWL_REVIEWED_HEAD_SHA || github.event.pull_request.head.sha }}"
