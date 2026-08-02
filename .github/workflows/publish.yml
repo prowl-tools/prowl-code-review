@@ -48,12 +48,17 @@ jobs:
 
       # npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum
       # compatible version. Node 22.14 bundles npm 10, so upgrade before publishing.
-      - name: Upgrade npm to a Trusted Publishing-capable version
+      - name: Ensure npm is Trusted Publishing-capable
         env:
           MIN_NPM_VERSION: 11.5.1
         run: |
-          npm install -g --ignore-scripts "npm@${MIN_NPM_VERSION}"
-          node scripts/verify-npm-version.mjs "$(npm --version)" "${MIN_NPM_VERSION}"
+          current_npm="$(npm --version)"
+          if node scripts/verify-npm-version.mjs --quiet "${current_npm}" "${MIN_NPM_VERSION}"; then
+            echo "npm ${current_npm} already satisfies Trusted Publishing minimum ${MIN_NPM_VERSION}."
+          else
+            npm install -g --ignore-scripts "npm@${MIN_NPM_VERSION}"
+            node scripts/verify-npm-version.mjs "$(npm --version)" "${MIN_NPM_VERSION}"
+          fi
 
       - run: npm ci
 
@@ -170,8 +175,10 @@ jobs:
         run: |
           publish_log="$(mktemp)"
           trap 'rm -f "${publish_log}"' EXIT
+          set +e
           npm publish --provenance --access public --registry https://registry.npmjs.org 2>&1 | tee "${publish_log}"
           publish_status="${PIPESTATUS[0]}"
+          set -e
           if [ "${publish_status}" -ne 0 ]; then
             if grep -Eiq '(auth|oidc|token|trusted[ -]publisher|trusted publishing|E401|ENEEDAUTH|EOTP)' "${publish_log}"; then
               echo "::error::npm publish failed with an authentication/OIDC error. Confirm the npmjs.com trusted publisher for prowl-review is configured for repo prowl-tools/prowl-code-review, workflow publish.yml, and allowed action npm publish." >&2
