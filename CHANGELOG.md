@@ -18,8 +18,10 @@ All notable changes to Prowl Review will be documented in this file.
     from that PR, and reapplies the fork + draft gates. Fork skips publish a neutral replacement check before
     exiting so required **Prowl Review** rows do not stay pending; missing/ambiguous matches are skipped.
   - The Action gains a `pr-number` input (forwarded as `--pr`) so the review targets the resolved PR under
-    the context-free `workflow_run` event. The branded check run is now the **only** failure surface on the
-    PR — a review that does not complete closes the run out (neutral "Superseded by a newer commit" / failure
+    the context-free `workflow_run` event. The review workflow opens the branded check immediately after PR
+    resolution, passes its id into the Action, and finalizes setup/checkout/action failures if the Action never
+    reaches the normal close-out path. The branded check run is now the **only** failure surface on the PR —
+    a review that does not complete closes the run out (neutral "Superseded by a newer commit" / failure
     "Review did not complete") rather than surfacing as a red Actions row.
   - **Reusable org templates updated (#37):** `examples/reusable/` (the reusable workflow + its caller) move
     to the same `workflow_run` pattern. **Org users must** point the caller's `workflows:` at their CI

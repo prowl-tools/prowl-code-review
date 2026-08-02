@@ -133,6 +133,7 @@ runs:
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
         PROWL_CHECK_RUN: ${{ inputs.check-run }}
+        PROWL_CHECK_RUN_ID: ${{ env.PROWL_CHECK_RUN_ID }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}
         PROWL_DRY_RUN: ${{ inputs.dry-run }}
         PROWL_DEBUG: ${{ inputs.debug }}

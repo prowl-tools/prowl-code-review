@@ -564,12 +564,44 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).toContain("is_draft=${is_draft}");
     expect(resolve!.run).not.toContain('[ "${is_draft}" = "true" ]');
     // The action only runs once a single PR resolved, and gets its number handed in.
-    const reviewStep = doc.jobs.review.steps.find((step) => (step.name as string | undefined)?.startsWith("prowl-review")) as {
+    const reviewSteps = doc.jobs.review.steps;
+    const openCheckIndex = reviewSteps.findIndex((step) => step.id === "open-check");
+    const firstCheckoutIndex = reviewSteps.findIndex((step) => String(step.name ?? "").startsWith("Checkout"));
+    expect(openCheckIndex).toBeGreaterThanOrEqual(0);
+    expect(openCheckIndex).toBeLessThan(firstCheckoutIndex);
+    const openCheck = reviewSteps[openCheckIndex] as { env: Record<string, unknown>; run: string };
+    expect(openCheck.env.GH_TOKEN).toBe("${{ steps.app-token.outputs.token || github.token }}");
+    expect(openCheck.env.HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
+    if (label === "reusable") {
+      expect(openCheck.env.CHECK_RUN).toBe("${{ inputs.check-run }}");
+      expect(openCheck.run).toContain('[ "${CHECK_RUN}" != "true" ]');
+    } else {
+      expect(openCheck.env.CHECK_RUN).toBeUndefined();
+    }
+    expect(openCheck.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
+    expect(openCheck.run).toContain("status=in_progress");
+    expect(openCheck.run).toContain("check_run_id=");
+
+    const closeCheck = reviewSteps.find((step) => step.id === undefined && step.name === "Complete unfinished Prowl Review check") as {
+      if: string;
+      env: Record<string, unknown>;
+      run: string;
+    };
+    expect(closeCheck.if).toContain("always()");
+    expect(closeCheck.if).toContain("steps.open-check.outputs.check_run_id");
+    expect(closeCheck.env.CHECK_RUN_ID).toBe("${{ steps.open-check.outputs.check_run_id }}");
+    expect(closeCheck.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs/${CHECK_RUN_ID}" --jq');
+    expect(closeCheck.run).toContain('[ "${status}" = "completed" ]');
+    expect(closeCheck.run).toContain("--method PATCH");
+    expect(closeCheck.run).toContain("Review workflow failed");
+
+    const reviewStep = reviewSteps.find((step) => (step.name as string | undefined)?.startsWith("prowl-review")) as {
       env: Record<string, unknown>;
       with: Record<string, unknown>;
     };
     expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
     expect(reviewStep.env.PROWL_REVIEWED_HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
+    expect(reviewStep.env.PROWL_CHECK_RUN_ID).toBe("${{ steps.open-check.outputs.check_run_id }}");
     expect(reviewStep.with["pr-number"]).toBe("${{ needs.resolve.outputs.pr_number }}");
     expect(reviewStep.with["pr-draft"]).toBe("${{ needs.resolve.outputs.is_draft }}");
   });
@@ -755,6 +787,7 @@ esac
     const text = readRepo("action.yml");
     expect(text).toContain("PROWL_INPUT_PR_NUMBER: ${{ inputs.pr-number }}");
     expect(text).toContain("PROWL_REVIEWED_PR_DRAFT: ${{ inputs.pr-draft || env.PROWL_REVIEWED_PR_DRAFT }}");
+    expect(text).toContain("PROWL_CHECK_RUN_ID: ${{ env.PROWL_CHECK_RUN_ID }}");
     expect(text).toContain("pr_args+=(--pr");
   });
 

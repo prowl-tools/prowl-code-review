@@ -820,6 +820,51 @@ ${DELTA_DIFF}`;
       expect(result.checkRunConclusion).toBe("failure");
     });
 
+    it("adopts a workflow-opened live run instead of creating a duplicate", async () => {
+      const startCheckRun = vi.fn(async () => 555);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" },
+        checkRunId: 777
+      });
+
+      expect(startCheckRun).not.toHaveBeenCalled();
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(777);
+      expect(input.plan.conclusion).toBe("failure");
+      expect(result.checkRunConclusion).toBe("failure");
+    });
+
+    it("closes a workflow-opened live run as superseded when the reviewed head is stale before start", async () => {
+      const startCheckRun = vi.fn(async () => 555);
+      const submitCheckRun = vi.fn(async () => {});
+      const deps = { ...makeDeps(), startCheckRun, submitCheckRun };
+      deps.fetchPullRequest = vi.fn(async () => ({ meta: { ...meta, headSha: "newer-head" }, diff: DIFF }));
+
+      const result = await reviewPullRequest(octokit, ref, {
+        config,
+        toolkitRoot: "/repo",
+        deps,
+        checkRun: { enabled: true, failOn: "major" },
+        checkRunId: 888,
+        reviewedHeadSha: "old-head"
+      });
+
+      expect(result.headAdvanced).toBe(true);
+      expect(startCheckRun).not.toHaveBeenCalled();
+      expect(submitCheckRun).toHaveBeenCalledTimes(1);
+      const [, , input] = submitCheckRun.mock.calls[0];
+      expect(input.checkRunId).toBe(888);
+      expect(input.plan.conclusion).toBe("neutral");
+      expect(input.plan.title).toBe("Superseded by a newer commit");
+    });
+
     it("uses completeCheckRun idempotency to skip the neutral safety net after normal live completion", async () => {
       const startCheckRun = vi.fn(async () => 556);
       const submitCheckRun = vi.fn(async () => {});
