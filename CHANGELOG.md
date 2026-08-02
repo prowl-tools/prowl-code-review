@@ -5,6 +5,17 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
+  `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
+  it authenticates to npm through GitHub OIDC (`id-token: write`, already present for provenance) and keeps
+  `npm publish --provenance --access public`. The workflow toolchain moves to Node 22.14.0 with an explicit
+  npm upgrade to 11.5.1 (npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum compatible
+  version). Package `engines`, `.nvmrc`,
+  and CI are unchanged — a workflow-only bump satisfies the `>=22.13.0 <23 || >=24` range. **Requires a
+  one-time npmjs.com config** (the `prowl-review` package's GitHub Actions trusted publisher: this repo +
+  `publish.yml`) before the next release; until then the publish step fails loudly and re-runnably, with no
+  token fallback by design. After the first successful OIDC release, delete the npm token and the `NPM_TOKEN`
+  repository secret. See `docs/releasing.md`.
 - **Single branded checks row (#61).** A PR now shows prowl-review exactly once — the branded **Prowl
   Review** check run — instead of that row *plus* an octocat `prowl-review / review` Actions row. The
   auto-review workflow is now triggered by the **CI workflow completing** (`workflow_run`) rather than by
