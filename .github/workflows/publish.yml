@@ -56,7 +56,7 @@ jobs:
           if node scripts/verify-npm-version.mjs --quiet "${current_npm}" "${MIN_NPM_VERSION}"; then
             echo "npm ${current_npm} already satisfies Trusted Publishing minimum ${MIN_NPM_VERSION}."
           else
-            npm install -g --ignore-scripts "npm@${MIN_NPM_VERSION}"
+            npm install -g --ignore-scripts --registry https://registry.npmjs.org "npm@${MIN_NPM_VERSION}"
             node scripts/verify-npm-version.mjs "$(npm --version)" "${MIN_NPM_VERSION}"
           fi
 
