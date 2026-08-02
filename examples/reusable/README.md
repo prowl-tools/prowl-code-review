@@ -73,8 +73,12 @@ Two things this requires:
 - **Point `workflows:` at your CI workflow's `name:`.** The review then starts after
   CI finishes (≈1 min later). The reusable workflow resolves exactly one open PR from
   the `workflow_run` payload (falling back to a completed-run API lookup), skips fork
-  and draft PRs, and hands the PR number to the action — so the branded check run is
-  the only failure surface on the PR.
+  PRs, and hands the PR number and draft state to the action — so the branded check
+  run is the only failure surface on the PR.
+- **Merge the caller to your default branch first.** GitHub only runs
+  `workflow_run` workflows when the caller file exists on the repository's default
+  branch. Adding it solely on a feature branch is a silent no-op: no workflow
+  execution and no error.
 
 ## Notes
 

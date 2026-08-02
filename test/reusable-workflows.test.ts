@@ -175,17 +175,6 @@ function hasCompletePrMetadata(input: { baseSha: string; headSha: string; headRe
   return Object.values(input).every((value) => value !== "" && value !== "null");
 }
 
-// Single branded checks row (#61): a review starts only when CI, triggered by a
-// pull_request, completed successfully. Every other event/conclusion is skipped.
-function shouldStartReviewFromWorkflowRun(input: { event: string; conclusion: string }): boolean {
-  return input.event === "pull_request" && input.conclusion === "success";
-}
-
-// PR resolution (#61): a review starts only with EXACTLY ONE open PR/ref match.
-function resolveSinglePr(matches: readonly number[]): number | undefined {
-  return matches.length === 1 ? matches[0] : undefined;
-}
-
 describe("reusable org workflows (#37)", () => {
   it.each(ALL_WORKFLOWS)("%s is valid GitHub Actions workflow YAML", (name) => {
     expect(() => parseWorkflow(name)).not.toThrow();
@@ -275,14 +264,15 @@ describe("reusable org workflows (#37)", () => {
     const doc = parseWorkflow("prowl-review.yml");
     const text = read("prowl-review.yml");
     // Chained off CI via workflow_run (#61): gate on the triggering event type +
-    // the CI conclusion. Fork/draft gates moved into the PR-resolution step.
-    const review = (doc.jobs as { review: { if: string } }).review;
-    expect(normalizeExpression(review.if)).toBe(
+    // the CI conclusion in the resolver, then review only after PR resolution.
+    const jobs = doc.jobs as { resolve: { if: string }; review: { if: string } };
+    expect(normalizeExpression(jobs.resolve.if)).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
     );
+    expect(jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
     // Base checkout feeds guidelines from the RESOLVED PR; PR checkout feeds context.
-    expect(text).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
-    expect(text).toContain("ref: ${{ steps.pr.outputs.head_sha }}");
+    expect(text).toContain("ref: ${{ needs.resolve.outputs.base_sha }}");
+    expect(text).toContain("ref: ${{ needs.resolve.outputs.head_sha }}");
     expect(text).toContain("guidelines-path: ${{ github.workspace }}/prowl-base");
     // The trusted base SHA is never taken from the PR-controlled event payload.
     expect(text).not.toContain("github.event.pull_request.base.sha");
@@ -496,19 +486,34 @@ describe("single branded checks row (#61)", () => {
   });
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review job gates on the workflow_run event type and CI conclusion", ({ read: readFn }) => {
-    const doc = parseYaml(readFn()) as { jobs: { review: { if: string } } };
+    const doc = parseYaml(readFn()) as { jobs: { resolve: { if: string }; review: { if: string; needs: string } } };
     // Skip push-triggered CI completions; start only on a green pull_request CI run.
-    expect(normalizeExpression(doc.jobs.review.if)).toBe(
+    expect(normalizeExpression(doc.jobs.resolve.if)).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
     );
+    expect(doc.jobs.review.needs).toBe("resolve");
+    expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
   });
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review resolves exactly one open PR before reviewing", ({ read: readFn }) => {
     const text = readFn();
-    const doc = parseYaml(text) as { jobs: { review: { steps: Array<Record<string, unknown>> } } };
-    const steps = doc.jobs.review.steps;
+    const doc = parseYaml(text) as {
+      jobs: {
+        resolve: { outputs: Record<string, unknown>; steps: Array<Record<string, unknown>> };
+        review: { if: string; steps: Array<Record<string, unknown>> };
+      };
+    };
+    const steps = doc.jobs.resolve.steps;
     const resolve = steps.find((step) => step.id === "pr") as { run: string } | undefined;
     expect(resolve).toBeDefined();
+    expect(doc.jobs.resolve.outputs).toMatchObject({
+      resolved: "${{ steps.pr.outputs.resolved }}",
+      pr_number: "${{ steps.pr.outputs.pr_number }}",
+      base_sha: "${{ steps.pr.outputs.base_sha }}",
+      head_sha: "${{ steps.pr.outputs.head_sha }}",
+      head_repo: "${{ steps.pr.outputs.head_repo }}",
+      is_draft: "${{ steps.pr.outputs.is_draft }}"
+    });
     // Prefer the payload's pull_requests, fall back to a completed-run API lookup.
     expect(resolve!.run).toContain("jq -r '.[]?.number // empty'");
     expect(resolve!.run).toContain('gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}"');
@@ -516,61 +521,53 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).toContain('[ "${count}" -ne 1 ]');
     expect(resolve!.run).toContain("resolved=false");
     expect(resolve!.run).toContain("resolved=true");
-    // Re-derive trusted base/head + reapply fork/draft gates from the resolved PR.
+    // Re-derive trusted base/head and reject if the live head moved after CI.
     expect(resolve!.run).toContain("[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv");
+    expect(resolve!.run).toContain('[ "${head_sha}" != "${HEAD_SHA}" ]');
+    expect(resolve!.run).toContain("head moved from CI head");
+    // Forks are rejected before secrets; drafts are passed to the action's config-aware policy.
     expect(resolve!.run).toContain('[ "${head_repo}" != "${GITHUB_REPOSITORY}" ]');
-    expect(resolve!.run).toContain('[ "${is_draft}" = "true" ]');
+    expect(resolve!.run).toContain("is_draft=${is_draft}");
+    expect(resolve!.run).not.toContain('[ "${is_draft}" = "true" ]');
     // The action only runs once a single PR resolved, and gets its number handed in.
-    const reviewStep = steps.find((step) => (step.name as string | undefined)?.startsWith("prowl-review")) as {
-      if: string;
+    const reviewStep = doc.jobs.review.steps.find((step) => (step.name as string | undefined)?.startsWith("prowl-review")) as {
+      env: Record<string, unknown>;
       with: Record<string, unknown>;
     };
-    expect(reviewStep.if).toContain("steps.pr.outputs.resolved == 'true'");
-    expect(reviewStep.with["pr-number"]).toBe("${{ steps.pr.outputs.pr_number }}");
+    expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
+    expect(reviewStep.env.PROWL_REVIEWED_HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
+    expect(reviewStep.with["pr-number"]).toBe("${{ needs.resolve.outputs.pr_number }}");
+    expect(reviewStep.with["pr-draft"]).toBe("${{ needs.resolve.outputs.is_draft }}");
   });
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review keys concurrency off the resolved PR number", ({ read: readFn }) => {
     const text = readFn();
-    expect(text).toContain(
-      "group: prowl-review-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}"
-    );
-  });
-
-  it.each([
-    ["pull_request CI success", { event: "pull_request", conclusion: "success" }, true],
-    ["push CI success", { event: "push", conclusion: "success" }, false],
-    ["pull_request CI failure", { event: "pull_request", conclusion: "failure" }, false],
-    ["pull_request CI cancelled", { event: "pull_request", conclusion: "cancelled" }, false],
-    ["pull_request CI timed_out", { event: "pull_request", conclusion: "timed_out" }, false],
-    ["pull_request CI skipped", { event: "pull_request", conclusion: "skipped" }, false],
-    ["pull_request CI action_required", { event: "pull_request", conclusion: "action_required" }, false],
-    ["pull_request CI neutral", { event: "pull_request", conclusion: "neutral" }, false]
-  ])("the workflow_run start gate handles %s", (_name, input, expected) => {
-    expect(shouldStartReviewFromWorkflowRun(input)).toBe(expected);
-  });
-
-  it.each([
-    ["single open match", [42], 42],
-    ["no match", [], undefined],
-    ["ambiguous match", [42, 43], undefined]
-  ])("the single-PR resolution gate handles %s", (_name, matches, expected) => {
-    expect(resolveSinglePr(matches)).toBe(expected);
+    const doc = parseYaml(text) as { jobs: { review: { needs: string; concurrency: Record<string, unknown> } } };
+    expect(doc.jobs.review.needs).toBe("resolve");
+    expect(doc.jobs.review.concurrency).toMatchObject({
+      group: "prowl-review-${{ needs.resolve.outputs.pr_number }}",
+      queue: "max",
+      "cancel-in-progress": false
+    });
   });
 
   it("the action declares pr-number and forwards it as --pr", () => {
     const action = parseYaml(readRepo("action.yml")) as { inputs: Record<string, unknown> };
     // The workflow_run PR handoff input the availability gate greps for (#61).
     expect(action.inputs).toHaveProperty("pr-number");
+    expect(action.inputs).toHaveProperty("pr-draft");
     const text = readRepo("action.yml");
     expect(text).toContain("PROWL_INPUT_PR_NUMBER: ${{ inputs.pr-number }}");
+    expect(text).toContain("PROWL_REVIEWED_PR_DRAFT: ${{ inputs.pr-draft || env.PROWL_REVIEWED_PR_DRAFT }}");
     expect(text).toContain("pr_args+=(--pr");
   });
 
   it("the dogfood availability gate self-bootstraps on the workflow_run handoff", () => {
     const text = readRepo(".github/workflows/prowl-review.yml");
-    // Won't run an old base action that lacks the pr-number handoff (#61) or the
-    // ensemble keys (#53) — it self-bootstraps once this PR merges to the base.
+    // Won't run an old base action that lacks the workflow_run handoff (#61) or
+    // the ensemble keys (#53) — it self-bootstraps once this PR merges to the base.
     expect(text).toContain("grep -q 'pr-number' \"${action_file}\"");
+    expect(text).toContain("grep -q 'pr-draft' \"${action_file}\"");
     expect(text).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
     expect(text).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
   });

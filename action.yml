@@ -81,6 +81,10 @@ inputs:
     description: "Explicit pull request number to review. Required when the workflow is triggered by `workflow_run` (#61) — that event carries no pull_request context, so the number must be resolved in the workflow and handed in. Leave empty to resolve from the GitHub event (pull_request triggers)."
     required: false
     default: ""
+  pr-draft:
+    description: "Explicit pull request draft state for `workflow_run` review runs. Leave empty to resolve from the GitHub event (pull_request triggers)."
+    required: false
+    default: ""
 
 outputs:
   findings:
@@ -121,6 +125,7 @@ runs:
         # Explicit PR number for `workflow_run` review runs (#61); forwarded as --pr
         # only when set, so pull_request-triggered runs still resolve from the event.
         PROWL_INPUT_PR_NUMBER: ${{ inputs.pr-number }}
+        PROWL_REVIEWED_PR_DRAFT: ${{ inputs.pr-draft || env.PROWL_REVIEWED_PR_DRAFT }}
         PROWL_CONFIG_PATH: ${{ inputs.config-path }}
         PROWL_NO_CONFIG: ${{ inputs.config-path == '' }}
         PROWL_MIN_SEVERITY: ${{ inputs.min-severity }}

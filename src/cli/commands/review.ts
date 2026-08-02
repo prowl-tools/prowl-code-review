@@ -853,11 +853,18 @@ export function resolveReviewedHeadSha(env: NodeJS.ProcessEnv = process.env): st
 }
 
 /**
- * Resolve whether the PR under review is a draft, from the GitHub event payload
- * (#28). Returns undefined when there's no event (manual/local runs) so the
- * caller treats "unknown" as not-a-draft and reviews normally.
+ * Resolve whether the PR under review is a draft, from an explicit workflow_run
+ * handoff or the GitHub event payload (#28, #61). Returns undefined when there's
+ * no signal (manual/local runs) so the caller treats "unknown" as not-a-draft.
  */
 export function resolveIsDraftEvent(env: NodeJS.ProcessEnv = process.env): boolean | undefined {
+  const explicit = env.PROWL_REVIEWED_PR_DRAFT?.trim().toLowerCase();
+  if (explicit === "true") {
+    return true;
+  }
+  if (explicit === "false") {
+    return false;
+  }
   return readGitHubEventPayload(env)?.pull_request?.draft;
 }
 

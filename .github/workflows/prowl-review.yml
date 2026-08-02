@@ -11,15 +11,6 @@ on:
     workflows: [CI]
     types: [completed]
 
-# Serialize auto reviews with @prowl-review commands for the same PR so pushes do
-# not cancel command side effects; the action's stale-head checks prevent outdated
-# publishes. Keyed by the resolved PR number the CI run carries (matching the
-# command workflow's group), falling back to the head branch when it is absent.
-concurrency:
-  group: prowl-review-${{ github.event.workflow_run.pull_requests[0].number || github.event.workflow_run.head_branch }}
-  queue: max
-  cancel-in-progress: false
-
 permissions:
   pull-requests: write
   issues: write
@@ -28,7 +19,7 @@ permissions:
   actions: read # read the completed CI run for the PR-resolution fallback
 
 jobs:
-  review:
+  resolve:
     # Only same-repo pull_request CI runs that SUCCEEDED start a review.
     # `workflow_run` does not preserve the original PR action, so gate on the
     # triggering event type first (skip push CI), then require a green CI run.
@@ -39,25 +30,14 @@ jobs:
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
-    env:
-      PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
+    outputs:
+      resolved: ${{ steps.pr.outputs.resolved }}
+      pr_number: ${{ steps.pr.outputs.pr_number }}
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_repo: ${{ steps.pr.outputs.head_repo }}
+      is_draft: ${{ steps.pr.outputs.is_draft }}
     steps:
-      # Branded identity (#59): mint an App installation token when PROWL_APP_ID
-      # is set so the review posts as prowl-review[bot] with the App avatar.
-      # The env flag is only a boolean; the private key is only handed to the
-      # token action. Falls back to github-actions[bot].
-      - name: Mint prowl-review app token
-        id: app-token
-        if: env.PROWL_APP_CONFIGURED == 'true'
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
-        with:
-          app-id: ${{ secrets.PROWL_APP_ID }}
-          private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
-          permission-contents: read
-          permission-issues: write
-          permission-pull-requests: write
-          permission-checks: write
-
       - name: Resolve PR from the CI run
         id: pr
         env:
@@ -116,17 +96,18 @@ jobs:
             echo "Skipping: incomplete PR metadata for #${pr_number}."
             exit 0
           fi
+          if [ "${head_sha}" != "${HEAD_SHA}" ]; then
+            echo "resolved=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping: PR #${pr_number} head moved from CI head ${HEAD_SHA} to ${head_sha}."
+            exit 0
+          fi
 
-          # Fork + draft gates (the same policy the pull_request trigger enforced):
-          # forks never receive provider secrets; drafts wait until marked ready.
+          # Fork gate: forks never receive provider secrets. Draft handling is
+          # deferred to the action so trusted `review.reviewDrafts` config and the
+          # neutral skip check run still apply.
           if [ "${head_repo}" != "${GITHUB_REPOSITORY}" ]; then
             echo "resolved=false" >> "$GITHUB_OUTPUT"
             echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
-            exit 0
-          fi
-          if [ "${is_draft}" = "true" ]; then
-            echo "resolved=false" >> "$GITHUB_OUTPUT"
-            echo "Skipping draft PR #${pr_number}; mark it ready for review to run."
             exit 0
           fi
 
@@ -136,25 +117,55 @@ jobs:
             echo "base_sha=${base_sha}"
             echo "head_sha=${head_sha}"
             echo "head_repo=${head_repo}"
+            echo "is_draft=${is_draft}"
           } >> "$GITHUB_OUTPUT"
 
+  review:
+    needs: resolve
+    if: needs.resolve.outputs.resolved == 'true'
+    runs-on: ubuntu-latest
+    # Serialize auto reviews with @prowl-review commands for the same PR so pushes
+    # do not cancel command side effects; the action's stale-head checks prevent
+    # outdated publishes. The resolve job runs first so fallback-resolved PRs use
+    # the same PR-number key as the command workflow.
+    concurrency:
+      group: prowl-review-${{ needs.resolve.outputs.pr_number }}
+      queue: max
+      cancel-in-progress: false
+    env:
+      PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
+    steps:
+      # Branded identity (#59): mint an App installation token when PROWL_APP_ID
+      # is set so the review posts as prowl-review[bot] with the App avatar.
+      # The env flag is only a boolean; the private key is only handed to the
+      # token action. Falls back to github-actions[bot].
+      - name: Mint prowl-review app token
+        id: app-token
+        if: env.PROWL_APP_CONFIGURED == 'true'
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1
+        with:
+          app-id: ${{ secrets.PROWL_APP_ID }}
+          private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+          permission-contents: read
+          permission-issues: write
+          permission-pull-requests: write
+          permission-checks: write
+
       - name: Checkout trusted base (config + guidelines)
-        if: steps.pr.outputs.resolved == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.pr.outputs.base_sha }}
+          ref: ${{ needs.resolve.outputs.base_sha }}
           path: prowl-base
           persist-credentials: false
 
       - name: Check trusted action availability
         id: trusted-action
-        if: steps.pr.outputs.resolved == 'true'
         shell: bash
         run: |
           # Require the base action to support the per-provider ensemble keys (#53)
-          # AND the workflow_run PR handoff (#61, the pr-number input) before running,
-          # so the new trigger never drives an old base action that would ignore the
-          # explicit PR and fail on the empty workflow_run event context.
+          # AND the workflow_run PR handoff (#61, the pr-number + pr-draft inputs)
+          # before running, so the new trigger never drives an old base action that
+          # would ignore the explicit PR or draft state.
           # Self-bootstraps once this PR merges (the new action.yml + config land
           # together on the base branch).
           action_file=""
@@ -167,7 +178,8 @@ jobs:
           if [ -n "${action_file}" ] &&
             grep -q 'ai-key-anthropic' "${action_file}" &&
             grep -q 'ai-key-gemini' "${action_file}" &&
-            grep -q 'pr-number' "${action_file}"; then
+            grep -q 'pr-number' "${action_file}" &&
+            grep -q 'pr-draft' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -175,25 +187,26 @@ jobs:
           fi
 
       - name: Checkout PR head for context
-        if: steps.pr.outputs.resolved == 'true' && steps.trusted-action.outputs.available == 'true'
+        if: steps.trusted-action.outputs.available == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
-          ref: ${{ steps.pr.outputs.head_sha }}
+          ref: ${{ needs.resolve.outputs.head_sha }}
           path: pr-head
           persist-credentials: false
 
       - name: prowl-review
-        if: steps.pr.outputs.resolved == 'true' && steps.trusted-action.outputs.available == 'true'
+        if: steps.trusted-action.outputs.available == 'true'
         uses: ./prowl-base # external repos use: prowl-tools/prowl-code-review@v1
         env:
           # Trusted head identity re-derived from the resolved PR; the action reads
           # these for stale-head detection and same-repo (non-fork) confirmation.
-          PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}
-          PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}
+          PROWL_REVIEWED_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}
+          PROWL_REVIEWED_HEAD_REPOSITORY: ${{ needs.resolve.outputs.head_repo }}
         with:
           # workflow_run carries no pull_request context, so hand the resolved PR
-          # number to the action explicitly (#61).
-          pr-number: ${{ steps.pr.outputs.pr_number }}
+          # number and draft state to the action explicitly (#61).
+          pr-number: ${{ needs.resolve.outputs.pr_number }}
+          pr-draft: ${{ needs.resolve.outputs.is_draft }}
           # Claude + Gemini ensemble (#53); per-provider keys, models pinned in
           # the trusted base-branch config. Provider/model come from config-path,
           # not inputs, so the primary stays Claude.
