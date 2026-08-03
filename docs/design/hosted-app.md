@@ -869,10 +869,12 @@ uses workflow-file detection only as a bootstrap aid: repositories with both Act
 workflows and the hosted App must set the field explicitly, and the App yields with
 an explanatory "delivery owner not configured" status rather than guessing. The App
 owns by fallback only when a fresh trusted-base read proves the owner field is absent
-and no Action or reusable Action workflow is present for that PR head. Workflow file
+and no Prowl Action or reusable Action workflow file exists in the trusted-base tree.
+A present-but-disabled, skipped, broken, renamed, or non-running workflow still
+counts as Action ownership and cannot trigger hosted failover. Workflow file
 detection cannot override an explicit config owner and is re-run from the trusted
-base before claim; repos that want hosted failover must set an explicit owner in
-trusted-base config rather than relying on broken-workflow detection.
+base before claim; repos that want hosted failover must set `delivery.owner: app` in
+trusted-base config rather than relying on workflow failure detection.
 
 Before hosted launch, the Action must learn this field from the same trusted-base
 config it already loads and exit with a neutral "App owns delivery" result before
@@ -936,23 +938,32 @@ commands are honored only when all checks pass:
    UPDATE`, or a compare-and-swap version update; asynchronous invalidation workers
    may enqueue work, but the generation bump itself is synchronous with webhook
    ingestion before ack. The claim transaction reads the current auth generation
-   inside the transaction, requires any prefetched cache generation to equal that row,
-   and writes the claimed command with the row version it actually locked. If a
-   permission-change webhook lands after the prefilter but before claim, the
-   generation bump wins or forces the claim transaction to retry/fail before any
-   command record can be consumed. Claimed command records store the auth generation
-   used for authorization, and the handler re-checks that generation plus performs
+   inside the transaction; any generation from the earlier prefilter cache is treated
+   only as an expected value and never becomes authority. If that expected value
+   differs from the locked row, the transaction rolls back before writing or consuming
+   a command record, records a `stale_prefilter_generation` audit event, and may
+   perform at most one fresh GitHub permission read before retrying under the new
+   generation if the delivery, comment body, and head SHA are still current. It never
+   tolerates a generation mismatch and never claims work under the old cache
+   generation. If a permission-change webhook lands after the prefilter but before
+   claim, the generation bump wins or forces the claim transaction to retry/fail
+   before any command record can be consumed. Claimed command records store the auth
+   generation used for authorization, and the handler re-checks that generation plus performs
    the fresh GitHub permission API check through the same guarded-send pattern
    immediately before each provider or GitHub side effect; a stale generation alone
    can never authorize execution. If a permission-change webhook invalidated the
    cache after the fresh check but before an external call, the guarded send sees the
    generation mismatch, aborts, and no side effect starts. If a permission-change
-   webhook invalidated the cache mid-command, the command is marked
-   `authorization_changed`, no provider/GitHub side effect runs, and the user-visible
-   response asks the sender to re-run the command after permissions settle. There is
-   no automatic retry for provider-backed, state-changing, or privileged commands
-   after authorization invalidation because retrying could execute after a role
-   downgrade without explicit user intent. Operationally, guarded send is one helper:
+   webhook invalidated the cache mid-command, the consumed command record remains
+   consumed and transitions to terminal `authorization_changed` with the old and new
+   auth generations, abort reason, and side-effect reservation state. It is not reset,
+   re-queued, or automatically retried. The normal status/comment/check channel
+   publishes a single user-visible `authorization_changed` response when the App still
+   has permission to publish; otherwise the terminal audit event and installation UI
+   show that the sender must re-run the command after permissions settle. There is no
+   automatic retry for provider-backed, state-changing, or privileged commands after
+   authorization invalidation because retrying could execute after a role downgrade
+   without explicit user intent. Operationally, guarded send is one helper:
    after the fresh GitHub permission API result returns, it opens a serializable
    transaction, locks the installation auth row and command row, confirms the auth
    generation and sender/role/scope still match, consumes any provider-call nonce or
@@ -1003,20 +1014,26 @@ commands are honored only when all checks pass:
    `updated_at` value from a fresh GitHub API read, not a client-derived or
    webhook-trusted clock value, and the body digest covers the full normalized
    comment body plus command parse version and verb, not only the matched command
-   fragment. Edited comments create a distinct consume-once record keyed by that
-   API-read timestamp and digest only after a comment-level execution lock keyed by
-   `{installation, repository, pull_request, comment_id}` is available. The lock
-   intentionally excludes the mutable parsed command verb, PR head SHA, and lifecycle
-   generation so every edit of one comment serializes behind the same comment
-   identity. That lock is held from claim through command terminal state, including
-   provider calls and publication, with its own lease and fencing token. The handler
-   fetches the current GitHub comment again and validates that its `updated_at`
-   value/body digest still matches the claimed delivery immediately before side
-   effects; if it advanced, the in-flight command aborts as superseded and records
-   the current version for later processing. If an edit arrives while the lock is
-   held, the newer edit is durably queued behind the lock and re-authorized after
-   the current command reaches terminal state; it is not dropped through a Retry-After-only
-   webhook response because GitHub will not redeliver it automatically. Delivery-id
+   fragment. Webhook payloads may enqueue edit work but cannot create the canonical
+   consume-once record. Edited comments create a distinct consume-once record keyed by
+   that API-read timestamp and digest only after a comment-level execution lock keyed
+   by `{installation, repository, pull_request, comment_id}` is available. After the
+   lock is acquired, the handler performs the fresh GitHub API read that supplies the
+   authoritative `updated_at` value, full body digest, parsed verb, and head SHA. If
+   the API state no longer matches the queued delivery, the queued version is recorded
+   as superseded without creating a consume-once record, and the latest queued edit is
+   processed behind the same lock. The lock intentionally excludes the mutable parsed
+   command verb, PR head SHA, and lifecycle generation so every edit of one comment
+   serializes behind the same comment identity. That lock is held from claim through
+   command terminal state, including provider calls and publication, with its own
+   lease and fencing token. The handler fetches the current GitHub comment again and
+   validates that its `updated_at` value/body digest still matches the claimed
+   delivery immediately before side effects; if it advanced, the in-flight command
+   aborts as superseded and records the current version for later processing. If an
+   edit arrives while the lock is held, the newer edit is durably queued behind the
+   lock and re-authorized after the current command reaches terminal state; it is not
+   dropped through a Retry-After-only webhook response because GitHub will not
+   redeliver it automatically. Delivery-id
    replay records live for 24 hours, and state-changing/costly commands are
    rate-limited to 5 commands per minute per `{installation, user, pull_request,
    command}` before any provider call. Violations are rejected, audited, and alerted
