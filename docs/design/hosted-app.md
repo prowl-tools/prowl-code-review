@@ -505,17 +505,22 @@ surface.
   user's provider key may do, and they do not apply to self-hosted deployments.
 - **Launch defaults:** start with 1 active review and 10 queued reviews per
   installation, a 60 relevant command-webhook-events/hour token bucket, a separate
-  review-event bucket, a protected authorization-control bucket for permission and
+  review-event bucket, lossless authorization-control ingestion for permission and
   installation invalidation events, a 30-minute job timeout, and dead-letter after 3
   consecutive runner failures for the same job. Operators may tune these globally
   during beta, but every change must remain published and audited.
 - **Limit behavior:** duplicate webhooks coalesce; irrelevant signed comment noise
   is acknowledged as no-op after replay/idempotency recording and is not charged to
-  installation review, command, or authorization-control buckets; concurrency excess
-  queues with a `retry_after`/pending status; abusive webhook bursts are rejected
-  before provider calls with a neutral check or explanatory summary; per-review
-  budget exhaustion ends as **Review incomplete** with approval withheld. No limit
-  silently degrades context or pretends a review completed.
+  installation review, command, or authorization-control processing. Review and
+  command concurrency excess queues with a `retry_after`/pending status; abusive
+  review/command webhook bursts are rejected before provider calls with a neutral
+  check or explanatory summary. Authorization-control deliveries are never
+  burst-dropped: if their processing capacity is exhausted, the receiver persists
+  and coalesces the latest control state, pessimistically bumps the installation auth
+  generation, blocks new job claims and decrypts for the affected scope, and schedules
+  reconciliation before allowing more provider work. Per-review budget exhaustion
+  ends as **Review incomplete** with approval withheld. No limit silently degrades
+  context or pretends a review completed.
 - **Configuration and observability:** default values are globally tunable by
   operators and published in launch docs. Installation admins can view limit hits,
   queued jobs, and incomplete-review reasons in the settings UI. Repeated limit
@@ -607,10 +612,15 @@ append-only audit log.
   relevance classification before charging per-installation buckets: non-PR events,
   comments without an `@prowl-review` mention/command, and other no-op signed noise
   are acknowledged without consuming review, command, or authorization-control
-  quota. Relevant review, command, and permission/installation-control deliveries
-  use separate per-installation buckets so public comment noise cannot starve review
-  starts or cache invalidation; app-wide and source-rate abuse buckets still apply
-  before a job is queued.
+  quota. Relevant review and command deliveries use separate per-installation buckets
+  so public comment noise cannot starve review starts. Permission and
+  installation-control deliveries are persisted into a durable coalescing control
+  log before processing limits are applied; if processing is saturated, the system
+  fails closed by bumping auth generation, cancelling affected leases, blocking new
+  decrypts/job claims, and reconciling installation/repository/permission state from
+  GitHub before reopening the scope. App-wide and source-rate abuse buckets still
+  apply before a review or command job is queued, but they cannot drop signed
+  suspend/delete, installation-repository, or permission-invalidation control events.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
   provisioning and rotation are operator-only, App-wide flows; installation admins
@@ -638,10 +648,10 @@ append-only audit log.
   old-secret rejection after grace despite a matching HMAC. Self-host operators own
   the same App-wide rotation flow for their registered App.
 - **Abuse controls:** per-installation queue depth/concurrency, separate relevant
-  review/command/control webhook buckets after no-op filtering, dead-letter +
-  alerting on repeated failures, and stale-head close-out so a misbehaving repo
-  cannot spin the queue, starve authorization invalidation, or publish outdated
-  reviews.
+  review/command buckets after no-op filtering, lossless durable control-event
+  coalescing with fail-closed reconciliation, dead-letter + alerting on repeated
+  failures, and stale-head close-out so a misbehaving repo cannot spin the queue,
+  starve authorization invalidation, or publish outdated reviews.
 
 **Rationale:** operational state is necessary for reliability, but the same
 privacy line that exists today still holds: durable systems do not become a code,
@@ -860,7 +870,7 @@ The explicit records are:
 | Webhook architecture | Thin open-source webhook service using the shared TypeScript core; Cloudflare Workers + Queues is the reference managed receiver/orchestrator. | Durable idempotency, leased claims, stale-head checks, and fork skips keep instant reviews deterministic. | Queueing before durable idempotency, delivery-id-only dedupe, automatic fork review, and waiting for full checkout infrastructure. | Requires persistence before the queue and user-visible duplicate/superseded/skip states. |
 | Key custody, secret lifecycle, and least privilege | Open-source self-host path plus managed per-installation envelope encryption with KMS/HSM roles, audited grants, revocation, deletion, and explicit live-runner residual risk. | Preserves install-once UX while making Prowl's managed custody boundary verifiable. | Environment-only managed keys, plaintext queue payloads, closed-source hosting, broad PATs, and claiming Node memory erasure solves live compromise. | KMS policy, leak tests, deletion jobs, revocation fencing, incident response, and settings authorization are launch blockers. |
 | Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews, must publish retrieval limits and caveats, and must label or withhold security findings when required context is incomplete. |
-| Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits and separate relevant review/command/control webhook buckets. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, and operator dashboards. |
+| Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits, separate relevant review/command buckets, and lossless control-event reconciliation. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, dropping authorization-control webhooks under burst load, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, durable control-event coalescing, and operator dashboards. |
 | State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing with fixed 10-minute planned rotation grace. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, short-lived runtime inspection, explicit rotation replay tests, and bounded streaming-abort tests. |
 | Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity only after Action-distributed App private keys are revoked at the GitHub App level and verified, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus fresh GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head or sharing a cross-tenant signing key. | A sibling cloud App unless key revocation cannot be verified, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, verified credential-rotation gate, and a settings flow for key configuration. |
 
