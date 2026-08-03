@@ -430,12 +430,17 @@ fixtures before it can be enabled. Build-plan step 5 below is the tracked artifa
 for this gate; approval of this decision record can un-park implementation planning
 but not managed runtime launch. The signed launch record must name the wrapper repo
 path, implementation commit, canonical mock path, fixture corpus version, minimum
-pass criteria, timing/drift thresholds, SBOM and pinned dependency versions, startup
-self-test behavior, failure-mode behavior, and two security reviewers from the
-security-owner quorum. Managed v1 bans provider SDKs, SDK middleware/plugin systems,
-retry/redirect helpers, proxy-agent/global-agent packages, request instrumentation,
-and generic HTTP clients outside the named wrapper on the provider-key path unless a
-future design decision adds them to the same harness and launch record. The initial
+pass criteria, timing/drift thresholds, tested Node versions, GC and CPU-contended
+timing results, buffer-zeroing equivalence evidence, canary-key leakage results after
+`finally`, SBOM and pinned dependency versions, startup self-test behavior,
+failure-mode behavior, and two security reviewers from the security-owner quorum. The
+launch record must state that the decrypt-to-send window is residual-risk mitigation,
+not elimination, and that zero process-memory exposure requires CLI, Action, or
+self-hosting on hardware/runtime isolation the user controls. Managed v1 bans provider
+SDKs, SDK middleware/plugin systems, retry/redirect helpers, proxy-agent/global-agent
+packages, request instrumentation, and generic HTTP clients outside the named wrapper
+on the provider-key path unless a future design decision adds them to the same harness
+and launch record. The initial
 reserved artifact names are `src/hosted/provider-http-client.ts`,
 `test/hosted/provider-http-client.test.ts`,
 `test/fixtures/hosted/provider-mock.ts`, and
@@ -615,7 +620,12 @@ readability and nonblocking behavior on Unix-like hosts, `getentropy()`/platform
 syscall success where exposed, or HSM/entropy-service health and policy status when
 that source backs nonce generation. Runtime nonce generation errors
 must never fall back to Math/random, timestamps, counters, session ids, or weaker
-sources; they return the generic failure envelope and alert. Issuance is
+sources; they return the generic failure envelope and alert. The startup gate and
+continuous health monitor are the entropy authority; per-request key-save handling
+does not rerun entropy self-tests inside the fixed response timing path. If runtime
+nonce generation throws, the request uses the fixed dummy-row/failure envelope, creates
+no usable nonce or key candidate, and an out-of-band health event disables new key-save
+traffic before another nonce can be issued. Issuance is
 rate-limited and capped to one active unexpired
 key-setup nonce per `{installation, repository, sender, comment_id}` plus a small
 per-sender rolling limit; exceeding either cap denies a new link and audits the
@@ -625,9 +635,13 @@ commits to installation id, repository id, sender id, comment id, comment
 settings UI displays the target owner/repo before save and refuses
 cross-origin `Origin`/`Host` mismatches. OAuth `state` and CSRF tokens are signed
 values that commit to the nonce hash or link id, authenticated session id hash,
-sender id, installation id, repository id, and expiry. The settings page serves no
-third-party assets, sends `Referrer-Policy: no-referrer`, `Content-Security-Policy:
-form-action 'self'; frame-ancestors 'none'`, and HSTS, uses a dedicated `Secure`,
+sender id, installation id, repository id, and expiry. The signature is HMAC-SHA256
+or Ed25519 over a canonical payload with a server-side key id and expiry; the browser
+token carries only an opaque state id plus the signature, while the committed fields
+stay server-side and are verified with the stored nonce/session row before render or
+POST. The settings page serves no third-party assets, sends `Referrer-Policy:
+no-referrer`, `Content-Security-Policy: form-action 'self'; frame-ancestors 'none'`,
+and HSTS, uses a dedicated `Secure`,
 `HttpOnly`, `SameSite=Strict` key-setup session cookie, and requires the explicit
 signed CSRF token on every key-save POST. SameSite cookies are defense-in-depth; the
 POST fails unless `Origin`, `Host`, forwarded host/proto, CSRF token, session-binding
@@ -728,6 +742,12 @@ stored-key records and compares only equal-length buffers with `crypto.timingSaf
 or equivalent. Key-match and key-mismatch paths perform the same database reads,
 candidate writes, dummy validation work, response delay, and provider-call decision
 snapshot so timing does not reveal whether a retry supplied the same key.
+Step 3 must deliver the concrete constant-shape validation module, fixture corpus,
+production-bundle timing harness, and launch-record entry before managed key-save
+traffic can be enabled. Runtime startup verifies the module path, build artifact hash,
+fixture corpus hash, and configured timing floor against that launch record; a mismatch
+or missing timing evidence disables new key-save traffic before the settings listener
+accepts provider-key submissions.
 Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, session-race, absent-key, valid-prefix, invalid-prefix, minimum-length,
@@ -827,13 +847,19 @@ path is unmeasured, contains avoidable async gaps, or exceeds the bound. DNS, TL
 provider processing after wrapper handoff are already part of the external request and
 remain residual cross-system exposure; this is not a promise of atomic or
 microsecond-scale cancellation in Node.js. The
-GitHub publication path uses the same guarded-send boundary: the helper locks the
-installation state row and review/publication row, re-reads revocation generation,
-allocates a publication-reservation fencing token, commits, and opens the GitHub API
-request in the same call stack without unrelated awaits. If revocation is observed
-before the request opens, no publication reservation is written; if it is observed
-mid-call, the response is discarded, the reservation is failed, and no retry can
-publish without a fresh guarded-send reservation. The
+GitHub publication path uses the same guarded-send boundary: provider-derived output
+may be held only in runner-local buffers until the helper locks the installation state
+row and review/publication row, re-reads revocation generation, allocates a
+publication-reservation fencing token, commits, materializes the GitHub request body,
+and opens the GitHub API request in the same call stack without unrelated awaits. No
+serialized GitHub request object, retry closure, queue message, or HTTP client task may
+exist before that final guarded publication check succeeds. If revocation is observed
+before the request opens, no publication reservation is written, provider-derived
+buffers are discarded, and no request object is handed to the HTTP client; if it is
+observed mid-call, the response is discarded, the reservation is failed, and no retry
+can publish without a fresh guarded-send reservation. Integration tests must inject a
+revocation between reservation/check and socket open and prove that no GitHub
+publication request is emitted. The
 worker control plane also cancels active provider HTTP streams, sends a graceful
 termination signal to active runner processes after the revocation transaction
 commits, and escalates to a hard kill after a short published deadline; fencing
@@ -952,10 +978,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   queue hops, or cache lookups. Visibility-changing webhooks synchronously bump that
   local generation and abort in-flight guarded searches before send when the bump wins
   the race; a mismatch after response receipt discards the response before cache/use.
-  If the chosen GitHub API path, runtime, or tests cannot keep that handoff within the
-  published bound or prove no private/unknown search request object is sent after a
-  visibility bump visible to the App, public code search remains disabled for managed
-  v1 and required search reports incomplete context.
+  The launch target for the visibility-read-to-search-send handoff is p99 <= 50 ms and
+  max <= 100 ms under production-like load, measured from the final GitHub visibility
+  read to the first search-request byte leaving the process. If the chosen GitHub API
+  path, runtime, or tests cannot keep that handoff within the published bound or prove
+  no private/unknown search request object is sent after a visibility bump visible to
+  the App, public code search remains disabled for managed v1 and required search
+  reports incomplete context. Production telemetry records visibility-change/search
+  races and automatically disables public code search for the affected runner class
+  when the bound drifts or a race reaches the guarded send.
   The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
   before every managed retrieval deploy and in startup smoke tests. It covers
   private repository metadata, private submodules, visibility changes, renamed or
@@ -992,6 +1023,17 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   default and opt-in only to avoid excessive API load. Future retrieval of GitHub
   Advanced Security findings must not expose secret-scanning or custom-pattern
   findings through code search or any externally indexed surface.
+- **External URL fetches:** optional managed grounding may fetch configured
+  org-guidelines URLs, Semgrep registry rules, or OSV.dev data only through a
+  dedicated non-provider fetch client. User-configured guidelines URLs must be HTTPS,
+  must not follow redirects, and must fail if DNS resolution or the final socket target
+  is loopback, link-local, multicast, private RFC1918/unique-local, carrier-grade NAT,
+  metadata-service, or otherwise non-public address space. Semgrep and OSV fetches use
+  strict host allowlists for their published service domains and reject redirects to
+  any other host. The client pins the resolved address for the connection, re-checks
+  after DNS rebinding-sensitive failures, applies the existing 10-second timeout and
+  256 KiB body cap for guidelines, and reports skipped external grounding as incomplete
+  or caveated context according to whether that data was required for the review.
 - **Bounds:** each review has a bounded LRU cache keyed by `{head_sha, tool, path,
   query}` with launch defaults of 128 MiB or 2,000 entries, whichever comes first.
   The runner also starts with a 1,000-request retrieval ceiling, 25 MiB aggregate
@@ -1288,7 +1330,12 @@ append-only audit log.
   before processing resumes. The verifier module is static, has no dynamic code
   generation, and its timing tests run against the production bundle, but this is a
   remote timing mitigation, not a claim against local microarchitectural observation
-  of the receiver process. Only after the full signature loop completes does the
+  of the receiver process. Launch records and operator docs must explicitly state
+  that this mitigates remote branch/timing regressions only; it does not defend
+  against local CPU-cache inference, speculative-execution leakage, power analysis,
+  or an attacker with process or hardware observation of the receiver. Operators on
+  shared or untrusted infrastructure must add isolation outside this Node verifier or
+  keep managed intake disabled. Only after the full signature loop completes does the
   receiver consult the replay store. The replay decision receives the immutable
   match-bit set from that just-completed HMAC loop; replay-store state alone is never
   authentication. Replay-store access uses a fixed prepared read sequence for the
