@@ -4,6 +4,8 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-08-03
+
 ### Added
 - **Hosted GitHub App design doc** (`docs/design/hosted-app.md`, backlog #62) — proposed resolutions for the
   Phase-2 hosted-App decisions: persistent webhook idempotency, managed key custody via an open-source
