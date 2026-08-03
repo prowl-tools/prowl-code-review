@@ -64,9 +64,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   A provider request already sent cannot be recalled; it may consume provider quota,
   reach the provider, continue server-side after the local stream is aborted, and
   expose content to provider-side systems. If revocation happens in flight, the
-  runner must re-check before parsing the provider response or publishing, then
-  discard response bytes without extraction, summary generation, persistence, or
-  GitHub publication. Hosted stores purge key rows, queued jobs, caches, review
+  runner must re-check before parsing the provider response and again immediately
+  before each GitHub publication call, then discard response bytes without
+  extraction, summary generation, persistence, or GitHub publication if revocation
+  is observed. There is no true atomicity across the database and an already-started
+  external GitHub API call. Hosted stores purge key rows, queued jobs, caches, review
   state, and backup key material on the published 30-day schedule. Suspected
   wrapping-key compromise must alert operators within 5 minutes, freeze affected
   managed decrypts within 15 minutes, and keep affected installations suspended
