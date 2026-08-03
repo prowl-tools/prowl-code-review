@@ -50,10 +50,12 @@ If a future emergency ever requires direct token auth, handle credential details
 private maintainer runbooks, use only a scoped granular token with the shortest
 practical expiry, and inject it only through repository or CI secret storage for
 the emergency run. Never log, commit, paste into issues or PRs, expose in CI logs,
-or store the token in repository artifacts. After use, rotate and delete it from
-npm, every repository secret store, and CI/CD systems; verify deletion and confirm
-no workflow logs or artifacts expose it before closing the emergency. Do not add
-token values, expiry dates, or operational timelines to public documentation.
+or store the token in repository artifacts. Do not place it in Git history,
+temporary branches, shell history, environment dumps, editor swap files, or IDE
+caches. After use, rotate and delete it from npm, every repository secret store,
+and CI/CD systems; verify deletion and confirm no workflow logs, log archives, or
+retained artifacts expose it before closing the emergency. Do not add token values,
+expiry dates, or operational timelines to public documentation.
 
 ## Cut a release
 
