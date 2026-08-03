@@ -316,12 +316,19 @@ admin. Organization-owner checks require either GitHub App `Members: read`
 permission on the installation or an OAuth session with `read:org`; hosted org key
 setup fails closed with a reapproval/reauthorization prompt until one of those
 membership-reading authorities is available. The settings service stores the latest
-observed App permission grant version and dynamically re-checks it before every org
-key command and settings save; if the grant is missing or stale, the UI links to the
-GitHub App reapproval flow and does not create or consume a key-save nonce unless
-OAuth `read:org` can prove owner status for that session. `@prowl-review configure
-key` never accepts a raw key in a public comment; it only opens a short-lived,
-single-use settings link after the command authorization in Decision 5 succeeds. The
+observed App permission grant version, computed from GitHub's current installation
+record and permission map, not from an internal remembered approval flag. Before
+every org key command and settings save, the handler reads the current installation
+permissions from GitHub, requires `Members: read` for the same installation id, and
+updates the stored grant version only from that GitHub response. A 403/404, missing
+permission, lower permission value, changed installation id, or read failure fails
+closed as stale and links to GitHub App reapproval. The OAuth `read:org` path
+performs the owner check with the current OAuth session token for that same request;
+no cached App grant can substitute for it. If neither current membership-reading
+authority is available, the command/UI does not create or consume a key-save nonce.
+`@prowl-review configure key` never accepts a raw key in a public comment; it only
+opens a short-lived, single-use settings link after the command authorization in
+Decision 5 succeeds. The
 link is an HTTPS-only App URL protected by HSTS and contains only an opaque nonce
 generated with `crypto.randomBytes`, WebCrypto `getRandomValues`, or an equivalent
 OS-backed CSPRNG. The nonce has at least 128 bits of entropy, is never derived from
@@ -377,9 +384,24 @@ details. "Identical" means the same status code, same header names/order/values,
 same `Content-Length`, same precomputed body bytes, same cookie mutation behavior,
 same redirect behavior, and the same externally observable state-machine transition;
 the provider enum is stored only in internal audit state after the response budget
-has elapsed. The response never re-renders or logs the submitted key, its
-prefix/suffix, length, character classes, or partial provider error details. The
-input field is cleared after every submit attempt.
+has elapsed. The handler computes a per-request millisecond deadline before any
+branch-specific work starts and never releases the response until that deadline is
+reached; early-finishing branches sleep to the deadline, and over-deadline branches
+return the same generic envelope, alert, and do not persist a verified key. Failure
+branches run the same local nonce/session/CSRF/Origin checks, provider-adapter
+selection, key-hash/HMAC comparisons, and dummy validation path with conditional
+assignments instead of early returns; unauthorized or expired-nonce requests use
+dummy credentials and never contact the real provider. Authorized live probes either
+finish behind the same response deadline or leave the key in the generic pending
+state for later guarded validation. Staging timing tests must issue repeated
+`invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
+nonce, and session-race requests and block launch if p95/p99 distributions diverge
+beyond the published bound. The residual timing threat model is statistical leakage
+of a generic save-state transition under runtime/network jitter, never plaintext key
+material, provider error detail, key prefix/length/class, or authorization reason.
+The response never re-renders or logs the submitted key, its prefix/suffix, length,
+character classes, or partial provider error details. The input field is cleared
+after every submit attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -701,17 +723,20 @@ append-only audit log.
   acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
   if the old-secret match has no existing pre-activation replay row, verification
   fails before any replay record is inserted. After signature and replay handling,
-  the receiver performs cheap relevance classification before charging
-  per-installation buckets: non-PR events,
-  comments without an `@prowl-review` mention/command, and other no-op signed noise
-  are acknowledged without consuming review, command, or authorization-control
+  the receiver classifies authorization-control events before no-op filtering:
+  `installation`, `installation_repositories`, `membership`, `member`, `organization`,
+  `team`, `team_add`, `repository`, and any documented permission, suspend, delete,
+  transfer, visibility, SAML/IP, or policy event bypass the non-PR no-op path and are
+  persisted into a durable coalescing control log before processing limits are
+  applied. Only after that control-event check may the receiver acknowledge remaining
+  non-PR events, comments without an `@prowl-review` mention/command, and other
+  signed no-op noise without consuming review, command, or authorization-control
   quota. Relevant review and command deliveries use separate per-installation buckets
-  so public comment noise cannot starve review starts. Permission and
-  installation-control deliveries are persisted into a durable coalescing control
-  log before processing limits are applied; if processing is saturated, the system
-  fails closed by bumping auth generation, cancelling affected leases, blocking new
-  decrypts/job claims, and reconciling installation/repository/permission state from
-  GitHub before reopening the scope. App-wide and source-rate abuse buckets still
+  so public comment noise cannot starve review starts. If control processing is
+  saturated, the system fails closed by bumping auth generation, cancelling affected
+  leases, blocking new decrypts/job claims, and reconciling
+  installation/repository/permission state from GitHub before reopening the scope.
+  App-wide and source-rate abuse buckets still
   apply before a review or command job is queued, but they cannot drop signed
   suspend/delete, installation-repository, or permission-invalidation control events.
   Webhook secrets rotate at least every 90 days or immediately on suspected
