@@ -114,8 +114,14 @@ tests, and drift alerts rather than by a manual runbook alone:
   application database.
 - Runner-decrypt identities may decrypt only through a per-job grant whose
   encryption context/AAD exactly matches installation id, key row id, job id,
-  revocation generation, and fencing token. They cannot list, export, rotate, or
-  re-wrap keys, and each grant expires at job completion or job timeout.
+  provider name, provider-call nonce, revocation generation, and fencing token.
+  They cannot list, export, rotate, or re-wrap keys. Each provider API request or
+  retry requires a fresh decrypt authorization with a monotonic provider-call
+  nonce; the decrypted key is used to construct exactly one outbound provider
+  request and then cleared before any subsequent retry or provider call can start.
+  This adds KMS latency/cost but prevents a normal runner path from reusing one
+  decrypt across multiple calls; it does not protect against a runner already
+  compromised during that authorized call.
 - Rewrap/deletion workers may re-wrap or destroy affected data keys for an
   approved incident/deletion job, but they cannot call providers or GitHub as a
   review runner.
@@ -136,7 +142,9 @@ within 5 minutes; broad or critical wrapping-key compromise freezes all affected
 managed decrypts within 15 minutes. Re-wrap/destruction begins immediately, affected
 installations stay suspended until it completes, and the 4-hour target is a maximum
 restoration objective for scoped events, not a period where compromised grants keep
-working. Queue messages carry installation, repo, PR, head SHA, and key row
+working. These incident timers are post-detection containment for future decrypts
+and stored ciphertext; they do not undo plaintext exposure from a live compromised
+runner. Queue messages carry installation, repo, PR, head SHA, and key row
 identifiers, never plaintext keys or encrypted key blobs.
 
 Plaintext provider keys exist only inside the runner process while constructing and
@@ -179,17 +187,21 @@ caches, persisted state, provider error summaries, process environment snapshots
 or crash-dump locations. These tests verify the operational controls only; they do
 not prove safety against live host/process compromise.
 
-Every provider-call error path catches exceptions before any logging, drops the
+Every provider-call error path, including key decrypt, request construction,
+network timeout, response streaming, malformed provider response, provider 4xx/5xx,
+and local HTTP-library failure, catches exceptions before any logging, drops the
 original exception object from log/audit serialization, and constructs an
-allowlisted error summary from status code, provider error class, retryability, and
-request id only. Provider request/response bodies, headers, stack traces, raw
-URLs, and SDK debug objects are not logged. HTTP-library debug logging is disabled
-in production. Launch-blocking CI and staging tests must include canary provider
-keys and provider mocks that echo those keys in headers, URLs, bodies, and thrown
-errors; the tests fail if canaries appear in logs, thrown errors, audit events,
-provider error summaries, traces, provider request metadata, queue payloads, cache
-entries, or persisted state. The same test suite must verify that decrypting an
-installation key fails after revocation.
+allowlisted sanitized error from status code, provider error class, retryability,
+and request id only. The original error is not re-thrown across the runner boundary.
+Provider request/response bodies, headers, stack traces, raw URLs, and SDK debug
+objects are not logged or retained in client/cache state. HTTP-library debug logging
+is disabled in production. Launch-blocking CI and staging tests must include canary
+provider keys and provider mocks that echo those keys in headers, URLs, bodies,
+timeout errors, malformed responses, and thrown errors; the tests fail if canaries
+appear in logs, thrown errors, audit events, provider error summaries, traces,
+provider request metadata, queue payloads, cache entries, or persisted state. The
+same test suite must verify that decrypting an installation key fails after
+revocation.
 
 Keys are set through a settings UI authorized by explicit GitHub permissions:
 org-owner permission for org installations, repository-admin permission for
@@ -269,12 +281,18 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
-  This is because code search exposes repository content to GitHub's global search
-  index, which has different access-control semantics than fine-grained repository
-  reads. Public-repo search is disabled by default and opt-in only to avoid
-  excessive API load. Future retrieval of GitHub Advanced Security findings must
-  not expose secret-scanning or custom-pattern findings through code search or any
-  externally indexed surface.
+  Search is completely disabled for repositories GitHub reports as private,
+  regardless of submodule structure, visibility inheritance, or user configuration.
+  Private submodules and cross-repo references are not traversed in managed v1;
+  cross-repo context that would require search or broader credentials fails with a
+  clear incomplete-context note. Public-repo search results never populate a cache
+  entry for a different repository namespace, and every cache key includes
+  installation id, repository id, visibility, ref, and retrieval mode. This is
+  because code search is a different security boundary than exact-path repository
+  reads, especially for private access controls. Public-repo search is disabled by
+  default and opt-in only to avoid excessive API load. Future retrieval of GitHub
+  Advanced Security findings must not expose secret-scanning or custom-pattern
+  findings through code search or any externally indexed surface.
 - **Bounds:** each review has a bounded LRU cache keyed by `{head_sha, tool, path,
   query}` with launch defaults of 128 MiB or 2,000 entries, whichever comes first.
   The runner also starts with a 1,000-request retrieval ceiling, 25 MiB aggregate
@@ -423,9 +441,13 @@ append-only audit log.
   may view diagnostics for their installation but cannot rotate or resynchronize the
   shared secret. During planned rotation, the previous secret may verify only
   duplicate redeliveries whose delivery id and payload hash were first accepted
-  before the new secret became active; new delivery ids signed with the previous
-  secret are rejected. After the grace window, old-secret deliveries fail closed.
-  Self-host operators own the same App-wide rotation flow for their registered App.
+  before the new secret became active; those duplicates are never re-enqueued and
+  can only return the existing accepted/duplicate outcome. New delivery ids signed
+  with the previous secret are rejected. Replay records for the previous secret
+  expire at the earlier of 24 hours from first accepted delivery or the configured
+  rotation grace deadline. After the grace window, old-secret deliveries fail closed
+  even if GitHub retries them late. Self-host operators own the same App-wide
+  rotation flow for their registered App.
 - **Abuse controls:** per-installation queue depth/concurrency, webhook token
   bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
   a misbehaving repo cannot spin the queue or publish outdated reviews.
@@ -509,12 +531,16 @@ commands are honored only when all checks pass:
    command verb and lifecycle generation, and marks it consumed in the same
    transaction. Already-consumed records are rejected even when the delivery id,
    comment id, body digest, and head SHA match. Edited comments create a distinct
-   consume-once record keyed by edited timestamp and body digest, so an edit can be
-   processed once without reopening the original delivery. Delivery-id replay
-   records live for 24 hours, and state-changing/costly commands are rate-limited to
-   5 commands per minute per `{installation, user, pull_request, command}` before
-   any provider call. Violations are rejected, audited, and alerted on repeated
-   abuse.
+   consume-once record keyed by edited timestamp and body digest only after a
+   comment-level lock keyed by `{installation, comment_id, command, head_sha,
+   lifecycle_generation}` is available. If an edit arrives while a prior delivery
+   for the same lock is in flight, the older delivery re-checks the latest comment
+   digest before side effects and aborts if superseded; the newer edit is queued
+   behind the lock or rejected with a retry-after response, never executed
+   concurrently. Delivery-id replay records live for 24 hours, and
+   state-changing/costly commands are rate-limited to 5 commands per minute per
+   `{installation, user, pull_request, command}` before any provider call.
+   Violations are rejected, audited, and alerted on repeated abuse.
 4. The command is in the explicit current allowlist: `review`, `full review`,
    `break glass`, `ignore`, `resolve`, per-PR `configure`, `pause`, `resume`,
    `docstrings`, `tests`, `help`, chat replies, and `configure key` link creation.

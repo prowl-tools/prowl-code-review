@@ -64,9 +64,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   state, and backup key material on the published 30-day schedule. Suspected
   wrapping-key compromise must alert operators within 5 minutes, freeze affected
   managed decrypts within 15 minutes, and keep affected installations suspended
-  until data keys are re-wrapped or destroyed. The hosted App is not approved to
-  launch until those controls exist and leak tests confirm decryption fails after
-  revocation.
+  until data keys are re-wrapped or destroyed. Those incident timers are
+  post-detection containment for future decrypts and stored ciphertext; they cannot
+  undo plaintext exposure from a live compromised runner or provider request that
+  was already sent. The hosted App is not approved to launch until those controls
+  exist and leak tests confirm decryption fails after revocation.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
