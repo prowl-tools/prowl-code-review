@@ -177,16 +177,16 @@ compromised settings process during key save or a compromised runner process whi
 decrypting/sending the provider request exposes the plaintext key in memory; no
 Node/V8 mitigation can prevent that. The managed v1 boundary is therefore not
 suitable for users who require protection against live process compromise,
-host-level memory disclosure, malicious platform operators, CPU side channels, or a
-provider endpoint compromise. Post-detection containment and revocation reduce only
-future exposure; they cannot undo plaintext disclosure that occurred before
-detection. The managed service is therefore incompatible with a
-zero-trust-of-Prowl-infrastructure threat model. Those users should self-host the
-Docker runner and settings service on hardware/runtime they control; a native secret
-helper or sidecar vault with memory-locking is required before Prowl can claim
-stronger live-custody protection for the managed service. The controls below reduce
-accidental persistence, ordinary crash dumps, logs, traces, and reuse after a job
-exits.
+host-level memory disclosure, malicious platform operators, malicious runtime
+dependencies in the settings/runner path, CPU side channels, or a provider endpoint
+compromise. Post-detection containment and revocation reduce only future exposure;
+they cannot undo plaintext disclosure that occurred before detection. The managed
+service is therefore incompatible with a zero-trust-of-Prowl-infrastructure threat
+model. Those users should self-host the Docker runner and settings service on
+hardware/runtime they control; a native secret helper or sidecar vault with
+memory-locking is required before Prowl can claim stronger live-custody protection
+for the managed service. The controls below reduce accidental persistence, ordinary
+crash dumps, logs, traces, and reuse after a job exits.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -249,8 +249,15 @@ equivalent wrapper only if tests prove the same behavior. The wrapper has no
 middleware cache, no automatic redirects, no automatic retries, no request/response
 buffering beyond the active socket or one bounded read chunk, no automatic request
 object retention, no debug hooks, and no logging of serialized request/response
-objects. The launch maximum buffered provider response chunk is 64 KiB before the
-runner performs a revocation check and either processes that chunk or discards it;
+objects. Its runtime dependency set is explicitly allowlisted, pinned by the
+production lockfile, included in the SBOM, and reviewed in the launch-blocking
+dependency audit; dependency updates that can observe headers, sockets, streams,
+environment, or errors require security review before deployment. The wrapper does
+not load provider SDK plugins, middleware, proxy agents, or instrumentation by
+tenant configuration. A malicious dependency that reaches the runner despite those
+controls is treated as live-process compromise and remains unmitigated for the active
+request window. The launch maximum buffered provider response chunk is 64 KiB before
+the runner performs a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
 the chunk limit at the response reader, perform a startup self-test against a
 provider mock that attempts over-buffering, and expose a metric/alert if any read
@@ -315,9 +322,14 @@ GitHub App reapproval flow and does not create or consume a key-save nonce unles
 OAuth `read:org` can prove owner status for that session. `@prowl-review configure
 key` never accepts a raw key in a public comment; it only opens a short-lived,
 single-use settings link after the command authorization in Decision 5 succeeds. The
-link is an HTTPS-only App URL protected by HSTS, contains
-only an opaque CSPRNG nonce with at least 128 bits of entropy whose server-side
-record stores a hash, and is redacted from application logs. The signed link record
+link is an HTTPS-only App URL protected by HSTS and contains only an opaque nonce
+generated with `crypto.randomBytes`, WebCrypto `getRandomValues`, or an equivalent
+OS-backed CSPRNG. The nonce has at least 128 bits of entropy, is never derived from
+session/user/comment ids, has only a server-side hash persisted, and is redacted from
+application logs. Issuance is rate-limited and capped to one active unexpired
+key-setup nonce per `{installation, repository, sender, comment_id}` plus a small
+per-sender rolling limit; exceeding either cap denies a new link and audits the
+attempt rather than creating many concurrent unexpired nonces. The signed link record
 commits to installation id, repository id, sender id, comment id, head SHA, nonce,
 and expiry; the settings UI displays the target owner/repo before save and refuses
 cross-origin `Origin`/`Host` mismatches. OAuth `state` and CSRF tokens are signed
@@ -646,22 +658,30 @@ append-only audit log.
   key access.
 - **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
   HMAC-SHA256 verification using the App-wide webhook secret and constant-time
-  comparison. The signature parser accepts only the strict `sha256=<64 hex chars>`
-  format with exactly 71 ASCII characters and exactly one `X-Hub-Signature-256`
-  header after case-insensitive header-name normalization across the raw header
-  list; an absent header is a hard verification failure. The receiver must iterate
-  the raw `Headers`/wire header collection and reject multiple values, comma-joined
-  values, framework-coalesced duplicates, and case-variant duplicates such as
-  `x-hub-signature-256` plus `X-Hub-Signature-256`. Empty values, missing prefixes,
-  malformed hex, truncated digests, overlong/padded digests, base64-wrapped values,
-  duplicate signature headers, and MD5/SHA1 signatures are rejected as generic
-  authentication failures before any HMAC computation or enqueueing. The
-  malformed-input path does not normalize, truncate, compare partial prefixes, or
-  choose first/last duplicate headers. Webhook secrets are generated
-  and loaded as 32-byte random byte arrays, not variable-length strings. The receiver
+  comparison. Verification runs in the raw HTTP adapter before framework header
+  normalization; a runtime that cannot expose the original header list with
+  duplicate values and case variants is not eligible for launch. The signature parser
+  accepts only the strict `sha256=<64 hex chars>` format with exactly 71 ASCII
+  characters and exactly one `X-Hub-Signature-256` header after case-insensitive
+  counting across the raw header list; an absent header is a hard verification
+  failure. The receiver must iterate the raw wire header collection and reject
+  multiple values, comma-joined values, framework-coalesced duplicates, and
+  case-variant duplicates such as `x-hub-signature-256` plus
+  `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
+  digests, overlong/padded digests, base64-wrapped values, duplicate signature
+  headers, and MD5/SHA1 signatures are rejected as generic authentication failures
+  before enqueueing. Malformed inputs are assigned a fixed dummy presented digest and
+  traverse the same fixed candidate HMAC/compare loop and response envelope as an
+  HMAC mismatch: same HTTP status, header names/order/values, body bytes,
+  `Content-Length`, cache headers, and bounded timing floor, with detailed parser
+  reason logged only after the response is committed. The malformed-input path does
+  not normalize, truncate, compare partial prefixes, or choose first/last duplicate
+  headers. Webhook secrets are generated and loaded as 32-byte random byte arrays, not
+  variable-length strings. The receiver
   always builds a fixed two-slot candidate array: current secret and
   previous-secret-or-32-byte-dummy, with version/window metadata masked into the
-  final decision after comparison. For validly formatted signatures, the receiver
+  final decision after comparison. For every request that reaches signature
+  verification, the receiver
   computes expected digests for every candidate slot before any replay store lookup,
   performs equal-length constant-time comparisons for every slot regardless of match
   or mismatch, combines match bits with bitwise OR/result masking in a full-length
@@ -678,8 +698,11 @@ append-only audit log.
   secret version. New replay rows may be inserted only for the current secret version
   or for the first accepted delivery before `new_secret_active_at`; an old-secret
   match during grace is never allowed to create the prior replay record it needs for
-  acceptance. After signature and replay handling, the receiver performs cheap
-  relevance classification before charging per-installation buckets: non-PR events,
+  acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
+  if the old-secret match has no existing pre-activation replay row, verification
+  fails before any replay record is inserted. After signature and replay handling,
+  the receiver performs cheap relevance classification before charging
+  per-installation buckets: non-PR events,
   comments without an `@prowl-review` mention/command, and other no-op signed noise
   are acknowledged without consuming review, command, or authorization-control
   quota. Relevant review and command deliveries use separate per-installation buckets
@@ -769,22 +792,36 @@ versions, include direct inspection evidence from the GitHub App's registered
 private-key list or audit/export proving those key ids are no longer active on
 GitHub, name the replacement managed key version generated after the cutoff, and
 include a production canary showing a retired key cannot mint an installation token.
-The canary is supporting drift evidence, not a substitute for GitHub-level key-list
-verification. The canary runs in production before opening external installs and as
-a scheduled drift check; failure
-after launch immediately disables external installation acceptance, hosted token
-minting, and review enqueueing for the managed App until operators either repair the
-revocation evidence or migrate to a new App identity. If GitHub-level revocation
-cannot be verified with high confidence, the managed service must register and
-provision a new GitHub App identity whose private key was never distributed to
-Actions; migration docs then map old Action markers to the new bot only through the
-explicit marker-copy job above. The managed App signing credential lives only in the
-managed secret store, HSM, or token broker used by the hosted token-minter; it is
-never stored in this repository, workflow secrets, Action logs, or customer
-repositories. The Action path must use `GITHUB_TOKEN`, a user-owned GitHub App
-credential scoped to that operator, or a brokered token that can mint only for the
-current repository/workflow and cannot mint across managed hosted tenants. Sharing
-the managed App signing credential with Actions is a launch blocker.
+The credential-rotation record is a policy document signed by two distinct
+release/security operators from the approved quorum using hardware-backed signing
+keys registered in the policy store; service principals and the runtime deployment
+identity cannot satisfy either signature. It includes the App id, cutoff time,
+revoked key ids/fingerprints as displayed by GitHub, replacement managed key id,
+change ticket, evidence hashes, and the canary result. Verification reads the current
+GitHub App private-key inventory from the GitHub-provided App settings surface,
+audit/export, or documented API available in the deployment environment; if only the
+settings UI is available, two independent operator captures are required and the lack
+of machine-readable evidence is itself recorded. The canary signs a GitHub App JWT
+with the sealed retired key material and calls GitHub's installation-token endpoint
+for a controlled installation; only a GitHub-origin `401`/invalid-signature response
+counts as proof, while local preflight rejection, network failure, or missing
+installation access is inconclusive and blocks launch. The canary is supporting drift
+evidence, not a substitute for GitHub-level key-list verification. The canary and
+key-inventory verification run in production before opening external installs, at
+managed App startup, after any key rotation, and at least daily as a scheduled drift
+check; failure pages the on-call and immediately disables external installation
+acceptance, hosted token minting, and review enqueueing for the managed App until
+operators either repair the revocation evidence or migrate to a new App identity. If
+GitHub-level revocation cannot be verified with high confidence, the managed service
+must register and provision a new GitHub App identity whose private key was never
+distributed to Actions; migration docs then map old Action markers to the new bot
+only through the explicit marker-copy job above. The managed App signing credential
+lives only in the managed secret store, HSM, or token broker used by the hosted
+token-minter; it is never stored in this repository, workflow secrets, Action logs,
+or customer repositories. The Action path must use `GITHUB_TOKEN`, a user-owned
+GitHub App credential scoped to that operator, or a brokered token that can mint only
+for the current repository/workflow and cannot mint across managed hosted tenants.
+Sharing the managed App signing credential with Actions is a launch blocker.
 
 Uninstalling the `prowl-review` App immediately disables hosted reviews and token
 minting for Action workflows that depend on that App. The uninstall webhook is a
@@ -846,9 +883,13 @@ commands are honored only when all checks pass:
    unauthenticated mentions are audited and rate-limited through the untrusted
    ingress buckets, not through the authorized command budget. A short-lived positive
    permission cache may avoid repeated GitHub calls for non-provider,
-   non-state-changing commands only
-   when it was minted from GitHub for the same `{installation, repository, sender,
-   required_role}` within the last 60 seconds.
+   non-state-changing commands only when it was minted from GitHub for the same
+   `{installation, repository, sender, required_role}` within the last 60 seconds.
+   Positive entries use a hard, non-sliding expiry, are evicted by a minutely sweeper,
+   are dropped on process restart, and are never refreshed by cache hits. Enterprise,
+   branch-protection, SAML/IP, admin, key-setup, provider-backed, privileged, and
+   state-changing commands cannot rely on that cache for authorization; at most it
+   suppresses repeated unauthenticated ingress before the required fresh GitHub read.
    Cache invalidation is atomic with webhook ingestion for permission-changing
    events, including `member` collaborator add/remove/edit, `membership` add/remove,
    `organization` member add/remove/invite/role/rename changes, `team`
@@ -886,8 +927,20 @@ commands are honored only when all checks pass:
    response asks the sender to re-run the command after permissions settle. There is
    no automatic retry for provider-backed, state-changing, or privileged commands
    after authorization invalidation because retrying could execute after a role
-   downgrade without explicit user intent. State-changing, privileged, or
-   provider-backed commands,
+   downgrade without explicit user intent. Operationally, guarded send is one helper:
+   after the fresh GitHub permission API result returns, it opens a serializable
+   transaction, locks the installation auth row and command row, confirms the auth
+   generation and sender/role/scope still match, consumes any provider-call nonce or
+   publication reservation, writes a side-effect fencing token, commits, and then
+   immediately opens the external request in the same call stack without unrelated
+   awaits, timers, or queue hops. The request builder requires that fencing token and
+   performs one final local generation read before opening the socket; a webhook
+   generation bump that lands between the API read and socket open either blocks on
+   the same row lock or makes that final read fail. A revocation that occurs after the
+   final local read but before the first outbound packet leaves the process remains a
+   residual GitHub/event-delivery race, is bounded by the guarded-send telemetry in
+   Decision 2, and is not claimed as atomic cancellation. State-changing,
+   privileged, or provider-backed commands,
    including `review`, `full review`, `docstrings`, `tests`, chat replies,
    `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
    `configure key`, must perform a fresh GitHub permission API check after the
