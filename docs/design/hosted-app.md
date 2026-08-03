@@ -927,17 +927,17 @@ commands are honored only when all checks pass:
    comment body plus command parse version and verb, not only the matched command
    fragment. Edited comments create a distinct consume-once record keyed by that
    API-read timestamp and digest only after a comment-level execution lock keyed by
-   `{installation, repository, pull_request, comment_id, command}` is available. The
-   lock intentionally excludes mutable PR head SHA and lifecycle generation so
-   comment edits and head changes serialize behind the same command identity. That
-   lock is held from claim through command terminal state, including provider calls
-   and publication, with its own lease and fencing token. The handler fetches the
-   current GitHub comment again and validates that its `updated_at` value/body
-   digest still matches the claimed delivery immediately before side effects; if it
-   advanced, the in-flight command aborts as superseded and records the current
-   version for later processing. If an edit arrives while the lock is held, the
-   newer edit is durably queued behind the lock and re-authorized after the current
-   command reaches terminal state; it is not dropped through a Retry-After-only
+   `{installation, repository, pull_request, comment_id}` is available. The lock
+   intentionally excludes the mutable parsed command verb, PR head SHA, and lifecycle
+   generation so every edit of one comment serializes behind the same comment
+   identity. That lock is held from claim through command terminal state, including
+   provider calls and publication, with its own lease and fencing token. The handler
+   fetches the current GitHub comment again and validates that its `updated_at`
+   value/body digest still matches the claimed delivery immediately before side
+   effects; if it advanced, the in-flight command aborts as superseded and records
+   the current version for later processing. If an edit arrives while the lock is
+   held, the newer edit is durably queued behind the lock and re-authorized after
+   the current command reaches terminal state; it is not dropped through a Retry-After-only
    webhook response because GitHub will not redeliver it automatically. Delivery-id
    replay records live for 24 hours, and state-changing/costly commands are
    rate-limited to 5 commands per minute per `{installation, user, pull_request,
