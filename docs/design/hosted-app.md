@@ -256,8 +256,18 @@ environment, or errors require security review before deployment. The wrapper do
 not load provider SDK plugins, middleware, proxy agents, or instrumentation by
 tenant configuration. A malicious dependency that reaches the runner despite those
 controls is treated as live-process compromise and remains unmitigated for the active
-request window. The launch maximum buffered provider response chunk is 64 KiB before
-the runner performs a revocation check and either processes that chunk or discards it;
+request window. An equivalent wrapper cannot be approved by happy-path tests alone:
+launch tests must exercise 301/302/307/308 redirects, retryable 429/500 responses,
+socket reset, DNS failure, proxy environment variables, oversized response chunks,
+slow streaming, debug/error serialization, keep-alive reuse across tenants, and
+attempted middleware/plugin injection. The passing criteria are one outbound network
+attempt per provider-call nonce, no redirect follow, no automatic retry, no inherited
+proxy use, no retained `Authorization` header after `finally`, no serialized
+request/response object containing credentials, no cross-tenant connection reuse, and
+enforced abort/buffer limits. Approval requires the test report plus security-owner
+sign-off by someone who did not author the wrapper. The launch maximum buffered
+provider response chunk is 64 KiB before the runner performs a revocation check and
+either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
 the chunk limit at the response reader, perform a startup self-test against a
 provider mock that attempts over-buffering, and expose a metric/alert if any read
@@ -328,8 +338,13 @@ no cached App grant can substitute for it. If neither current membership-reading
 authority is available, the command/UI does not create or consume a key-save nonce.
 `@prowl-review configure key` never accepts a raw key in a public comment; it only
 opens a short-lived, single-use settings link after the command authorization in
-Decision 5 succeeds. The
-link is an HTTPS-only App URL protected by HSTS and contains only an opaque nonce
+Decision 5 succeeds. The settings hostname must be HTTPS-only at the network
+boundary: the load balancer/reverse proxy rejects cleartext HTTP before application
+code, nonce lookup, cookies, OAuth state, or CSRF validation can run, and it must not
+redirect an HTTP request while preserving the path or query. The settings domain is
+HSTS preloaded, or launch remains blocked until the preload submission is accepted
+for the exact host or parent domain that covers it. The link is an App URL on that
+preloaded HTTPS origin and contains only an opaque nonce
 generated with `crypto.randomBytes`, WebCrypto `getRandomValues`, or an equivalent
 OS-backed CSPRNG. The nonce has at least 128 bits of entropy, is never derived from
 session/user/comment ids, has only a server-side hash persisted, and is redacted from
@@ -699,23 +714,26 @@ append-only audit log.
   reason logged only after the response is committed. The malformed-input path does
   not normalize, truncate, compare partial prefixes, or choose first/last duplicate
   headers. Webhook secrets are generated and loaded as 32-byte random byte arrays, not
-  variable-length strings. The receiver
-  always builds a fixed two-slot candidate array: current secret and
-  previous-secret-or-32-byte-dummy, with version/window metadata masked into the
-  final decision after comparison. For every request that reaches signature
-  verification, the receiver
-  computes expected digests for every candidate slot before any replay store lookup,
-  performs equal-length constant-time comparisons for every slot regardless of match
-  or mismatch, combines match bits with bitwise OR/result masking in a full-length
-  loop, and rejects the entire request only after the full candidate set has been
-  tested. It accepts only a matched candidate whose `not_before`/`not_after` window
-  is valid. The required implementation pattern is `crypto.timingSafeEqual` or
+  variable-length strings. The receiver always builds a fixed two-slot candidate
+  array: current secret and previous-secret-or-32-byte-dummy, with version/window
+  metadata masked into the final decision after comparison. Both slots are exactly
+  32-byte buffers and both expected HMAC digests are computed unconditionally over the
+  same raw payload bytes before any replay store lookup, using the same helper and a
+  fixed slot count; sequential computation is allowed only because the slot count and
+  key length are fixed, and an implementation may compute them in parallel if it
+  preserves the same observable behavior. For every request that reaches signature
+  verification, the receiver performs equal-length constant-time comparisons for
+  every slot regardless of match or mismatch, combines match bits with bitwise
+  OR/result masking in a full-length loop, and rejects the entire request only after
+  the full candidate set has been tested. It accepts only a matched candidate whose
+  `not_before`/`not_after` window is valid. The required implementation pattern is
+  `crypto.timingSafeEqual` or
   equivalent for each candidate, fixed-count loop iteration, no `some`/early
   `return`, no per-candidate exceptions, no per-candidate internal state in logs or
-  traces until the loop completes, and tests showing equivalent behavior when the
-  matching secret is first, last, dummy/absent, or outside its validity window. Only
-  after the full signature loop completes does the receiver consult the replay
-  store. Delivery ids are recorded with a 24-hour replay
+  traces until the loop completes, and tests showing equivalent behavior and bounded
+  timing distributions when the matching secret is current, previous, dummy/absent,
+  or outside its validity window. Only after the full signature loop completes does
+  the receiver consult the replay store. Delivery ids are recorded with a 24-hour replay
   TTL before enqueueing, keyed with delivery id, payload hash, action, and accepted
   secret version. New replay rows may be inserted only for the current secret version
   or for the first accepted delivery before `new_secret_active_at`; an old-secret
