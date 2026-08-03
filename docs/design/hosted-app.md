@@ -36,7 +36,7 @@ defined in Decision 2.
 ```text
 PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
                                               │
-                                  persistent idempotency + owner check
+                                  persistent idempotency + leased claim
                                               │
                                         job queue (per-installation isolation)
                                               │
@@ -51,10 +51,13 @@ PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
 
 The receiver verifies the webhook signature, then records the GitHub delivery id
 and a coalescing key of `{installation, repository, pull_request, head_sha}` before
-enqueueing. Duplicate deliveries reuse the existing job record. A runner re-checks
-the current PR head, App installation state, and delivery owner immediately before
-any provider call and again before publishing; stale jobs close out as superseded
-without posting review content.
+enqueueing. Duplicate deliveries reuse the existing job record. Before work starts,
+a runner atomically claims the job by writing a persistent lease with an expiry and
+monotonic fencing token. Every provider call and publication re-reads the current
+PR head, App installation state, delivery owner, revocation generation, and fencing
+token; stale, expired, or superseded claims stop without posting review content.
+Retries acquire a new fencing token, so concurrent deliveries cannot process the
+same job simultaneously.
 
 Fork-originated pull requests are **skipped by the managed App in v1**. The service
 may post a neutral check or summary explaining the skip, but it makes no provider
@@ -128,9 +131,13 @@ opens a short-lived, single-use settings link after the command authorization in
 Decision 5 succeeds. The UI never displays plaintext keys after save.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
-audit event. Delete/uninstall immediately marks the installation revoked, disables
-decrypt access, cancels queued jobs, evicts runner/cache entries, deletes provider
-key rows and review state, and writes a deletion audit event. Logs keep only
+audit event. Delete/uninstall immediately marks the installation revoked, bumps the
+revocation generation, disables decrypt access, invalidates outstanding job leases
+and fencing tokens, cancels queued jobs, signals active runners to stop, evicts
+runner/cache entries, deletes provider key rows and review state, and writes a
+deletion audit event. Active runners check the revocation generation and fencing
+token immediately before every external call and before publication; a revoked
+runner drops any plaintext key reference and exits without posting. Logs keep only
 redacted operational events. Backups remain encrypted and become cryptographically
 unusable once wrapping keys are destroyed; backup copies expire on the published
 30-day retention schedule. GitHub comments/checks already posted to the user's
@@ -162,11 +169,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repository and required read permissions only. Private dependencies outside the
   installed repo are out of scope for v1; adding optional broader credentials is a
   separate decision.
-- **v1 endpoints:** read uses blob/contents APIs by exact path/ref; file discovery
-  uses bounded git-tree traversal; grep/find-reference behavior runs over the
-  bounded tree/file cache. GitHub code search is disabled for private repositories
-  in v1 and opt-in only for public repositories, because search has different rate
-  limits and visibility semantics.
+- **v1 endpoints:** read uses blob/contents APIs by exact path/ref; changed-file
+  discovery and repository tree traversal use bounded pagination with an explicit
+  page ceiling. Every page, retry attempt, response byte, and retrieved byte counts
+  against the request, response-size, and timeout ceilings below. The adapter treats
+  Git tree `truncated` responses, incomplete PR-file pagination, and missing
+  required blobs as completeness failures. Grep/find-reference behavior runs only
+  over the proven-complete bounded tree/file cache. GitHub code search is disabled
+  for private repositories in v1 and opt-in only for public repositories, because
+  search has different rate limits and visibility semantics.
 - **Bounds:** each review has a bounded LRU cache keyed by `{head_sha, tool, path,
   query}` with launch defaults of 128 MiB or 2,000 entries, whichever comes first.
   The runner also starts with a 1,000-request retrieval ceiling, 25 MiB aggregate
@@ -262,11 +273,16 @@ append-only audit log.
   pointers), webhook idempotency records, queue/dead-letter metadata, deletion
   jobs, and audit events.
 - **Privacy invariant:** no diff contents, API-retrieved file contents, review
-  bodies, `issue_comment` bodies, thread context, logs, or provider payloads are
-  stored as durable content. API-retrieved content, command/comment bodies, thread
-  context, logs, generated review text, and outbound provider requests all pass
-  through the shared redaction boundary before storage, publication, logging, or
-  transmission. Redaction counts remain reportable; secret values do not.
+  bodies, `issue_comment` bodies, thread context, logs, prompts, provider
+  responses, or provider payloads are stored as durable content. Content payloads
+  from API retrieval, commands/comments, thread context, generated review text,
+  logs, prompts, provider responses, and persisted representations pass through the
+  shared redaction boundary before storage, publication, logging, or provider
+  transmission. Credential-bearing transport headers are attached only at the
+  transport boundary and sent unchanged only to the intended provider or GitHub API;
+  authentication headers are never logged, stored, audited, traced, or included in
+  provider request metadata. Redaction counts remain reportable; secret values do
+  not.
 - **Tenant isolation:** every queue message, DB row, cache key, audit event, and
   runner credential is keyed by installation id. Runners process one installation's
   job with only that installation's decrypted provider key and scoped GitHub token

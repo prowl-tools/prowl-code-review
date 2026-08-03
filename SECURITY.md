@@ -85,14 +85,22 @@ pull-request content without leaking secrets or executing attacker-controlled co
 
 ## Privacy & telemetry
 
-- **prowl-review collects no telemetry and no analytics.** There is no usage
-  reporting, no phone-home, no third-party tracking.
-- The tool makes network calls to exactly two places: **your configured LLM
-  provider** (to perform the review) and the **GitHub API** (to fetch the diff
-  and publish the review). Your code and review content go only to the provider
-  *you* chose with the key *you* supplied — never to us.
-- Cost/usage figures are computed locally and written only to your run logs / the
-  Action job summary / your local usage log — never transmitted.
+- In the CLI, GitHub Action, and self-hosted modes, **prowl-review collects no
+  telemetry and no analytics.** There is no usage reporting, no phone-home, no
+  third-party tracking.
+- In the CLI, GitHub Action, and self-hosted modes, the tool makes network calls
+  only to **your configured LLM provider** (to perform the review) and the
+  **GitHub API** (to fetch the diff and publish the review). Your code and review
+  content go only to the provider *you* chose with the key *you* supplied.
+- In those non-managed modes, cost/usage figures are computed locally and written
+  only to your run logs / the Action job summary / your local usage log — never
+  transmitted to Prowl.
+- The proposed managed hosted GitHub App has different operational boundaries:
+  it necessarily uses the hosted queue, installation database, audit log, KMS/HSM
+  service, GitHub API, and the user's configured LLM provider. Its durable systems
+  may store only the operational state described in
+  [`docs/design/hosted-app.md`](docs/design/hosted-app.md), not raw diffs, review
+  bodies, prompts, provider responses, or plaintext provider keys.
 - If telemetry is ever added, it will be **opt-in and off by default**, clearly
   documented, and never include code or secrets.
 
