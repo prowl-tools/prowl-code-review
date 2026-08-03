@@ -267,13 +267,16 @@ dumps/heap snapshots/process inspection, startup self-checks for those controls,
 deployment only on platforms where crash-dump controls can be enforced are
 mitigations, not a guarantee that memory is clean.
 
-The provider HTTP client is a launch-blocking security component: use a minimal
-audited wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, or an
-equivalent wrapper only if tests prove the same behavior. The wrapper has no
-middleware cache, no automatic redirects, no automatic retries, no request/response
-buffering beyond the active socket or one bounded read chunk, no automatic request
-object retention, no debug hooks, and no logging of serialized request/response
-objects. Its runtime dependency set is explicitly allowlisted, pinned by the
+The provider HTTP client is a launch-blocking security component. This design
+document defines the approval criteria only; it does not approve any implementation
+or unblock provider traffic. The first launchable implementation must be a named
+reference wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, and an
+equivalent wrapper is ineligible until the reference harness includes it and tests
+prove the same behavior. The wrapper has no middleware cache, no automatic
+redirects, no automatic retries, no request/response buffering beyond the active
+socket or one bounded read chunk, no automatic request object retention, no debug
+hooks, and no logging of serialized request/response objects. Its runtime dependency
+set is explicitly allowlisted, pinned by the
 production lockfile, included in the SBOM, and reviewed in the launch-blocking
 dependency audit; dependency updates that can observe headers, sockets, streams,
 environment, or errors require security review before deployment. The wrapper does
@@ -298,7 +301,9 @@ named reference implementation, canonical provider mock, equivalence test harnes
 dependency provenance report, and signed launch record for that implementation; using
 an unnamed "equivalent" wrapper is itself a launch blocker. The reference harness is
 the only source of accepted alternatives, and each alternative must pass the same
-fixtures before it can be enabled. The
+fixtures before it can be enabled. Build-plan step 5 below is the tracked artifact
+for this gate; approval of this decision record can un-park implementation planning
+but not managed runtime launch. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
@@ -307,11 +312,15 @@ aborts the provider request, zeroes/discards the partial chunk, marks the provid
 attempt incomplete with no retry of that request object, and recycles the runner.
 Continuing to parse or summarize an over-limit chunk is launch-blocking. The wrapper
 must perform a startup self-test against a provider mock that attempts over-buffering
-and expose a metric/alert if any read exceeds the bound. Abort signals fire
-synchronously when revocation is observed and
-must destroy active request and response streams plus any owned buffers within a
-1-second deadline, then the runner process exits if the stream is still open; no
-cached request object may be retried. Tests must include post-attempt canary scans
+and expose a metric/alert if any read exceeds the bound. Revocation observation
+synchronously marks the attempt revoked and requests stream abort, but Node.js stream
+cancellation is asynchronous. The wrapper must enforce the 64 KiB limit at the reader
+level without relying on abort-signal timing, must never full-body/read-ahead buffer,
+and must discard or zero owned buffers on the next event-loop turn. The control plane
+enforces a hard process kill after a 1-second deadline if the stream is still open;
+this is best-effort containment, not a claim of synchronous in-flight stream
+cancellation. No cached request object may be retried. Tests must include
+post-attempt canary scans
 of owned buffers, structured logs, traces, serialized errors, and available
 heap/debug artifacts in staging after the wrapper has run `finally`, dropped
 references, forced an explicit GC where the runtime permits, and recycled the worker.
@@ -385,7 +394,14 @@ GET and POST repeat the same current-admin check before rendering the key input 
 accepting key bytes.
 `@prowl-review configure key` never accepts a raw key in a public comment; it only
 opens a short-lived, single-use settings link after the command authorization in
-Decision 5 succeeds. The settings hostname must be HTTPS-only at the network
+Decision 5 succeeds. Immediately before nonce creation, the command handler re-reads
+the current GitHub comment under the comment-level execution lock described in
+Decision 5. The current `updated_at`, full-body digest, parse version, verb, sender,
+and head SHA must still match the claimed `configure key` command, and the normalized
+body must contain only the allowed command shape with no raw provider key or
+conflicting key-setting arguments. If the body was edited, removed, or reparsed as a
+different command, link creation aborts as superseded and the event is audited. The
+settings hostname must be HTTPS-only at the network
 boundary: the load balancer/reverse proxy rejects cleartext HTTP before application
 code, nonce lookup, cookies, OAuth state, or CSRF validation can run, and it must not
 redirect an HTTP request while preserving the path or query. The settings domain is
@@ -399,8 +415,9 @@ application logs. Issuance is rate-limited and capped to one active unexpired
 key-setup nonce per `{installation, repository, sender, comment_id}` plus a small
 per-sender rolling limit; exceeding either cap denies a new link and audits the
 attempt rather than creating many concurrent unexpired nonces. The signed link record
-commits to installation id, repository id, sender id, comment id, head SHA, nonce,
-and expiry; the settings UI displays the target owner/repo before save and refuses
+commits to installation id, repository id, sender id, comment id, comment
+`updated_at`, full-body digest, parse version, verb, head SHA, nonce, and expiry; the
+settings UI displays the target owner/repo before save and refuses
 cross-origin `Origin`/`Host` mismatches. OAuth `state` and CSRF tokens are signed
 values that commit to the nonce hash or link id, authenticated session id hash,
 sender id, installation id, repository id, and expiry. The settings page serves no
@@ -427,12 +444,18 @@ cannot save a key without the fresh GitHub OAuth/App authorization described in
 Decision 5. The UI never displays plaintext keys after save.
 
 The key-save endpoint is rate-limited before validation by installation, user
-session, and source address. It performs constant-shape local format validation and,
-where the provider supports it, a minimal live auth probe over the same sanitized
-provider-call path before marking the key verified. If live validation fails or is
-unsupported, provider error bodies are not serialized, cached, returned, traced, or
-logged; they are mapped to a fixed internal enum such as `invalid`, `unauthorized`,
-`rate_limited`, or `unknown`. `invalid`, `unauthorized`, `rate_limited`, `unknown`,
+session, and source address. It performs constant-shape local format validation.
+Synchronous live provider validation is disabled by default and can be enabled only
+by an installation-independent deployment setting after staging proves the
+provider/network path, hard timeout, and response deadline fit the published timing
+bound. The wall-clock budget includes network round-trip time, TLS setup, provider
+latency, timeout handling, database/KMS calls, and response write time for that path.
+If a provider response has not completed before the per-request deadline, the result
+is ignored for key promotion and the request follows the skipped-validation pending
+path. If live validation fails or is unsupported, provider error bodies are not
+serialized, cached, returned, traced, or logged; they are mapped to a fixed internal
+enum such as `invalid`, `unauthorized`, `rate_limited`, or `unknown`. `invalid`,
+`unauthorized`, `rate_limited`, `unknown`,
 and validation-unsupported results never replace an existing verified key and never
 promote a key for reviews. They either persist no key material or store only an
 encrypted pending-validation candidate that is not part of the active provider-key
@@ -479,12 +502,14 @@ The background validator uses the same guarded provider-call path, never starts 
 another validation for that installation/provider is active, destroys failed or
 superseded candidates, and promotes exactly one candidate to the active verified-key
 table only after successful validation in a serializable compare-and-swap
-transaction. Probe selection is a provider/adapter deployment setting, not a per-key,
-per-format, or per-request branch, and both the live-probe-enabled and no-live-probe
-paths release responses only at the same configured deadline with the same dummy
-validation work when no provider call is made. If either the no-live-probe path or the
-later guarded validation cannot meet its own published bound, launch is blocked. The
-residual timing threat
+transaction. Probe selection is a provider/adapter deployment setting read once
+before branch-specific work, not a per-key, per-format, or per-request branch. The
+monitor/controller may flip that setting only between requests after timing windows
+close; an in-flight request never changes behavior based on its own probe result.
+Both the live-probe-enabled and no-live-probe paths release responses only at the same
+configured deadline with the same dummy validation work when no provider call is
+made. If either the no-live-probe path or the later guarded validation cannot meet its
+own published bound, launch is blocked. The residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
@@ -519,11 +544,15 @@ never grants authority: the transactional read must match the current lease toke
 revocation generation, and publication token exactly. Provider and GitHub calls are
 made only through guarded send functions that perform the transactional check,
 allocate/consume any provider-call nonce, attach an abort signal tied to revocation,
-and immediately start the external request in the same guarded function without
-unrelated awaits or queue hops. Staging telemetry must measure the
-final-check-to-HTTP-client handoff, publish p95/p99/max values, and block launch only
-if the path is unbounded, contains avoidable async gaps, or regresses beyond the
-published SLO for the chosen runtime; it is not a promise of atomic or
+materialize credential-bearing headers, and hand the request to the audited HTTP
+wrapper in the same call stack without unrelated awaits, timers, or queue hops. URL,
+body, and non-credential header preparation must complete before decrypt/final check;
+only credential-bearing header assembly and the wrapper `send` invocation may occur
+afterward. The published managed v1 bound for final-check-to-wrapper-handoff is p99 <=
+100 ms and max <= 250 ms in staging for the chosen runtime; launch is blocked if that
+path is unmeasured, contains avoidable async gaps, or exceeds the bound. DNS, TLS, and
+provider processing after wrapper handoff are already part of the external request and
+remain residual cross-system exposure; this is not a promise of atomic or
 microsecond-scale cancellation in Node.js. The
 worker control plane also cancels active provider HTTP streams, sends a graceful
 termination signal to active runner processes after the revocation transaction
@@ -533,12 +562,13 @@ the wire cannot be recalled and may consume quota, reach provider logs, or conti
 server-side after the local stream is aborted. A revocation that lands after the
 final local check but before the external API receives the request is an unavoidable
 cross-system race; the launch docs must disclose it. If revocation is observed while
-a provider response is streaming, the abort signal closes the stream immediately,
-the runner stops reading further chunks, and all bytes already received are
-discarded without parsing. Revocation handling is sequenced as signal, synchronous
-abort, buffer discard/zero-owned-buffers best-effort, then process exit if the
-stream is still open after the abort deadline. The runner must re-check revocation
-after response headers, before and after every bounded response chunk, after stream
+a provider response is streaming, the runner requests abort immediately, stops
+requesting further chunks, and discards bytes already received without parsing.
+Revocation handling is sequenced as signal, abort request, buffer discard or
+zero-owned-buffers best-effort, then process exit or hard kill if the stream is still
+open after the abort deadline. The wrapper's reader-level 64 KiB bound, not
+abort-signal timing, limits in-process response exposure. The runner must re-check
+revocation after response headers, before and after every bounded response chunk, after stream
 termination, and before parsing response content. If a provider or HTTP library has
 already buffered up to the 64 KiB chunk limit before the abort is honored, those
 bytes are discarded and the event is audited as residual live-buffer exposure; a
@@ -598,13 +628,18 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   discovery and repository tree traversal use bounded pagination with an explicit
   page ceiling. Exact-path reads must preflight the requested path through the trusted
   Git tree for the pinned ref before any GitHub Contents API request can run. The
-  adapter rejects symlinks, submodules, mode/type mismatches, and tree entries whose
-  target path would violate the sensitive-path denylist; accepted reads fetch the blob
-  by the verified tree-entry SHA or prove the Contents response type and SHA match
-  that preflight before bytes enter the retrieval cache. Every page, retry attempt,
+  adapter rejects symlinks, submodules, mode/type mismatches, and requested or
+  resolved paths that would violate the sensitive-path denylist; accepted reads fetch
+  the blob by the verified tree-entry SHA or prove the Contents response type and SHA
+  match that preflight before bytes enter the retrieval cache. A Contents type/SHA
+  mismatch, missing blob, or symlink response after preflight is a completeness
+  failure: the adapter discards response bytes without caching them, stops mixing
+  snapshots for that ref, marks the review incomplete, and reports that the file
+  changed or could not be verified during retrieval. Every page, retry attempt,
   response byte, and retrieved byte counts against the request, response-size, and
   timeout ceilings below. The adapter treats Git tree `truncated` responses,
-  incomplete PR-file pagination, and missing required blobs as completeness failures.
+  incomplete PR-file pagination, missing required blobs, and exact-read SHA/type
+  mismatches as completeness failures.
   Grep/find-reference behavior runs only over the proven-complete bounded tree/file
   cache. Every retrieval endpoint validates installation id, repository id,
   visibility, requested ref, and path bounds before making a GitHub request. GitHub
@@ -633,9 +668,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   the explicit incomplete-review path below. Launch docs publish the effective
   limits and any beta adjustments.
 - **Rate and failure behavior:** the runner checks remaining GitHub rate budget
-  before search-heavy work, applies bounded retry/backoff for `Retry-After` and
-  secondary-rate-limit responses, and stops retrieval before starving other jobs
-  for the same installation. Bounded, known partial context is reported as a
+  before search-heavy work. Rate-limit retries use exponential backoff with jitter,
+  a 100 ms base, a 5-second per-sleep cap, at most 3 retries per request, and at most
+  10 seconds of total rate-limit sleep inside the 90-second retrieval timeout. A
+  `Retry-After` value above those caps is not slept in full; it terminates retrieval
+  for the affected required context. "Stops retrieval before starving other jobs"
+  means the runner ends retrieval for this review, releases its lease through the
+  normal incomplete-review path, and reports missing context; it does not silently
+  yield and later resume with unbounded delay. Bounded, known partial context is
+  reported as a
   clean-with-caveat review. If required changed-file retrieval fails, permissions
   are denied, response sizes exceed bounds, the rate state is exhausted, or
   completeness is unknown, the review is marked **Review incomplete**, approval is
@@ -653,7 +694,10 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   package metadata or private dependency cannot be resolved produces an incomplete
   dependency-security finding rather than a clean dependency result. The hosted App
   must never publish a clean or fully verified security result for a PR whose
-  required security context is incomplete.
+  required security context is incomplete. The review state also carries an explicit
+  `security_context_incomplete` flag whenever required security context is unavailable;
+  the approval gate reads that flag independently of emitted findings, so approval is
+  withheld even if no concrete security finding can be generated.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -822,15 +866,29 @@ append-only audit log.
   timing distributions when the matching secret is current, previous, dummy/absent,
   or outside its validity window. The launch bound is p95 delta <= 10 ms and p99
   delta <= 25 ms between signature failure classes over at least 100,000 warmed
-  samples against the built receiver artifact; production records the same histograms
-  and disables hosted ingress, relying on GitHub redelivery, if drift exceeds the
-  bound for three consecutive five-minute windows. The verifier module is static, has
-  no dynamic code generation, and its timing tests run against the production bundle,
-  but this is a remote timing mitigation, not a claim against local microarchitectural
-  observation of the receiver process. Only after the full signature loop completes
-  does the receiver consult the replay store. The replay decision receives the immutable
+  samples against the built receiver artifact, including strict signature parsing, the
+  HMAC loop, replay-store read shape, and response-envelope floor. Production records
+  the same histograms. If drift exceeds the bound for three consecutive five-minute
+  windows, the receiver enters verifier-quarantine mode: it continues raw verification
+  and replay reads for signed deliveries, durably quarantines verified review/command
+  and authorization-control events, blocks job processing, blocks new job claims and
+  decrypts for affected scopes, and reconciles installation/repository/permission
+  state from GitHub before processing resumes. If the receiver cannot verify and
+  persist to quarantine, the system globally fails closed by blocking hosted job claims
+  and decrypts until reconciliation completes; it does not rely on GitHub redelivery as
+  the only preservation mechanism. The verifier module is static, has no dynamic code
+  generation, and its timing tests run against the production bundle, but this is a
+  remote timing mitigation, not a claim against local microarchitectural observation
+  of the receiver process. Only after the full signature loop completes does the
+  receiver consult the replay store. The replay decision receives the immutable
   match-bit set from that just-completed HMAC loop; replay-store state alone is never
-  authentication. Old-secret duplicate acceptance requires both the old-secret match
+  authentication. Replay-store access uses a fixed prepared read sequence for the
+  current-secret key and previous-secret key, including `SELECT ... FOR UPDATE` for
+  expected duplicate rows, before any branch-specific insert path can run. Row presence
+  or absence is masked into the final decision after the fixed read sequence and fixed
+  response floor; the design does not claim database planner constant time, and
+  row-present/row-absent timing classes are part of the launch and production
+  histograms above. Old-secret duplicate acceptance requires both the old-secret match
   bit for the exact immutable raw payload bytes just hashed and an existing
   pre-activation replay row. Delivery ids are recorded with a 24-hour replay TTL
   before enqueueing, keyed with installation id, repository id when present,
@@ -1192,10 +1250,10 @@ commands are honored only when all checks pass:
 
 `configure key` link creation is not sufficient to save a key. The settings link is
 cryptographically signed, stored server-side by nonce hash, bound to `{installation,
-repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
-single-use, requires cache-bypassing fresh GitHub OAuth/App authorization with the
-installation-admin definition above on both settings GET and POST, and carries no key
-material in the URL. OAuth
+repository, sender, comment_id, comment_updated_at, body_digest, parse_version, verb,
+head_sha, nonce}`, expires in 10 minutes, is single-use, requires cache-bypassing
+fresh GitHub OAuth/App authorization with the installation-admin definition above on
+both settings GET and POST, and carries no key material in the URL. OAuth
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
 session id hash, sender id, installation id, repository id, row version, and expiry
 before accepting a provider key. The OAuth-authenticated GitHub user id on the
@@ -1219,6 +1277,10 @@ version, locked auth generation, and `consumed_at IS NULL`; a second request,
 different session, different OAuth user, expired nonce, cache-hit authorization
 attempt, or permission-change generation mismatch gets a generic used/expired or
 unauthorized response and cannot write a key.
+Settings GET and POST also compare the nonce row's `comment_updated_at`, body digest,
+parse version, and verb against the canonical consume-once command row created from
+the fresh GitHub comment read. A missing, superseded, edited, or differently parsed
+command row invalidates the nonce and requires a new `configure key` command.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
