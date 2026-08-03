@@ -49,6 +49,10 @@ infrastructure during key save and provider calls, and encrypted key material is
 stored for later reviews. That is an explicit trust-model change; the managed Hosted
 App is not a
 security-equivalent replacement for CLI/Action live-key custody.
+For the managed Hosted App, your plaintext provider key is decrypted into
+Prowl-controlled settings or runner memory when you save or validate it and before
+every provider call; it cannot be protected against live-process compromise of that
+worker.
 
 > [!WARNING]
 > The planned managed hosted App is not suitable for threat models that assume zero
@@ -64,8 +68,9 @@ security-equivalent replacement for CLI/Action live-key custody.
 > Managed install, migration, and first key-entry screens must show this warning before
 > accepting provider keys and must require an explicit acknowledgement whose custody
 > policy version is recorded in the managed audit log. If the managed launch
-> attestation is missing, stale, unsigned, or mismatched to the deployed commit, the
-> managed App must not accept provider keys or send provider traffic.
+> attestation is missing, stale, unsigned, or mismatched to the deployed source
+> commit, immutable artifact digest, or environment, the managed App must not accept
+> provider keys or send provider traffic.
 
 - **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
   the planned managed Hosted App (not yet available) is a pre-launch exception that

@@ -288,12 +288,16 @@ field, or template value is not a launchable managed v1 implementation.
 Managed launch materials must surface that boundary before the user installs the App
 or enters a provider key. The install page, migration guide, and first key-setup
 screen must state that managed hosting is weaker than CLI/Action for live key
-custody because plaintext keys exist briefly in Prowl-controlled workers; key entry
+custody because plaintext keys are decrypted into Prowl-controlled settings or runner
+memory when users save or validate keys and before every provider call; key entry
 requires an explicit acknowledgement whose policy version is recorded in audit state,
 while CLI, Action, and self-host remain the recommended paths for users who reject
-that boundary. The key-save route fails closed until that acknowledgement exists for
+that boundary. The install, migration, and first key-entry UX must show the full
+plaintext-key custody warning inline and uncollapsed before accepting the first
+provider key. The key-save route fails closed until that acknowledgement exists for
 the active custody-policy version and the signed launch attestation permits managed
-key-save traffic for the deployed commit.
+key-save traffic for the deployed source commit, immutable artifact digest, and
+environment.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -350,7 +354,18 @@ platform differs materially from staging, managed launch either switches this pa
 native transport shim or requires a new security decision with a larger published risk
 budget. Production records decrypt-to-send p50/p95/p99/max histograms; any max over
 250 ms or two five-minute windows out of five over p99 100 ms disable hosted provider
-calls for the affected runner class and page on-call until repaired.
+calls for the affected runner class and page on-call until repaired. Runner startup
+also fails closed unless the decrypt-to-send monitor and circuit breaker are enabled,
+the metric sink accepts current deployment-window samples, and at least 100 warmed
+synthetic canary sends through the same decrypt/HTTP-client path have been recorded
+and analyzed for the active runner artifact. The canary path uses a non-secret test
+credential and a controlled endpoint but exercises the same decrypt-return,
+request-construction, TLS/socket handoff, histogram write, threshold evaluation, and
+disable-provider-calls path. If the monitor, metric sink, or analyzer is absent,
+delayed beyond the launch-record freshness window, or unable to prove the 100 ms p99 /
+250 ms max enforcement state, provider calls remain disabled. Alerts fire when any
+five-minute p99 reaches 80 ms, before the launch-blocking 100 ms threshold, and the
+launch record must include startup and continuous-monitor evidence.
 Each
 attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
 authorization tied to the current revocation generation; retries cannot reuse any of
@@ -454,9 +469,9 @@ security-owner quorum is two repository maintainers with write/admin access who 
 not the wrapper author and not the production deployment approver; their approval is
 recorded as GitHub review approvals on the launch-record PR plus their names and
 commit SHAs in the launch record. Deployment and runner startup load the launch
-record from the exact deployed commit and fail closed if the named wrapper path,
-fixture corpus, dependency lockfile, signed reviewers, or drift thresholds do not
-match. Startup also resolves the actual provider HTTP module through the production
+record from the deployed source commit and immutable artifact digest and fail closed
+if the named wrapper path, fixture corpus, dependency lockfile, signed reviewers, or
+drift thresholds do not match. Startup also resolves the actual provider HTTP module through the production
 module loader, verifies its path, package integrity, build artifact hash, dependency
 tree hash, and exported wrapper identity against the launch record, and refuses to
 decrypt provider keys if any provider call path can import an unrecorded HTTP client,
@@ -743,11 +758,13 @@ or equivalent. Key-match and key-mismatch paths perform the same database reads,
 candidate writes, dummy validation work, response delay, and provider-call decision
 snapshot so timing does not reveal whether a retry supplied the same key.
 Step 3 must deliver the concrete constant-shape validation module, fixture corpus,
-production-bundle timing harness, and launch-record entry before managed key-save
-traffic can be enabled. Runtime startup verifies the module path, build artifact hash,
-fixture corpus hash, and configured timing floor against that launch record; a mismatch
-or missing timing evidence disables new key-save traffic before the settings listener
-accepts provider-key submissions.
+production-bundle timing harness, background validator implementation, validator queue
+consumer, validator heartbeat, and launch-record entry before managed key-save traffic
+can be enabled. Runtime startup verifies the module path, build artifact hash, fixture
+corpus hash, configured timing floor, validator worker artifact hash, queue binding,
+heartbeat freshness, and canary-validation evidence against that launch record; a
+mismatch or missing timing/validator evidence disables new key-save traffic before the
+settings listener accepts provider-key submissions.
 Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, session-race, absent-key, valid-prefix, invalid-prefix, minimum-length,
@@ -790,12 +807,18 @@ superseded candidates, and promotes exactly one candidate to the active verified
 table only after successful validation in a serializable compare-and-swap
 transaction. The validator publishes a heartbeat at least every 30 seconds per
 installation/provider shard and records `started_at`, `finished_at`, outcome, attempt
-id, and candidate id for every validation attempt. A pending-validation candidate that
-has no terminal validation result within 1 hour expires automatically, is removed from
-the pending table, alerts on-call after repeated occurrences, and never becomes
-runner-authoritative. Runners read only the active verified-key table; if no verified
-key exists, reviews remain disabled with `key_required`
-status and approval withheld. The no-live-probe path releases responses only at the
+id, and candidate id for every validation attempt. Settings startup and deploy rollout
+fail closed unless each active validator shard is runnable, owns the expected queue
+lease, has produced a successful launch canary validation for the active artifact
+within the launch-record freshness window, and has no stale heartbeat. A
+pending-validation candidate that has no terminal validation result within 1 hour
+expires automatically, is removed from the pending table, alerts on-call on expiry,
+escalates after repeated occurrences, and never becomes runner-authoritative. Runners
+read only the active verified-key table; if no verified key exists, reviews remain
+disabled with `key_required`
+status and approval withheld, while internal diagnostics record whether a stuck or
+expired pending-validation candidate caused the disabled state without exposing that
+state to reviewers. The no-live-probe path releases responses only at the
 configured deadline with the same dummy validation work for every immediate outcome.
 If either that path or the later guarded validation cannot meet its own published
 bound, launch is blocked. The residual timing threat
@@ -1231,11 +1254,12 @@ append-only audit log.
   does not branch, return, log, or select a response from the first invalid position.
   The mask-building pass may store candidate nibbles in fixed arrays, but it must not
   call `parseInt`, `Buffer.from(hex, "hex")`, or any decoder that can truncate,
-  normalize, or ignore invalid/overlong input. Only after the full loop confirms the
-  prefix, length, and all 64 hex positions are valid may the verifier run the fixed
-  32-iteration hex-pair decoder. If any validity bit is unset, the decode step is
-  skipped entirely and the verifier copies the fixed dummy digest into the presented
-  digest slot; malformed inputs never produce "best effort" decoded bytes. Any digest
+  normalize, or ignore invalid/overlong input. The verifier must not branch to a
+  rejection path after mask construction. It always runs a fixed 32-iteration
+  hex-pair transform into a decoded-digest buffer, using dummy nibbles for invalid or
+  missing positions, then constant-time-selects between that buffer and a fixed dummy
+  presented digest from the accumulated validity mask. Malformed inputs never produce
+  "best effort" decoded bytes and never skip the HMAC path. Any digest
   that is not exactly 64 hex characters, including 63-, 65-,
   66-character, overlong, padded, non-hex, or otherwise malformed inputs, is rejected
   without truncation, padding, prefix comparison, or length normalization; integration
@@ -1244,8 +1268,10 @@ append-only audit log.
 
   ```text
   mask = scan_exact_71_ascii_bytes_without_early_return(header_or_dummy)
-  presented_digest = mask.all_valid ? decode_exact_64_hex_chars() : dummy_digest
-  compare every candidate HMAC against presented_digest, then apply mask
+  decoded_digest = decode_exact_64_hex_chars_with_masked_dummy_nibbles()
+  presented_digest = constant_time_select(mask.all_valid, decoded_digest, dummy_digest)
+  compare every candidate HMAC against presented_digest
+  authorized = hmac_match & mask.all_valid & replay_accept
   ```
 
   Production code must match that ordering or prove equivalent fixed-work behavior in
@@ -1262,7 +1288,9 @@ append-only audit log.
   headers, and MD5/SHA1 signatures are rejected as generic authentication failures
   before enqueueing. Malformed inputs are assigned a fixed dummy presented digest and
   traverse the same fixed candidate HMAC/compare loop and response envelope as an
-  HMAC mismatch: same HTTP status, header names/order/values, body bytes,
+  HMAC mismatch: the receiver computes the body HMAC for every configured
+  current/previous/dummy secret slot before applying the parser-validity mask, then
+  returns the same HTTP status, header names/order/values, body bytes,
   `Content-Length`, cache headers, and bounded timing floor, with detailed parser
   reason logged only after the response is committed. The malformed-input path does
   not normalize, truncate, compare partial prefixes, choose first/last duplicate
@@ -1407,14 +1435,21 @@ append-only audit log.
   suspend/delete, installation-repository, or permission-invalidation control events.
   The raw receiver also enforces a managed-launch request-body ceiling before any
   framework parser, JSON decoder, queue write, or provider work can observe the body.
-  The ceiling is published in the launch record. Review, command, and irrelevant no-op
+  Webhook routes must be registered with framework body parsers disabled; the raw
+  adapter owns the byte stream, bounded raw buffer, HMAC update, limit enforcement, and
+  generic failure envelope before control reaches application routing. The ceiling is
+  published in the launch record. Review, command, and irrelevant no-op
   events default to 2 MiB, but authorization-control events named above default to
   GitHub's delivered webhook payload cap, currently 25 MiB, so legitimate bulk
   installation/repository-scope changes can reach the durable fail-closed control path.
   The raw adapter selects the control-event ceiling from the bounded raw
   `X-GitHub-Event` header before JSON parsing; that selection grants only body-size
   allowance, not event trust. It streams bytes through the HMAC input while counting
-  them and verifies the signature before any body content is trusted. If an
+  them; if the count exceeds the selected ceiling before signature verification
+  completes, the receiver drains or terminates the connection according to the
+  platform's safe policy, writes only redacted failure metadata, and never passes bytes
+  to a framework/parser path. It verifies the signature before any body content is
+  trusted. If an
   authorization-control delivery exceeds the normal 2 MiB review/command ceiling but
   is within the control ceiling, the receiver records redacted delivery metadata,
   bumps the affected authorization generation or an App-wide quarantine generation
@@ -1422,9 +1457,18 @@ append-only audit log.
   schedules GitHub API reconciliation before reopening it. Bodies that exceed the
   relevant published ceiling drain or terminate according to the platform's safe
   connection policy, record only redacted metadata, follow the same generic failure
-  envelope and timing floor as other authentication failures, and never persist or
-  enqueue the payload. A receiver that must buffer an unbounded body before signature
-  verification is not eligible for managed launch.
+  envelope and timing floor as other authentication failures, and never persist,
+  parse, or enqueue the payload. After HMAC, JSON parsing uses a parser-level size
+  limit equal to the selected ceiling plus explicit structure limits: maximum nesting
+  depth 32, maximum object members per object, maximum array length, maximum string
+  length, and a launch-record parse-time budget for valid and malformed payloads.
+  Implementations may use a bounded streaming parser or a full-buffer parse only after
+  the raw adapter has enforced the ceiling and the parser/pre-scan enforces the
+  structure limits; native parsers without depth and container-size guards are not
+  launchable for managed webhooks. Malformed or over-limit JSON follows the same
+  generic authenticated-failure envelope and records only redacted metadata. A receiver
+  that must buffer an unbounded body before signature verification is not eligible for
+  managed launch.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
   provisioning and rotation are operator-only, App-wide flows; installation admins
@@ -1684,8 +1728,10 @@ commands are honored only when all checks pass:
    fresh GitHub permission API read for that delivery, or retry under the newer
    generation. At most one fresh read applies only to retrying a transient GitHub API
    read after a claimed generation has been locked and recorded, not to retrying the
-   generation check or command authorization decision. It never tolerates a generation
-   mismatch and never claims work under the old cache generation. If a
+   generation check or command authorization decision. That retry is permitted only
+   when the auth generation remains unchanged across the pre-read lock and the
+   guarded-send lock; any generation mismatch is terminal for that command version. It
+   never claims work under the old cache generation. If a
    permission-change webhook lands after the prefilter but before claim, the generation
    bump wins or forces the claim transaction to fail before any command record can be
    consumed. Claimed command records store the auth
@@ -1706,8 +1752,8 @@ commands are honored only when all checks pass:
    `authorization_unavailable` and writes no side-effect reservation. If a
    permission-change webhook bumps the generation while that GitHub API call is in
    flight, the result is discarded as stale before any side-effect reservation is
-   written; the command then follows the same single fresh-read retry or terminal
-   `authorization_changed` path described here. If a permission-change webhook
+   written and the command transitions directly to terminal `authorization_changed`
+   without retrying under the newer generation. If a permission-change webhook
    invalidated the cache after the fresh check but before an external call, the
    guarded send sees the generation mismatch, aborts, and no side effect starts. If a
    permission-change webhook invalidated the cache mid-command, the consumed command record remains
@@ -1791,11 +1837,21 @@ commands are honored only when all checks pass:
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    deployment or self-host instance id, installation id, repository id, PR number, and
    current head SHA match the idempotency record for the command. Webhook payloads
-   can enqueue candidate work only; the canonical claim path acquires the comment-level
-   lock, re-reads the current GitHub comment and PR head, obtains the fresh
-   cache-bypassing authorization proof required by step 2, and only then inserts or
-   consumes the command record. No command record can be claimed from webhook-delivered
-   comment body, webhook timestamps, or a positive permission cache alone. Before any provider
+   can enqueue candidate work only; every command-bearing comment or edit delivery is
+   first stored in a durable `command_comment_events` row keyed by delivery id with a
+   secondary index over `{deployment_id, installation, repository, pull_request,
+   comment_id}` and untrusted expected fields for sender id, GitHub `updated_at`, raw
+   body digest, parsed verb, parsed arguments, command occurrence, and observed head
+   SHA. The canonical claim path acquires the deployment-scoped comment-level lock,
+   re-reads the current GitHub comment and PR head, obtains the fresh cache-bypassing
+   authorization proof required by step 2, compares the fresh author id, `updated_at`,
+   full-body digest, verb, arguments, occurrence id, and head SHA to the queued row
+   before creating a consume-once record, and only then inserts or consumes the command
+   record. If the fresh state differs, that queued row is marked `superseded` without a
+   consume-once row; the latest queued row for the same comment key is selected under
+   the same lock and re-read from GitHub before any command can be consumed. No command
+   record can be claimed from webhook-delivered comment body, webhook timestamps, or a
+   positive permission cache alone. Before any provider
    call, settings-link creation, GitHub publication, or other side effect, the handler
    atomically claims an unconsumed command record, sets `consumed_at` as part of that
    claim, and rejects already-consumed records even when delivery id, comment id, body
@@ -1805,22 +1861,27 @@ commands are honored only when all checks pass:
    `updated_at` value from a fresh GitHub API read, not a client-derived or
    webhook-trusted clock value. The body digest is SHA-256 over the exact raw UTF-8
    bytes of GitHub's REST/GraphQL `body` field as returned by that fresh API read,
-   followed by fixed-length encodings of command parse version and verb; it is not
-   rendered Markdown, trimmed text, Unicode-normalized text, line-ending-normalized
+   followed by fixed-length encodings of comment node id, immutable author user id, PR
+   head SHA, command parse version, verb, args digest, and command occurrence id; it is
+   not rendered Markdown, trimmed text, Unicode-normalized text, line-ending-normalized
    text, or only the matched command fragment. Cosmetic edits, including trailing
    spaces or line-ending changes returned by GitHub, produce a different digest and
-   therefore a different consume-once record after the comment-level lock. Webhook
+   therefore a different consume-once record after the comment-level lock, while author
+   or head changes cannot be replayed through a body digest from an earlier queued
+   command. Webhook
    payloads may enqueue edit work but cannot create the canonical
    consume-once record. Edited comments follow the same consume-once rule: they create
    a distinct consume-once record keyed by the deployment/instance id, that API-read
    timestamp, digest, parsed command occurrence, and canonical arguments only after a
    comment-level execution lock keyed by
    `{deployment_id, installation, repository, pull_request, comment_id}` is available.
-   After the lock is acquired, the handler performs the fresh GitHub API read that supplies the
-   authoritative `updated_at` value, full body digest, parsed verb, and head SHA. If
-   the API state no longer matches the queued delivery, the queued version is recorded
-   as superseded without creating a consume-once record, and the latest queued edit is
-   processed behind the same lock. While holding the lock, the handler allocates a
+   After the lock is acquired, the handler performs the fresh GitHub API read that
+   supplies the authoritative author id, `updated_at` value, full body digest, parsed verb, args
+   digest, command occurrence id, and head SHA. If the API state no longer matches the
+   queued delivery, the queued version is recorded as superseded without creating a
+   consume-once record, and the newest queued row for that comment remains pending for
+   the drain step below.
+   While holding the lock, the handler allocates a
    monotonic local `comment_version_seq` for the current API state and inserts the
    consume-once row through a unique constraint over `{deployment_id, installation,
    repository, pull_request, comment_id, api_updated_at, body_digest, parse_version,
@@ -1840,10 +1901,19 @@ commands are honored only when all checks pass:
    provider calls and publication, with its own lease and fencing token. The handler
    fetches the current GitHub comment again immediately after acquiring the
    comment-level lock and before creating a consume-once row; if the GitHub-fetched
-   `updated_at` value or body digest differs from the queued delivery, that queued
-   version is recorded as superseded without a consume-once row and the latest queued
-   edit is processed behind the same lock. Immediately before side effects, the handler
-   repeats the current-comment read and aborts as superseded if the claimed version has
+   author id, `updated_at` value, body digest, parsed verb, args digest, occurrence id,
+   or head SHA differs from the queued delivery, that queued version is recorded as
+   superseded without a consume-once row and the newest queued row for that comment
+   remains pending for the drain step below. The lock holder drains at most one current
+   queued row at a time: it
+   marks the row `processing`, performs the fresh GitHub read, either creates and
+   consumes the matching command row or marks the queued row `superseded`, and after the
+   command reaches terminal state re-queries `command_comment_events` for the newest
+   unprocessed row under the same comment key. Each queued edit is then re-authorized by
+   re-acquiring the comment lock and repeating the fresh-read comparison; webhook
+   redelivery is not required for an edit that arrived during lock acquisition or while
+   the prior command was running. Immediately before side effects, the handler repeats
+   the current-comment read and aborts as superseded if the claimed version has
    advanced, recording the current version for later processing. Launch tests must show
    repeated API reads of the same edited comment produce the same digest, and cosmetic
    edits such as adding or removing trailing spaces produce a new digest and a new
