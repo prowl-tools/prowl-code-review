@@ -61,6 +61,11 @@ security-equivalent replacement for CLI/Action live-key custody.
 > grants, or audit logs; incident response and revocation can stop future decrypts but
 > cannot undo a key already exfiltrated from process memory. Use CLI, Action, or
 > self-hosting if you require the stronger live-key custody boundary.
+> Managed install, migration, and first key-entry screens must show this warning before
+> accepting provider keys and must require an explicit acknowledgement whose custody
+> policy version is recorded in the managed audit log. If the managed launch
+> attestation is missing, stale, unsigned, or mismatched to the deployed commit, the
+> managed App must not accept provider keys or send provider traffic.
 
 - **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
   the planned managed Hosted App (not yet available) is a pre-launch exception that
@@ -106,10 +111,12 @@ security-equivalent replacement for CLI/Action live-key custody.
   the CLI, Action, or self-hosted App. Migrating from CLI/Action to the managed
   Hosted App is therefore an explicit opt-in to a weaker live-key custody model in
   exchange for install-once hosted operation; hosted migration docs and setup UI must
-  show that warning before key entry. It also cannot protect against compromise,
-  logging, or policy choices inside the user's selected LLM provider after the
-  key/content is sent to that provider; provider key scoping, spend limits,
-  monitoring, and rotation remain the user's provider controls.
+  show that warning before key entry, require explicit acknowledgement of the active
+  custody-policy version, and record that acknowledgement in installation audit state.
+  It also cannot protect against compromise, logging, or policy choices inside the
+  user's selected LLM provider after the key/content is sent to that provider; provider
+  key scoping, spend limits, monitoring, and rotation remain the user's provider
+  controls.
 - Hosted App revocation is an ordered, fenced sequence. The application database
   transaction marks the installation revoked, bumps the revocation generation,
   invalidates outstanding leases/fencing tokens, and prevents new job claims. After

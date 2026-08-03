@@ -56,9 +56,16 @@ PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
                                           └─ post review + branded "Prowl Review" check run
 ```
 
-The receiver verifies the webhook signature, then records the GitHub delivery id
-before enqueueing. Delivery id deduplicates exact GitHub retries only; review
-eligibility is tracked separately with a coalescing key of `{installation,
+The receiver verifies the webhook signature, then persists the raw delivery
+metadata, replay/idempotency row, eligibility row, and queue-intent outbox row in
+one serializable transaction before acknowledging GitHub. The queue is fed only by
+an outbox dispatcher that leases committed queue-intent rows; a commit without a
+successful broker enqueue is recovered by the dispatcher/sweeper, and a failed
+transaction produces no acknowledgement, no queue row, and no provider work. No
+review or command can start from an in-memory webhook payload or a broker message
+that lacks the matching durable idempotency record. Delivery id deduplicates exact
+GitHub retries only; review eligibility is tracked separately with a coalescing key
+of `{installation,
 repository, pull_request, head_sha, lifecycle_generation}`. The lifecycle
 generation increments on state transitions that can make the same head newly
 reviewable or newly owned, including `ready_for_review`, `reopened`, base-branch
@@ -67,11 +74,12 @@ Terminal skipped states can therefore be re-armed without treating a real state
 transition as a duplicate retry. Duplicate deliveries for the same lifecycle
 generation reuse the existing job record. Before work starts, a runner atomically
 claims the job by writing a persistent lease with an expiry and monotonic fencing
-token. Every provider call and publication re-reads the current PR head, App
-installation state, delivery owner, revocation generation, and fencing token;
-stale, expired, or superseded claims stop without posting review content. Retries
-acquire a new fencing token, so concurrent deliveries cannot process the same job
-simultaneously.
+token. Every provider call and publication re-reads the current PR head, PR
+eligibility (`open`, non-draft, non-fork for managed v1, expected base/head refs), App
+installation state, delivery owner, revocation generation, and fencing token; stale,
+expired, ineligible, or superseded claims stop without posting review content.
+Retries acquire a new fencing token, so concurrent deliveries cannot process the same
+job simultaneously.
 
 Fork-originated pull requests are **skipped by the managed App in v1**. The service
 may post a neutral check or summary explaining the skip, but it makes no provider
@@ -106,10 +114,14 @@ self-host path**, and run a managed instance of the same code.
   stored in the database only as per-installation envelope-encrypted ciphertext.
   This is the one exception to the current Action/CLI environment-only key rule;
   it applies only to the managed hosted App and must be called out in SECURITY.md.
-- **Self-hosted instance:** one-click deploy (Workers deploy button + Docker image).
-  The operator registers their own GitHub App, holds their own provider keys and
-  KMS material, and gets feature parity. Identical codebase; the managed instance
-  is just our deployment of it.
+- **Self-hosted instance:** one-click deploy for receiver/orchestration plus a Docker
+  runner/settings service for key-handling paths. A Workers-only deployment is allowed
+  only for webhook intake and queue orchestration unless the operator's platform proves
+  the Decision 1 memory-locking and process-isolation controls for key ingestion,
+  decrypt, and provider egress. The operator registers their own GitHub App, holds
+  their own provider keys and KMS material, and gets feature parity through the
+  hardened runner/settings tier. Identical codebase; the managed instance is just our
+  deployment of it.
 
 **Managed key controls:** the envelope root key lives outside the application
 database and outside queues, in a provider-managed KMS/HSM-style service. The
@@ -120,21 +132,23 @@ tests, and drift alerts rather than by a manual runbook alone:
   wrapping keys and grants, but they cannot decrypt provider keys or read the
   application database.
 - Runner-decrypt identities may decrypt only through a per-job grant whose
-  encryption context/AAD exactly matches installation id, key row id, job id,
+  authorization context exactly matches installation id, key row id, job id,
   provider name, provider-call nonce, revocation generation, and fencing token.
-  They cannot list, export, rotate, or re-wrap keys. The provider-call nonce is
-  allocated by the control plane in the same transaction that checks the active job
-  lease, refreshes the fencing token for that attempt, and advances a per-job
-  counter; runners cannot choose or reuse it. A decrypt broker issues one decrypt
-  authorization for that allocated nonce/fencing-token pair, marks it consumed
-  before returning plaintext, and rejects stale/replayed nonces or stale fencing
-  tokens, including after runner crashes or network retries. Each provider API
-  request or retry therefore requires a fresh decrypt authorization and current
-  fencing token; the decrypted key is used to construct exactly one outbound
-  provider attempt and then cleared in `finally` before any subsequent retry or
-  provider call can start. This adds KMS latency/cost but prevents a normal runner
-  path from reusing one decrypt across multiple calls; it does not protect against a
-  runner already compromised during that authorized call.
+  This per-attempt grant context is separate from the immutable envelope AAD used to
+  encrypt the stored key row; it gates *who may decrypt now* and never rewrites or
+  substitutes the stored envelope identity. Runner identities cannot list, export,
+  rotate, or re-wrap keys. The provider-call nonce is allocated by the control plane
+  in the same transaction that checks the active job lease, refreshes the fencing token
+  for that attempt, and advances a per-job counter; runners cannot choose or reuse it.
+  A decrypt broker issues one decrypt authorization for that allocated
+  nonce/fencing-token pair, marks it consumed before returning plaintext, and rejects
+  stale/replayed nonces or stale fencing tokens, including after runner crashes or
+  network retries. Each provider API request or retry therefore requires a fresh decrypt
+  authorization and current fencing token; the decrypted key is used to construct
+  exactly one outbound provider attempt and then cleared in `finally` before any
+  subsequent retry or provider call can start. This adds KMS latency/cost but prevents a
+  normal runner path from reusing one decrypt across multiple calls; it does not protect
+  against a runner already compromised during that authorized call.
 - Rewrap/deletion workers may re-wrap or destroy affected data keys for an
   approved incident/deletion job, but they cannot call providers or GitHub as a
   review runner.
@@ -170,15 +184,27 @@ provider requests already sent by a live compromised runner. Queue messages carr
 installation, repo, PR, head SHA, and key row identifiers, never plaintext keys or
 encrypted key blobs.
 
+The managed launch gate must include deployed KMS/HSM evidence, not only app-layer
+intent. The launch attestation must name the IAM/HSM policy classes for key-admin,
+runner-decrypt, rewrap/deletion, backup/restore, and break-glass identities; publish
+grant-separation and drift-test results; link immutable KMS audit delivery evidence;
+and include a post-revocation decrypt-failure test proving old grants and the
+compromised root cannot decrypt or re-wrap any affected data key. The runtime loads
+that attestation at startup and keeps key-save, decrypt, and provider traffic disabled
+if the attestation is absent, unsigned, stale, or names policy evidence that does not
+match the deployed commit and environment.
+
 Each encrypted provider-key row is an authenticated envelope, not just ciphertext.
-The envelope metadata commits to installation id, key row id, provider name, data
-key id, key version, and creation generation, and it stores a KMS/HSM-backed HMAC
-tag over that metadata plus the plaintext key bytes. After decrypt, the runner asks
-KMS/HSM to verify the non-exportable HMAC tag against the requested envelope
-metadata before using the key. A metadata mismatch, tag failure, or unexpected key
-row/provider pairing fails closed, revokes the job grant, and emits an audit event;
-the runner never sends a provider request with a key whose envelope does not match
-the installation being processed.
+The immutable envelope AAD commits to installation id, key row id, provider name,
+data key id, key version, and creation generation. KMS/HSM verifies that AAD and the
+envelope authentication tag while decrypting the stored ciphertext; it is never asked
+to verify a tag over plaintext provider-key bytes after plaintext has been released.
+If additional integrity evidence is needed, it is computed over ciphertext and envelope
+metadata with a non-exportable key, not over plaintext key material. A metadata
+mismatch, tag failure, unexpected key row/provider pairing, or per-attempt grant
+context mismatch fails closed, revokes the job grant, and emits an audit event; the
+runner never sends a provider request with a key whose immutable envelope identity does
+not match the installation being processed.
 
 Plaintext provider keys exist in two managed-service places only: the settings
 key-ingestion path while an admin saves or rotates a key, and the runner process
@@ -262,7 +288,9 @@ screen must state that managed hosting is weaker than CLI/Action for live key
 custody because plaintext keys exist briefly in Prowl-controlled workers; key entry
 requires an explicit acknowledgement whose policy version is recorded in audit state,
 while CLI, Action, and self-host remain the recommended paths for users who reject
-that boundary.
+that boundary. The key-save route fails closed until that acknowledgement exists for
+the active custody-policy version and the signed launch attestation permits managed
+key-save traffic for the deployed commit.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -410,6 +438,10 @@ reserved artifact names are `src/hosted/provider-http-client.ts`,
 `test/fixtures/hosted/provider-mock.ts`, and
 `docs/security/hosted-provider-http-launch-record.md`; step 5 must either create
 those paths or update this decision before provider traffic can be enabled. The
+managed runtime starts with provider egress disabled and checks this launch record
+before every runner startup and provider-call feature-flag enablement; an absent,
+draft, unsigned, or mismatched record keeps decrypt and provider traffic disabled
+even if the rest of the App is deployed. The
 security-owner quorum is two repository maintainers with write/admin access who are
 not the wrapper author and not the production deployment approver; their approval is
 recorded as GitHub review approvals on the launch-record PR plus their names and
@@ -756,14 +788,19 @@ character classes, or partial provider error details. The input field is cleared
 after every submit attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
-audit event. Delete/uninstall starts with a single database transaction that marks
-the installation revoked, bumps the revocation generation, invalidates outstanding
-job leases and fencing tokens, records deletion-started with a timestamp, and
-prevents new jobs from being claimed. Only after that transaction commits does the
-control plane disable KMS decrypt grants, cancel queued jobs, evict runner/cache
-entries, delete provider key rows and review state, and write the deletion-complete
-audit event. Outstanding leases are invalidated before revocation is reported as
-complete.
+audit event. Deleting one provider credential revokes only that
+`{installation, repository scope, provider, key_row_id}` credential, bumps a
+credential-scoped revocation generation, disables its decrypt grants, cancels or
+marks incomplete jobs that depended on that key, and leaves unrelated provider
+credentials, installation metadata, and review state intact unless the request is an
+installation uninstall or repository disable. Uninstall starts with a single database
+transaction that marks the installation revoked, bumps the installation revocation
+generation, invalidates outstanding job leases and fencing tokens, records
+deletion-started with a timestamp, and prevents new jobs from being claimed. Only
+after that transaction commits does the control plane disable KMS decrypt grants,
+cancel queued jobs, evict runner/cache entries, delete provider key rows and review
+state, and write the deletion-complete audit event. Outstanding leases are
+invalidated before revocation is reported as complete.
 
 Active runners perform a transactional read of installation state, revocation
 generation, lease expiry, and fencing token immediately before every external call
@@ -893,27 +930,27 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
-	  Repository visibility is a fresh-search precondition, not a cached hint: the adapter
-	  re-reads visibility immediately before each code-search call and again before caching
-	  or serving results. If a result was produced under a public visibility state and a
-	  later check shows private, unknown, transferred, renamed, or inaccessible visibility,
-	  the result is discarded without use, any cache entry for the prior state is evicted,
-	  in-flight search is aborted, and the review is marked incomplete with
-	  `visibility_changed` or the more specific access reason. GitHub code search does
-	  not expose an atomic "execute only if repository is still public" visibility token
-	  that the App can bind to a request, so managed v1 treats the final-check-to-search
-	  handoff as a launch-blocking boundary rather than a solved atomic primitive. Public
-	  search may be enabled only through a guarded-search helper that reads GitHub
-	  visibility, records a local visibility generation, builds the search request, and
-	  opens the outbound request in the same call stack without unrelated awaits, timers,
-	  queue hops, or cache lookups. Visibility-changing webhooks synchronously bump that
-	  local generation and abort in-flight guarded searches before send when the bump wins
-	  the race; a mismatch after response receipt discards the response before cache/use.
-	  If the chosen GitHub API path, runtime, or tests cannot keep that handoff within the
-	  published bound or prove no private/unknown search request object is sent after a
-	  visibility bump visible to the App, public code search remains disabled for managed
-	  v1 and required search reports incomplete context.
-	  The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
+  Repository visibility is a fresh-search precondition, not a cached hint: the adapter
+  re-reads visibility immediately before each code-search call and again before caching
+  or serving results. If a result was produced under a public visibility state and a
+  later check shows private, unknown, transferred, renamed, or inaccessible visibility,
+  the result is discarded without use, any cache entry for the prior state is evicted,
+  in-flight search is aborted, and the review is marked incomplete with
+  `visibility_changed` or the more specific access reason. GitHub code search does
+  not expose an atomic "execute only if repository is still public" visibility token
+  that the App can bind to a request, so managed v1 treats the final-check-to-search
+  handoff as a launch-blocking boundary rather than a solved atomic primitive. Public
+  search may be enabled only through a guarded-search helper that reads GitHub
+  visibility, records a local visibility generation, builds the search request, and
+  opens the outbound request in the same call stack without unrelated awaits, timers,
+  queue hops, or cache lookups. Visibility-changing webhooks synchronously bump that
+  local generation and abort in-flight guarded searches before send when the bump wins
+  the race; a mismatch after response receipt discards the response before cache/use.
+  If the chosen GitHub API path, runtime, or tests cannot keep that handoff within the
+  published bound or prove no private/unknown search request object is sent after a
+  visibility bump visible to the App, public code search remains disabled for managed
+  v1 and required search reports incomplete context.
+  The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
   before every managed retrieval deploy and in startup smoke tests. It covers
   private repository metadata, private submodules, visibility changes, renamed or
   transferred repositories, fork/private-base combinations, and public/private repos
@@ -936,7 +973,12 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   regardless of submodule structure, visibility inheritance, or user configuration.
   Private submodules and cross-repo references are not traversed in managed v1;
   cross-repo context that would require search or broader credentials fails with a
-  clear incomplete-context note. Public-repo search results never populate a cache
+  clear incomplete-context note. Managed launch materials, settings diagnostics, and
+  every affected review output must state this limitation prominently: private
+  repositories that need cross-repo caller/callee or private-dependency context receive
+  an incomplete review with approval withheld, not a clean review with a quiet caveat.
+  The long-term full-parity path is the v2 sandboxed-checkout tier below. Public-repo
+  search results never populate a cache
   entry for a different repository namespace, and every cache key includes
   installation id, repository id, visibility, ref, and retrieval mode. This is
   because code search is a different security boundary than exact-path repository
@@ -1159,7 +1201,12 @@ append-only audit log.
   ```
 
   Production code must match that ordering or prove equivalent fixed-work behavior in
-  the launch record. The receiver must iterate the raw wire header collection and reject
+  the launch record. This design is not an implementation approval: managed launch
+  requires an isolated verifier module, launch-blocking CI, and production-bundle
+  timing tests covering 63/64/65/66 hex-character inputs, malformed prefixes,
+  duplicate/case-variant headers, current-secret, previous-secret, dummy-secret,
+  row-present/row-absent replay cases, and verifier-quarantine behavior. The receiver
+  must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus
   `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
@@ -1305,6 +1352,15 @@ append-only audit log.
   App-wide and source-rate abuse buckets still
   apply before a review or command job is queued, but they cannot drop signed
   suspend/delete, installation-repository, or permission-invalidation control events.
+  The raw receiver also enforces a managed-launch request-body ceiling before any
+  framework parser, JSON decoder, queue write, or provider work can observe the body.
+  The ceiling is published in the launch record and defaults to 2 MiB for v1 webhook
+  payloads. The raw adapter streams bytes through the HMAC input while counting them;
+  an over-limit body drains or terminates according to the platform's safe connection
+  policy, records only redacted metadata, follows the same generic failure envelope and
+  timing floor as other authentication failures, and never persists or enqueues the
+  payload. A receiver that must buffer an unbounded body before signature verification
+  is not eligible for managed launch.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
   provisioning and rotation are operator-only, App-wide flows; installation admins
@@ -1468,11 +1524,15 @@ failure detection.
 
 Before hosted launch, the Action must learn this field from the same trusted-base
 config it already loads and exit with a neutral "App owns delivery" result before
-any provider call when `delivery.owner: app`. The hosted App performs the symmetric
-check and no-ops when `delivery.owner: action`. Owner is read from the trusted base
-ref/config generation associated with the PR head. The initial owner decision records
-the trusted-base ref, config commit SHA, config blob SHA, owner value, and lifecycle
-generation. Owner changes apply only to the next PR head SHA or base-config
+opening or updating its branded check run and before any provider call when
+`delivery.owner: app`. The hosted App performs the symmetric check and no-ops when
+`delivery.owner: action`. Owner is read from the trusted base ref/config generation
+associated with the PR head. The initial owner decision records the trusted-base ref,
+config commit SHA, config blob SHA, owner value, the owning delivery implementation
+(`action` or `app`), and, for `app`, the exact GitHub App id/slug and installation id
+that owns the delivery. A hosted runner cannot claim a job if the installed App id or
+slug does not match that recorded owner identity. Owner changes apply only to the next
+PR head SHA or base-config
 generation; they increment lifecycle generation and supersede in-flight work for older
 generations. Subsequent deliveries for existing PR heads re-query the owner before
 enqueueing; in-flight reviews under the previous owner are marked `config_changed` or
@@ -1666,12 +1726,18 @@ commands are honored only when all checks pass:
    privilege regain requires a new command, and the failure is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    deployment or self-host instance id, installation id, repository id, PR number, and
-   current head SHA match the idempotency record for the command. Before any provider
-   call or side effect, the
-   handler atomically claims an unconsumed command record keyed by those fields plus
-   command verb and lifecycle generation, and marks it consumed in the same
-   transaction. Already-consumed records are rejected even when the delivery id,
-   comment id, body digest, and head SHA match. The edited timestamp is GitHub's
+   current head SHA match the idempotency record for the command. Webhook payloads
+   can enqueue candidate work only; the canonical claim path acquires the comment-level
+   lock, re-reads the current GitHub comment and PR head, obtains the fresh
+   cache-bypassing authorization proof required by step 2, and only then inserts or
+   consumes the command record. No command record can be claimed from webhook-delivered
+   comment body, webhook timestamps, or a positive permission cache alone. Before any provider
+   call, settings-link creation, GitHub publication, or other side effect, the handler
+   atomically claims an unconsumed command record, sets `consumed_at` as part of that
+   claim, and rejects already-consumed records even when delivery id, comment id, body
+   digest, head SHA, and every parsed command field still match. Consume-once is a
+   claim-time guard, not a completion marker or retry permit. The edited timestamp is
+   GitHub's
    `updated_at` value from a fresh GitHub API read, not a client-derived or
    webhook-trusted clock value. The body digest is SHA-256 over the exact raw UTF-8
    bytes of GitHub's REST/GraphQL `body` field as returned by that fresh API read,
@@ -1681,8 +1747,9 @@ commands are honored only when all checks pass:
    spaces or line-ending changes returned by GitHub, produce a different digest and
    therefore a different consume-once record after the comment-level lock. Webhook
    payloads may enqueue edit work but cannot create the canonical
-   consume-once record. Edited comments create a distinct consume-once record keyed by
-   the deployment/instance id, that API-read timestamp, and digest only after a
+   consume-once record. Edited comments follow the same consume-once rule: they create
+   a distinct consume-once record keyed by the deployment/instance id, that API-read
+   timestamp, digest, parsed command occurrence, and canonical arguments only after a
    comment-level execution lock keyed by
    `{deployment_id, installation, repository, pull_request, comment_id}` is available.
    After the lock is acquired, the handler performs the fresh GitHub API read that supplies the
@@ -1693,13 +1760,15 @@ commands are honored only when all checks pass:
    monotonic local `comment_version_seq` for the current API state and inserts the
    consume-once row through a unique constraint over `{deployment_id, installation,
    repository, pull_request, comment_id, api_updated_at, body_digest, parse_version,
-   verb}` plus the local sequence. `deployment_id` is the managed App deployment id or
+   verb, args_digest, command_occurrence_id}` plus the local sequence. `deployment_id`
+   is the managed App deployment id or
    self-host instance id and is never inferred from GitHub installation id alone, so
    exported/imported records or shared-App migrations cannot make an independent
-   deployment honor another deployment's consume-once row. Insert conflicts are
-   treated as duplicates and do not execute again; identical
-   `updated_at`/digest/verb values represent the same observed comment version, and
-   different digests under the same GitHub timestamp serialize through the local
+   deployment honor another deployment's consume-once row. Insert conflicts or rows
+   whose `consumed_at` is already set are treated as duplicates and do not execute
+   again; identical `updated_at`/digest/verb/args/occurrence values represent the same
+   observed comment version, and different digests under the same GitHub timestamp
+   serialize through the local
    sequence. The lock intentionally excludes the mutable parsed command verb, PR head
    SHA, and lifecycle generation so every edit of one comment serializes behind the
    same deployment-scoped comment identity. That lock is acquired before creating the
@@ -1828,7 +1897,8 @@ The explicit records are:
    two-security-reviewer launch record.
 6. Runner + posting path (core unchanged) + command authorization/replay handling,
    blocked on step 5 for any provider call.
-7. Self-host packaging (Workers deploy button + Dockerfile) and SECURITY.md/docs.
+7. Self-host packaging (Workers receiver deploy button + Docker runner/settings
+   service) and SECURITY.md/docs.
 8. Beta on our own repos → publish policy docs/limit defaults → announce.
 
 Each step lands as its own backlog item once #47 is un-parked; this doc's approval
