@@ -246,10 +246,17 @@ transparent proxy, no inherited `HTTP_PROXY`/`HTTPS_PROXY` environment, and no
 tenant-shared connection pool that can retain provider headers or bodies. Requests
 include `Cache-Control: no-store` and `Pragma: no-cache` where the provider accepts
 them, and the client never forwards provider responses through an intermediate cache
-before redaction. Each attempt obtains a fresh lease/fencing snapshot, provider-call
-nonce, and decrypt authorization tied to the current revocation generation; retries
-cannot reuse any of those values. The control plane consumes the provider-call nonce
-and grant in the same transaction that authorizes decrypt, with a unique key over
+before redaction. Launch requires a measured decrypt-to-send budget: staging tests
+record wall-clock time from successful decrypt return to the first provider request
+byte leaving the runner process and fail if p99 exceeds 100 ms or max exceeds 250 ms
+under representative load. If the minimal client cannot prove that bound, or if it
+requires provider-key material to live in JavaScript strings outside that measured
+handoff window, managed launch requires a native secret helper, sidecar vault with
+locked memory, or equivalent transport shim before provider traffic is enabled. Each
+attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
+authorization tied to the current revocation generation; retries cannot reuse any of
+those values. The control plane consumes the provider-call nonce and grant in the same
+transaction that authorizes decrypt, with a unique key over
 `{installation, job, attempt, nonce}` so a buggy retry loop or attacker cannot
 resubmit a failed attempt's nonce. The attempt is wrapped in a
 `try/finally` that starts before decrypt and encloses request construction, send,
@@ -907,12 +914,14 @@ append-only audit log.
   `X-Hub-Signature-256` header after case-insensitive counting across the raw header
   list; an absent header is a hard verification failure. The parser must reject
   missing prefixes, prefixes with extra characters, whitespace/control characters,
-  suffixes after the digest, and any post-prefix digest string that is not exactly 64
-  hexadecimal characters, including 63-, 65-, 66-character, overlong, padded, non-hex,
-  or otherwise malformed inputs, without truncating, padding, decoding partial
-  nibbles, normalizing length, or comparing prefixes; integration tests must cover
-  63/64/65/66 hex-character inputs and accept only a correct 64-character HMAC. The
-  receiver must iterate the raw wire header collection and reject
+  and suffixes after the digest. The parser validates that the character sequence
+  after the `sha256=` prefix is exactly 64 characters and contains only hexadecimal
+  digits before any attempt to decode, convert, hash, or compare the presented digest
+  bytes. Any digest that is not exactly 64 hex characters, including 63-, 65-,
+  66-character, overlong, padded, non-hex, or otherwise malformed inputs, is rejected
+  without truncation, padding, prefix comparison, or length normalization; integration
+  tests must cover 63/64/65/66 hex-character inputs and accept only a correct
+  64-character HMAC. The receiver must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus
   `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
@@ -997,9 +1006,13 @@ append-only audit log.
   match during grace is never allowed to create the prior replay record it needs for
   acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
   if the old-secret match has no existing pre-activation replay row, verification
-  fails before any replay record is inserted. Current-secret first-delivery insertions
-  run in a serializable transaction with a unique index over the replay key above;
-  old-secret duplicate checks use `SELECT ... FOR UPDATE` on the existing
+  fails before any replay record is inserted and returns the same response envelope
+  and fixed-path response generation as a current-secret HMAC mismatch. The old-secret
+  replay-row miss path cannot branch, log, or respond on the miss reason until after
+  the response is committed, and its timing class is part of the same launch and
+  production histograms as current-secret mismatches. Current-secret first-delivery
+  insertions run in a serializable transaction with a unique index over the replay key
+  above; old-secret duplicate checks use `SELECT ... FOR UPDATE` on the existing
   pre-activation row and never execute an insert path during grace. After signature
   and replay handling, the receiver classifies authorization-control events before no-op filtering:
   `installation`, `installation_repositories`, `membership`, `member`, `organization`,
@@ -1267,17 +1280,22 @@ commands are honored only when all checks pass:
    authorization invalidation because retrying could execute after a role downgrade
    without explicit user intent. Operationally, guarded send is one helper:
    after the fresh GitHub permission API result returns, it opens a serializable
-   transaction, locks the installation auth row and command row, confirms the auth
-   generation and sender/role/scope still match, consumes any provider-call nonce or
-   publication reservation, writes a side-effect fencing token, commits, and then
-   immediately opens the external request in the same call stack without unrelated
-   awaits, timers, or queue hops. The request builder requires that fencing token and
-   performs one final local generation read before opening the socket; a webhook
-   generation bump that lands between the API read and socket open either blocks on
-   the same row lock or makes that final read fail. A revocation that occurs after the
-   final local read but before the first outbound packet leaves the process remains a
-   residual GitHub/event-delivery race, is bounded by the guarded-send telemetry in
-   Decision 2, and is not claimed as atomic cancellation. State-changing,
+   transaction, locks the installation auth row and command row, re-reads the current
+   auth generation, and confirms it still matches the generation recorded before the
+   GitHub API call was issued plus the authorized sender/role/scope. If the generation
+   has advanced, the transaction rolls back immediately without consuming a
+   provider-call nonce, writing a side-effect fencing token, creating a publication
+   reservation, or opening an external request, and the command transitions to terminal
+   `authorization_changed`. Only if the generation still matches does the helper
+   consume any provider-call nonce or publication reservation, write a side-effect
+   fencing token, commit, and then immediately open the external request in the same
+   call stack without unrelated awaits, timers, or queue hops. The request builder
+   requires that fencing token and performs one final local generation read before
+   opening the socket; a webhook generation bump that lands between the API read and
+   socket open either blocks on the same row lock or makes that final read fail. A
+   revocation that occurs after the final local read but before the first outbound
+   packet leaves the process remains a residual GitHub/event-delivery race, is bounded
+   by the guarded-send telemetry in Decision 2, and is not claimed as atomic cancellation. State-changing,
    privileged, or provider-backed commands,
    including `review`, `full review`, `docstrings`, `tests`, chat replies,
    `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
@@ -1315,8 +1333,9 @@ commands are honored only when all checks pass:
    transaction, the command fails closed, any opened nonce is invalidated so later
    privilege regain requires a new command, and the failure is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
-   installation id, repository id, PR number, and current head SHA match the
-   idempotency record for the command. Before any provider call or side effect, the
+   deployment or self-host instance id, installation id, repository id, PR number, and
+   current head SHA match the idempotency record for the command. Before any provider
+   call or side effect, the
    handler atomically claims an unconsumed command record keyed by those fields plus
    command verb and lifecycle generation, and marks it consumed in the same
    transaction. Already-consumed records are rejected even when the delivery id,
@@ -1326,27 +1345,36 @@ commands are honored only when all checks pass:
    comment body plus command parse version and verb, not only the matched command
    fragment. Webhook payloads may enqueue edit work but cannot create the canonical
    consume-once record. Edited comments create a distinct consume-once record keyed by
-   that API-read timestamp and digest only after a comment-level execution lock keyed
-   by `{installation, repository, pull_request, comment_id}` is available. After the
-   lock is acquired, the handler performs the fresh GitHub API read that supplies the
+   the deployment/instance id, that API-read timestamp, and digest only after a
+   comment-level execution lock keyed by
+   `{deployment_id, installation, repository, pull_request, comment_id}` is available.
+   After the lock is acquired, the handler performs the fresh GitHub API read that supplies the
    authoritative `updated_at` value, full body digest, parsed verb, and head SHA. If
    the API state no longer matches the queued delivery, the queued version is recorded
    as superseded without creating a consume-once record, and the latest queued edit is
    processed behind the same lock. While holding the lock, the handler allocates a
    monotonic local `comment_version_seq` for the current API state and inserts the
-   consume-once row through a unique constraint over `{installation, repository,
-   pull_request, comment_id, api_updated_at, body_digest, parse_version, verb}` plus
-   the local sequence. Insert conflicts are treated as duplicates and do not execute
-   again; identical `updated_at`/digest/verb values represent the same observed
-   comment version, and different digests under the same GitHub timestamp serialize
-   through the local sequence. The lock intentionally excludes the mutable parsed
-   command verb, PR head SHA, and lifecycle generation so every edit of one comment
-   serializes behind the same comment identity. That lock is held from claim through
-   command terminal state, including provider calls and publication, with its own
-   lease and fencing token. The handler fetches the current GitHub comment again and
-   validates that its `updated_at` value/body digest still matches the claimed
-   delivery immediately before side effects; if it advanced, the in-flight command
-   aborts as superseded and records the current version for later processing. If an
+   consume-once row through a unique constraint over `{deployment_id, installation,
+   repository, pull_request, comment_id, api_updated_at, body_digest, parse_version,
+   verb}` plus the local sequence. `deployment_id` is the managed App deployment id or
+   self-host instance id and is never inferred from GitHub installation id alone, so
+   exported/imported records or shared-App migrations cannot make an independent
+   deployment honor another deployment's consume-once row. Insert conflicts are
+   treated as duplicates and do not execute again; identical
+   `updated_at`/digest/verb values represent the same observed comment version, and
+   different digests under the same GitHub timestamp serialize through the local
+   sequence. The lock intentionally excludes the mutable parsed command verb, PR head
+   SHA, and lifecycle generation so every edit of one comment serializes behind the
+   same deployment-scoped comment identity. That lock is acquired before creating the
+   consume-once row and held from claim through command terminal state, including
+   provider calls and publication, with its own lease and fencing token. The handler
+   fetches the current GitHub comment again immediately after acquiring the
+   comment-level lock and before creating a consume-once row; if the GitHub-fetched
+   `updated_at` value or body digest differs from the queued delivery, that queued
+   version is recorded as superseded without a consume-once row and the latest queued
+   edit is processed behind the same lock. Immediately before side effects, the handler
+   repeats the current-comment read and aborts as superseded if the claimed version has
+   advanced, recording the current version for later processing. If an
    edit arrives while the lock is held, the newer edit is durably queued behind the
    lock and re-authorized after the current command reaches terminal state; it is not
    dropped through a Retry-After-only webhook response because GitHub will not
