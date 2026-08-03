@@ -197,9 +197,13 @@ objects into native secure allocation with memory locking and explicit zeroing
 (`sodium_malloc`/`sodium_memzero` or platform equivalent) before validation and
 envelope encryption; if the managed platform cannot provide that primitive for key
 ingestion, launch is blocked until an external secret helper or sidecar vault owns
-the ingestion step. These controls reduce persistence after save, but they still do
-not protect against malicious code or an operator already executing inside that
-worker during the live save window.
+the ingestion step. The native primitive is not provided by the general Node request
+handler: it must be implemented by a pinned, audited N-API/libsodium binding inside
+the short-lived ingestion worker or by a separate local secret broker that receives
+the key over local authenticated IPC and returns only the encrypted envelope. These
+controls reduce persistence after save, but they still do not protect against
+malicious code or an operator already executing inside that worker during the live
+save window.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -282,6 +286,12 @@ sign-off by a two-person security quorum whose members did not author the wrappe
 are not the deployment approver. The wrapper reruns the equivalence suite at startup,
 after dependency updates, and at least daily as a drift check; failure disables hosted
 provider calls and pages on-call until the wrapper or dependency set is repaired. The
+managed App has no approved provider HTTP wrapper until the repository contains a
+named reference implementation, canonical provider mock, equivalence test harness,
+dependency provenance report, and signed launch record for that implementation; using
+an unnamed "equivalent" wrapper is itself a launch blocker. The reference harness is
+the only source of accepted alternatives, and each alternative must pass the same
+fixtures before it can be enabled. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
@@ -437,10 +447,16 @@ state for later guarded validation. Staging timing tests must issue repeated
 nonce, and session-race requests and block launch if p95/p99 distributions diverge
 beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms and
 p99 delta <= 50 ms between any two failure classes over at least 10,000 staging
-samples per class, after warmup, on the chosen runtime and ingress path. If the
-environment cannot meet that bound, synchronous live validation is disabled in favor
-of the generic pending state or launch is blocked. The residual timing threat model
-is statistical leakage of a generic save-state transition under runtime/network
+samples per class, after warmup, measured from ingress accept at the load balancer to
+the last response byte written, including framework parsing, nonce/session/CSRF/OAuth
+checks, database/KMS calls used by that path, and any synchronous validation work. If
+including a live provider auth probe would exceed the bound, the endpoint must skip
+that synchronous provider call, persist only an `unverified` encrypted key row after
+the local constant-shape checks pass, return the same generic pending envelope, and
+withhold all reviews for that installation until a later guarded validation job marks
+the key verified. If either the no-live-probe path or the later guarded validation
+cannot meet its own published bound, launch is blocked. The residual timing threat
+model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
 The response never re-renders or logs the submitted key, its prefix/suffix, length,
@@ -762,8 +778,12 @@ append-only audit log.
   traces until the loop completes, and tests showing equivalent behavior and bounded
   timing distributions when the matching secret is current, previous, dummy/absent,
   or outside its validity window. Only after the full signature loop completes does
-  the receiver consult the replay store. Delivery ids are recorded with a 24-hour replay
-  TTL before enqueueing, keyed with installation id, repository id when present,
+  the receiver consult the replay store. The replay decision receives the immutable
+  match-bit set from that just-completed HMAC loop; replay-store state alone is never
+  authentication. Old-secret duplicate acceptance requires both the old-secret match
+  bit for the exact immutable raw payload bytes just hashed and an existing
+  pre-activation replay row. Delivery ids are recorded with a 24-hour replay TTL
+  before enqueueing, keyed with installation id, repository id when present,
   delivery id, payload hash, action, and accepted secret version. The installation id
   is parsed from the signed payload before replay insertion and must match the row's
   tenant scope before any job or control event is enqueued. New replay rows may be
@@ -998,13 +1018,19 @@ commands are honored only when all checks pass:
    generation. If a permission-change webhook lands after the prefilter but before
    claim, the generation bump wins or forces the claim transaction to retry/fail
    before any command record can be consumed. Claimed command records store the auth
-   generation used for authorization, and the handler re-checks that generation plus performs
-   the fresh GitHub permission API check through the same guarded-send pattern
-   immediately before each provider or GitHub side effect; a stale generation alone
-   can never authorize execution. If a permission-change webhook invalidated the
-   cache after the fresh check but before an external call, the guarded send sees the
-   generation mismatch, aborts, and no side effect starts. If a permission-change
-   webhook invalidated the cache mid-command, the consumed command record remains
+   generation used for authorization, and the handler re-checks that generation plus
+   performs the fresh GitHub permission API check through the same guarded-send
+   pattern immediately before each provider or GitHub side effect; a stale generation
+   alone can never authorize execution. The handler records the locked auth
+   generation before starting the fresh GitHub permission API read and compares it
+   with the locked row again inside guarded send after the read returns. If a
+   permission-change webhook bumps the generation while that GitHub API call is in
+   flight, the result is discarded as stale before any side-effect reservation is
+   written; the command then follows the same single fresh-read retry or terminal
+   `authorization_changed` path described here. If a permission-change webhook
+   invalidated the cache after the fresh check but before an external call, the
+   guarded send sees the generation mismatch, aborts, and no side effect starts. If a
+   permission-change webhook invalidated the cache mid-command, the consumed command record remains
    consumed and transitions to terminal `authorization_changed` with the old and new
    auth generations, abort reason, and side-effect reservation state. It is not reset,
    re-queued, or automatically retried. The normal status/comment/check channel
