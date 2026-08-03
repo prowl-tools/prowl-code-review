@@ -1155,14 +1155,18 @@ webhook; a mismatch fails with the same generic unauthorized envelope, invalidat
 other user's nonce, and audits a possible social-engineering attempt. The first
 authorized settings GET transactionally binds the nonce row to that same-sender
 session before rendering the key input only with a predicate that includes
-`expires_at > now()` and `consumed_at IS NULL`; expired nonces cannot be bound even if
-cleanup has not run. The key-save POST must happen over HTTPS with the same
-authorized same-sender session. Nonce consumption plus key persistence must commit in
-one transaction using a predicate that includes the nonce hash, session-binding hash,
-sender id, OAuth user id, installation id, repository id, row version, `expires_at >
-now()`, and `consumed_at IS NULL`; a second request, different session, different
-OAuth user, or expired nonce gets a generic used/expired response and cannot write a
-key.
+`expires_at > database_transaction_timestamp()` and `consumed_at IS NULL`; expired
+nonces cannot be bound even if cleanup has not run. That bind is a single
+serializable `UPDATE ... WHERE nonce_hash = ? AND row_version = ? AND expires_at >
+database_transaction_timestamp() AND consumed_at IS NULL RETURNING ...` or equivalent
+row-locked compare-and-swap; read-committed read-then-update flows are not allowed.
+Cleanup is storage hygiene only and is never part of authorization. The key-save POST
+must happen over HTTPS with the same authorized same-sender session. Nonce consumption
+plus key persistence must commit in one transaction using the same database-clock
+expiry predicate plus nonce hash, session-binding hash, sender id, OAuth user id,
+installation id, repository id, row version, and `consumed_at IS NULL`; a second
+request, different session, different OAuth user, or expired nonce gets a generic
+used/expired response and cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents

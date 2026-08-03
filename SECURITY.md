@@ -63,7 +63,10 @@ pull-request content without leaking secrets or executing attacker-controlled co
   decrypts, but they cannot undo plaintext disclosure that happened before the
   compromise was detected. Users who require "no Prowl infrastructure ever handles
   my key" or otherwise assume zero trust of Prowl-managed infrastructure must use
-  the CLI, Action, or self-hosted App. It also cannot protect against compromise,
+  the CLI, Action, or self-hosted App. Migrating from CLI/Action to the managed
+  Hosted App is therefore an explicit opt-in to a weaker live-key custody model in
+  exchange for install-once hosted operation; hosted migration docs and setup UI must
+  show that warning before key entry. It also cannot protect against compromise,
   logging, or policy choices inside the user's selected LLM provider after the
   key/content is sent to that provider; provider key scoping, spend limits,
   monitoring, and rotation remain the user's provider controls.
