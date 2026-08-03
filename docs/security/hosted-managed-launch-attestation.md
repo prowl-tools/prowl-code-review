@@ -18,6 +18,8 @@ deployment record, launch records, runtime feature-flag state, and evidence for:
   hardened secret broker, or platform enclave/secret service.
 - Startup self-tests for memory locking, no-swap, no-core-dump, no-debug/no-inspector,
   blocked process inspection, and explicit canary-buffer zeroing.
+- Key-save fixed-response timing evidence, latency/capacity budget, and the automated
+  two-window drift cutoff that disables managed key-save traffic.
 - Canary-injection results proving plaintext provider keys do not reach logs, errors,
   traces, queues, caches, persisted state, crash dumps, or process-inspection paths.
 - The deployed KMS/HSM IAM policy classes for key-admin, runner-decrypt,
@@ -29,11 +31,13 @@ deployment record, launch records, runtime feature-flag state, and evidence for:
   core-dump, debugger, crash-dump, and runner-isolation policy.
 - The provider HTTP wrapper, canonical mock, equivalence harness, dependency
   provenance report, timing/drift thresholds, lower-layer receive-buffer evidence,
-  and provider-egress launch record.
+  provider-native short-lived credential/revocation capability assessment, runtime
+  provider-egress policy gate, and provider-egress launch record.
 - The webhook verifier implementation path, raw-header/body-limit receiver evidence,
   duplicate/case-variant header fixtures through the deployed proxy/runtime stack,
-  malformed digest fixtures, replay-store schema, planned rotation tests, timing/drift
-  histograms, and verifier-quarantine drill results.
+  pre-production and daily drift-test results, malformed digest fixtures, replay-store
+  schema, planned rotation tests, timing/drift histograms, and verifier-quarantine
+  drill results.
 - The managed GitHub App identity decision: either a new App registration whose
   signing key was never distributed to Actions, or deletion-grade GitHub evidence plus
   canary results proving every Action-distributed private key for a reused App
