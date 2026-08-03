@@ -3,7 +3,10 @@
 **Status: PROPOSED — pending maintainer review.** This document is backlog **#62**, the
 revival gate for parked **#47** (install-once hosted GitHub App). Per the workspace
 policy, #47 stays parked until the decisions below are approved; approving this doc
-un-parks it with a build plan. Nothing here changes the Action/CLI delivery.
+un-parks implementation planning only. It does not approve managed launch, external
+installations, key-save traffic, provider traffic, or #47 completion; those remain
+blocked on the named implementation artifacts, tests, signed launch records, and
+security-owner approvals below. Nothing here changes the Action/CLI delivery.
 
 ## Why a hosted App at all
 
@@ -218,7 +221,7 @@ Managed v1 has no approved key-ingestion implementation until a follow-up PR sel
 one of those classes, adds the named worker/broker path, key-ingestion test harness,
 startup self-test, SBOM/dependency provenance, and
 `docs/security/hosted-key-ingestion-launch-record.md`, and records approval from the
-same two-person security-owner quorum used for provider egress. Build-plan step 4 is
+same two-person security-owner quorum used for provider egress. Build-plan step 3 is
 the tracked artifact for this gate; approval of this design record un-parks that work
 but does not allow key-save traffic. These controls reduce persistence after save, but
 they still do not protect against malicious code or an operator already executing
@@ -233,14 +236,24 @@ unless a new security decision explicitly accepts and discloses that residual ri
 Hosted key entry must use an isolated raw-body POST endpoint with a provider/key-type
 selector outside the key payload; JSON, GraphQL, form-urlencoded, multipart fields,
 template variables, or framework body parsers that materialize the key as a JavaScript
-string are forbidden on the managed key path.
+string are forbidden on the managed key path. The framework integration is itself a
+launch artifact: the selected route must be registered outside the normal application
+body-parser/middleware tree, or terminate in the native helper/broker before the Node
+framework observes the body, and the launch record must name the exact framework hooks
+that disable parsing, request logging, template binding, tracing, and error
+serialization for that endpoint. Tests must monkeypatch the chosen framework parsers,
+loggers, validators, and error serializers with canary detectors and fail if any of
+them observes submitted key bytes before encryption. A normal Express/Koa/Fastify/Next
+action handler that receives the key as `string`, parsed JSON, form data, multipart
+field, or template value is not a launchable managed v1 implementation.
 
 Managed launch materials must surface that boundary before the user installs the App
 or enters a provider key. The install page, migration guide, and first key-setup
 screen must state that managed hosting is weaker than CLI/Action for live key
 custody because plaintext keys exist briefly in Prowl-controlled workers; key entry
-requires an explicit acknowledgement, while CLI, Action, and self-host remain the
-recommended paths for users who reject that boundary.
+requires an explicit acknowledgement whose policy version is recorded in audit state,
+while CLI, Action, and self-host remain the recommended paths for users who reject
+that boundary.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -326,7 +339,13 @@ mitigations, not a guarantee that memory is clean.
 
 The provider HTTP client is a launch-blocking security component. This design
 document defines the approval criteria only; it does not approve any implementation
-or unblock provider traffic. The first launchable implementation must be a named
+or unblock provider traffic. Approval of #62 or un-parking #47 into implementation
+planning must not be interpreted as provider-egress approval. Before any external
+managed installation, beta, or provider traffic is enabled, the repository must contain
+at least the draft reference wrapper, canonical provider mock, equivalence harness,
+canary fixture corpus, and launch-record skeleton for security review; the final
+launch record with two-person security-owner approval is required before production
+traffic. The first launchable implementation must be a named
 reference wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, and an
 equivalent wrapper is ineligible until the reference harness includes it and tests
 prove the same behavior. The wrapper has no middleware cache, no automatic
@@ -617,8 +636,13 @@ selection, key-hash/HMAC comparisons, and dummy validation path with conditional
 assignments instead of early returns; unauthorized or expired-nonce requests use
 dummy credentials and never contact the real provider. Nonce, session-binding, CSRF,
 Origin, and key-fingerprint comparisons use fixed-length HMAC or digest buffers and
-`crypto.timingSafeEqual` or equivalent; variable-length strings are decoded to fixed
-candidate buffers plus validity masks before comparison. Nonce lookup uses one
+`crypto.timingSafeEqual` or equivalent. Direct comparison of submitted strings,
+decoded strings, prefixes, suffixes, or lengths is forbidden on sensitive values,
+including before length validation. Variable-length inputs are scanned into fixed-size
+candidate buffers plus validity masks with full-length loops and conditional
+assignment; the final equality decision always compares equal-length buffers with
+`crypto.timingSafeEqual` or equivalent and folds the length/format mask into the
+result after the comparison. Nonce lookup uses one
 prepared query shape over a keyed nonce hash and indexed tenant/scope columns for
 present, absent, expired, and consumed rows, followed by the same dummy-row merge and
 authorization transaction shape. The design does not claim database planner constant
@@ -1054,12 +1078,16 @@ append-only audit log.
   `^sha256=[0-9A-Fa-f]{64}$` format with exactly 71 ASCII characters, exactly 64 hex
   characters after the prefix, and exactly 32 decoded bytes, plus exactly one
   `X-Hub-Signature-256` header after case-insensitive counting across the raw header
-  list; an absent header is a hard verification failure. The parser must reject
-  missing prefixes, prefixes with extra characters, whitespace/control characters,
-  and suffixes after the digest. The parser validates that the character sequence
-  after the `sha256=` prefix is exactly 64 characters and contains only hexadecimal
-  digits before any attempt to decode, convert, hash, or compare the presented digest
-  bytes. Any digest that is not exactly 64 hex characters, including 63-, 65-,
+  list; an absent header is a hard verification failure. The regex notation is the
+  accepted grammar, not permission to use a branchy auth decision. The parser must
+  reject missing prefixes, prefixes with extra characters, whitespace/control
+  characters, and suffixes after the digest through the same fixed-work validation
+  path. It scans the fixed 71-byte candidate window, maps missing/overlong bytes to
+  dummy byte values, accumulates prefix, length, and hex validity into masks, and
+  does not branch, return, log, or select a response from the first invalid position.
+  Only after that mask-building pass does it decode into either the presented
+  32-byte digest buffer or the fixed dummy digest. Any digest that is not exactly 64
+  hex characters, including 63-, 65-,
   66-character, overlong, padded, non-hex, or otherwise malformed inputs, is rejected
   without truncation, padding, prefix comparison, or length normalization; integration
   tests must cover 63/64/65/66 hex-character inputs and accept only a correct
@@ -1171,7 +1199,22 @@ append-only audit log.
   production histograms as current-secret mismatches. Current-secret first-delivery
   insertions run in a serializable transaction with a unique index over the replay key
   above; old-secret duplicate checks use `SELECT ... FOR UPDATE` on the existing
-  pre-activation row and never execute an insert path during grace. After signature
+  pre-activation row and never execute an insert path during grace. The replay table
+  schema is a launch artifact and must include at least `deployment_id`,
+  `installation_id`, nullable `repository_id`, `delivery_id`, `payload_hash`,
+  `action`, `accepted_secret_version`, `first_seen_at` from the database clock,
+  `new_secret_active_at_snapshot`, `expires_at`, and `payload_tenant_hash`, with a
+  unique index over `{deployment_id, installation_id, repository_id, delivery_id,
+  payload_hash, action, accepted_secret_version}`. Inserts for the previous secret are
+  allowed only before activation through `INSERT ... SELECT` from the locked secret
+  version row where `database_transaction_timestamp() < new_secret_active_at`; planned
+  grace handling has no previous-secret insert statement at all. A check constraint or
+  equivalent trigger rejects rows where `accepted_secret_version = previous` and
+  `first_seen_at >= new_secret_active_at_snapshot`; application-supplied timestamps are
+  never accepted. The launch record must name the database platform, timestamp
+  precision, transaction isolation, indexes, and lock order, and tests must race
+  deliveries at exactly `new_secret_active_at` plus concurrent rotation commits to prove
+  no post-activation old-secret row can be created. After signature
   and replay handling, the receiver classifies authorization-control events before no-op filtering:
   `installation`, `installation_repositories`, `membership`, `member`, `organization`,
   `team`, `team_add`, `repository`, and any documented permission, suspend, delete,
@@ -1415,7 +1458,14 @@ commands are honored only when all checks pass:
    carries an explicit `requires_fresh_auth`/`policy_sensitive` flag for admin,
    key-setup, provider-backed, state-changing, branch-protection-sensitive, and
    enterprise/SAML/IP-sensitive commands; launch tests fail if any such command can
-   reach side effects from a positive cache hit. Unknown permission or enterprise
+   reach side effects from a positive cache hit. The implementation must represent
+   cached permission hints and fresh GitHub permission proofs as different types or
+   tagged capabilities: privileged handlers accept only a `FreshAuthContext`
+   carrying the GitHub request id, required role, scope, auth generation observed
+   before the read, and auth generation reserved after the read. A cached
+   `PermissionHint` cannot satisfy that function signature, cannot be implicitly
+   converted, and any attempted use reaches the sentinel failure path above. Unknown
+   permission or enterprise
    policy webhooks also set an `enterprise_policy_dirty` flag that is cleared only by a
    successful full installation/org permission reconciliation; while set, sensitive
    commands bypass the cache and fail closed if GitHub cannot confirm current authority.
@@ -1486,7 +1536,18 @@ commands are honored only when all checks pass:
    socket open either blocks on the same row lock or makes that final read fail. A
    revocation that occurs after the final local read but before the first outbound
    packet leaves the process remains a residual GitHub/event-delivery race, is bounded
-   by the guarded-send telemetry in Decision 2, and is not claimed as atomic cancellation. State-changing,
+   by the guarded-send telemetry in Decision 2, and is not claimed as atomic
+   cancellation. This guarded-send transaction is the only path allowed to create a
+   side-effect reservation for commands: there is no implementation path where an
+   initial permission check, positive cache hit, or GitHub response held only in
+   memory can consume the command record or start work without re-locking the auth row
+   and command row after the network call returns. Launch tests must simulate a
+   permission downgrade after API dispatch but before API return, after API return
+   but before row lock acquisition, after reservation but before socket open, and
+   during command execution; every case must produce terminal
+   `authorization_changed`/`authorization_unavailable` without provider calls,
+   settings nonce creation, or GitHub publication unless the external request had
+   already opened before revocation/demotion was observable. State-changing,
    privileged, or provider-backed commands,
    including `review`, `full review`, `docstrings`, `tests`, chat replies,
    `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
