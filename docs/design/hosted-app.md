@@ -1764,6 +1764,18 @@ Action/App owner check is a launch blocker for dual-delivery support.
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
 commands are honored only when all checks pass:
 
+The **canonical claim path** is the only execution path that can turn a signed webhook
+delivery or queued comment/edit event into an executable command. It starts after
+webhook signature verification, replay/idempotency recording, cheap mention prefilter,
+and command-event enqueueing; webhook handlers themselves never run commands. The path
+acquires the deployment-scoped comment lock, re-reads the current GitHub comment, PR
+head, author, and repository state, parses the current body only in memory, compares
+the fresh state to the queued event's digests and metadata, performs the fresh
+authorization checks below, creates or claims the consume-once command record, and
+holds the lock through terminal command state. Comment edits that arrive before or
+during execution remain queued behind the same comment key and re-enter this canonical
+claim path after the current command reaches terminal state.
+
 1. The comment belongs to a pull request in a repository covered by the active App
    installation.
 2. A cheap mention prefilter and token bucket run before GitHub permission APIs:
