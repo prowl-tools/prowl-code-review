@@ -115,13 +115,18 @@ tests, and drift alerts rather than by a manual runbook alone:
 - Runner-decrypt identities may decrypt only through a per-job grant whose
   encryption context/AAD exactly matches installation id, key row id, job id,
   provider name, provider-call nonce, revocation generation, and fencing token.
-  They cannot list, export, rotate, or re-wrap keys. Each provider API request or
-  retry requires a fresh decrypt authorization with a monotonic provider-call
-  nonce; the decrypted key is used to construct exactly one outbound provider
-  request and then cleared before any subsequent retry or provider call can start.
-  This adds KMS latency/cost but prevents a normal runner path from reusing one
-  decrypt across multiple calls; it does not protect against a runner already
-  compromised during that authorized call.
+  They cannot list, export, rotate, or re-wrap keys. The provider-call nonce is
+  allocated by the control plane in the same transaction that checks the active job
+  lease/fencing token and advances a per-job counter; runners cannot choose or reuse
+  it. A decrypt broker issues one decrypt authorization for that allocated nonce,
+  marks it consumed before returning plaintext, and rejects stale/replayed nonces,
+  including after runner crashes or network retries. Each provider API request or
+  retry therefore requires a fresh decrypt authorization; the decrypted key is used
+  to construct exactly one outbound provider attempt and then cleared in `finally`
+  before any subsequent retry or provider call can start. This adds KMS latency/cost
+  but prevents a normal runner path from reusing one decrypt across multiple calls;
+  it does not protect against a runner already compromised during that authorized
+  call.
 - Rewrap/deletion workers may re-wrap or destroy affected data keys for an
   approved incident/deletion job, but they cannot call providers or GitHub as a
   review runner.
@@ -196,6 +201,15 @@ job before any other installation's work, disabled swap/core dumps/heap
 snapshots/process inspection, startup self-checks for those controls, and
 deployment only on platforms where crash-dump controls can be enforced are
 mitigations, not a guarantee that memory is clean.
+
+The provider HTTP client is a launch-blocking security component: use a minimal
+audited client or in-house wrapper with no middleware cache, no automatic request
+object retention, no SDK-level retries carrying prior request objects, no debug
+hooks, and no logging of serialized request/response objects. Tests must include
+post-attempt canary scans of available heap/debug artifacts in staging; a canary
+present after `finally` completes blocks launch until the client/wrapper is
+replaced or patched. A canary may still be observable while the request is active;
+that live-process exposure is the explicit residual risk above.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -280,11 +294,18 @@ to a hard kill after a short published deadline; fencing remains authoritative i
 process cannot be reached. A provider request already on the wire cannot be recalled
 and may consume quota, reach provider logs, or continue server-side after the local
 stream is aborted. The runner must re-check revocation immediately after response
-headers/stream termination and before parsing response content or publishing. If
-revocation occurred in flight, the response bytes are discarded without extraction,
-summary generation, persistence, or GitHub publication; provider-side effects from
-the already-sent request cannot be undone. Logs keep only redacted operational
-events. Backups remain encrypted and become
+headers/stream termination and before parsing response content. It must re-check
+again immediately before the GitHub publication API call, or before each publication
+call if output is deferred/batched, and the publication lease/fencing token is
+invalidated by revocation. If revocation occurred in flight, the response bytes are
+discarded without extraction, summary generation, persistence, or GitHub
+publication; provider-side effects from the already-sent request cannot be undone.
+There is no true atomicity across the database and an already-started external
+GitHub API call, so the last re-check and fencing token are the final defense before
+publication. Integration tests must revoke an installation mid-review, during
+provider response handling, and immediately before publication, and verify no
+post-revocation publication occurs unless the external GitHub call had already
+started. Logs keep only redacted operational events. Backups remain encrypted and become
 cryptographically unusable once wrapping keys are destroyed; backup copies expire
 on the published 30-day retention schedule. GitHub comments/checks already posted
 to the user's repo are not deleted automatically because they are user-visible
@@ -488,8 +509,12 @@ append-only audit log.
   constant-time comparisons for every candidate regardless of match or mismatch,
   combines the results without per-candidate branching/logging, and rejects the
   entire request only after the full candidate set has been tested. It accepts only
-  a matched candidate whose `not_before`/`not_after` window is valid. Delivery ids
-  are recorded with a 24-hour replay TTL before enqueueing, keyed with delivery id,
+  a matched candidate whose `not_before`/`not_after` window is valid. The required
+  implementation pattern is `crypto.timingSafeEqual` or equivalent for each
+  candidate, bitwise/result accumulation instead of `some`/early `return`, no
+  per-candidate logs until the loop completes, and tests showing equivalent
+  behavior when the matching secret is first, last, or absent. Delivery ids are
+  recorded with a 24-hour replay TTL before enqueueing, keyed with delivery id,
   payload hash, action, and accepted secret version. Verified webhooks still pass
   through app-wide,
   source-rate, and per-installation token buckets before a job is queued.
@@ -583,12 +608,15 @@ commands are honored only when all checks pass:
    membership, team, collaborator, repository-permission, or installation-scope
    events invalidate the whole installation permission cache. Cache hits, misses,
    and invalidations are audited; stale, missing, or lower-role cache entries cannot
-   authorize a command. `configure key` always requires a fresh settings-UI
+   authorize a command. `configure key` is stricter than the general command gate:
+   before creating any settings link, the command parser must verify the sender is
+   an installation admin, defined as org-owner permission for org installations or
+   repository `admin` permission for repo-only/user installations; a writer/maintainer
+   cannot receive a key-configuration link. The settings UI repeats the same fresh
    authorization after the link is opened: the OAuth/App session user must match the
    command sender, the installation id and repository id must match the signed link
-   record, and GitHub must confirm org-owner permission for org installations or
-   repository `admin` permission for repo-only/user installations. If GitHub cannot
-   confirm the role, the command fails closed.
+   record, and GitHub must confirm the same elevated role. If GitHub cannot confirm
+   the role at either gate, the command fails closed and is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
