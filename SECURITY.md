@@ -47,13 +47,16 @@ pull-request content without leaking secrets or executing attacker-controlled co
   tests, provider-side KMS audit logs, and drift alerts enforce separation between
   KMS administration, database administration, backup/restore, deletion workers,
   and runner decrypt identities. This protects stored ciphertext, queues, and
-  backups; it does **not** protect a plaintext provider key from a runner that is
-  compromised while decrypting or sending the active provider request. Users who
-  need that threat model should self-host on infrastructure they control. It also
-  cannot protect against compromise, logging, or policy choices inside the user's
-  selected LLM provider after the key/content is sent to that provider; provider
-  key scoping, spend limits, monitoring, and rotation remain the user's provider
-  controls.
+  backups. This is a material change from the CLI/Action model: Prowl-managed
+  infrastructure receives the key during settings save/rotation, stores encrypted
+  key material, and later decrypts it transiently for reviews. It does **not**
+  protect a plaintext provider key from a settings service or runner that is
+  compromised while handling the active key. Users who require "no Prowl
+  infrastructure ever handles my key" must use the CLI, Action, or self-hosted App.
+  It also cannot protect against compromise, logging, or policy choices inside the
+  user's selected LLM provider after the key/content is sent to that provider;
+  provider key scoping, spend limits, monitoring, and rotation remain the user's
+  provider controls.
 - Hosted App revocation is an ordered, fenced sequence. The application database
   transaction marks the installation revoked, bumps the revocation generation,
   invalidates outstanding leases/fencing tokens, and prevents new job claims. After
@@ -141,8 +144,10 @@ storage, audit, and runner services.
   [`docs/design/hosted-app.md`](docs/design/hosted-app.md). This no-content rule
   applies to every hosted store, including queues and shared caches: no raw diffs,
   review bodies, prompts, provider responses, API-retrieved content, or plaintext
-  provider keys. Raw content may exist only in active runner memory for the review
-  currently being processed.
+  provider keys. Raw webhook request bytes and GitHub event payloads may exist
+  transiently in receiver memory for signature verification/routing, and review
+  content may exist transiently in active runner memory for the review currently
+  being processed; neither may be persisted as durable content.
 - If telemetry is ever added, it will be **opt-in and off by default**, clearly
   documented, and never include code or secrets.
 
