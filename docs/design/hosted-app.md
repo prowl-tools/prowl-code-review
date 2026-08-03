@@ -147,6 +147,16 @@ and stored ciphertext; they do not undo plaintext exposure from a live compromis
 runner. Queue messages carry installation, repo, PR, head SHA, and key row
 identifiers, never plaintext keys or encrypted key blobs.
 
+Each encrypted provider-key row is an authenticated envelope, not just ciphertext.
+The envelope metadata commits to installation id, key row id, provider name, data
+key id, key version, and creation generation, and it stores a KMS/HSM-backed HMAC
+tag over that metadata plus the plaintext key bytes. After decrypt, the runner asks
+KMS/HSM to verify the non-exportable HMAC tag against the requested envelope
+metadata before using the key. A metadata mismatch, tag failure, or unexpected key
+row/provider pairing fails closed, revokes the job grant, and emits an audit event;
+the runner never sends a provider request with a key whose envelope does not match
+the installation being processed.
+
 Plaintext provider keys exist only inside the runner process while constructing and
 sending the direct provider request. Most critically, a compromised runner process
 while decrypting or sending the provider request exposes the plaintext key in
@@ -533,14 +543,21 @@ commands are honored only when all checks pass:
    must have repository `write`, `maintain`, or `admin` permission, verified through
    repository collaborator/permission APIs. A short-lived positive permission cache
    may avoid repeated GitHub calls only when it was minted from GitHub for the same
-   `{installation, repository, sender, required_role}` within the last 5 minutes and
-   no membership/repository webhook invalidated it; stale, missing, or lower-role
-   cache entries cannot authorize a command. `configure key` always requires a fresh
-   settings-UI authorization after the link is opened: the OAuth/App session user
-   must match the command sender, the installation id and repository id must match
-   the signed link record, and GitHub must confirm org-owner permission for org
-   installations or repository `admin` permission for repo-only/user installations.
-   If GitHub cannot confirm the role, the command fails closed.
+   `{installation, repository, sender, required_role}` within the last 5 minutes.
+   Cache invalidation is atomic with webhook ingestion for permission-changing
+   events, including `member` collaborator add/remove/edit, `membership` add/remove,
+   `organization` member add/remove/invite/role changes, `team` edit/delete and
+   repository add/remove, `team_add`, `repository` visibility/transfer/archive/delete
+   changes, `installation_repositories`, and `installation` suspend/delete. Unknown
+   membership, team, collaborator, repository-permission, or installation-scope
+   events invalidate the whole installation permission cache. Cache hits, misses,
+   and invalidations are audited; stale, missing, or lower-role cache entries cannot
+   authorize a command. `configure key` always requires a fresh settings-UI
+   authorization after the link is opened: the OAuth/App session user must match the
+   command sender, the installation id and repository id must match the signed link
+   record, and GitHub must confirm org-owner permission for org installations or
+   repository `admin` permission for repo-only/user installations. If GitHub cannot
+   confirm the role, the command fails closed.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
@@ -549,15 +566,18 @@ commands are honored only when all checks pass:
    transaction. Already-consumed records are rejected even when the delivery id,
    comment id, body digest, and head SHA match. Edited comments create a distinct
    consume-once record keyed by edited timestamp and body digest only after a
-   comment-level lock keyed by `{installation, comment_id, command, head_sha,
-   lifecycle_generation}` is available. If an edit arrives while a prior delivery
-   for the same lock is in flight, the older delivery re-checks the latest comment
-   digest before side effects and aborts if superseded; the newer edit is queued
-   behind the lock or rejected with a retry-after response, never executed
-   concurrently. Delivery-id replay records live for 24 hours, and
-   state-changing/costly commands are rate-limited to 5 commands per minute per
-   `{installation, user, pull_request, command}` before any provider call.
-   Violations are rejected, audited, and alerted on repeated abuse.
+   comment-level execution lock keyed by `{installation, comment_id, command,
+   head_sha, lifecycle_generation}` is available. That lock is held from claim
+   through command terminal state, including provider calls and publication, with
+   its own lease and fencing token. The handler validates that the current GitHub
+   comment timestamp/body digest still matches the claimed delivery immediately
+   before side effects; if it advanced, the in-flight command aborts as superseded.
+   If an edit arrives while the lock is held, the newer edit is queued behind the
+   lock or rejected with a retry-after response, never executed concurrently.
+   Delivery-id replay records live for 24 hours, and state-changing/costly commands
+   are rate-limited to 5 commands per minute per `{installation, user, pull_request,
+   command}` before any provider call. Violations are rejected, audited, and alerted
+   on repeated abuse.
 4. The command is in the explicit current allowlist: `review`, `full review`,
    `break glass`, `ignore`, `resolve`, per-PR `configure`, `pause`, `resume`,
    `docstrings`, `tests`, `help`, chat replies, and `configure key` link creation.
