@@ -31,8 +31,12 @@ release / `main`**; please reproduce against the latest before reporting.
 
 ## Security & trust model
 
-prowl-review is **BYOK** (bring-your-own-key) and designed to run on untrusted
-pull-request content without leaking secrets or executing attacker-controlled code.
+Today's supported CLI, GitHub Action, and self-hosted modes are **BYOK**
+(bring-your-own-key): provider keys stay on the user's machine or chosen runner, and
+the tool is designed to process untrusted pull-request content without exposing those
+keys to Prowl-managed services or executing attacker-controlled code. The planned
+managed Hosted App is a future service with a different custody model, described
+separately below, and those managed-service controls are not deployed guarantees today.
 
 ### Keys & secrets
 #### Managed Hosted App Uses A Different Custody Model
