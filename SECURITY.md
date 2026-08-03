@@ -36,6 +36,15 @@ pull-request content without leaking secrets or executing attacker-controlled co
 
 ### Keys & secrets
 #### Managed Hosted App Uses A Different Custody Model
+> [!IMPORTANT]
+> **FUTURE SERVICE, NOT YET AVAILABLE.** The managed hosted GitHub App is under
+> design and is not available for use today. The managed controls below are planned
+> design artifacts, not deployed guarantees. Do not rely on managed hosted App
+> security claims until the signed launch attestation in
+> [`docs/security/hosted-managed-launch-attestation.md`](docs/security/hosted-managed-launch-attestation.md)
+> is published. Until then, use the CLI, GitHub Action, or self-hosted deployment,
+> which follow the environment-only BYOK model.
+
 The managed hosted GitHub App described in this section is a planned future
 service, not a capability available today. Current CLI, GitHub Action, and
 self-hosted use follows the environment-only BYOK model described immediately
@@ -65,10 +74,10 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
 > runner, or HTTP-client path. The CLI, GitHub Action, and self-hosted Docker
 > deployment keep provider keys only on your machine or chosen runner and do not send
 > them to Prowl services. Managed users cannot prevent or independently detect a
-> plaintext key captured during a live decrypt-to-send window through RBAC, KMS
-> grants, or audit logs; incident response and revocation can stop future decrypts but
-> cannot undo a key already exfiltrated from process memory. Use CLI, Action, or
-> self-hosting if you require the stronger live-key custody boundary.
+> plaintext key captured during a live managed key-save or provider-call window through
+> RBAC, KMS grants, or audit logs; incident response and revocation can stop future
+> decrypts but cannot undo a key already exfiltrated from process memory. Use CLI,
+> Action, or self-hosting if you require the stronger live-key custody boundary.
 > Managed install, migration, and first key-entry screens must show this warning before
 > accepting provider keys and must require an explicit acknowledgement whose custody
 > policy version is recorded in the managed audit log. If the managed launch

@@ -314,34 +314,41 @@ users to provider-side key scoping, spend limits, monitoring, and rotation; user
 who do not trust a provider with their key should not use that provider through the
 managed App.
 
-For each provider API attempt, the runner decrypts the key immediately after the
-final revocation/fencing check and immediately before request construction. The key
-is passed to a minimal HTTP client that does not persist headers, buffer
-authorization data beyond the active request, replay a constructed request object,
-or enable request debugging. Provider calls use direct TLS egress from the runner to
-the configured provider endpoint: no shared outbound HTTP cache, no CDN, no
-transparent proxy, no inherited `HTTP_PROXY`/`HTTPS_PROXY` environment, and no
-tenant-shared connection pool that can retain provider headers or bodies. Requests
-include `Cache-Control: no-store` and `Pragma: no-cache` where the provider accepts
-them, and the client never forwards provider responses through an intermediate cache
-before redaction. Launch requires a measured decrypt-to-send budget: staging tests
-record wall-clock time from successful decrypt return to the first provider request
-byte leaving the runner process and fail if p99 exceeds 100 ms or max exceeds 250 ms
-under representative production hardware, real DNS/TLS/socket handoff, documented CPU
+For each provider API attempt, managed provider traffic remains disabled unless the
+chosen provider-call path proves that the user's long-lived provider key never enters
+the Node/V8 runtime as a JavaScript string, `Buffer`, `Uint8Array`, GC root, header
+object, request object, or exception/loggable value. The approved managed v1 shape is a
+native secret helper, sidecar vault with locked memory, or platform enclave/secret
+service that owns decrypt, locked plaintext memory, credential-bearing header
+construction, zeroing, and socket open; the JavaScript runner receives only an opaque
+provider-call grant plus non-credential request metadata and cannot read or serialize
+the provider key. If a provider supports short-lived per-request credentials or
+request-signing tokens, the helper must use those instead of delegating the user's
+long-lived key to the request path. A direct JavaScript HTTP client that handles the
+user's long-lived provider key is not launchable for managed v1. Provider calls use
+direct TLS egress from the helper/runner boundary to the configured provider endpoint:
+no shared outbound HTTP cache, no CDN, no transparent proxy, no inherited
+`HTTP_PROXY`/`HTTPS_PROXY` environment, and no tenant-shared connection pool that can
+retain provider headers or bodies. Requests include `Cache-Control: no-store` and
+`Pragma: no-cache` where the provider accepts them, and the transport never forwards
+provider responses through an intermediate cache before redaction. Launch requires a
+measured grant-to-send budget: staging tests record wall-clock time from the final
+revocation/fencing authorization return to the first provider request byte leaving the
+helper/runner process and fail if p99 exceeds 100 ms or max exceeds 250 ms under
+representative production hardware, real DNS/TLS/socket handoff, documented CPU
 counts, GC pressure, large-buffer allocation, and contested event-loop conditions. Each
 staging condition must run at least 50,000 warmed samples and publish confidence
-intervals for p95/p99/max in the provider-egress launch record. Once plaintext key
-material is available, request construction and transport handoff run in one guarded
-synchronous call path with no `await`, timer, queue hop, microtask yield, or callback
-that can sit behind unrelated review work. A runtime event-loop monitor is armed while
-plaintext key material exists; if the loop is blocked for more than 50 ms before the
-first request byte leaves the process, the attempt aborts, zeroes owned buffers, marks
-the runner class unhealthy, and disables hosted provider calls until repaired. If
-event-loop lag, HTTP-client scheduling, or async wrapper behavior can extend the
-measured handoff window, or if the minimal client requires provider-key material to
-live in JavaScript strings outside that window, managed launch requires a native secret
-helper, sidecar vault with locked memory, or equivalent transport shim before provider
-traffic is enabled. The full
+intervals for p95/p99/max in the provider-egress launch record. Once any plaintext key
+material exists inside the helper/enclave boundary, credential construction and
+transport handoff run in one guarded synchronous call path with no `await`, timer,
+queue hop, microtask yield, or callback that can sit behind unrelated review work. A
+runtime event-loop/health monitor is armed while plaintext key material exists; if the
+handoff is blocked for more than 50 ms before the first request byte leaves the
+process, the attempt aborts, zeroes owned buffers, marks the runner/helper class
+unhealthy, and disables hosted provider calls until repaired. Timing-bound windows are
+residual-risk mitigation only; they do not protect against live compromise of the
+helper/enclave process, and users requiring that protection must use CLI, Action, or
+self-hosted isolation they control. The full
 provider-call window also has a hard outer deadline, measured from decrypt start
 through request send, response streaming, response finalization, and `finally`; managed
 v1 defaults to 120 seconds and cannot exceed 180 seconds without a new security
@@ -350,20 +357,20 @@ in `finally`, marks the job incomplete rather than retrying the same request obj
 and recycles the runner. The launch record must publish provider-specific p95/p99
 successful-call latency, DNS/TLS timing, and timeout rates under representative
 provider and network conditions, with enough headroom that normal successful calls do
-not approach the hard deadline. The decrypt-to-send startup and staging suite must
+not approach the hard deadline. The grant-to-send startup and staging suite must
 deliberately create CPU contention, GC pressure, large-buffer allocation, event-loop
 lag, real TLS handshakes, slow DNS, and kernel socket-buffer pressure; if p99 exceeds
 100 ms, max exceeds 250 ms, confidence intervals overlap the bound, or the production
 platform differs materially from staging, managed launch either switches this path to a
 native transport shim or requires a new security decision with a larger published risk
-budget. Production records decrypt-to-send p50/p95/p99/max histograms; any max over
+budget. Production records grant-to-send p50/p95/p99/max histograms; any max over
 250 ms or two five-minute windows out of five over p99 100 ms disable hosted provider
 calls for the affected runner class and page on-call until repaired. Runner startup
-also fails closed unless the decrypt-to-send monitor and circuit breaker are enabled,
+also fails closed unless the grant-to-send monitor and circuit breaker are enabled,
 the metric sink accepts current deployment-window samples, and at least 100 warmed
-synthetic canary sends through the same decrypt/HTTP-client path have been recorded
+synthetic canary sends through the same helper/transport path have been recorded
 and analyzed for the active runner artifact. The canary path uses a non-secret test
-credential and a controlled endpoint but exercises the same decrypt-return,
+credential and a controlled endpoint but exercises the same grant-return,
 request-construction, TLS/socket handoff, histogram write, threshold evaluation, and
 disable-provider-calls path. If the monitor, metric sink, or analyzer is absent,
 delayed beyond the launch-record freshness window, or unable to prove the 100 ms p99 /
@@ -453,9 +460,11 @@ pass criteria, timing/drift thresholds, tested Node versions, GC and CPU-contend
 timing results, buffer-zeroing equivalence evidence, canary-key leakage results after
 `finally`, SBOM and pinned dependency versions, startup self-test behavior,
 failure-mode behavior, and two security reviewers from the security-owner quorum. The
-launch record must state that the decrypt-to-send window is residual-risk mitigation,
-not elimination, and that zero process-memory exposure requires CLI, Action, or
-self-hosting on hardware/runtime isolation the user controls. Managed v1 bans provider
+launch record must state that the grant-to-send window is residual-risk mitigation,
+not elimination, and that managed v1 provider traffic is allowed only when long-lived
+provider keys stay outside Node/V8 in the approved helper, broker, or enclave. Users
+who need protection against compromise of that helper/broker/enclave still need CLI,
+Action, or self-hosting on hardware/runtime isolation they control. Managed v1 bans provider
 SDKs, SDK middleware/plugin systems, retry/redirect helpers, proxy-agent/global-agent
 packages, request instrumentation, and generic HTTP clients outside the named wrapper
 on the provider-key path unless a future design decision adds them to the same harness
@@ -481,12 +490,12 @@ if the named wrapper path, fixture corpus, dependency lockfile, signed reviewers
 drift thresholds do not match. Startup also resolves the actual provider HTTP module through the production
 module loader, verifies its path, package integrity, build artifact hash, dependency
 tree hash, and exported wrapper identity against the launch record, and refuses to
-decrypt provider keys if any provider call path can import an unrecorded HTTP client,
-SDK, proxy agent, middleware, or instrumentation package. This runtime check does not
-make a JavaScript HTTP client safe against live compromise; it only proves the deployed
-client is the reviewed one, and managed launch materials must disclose that users who
-cannot tolerate compromise of that reviewed client path must use CLI, Action, or
-self-hosting. The
+authorize provider-call grants if any provider call path can import an unrecorded HTTP
+client, SDK, proxy agent, middleware, or instrumentation package. This runtime check
+does not make the helper/broker/enclave safe against live compromise; it only proves
+the deployed transport path is the reviewed one, and managed launch materials must
+disclose that users who cannot tolerate compromise of that reviewed path must use CLI,
+Action, or self-hosting. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The 64 KiB limit is per
@@ -1053,7 +1062,14 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   The launch record must explicitly accept that residual metadata-exposure risk before
   public search is enabled. Production telemetry records visibility-change/search
   races and automatically disables public code search for the affected runner class
-  when the bound drifts or a race reaches the guarded send.
+  when the bound drifts or a race reaches the guarded send. Every
+  visibility-flip-during-search event is recorded even when the response is discarded
+  before use. If any private-repository search result is observed after a downgrade,
+  transfer, rename, or access-loss race, the managed App is suspended for the affected
+  installation, affected repository admins are notified, the launch record's visibility
+  assumptions are re-opened, and managed code search remains disabled until GitHub
+  provides an atomic visibility-token mechanism or Prowl moves that coverage to a v2
+  sandbox-checkout retrieval model that does not depend on runtime search visibility.
   The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
   before every managed retrieval deploy and in startup smoke tests. It covers
   private repository metadata, private submodules, visibility changes, renamed or
@@ -1625,7 +1641,13 @@ attestation, managed launch must use the new App identity default. This design d
 not assume GitHub currently exposes a public deletion-grade private-key inventory API;
 the launch record for any reuse attempt must cite the exact GitHub-documented API,
 export schema, or signed-attestation format used, and no unpublished/operator-only
-claim can satisfy the automated startup gate. The canary signs a GitHub App JWT with
+claim can satisfy the automated startup gate. Reuse exploration has a 30-day limit
+from implementation kickoff: if GitHub Security/support does not provide a documented
+API, export schema, or signed attestation format that satisfies this gate within that
+window, the managed service must use the new App identity default and close the reuse
+path for launch. The launch record must include the GitHub request/ticket, the chosen
+identity path, and two security reviewers who did not author the managed App code. The
+canary signs a GitHub App JWT with
 the sealed retired key material and calls GitHub's installation-token endpoint for all
 installations when fewer than 10 exist, otherwise at least 3 installations spanning
 different owners plus the controlled installation; only GitHub-origin
@@ -2084,6 +2106,16 @@ The explicit records are:
 | Migration from the Action, App identity, delivery precedence, and commands | Launch-safe default is a new managed App identity; reuse `prowl-review` only with GitHub deletion-grade evidence for all Action-distributed private keys, trusted-base `delivery.owner`, and signed-webhook command authorization. | Prevents old Action-distributed signing keys or dual delivery from crossing into hosted custody while preserving an explicit marker-copy migration path. | Reuse without deletion-grade GitHub evidence, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, verified credential-rotation or new-App gate, and a settings flow for key configuration. |
 
 ## Build plan (when approved)
+
+Pre-launch gate: before managed installation acceptance, key-save traffic, managed
+webhook intake, or provider egress is enabled, step 3 must complete with a signed
+key-ingestion launch record naming the selected implementation class, startup
+self-tests, canary leak-test results, and two-person security-owner approval; step 5
+must complete with the provider wrapper/transport launch record; and the
+deployment-wide launch attestation must bind those artifacts to the deployed source
+commit, artifact digest, signed deployment record, and environment. Until then the
+managed App fails closed and rejects provider-key saves with a generic unavailable
+state that points admins to the launch attestation.
 
 1. Receiver + queue + installation store + persistent idempotency, using the
    existing `prowl-review` App identity for the managed instance only after every
