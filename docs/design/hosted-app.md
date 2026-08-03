@@ -230,6 +230,10 @@ raw request bytes to the native helper, local secret broker, or platform secret
 service before app-level parsing; any candidate implementation that requires
 plaintext provider keys to pass through normal JavaScript string APIs is not launchable
 unless a new security decision explicitly accepts and discloses that residual risk.
+Hosted key entry must use an isolated raw-body POST endpoint with a provider/key-type
+selector outside the key payload; JSON, GraphQL, form-urlencoded, multipart fields,
+template variables, or framework body parsers that materialize the key as a JavaScript
+string are forbidden on the managed key path.
 
 Managed launch materials must surface that boundary before the user installs the App
 or enters a provider key. The install page, migration guide, and first key-setup
@@ -496,10 +500,14 @@ opens a short-lived, single-use settings link after the command authorization in
 Decision 5 succeeds. Immediately before nonce creation, the command handler re-reads
 the current GitHub comment under the comment-level execution lock described in
 Decision 5. The current `updated_at`, full-body digest, parse version, verb, sender,
-and head SHA must still match the claimed `configure key` command, and the normalized
-body must contain only the allowed command shape with no raw provider key or
-conflicting key-setting arguments. If the body was edited, removed, or reparsed as a
-different command, link creation aborts as superseded and the event is audited. The
+command occurrence id, parsed arguments, and head SHA must still match the claimed
+`configure key` command, and the normalized body must contain only the allowed command
+shape with no raw provider key or conflicting key-setting arguments. Multiple
+`@prowl-review` commands in one comment are parsed into separate command records with
+distinct occurrence ids; they are never combined into one `configure key` link. If the
+body was edited, removed, reparsed as a different command, or reparsed with different
+arguments or command occurrence, link creation aborts as superseded and the event is
+audited. The
 settings hostname must be HTTPS-only at the network
 boundary: the load balancer/reverse proxy rejects cleartext HTTP before application
 code, nonce lookup, cookies, OAuth state, or CSRF validation can run, and it must not
@@ -514,7 +522,11 @@ application logs. Before the settings service binds an HTTP listener or accepts
 traffic, it must run a startup self-test through the exact configured nonce
 generator: generate at least 16 bytes, reject all-zero/all-one or repeated canary
 outputs, verify both set and clear bits exist, and fail closed with alerting if the
-OS entropy source is unavailable, blocked, or throws. Runtime nonce generation errors
+OS entropy source is unavailable, blocked, or throws. The same startup gate must also
+verify the platform entropy source directly for the deployed runtime: `/dev/urandom`
+readability and nonblocking behavior on Unix-like hosts, `getentropy()`/platform CSPRNG
+syscall success where exposed, or HSM/entropy-service health and policy status when
+that source backs nonce generation. Runtime nonce generation errors
 must never fall back to Math/random, timestamps, counters, session ids, or weaker
 sources; they return the generic failure envelope and alert. Issuance is
 rate-limited and capped to one active unexpired
@@ -556,8 +568,10 @@ decodability needed by the selected storage path, and an allowlisted character-c
 scan that runs over every submitted or dummy key buffer without early returns. It does
 not check provider-specific prefixes, token shapes, or semantic key classes before the
 generic response; if a provider requires a prefix check, every provider adapter must
-execute the same fixed validation path over dummy and submitted buffers with
-conditional assignment only. Managed v1 performs no synchronous live provider
+execute the same fixed validation path over dummy and submitted buffers with full-length
+iteration, bitwise validity masks, and conditional assignment only. The scan never
+exits early or takes a branch based on the first invalid character, prefix, length, or
+provider type. Managed v1 performs no synchronous live provider
 validation and opens no provider network connection before the response is committed.
 Provider auth validation runs only after the generic response, from an inactive
 pending-validation candidate, in the bounded background validator below. Adding
@@ -634,7 +648,14 @@ The background validator uses the same guarded provider-call path, never starts 
 another validation for that installation/provider is active, destroys failed or
 superseded candidates, and promotes exactly one candidate to the active verified-key
 table only after successful validation in a serializable compare-and-swap
-transaction. The no-live-probe path releases responses only at the configured
+transaction. The validator publishes a heartbeat at least every 30 seconds per
+installation/provider shard and records `started_at`, `finished_at`, outcome, attempt
+id, and candidate id for every validation attempt. A pending-validation candidate that
+has no terminal validation result within 1 hour expires automatically, is removed from
+the pending table, alerts on-call after repeated occurrences, and never becomes
+runner-authoritative. Runners read only the active verified-key table; if no verified
+key exists, reviews remain disabled with `key_validation_pending`/`key_required`
+status and approval withheld. The no-live-probe path releases responses only at the configured
 deadline with the same dummy validation work for every immediate outcome. If either
 that path or the later guarded validation cannot meet its own published bound, launch
 is blocked. The residual timing threat
@@ -682,6 +703,13 @@ path is unmeasured, contains avoidable async gaps, or exceeds the bound. DNS, TL
 provider processing after wrapper handoff are already part of the external request and
 remain residual cross-system exposure; this is not a promise of atomic or
 microsecond-scale cancellation in Node.js. The
+GitHub publication path uses the same guarded-send boundary: the helper locks the
+installation state row and review/publication row, re-reads revocation generation,
+allocates a publication-reservation fencing token, commits, and opens the GitHub API
+request in the same call stack without unrelated awaits. If revocation is observed
+before the request opens, no publication reservation is written; if it is observed
+mid-call, the response is discarded, the reservation is failed, and no retry can
+publish without a fresh guarded-send reservation. The
 worker control plane also cancels active provider HTTP streams, sends a graceful
 termination signal to active runner processes after the revocation transaction
 commits, and escalates to a hard kill after a short published deadline; fencing
@@ -1328,7 +1356,15 @@ commands are honored only when all checks pass:
    Because some permission-affecting changes, including branch protection and
    enterprise SAML/IP policy changes, may not arrive as reliable App webhooks, the
    cache is never final authority for commands whose required role depends on those
-   policies; those commands must perform a fresh GitHub API read. Settings UI and
+   policies; those commands must perform a fresh GitHub API read. The command registry
+   carries an explicit `requires_fresh_auth`/`policy_sensitive` flag for admin,
+   key-setup, provider-backed, state-changing, branch-protection-sensitive, and
+   enterprise/SAML/IP-sensitive commands; launch tests fail if any such command can
+   reach side effects from a positive cache hit. Unknown permission or enterprise
+   policy webhooks also set an `enterprise_policy_dirty` flag that is cleared only by a
+   successful full installation/org permission reconciliation; while set, sensitive
+   commands bypass the cache and fail closed if GitHub cannot confirm current authority.
+   Settings UI and
    admin command flows expose a cache-bust operation that bumps the installation auth
    generation after permission changes. Cache hits, misses, and invalidations are
    audited; stale, missing, or lower-role cache entries cannot authorize a command.
@@ -1504,7 +1540,8 @@ commands are honored only when all checks pass:
 `configure key` link creation is not sufficient to save a key. The settings link is
 cryptographically signed, stored server-side by nonce hash, bound to `{installation,
 repository, sender, comment_id, comment_updated_at, body_digest, parse_version, verb,
-head_sha, nonce}`, expires in 10 minutes, is single-use, requires cache-bypassing
+args_digest, command_occurrence_id, head_sha, nonce}`, expires in 10 minutes,
+is single-use, requires cache-bypassing
 fresh GitHub OAuth/App authorization with the installation-admin definition above on
 both settings GET and POST, and carries no key material in the URL. OAuth
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
@@ -1538,9 +1575,13 @@ OAuth user, expired nonce, cache-hit authorization attempt, or permission-change
 generation mismatch gets a generic used/expired or unauthorized response and cannot
 write a key.
 Settings GET and POST also compare the nonce row's `comment_updated_at`, body digest,
-parse version, and verb against the canonical consume-once command row created from
-the fresh GitHub comment read. A missing, superseded, edited, or differently parsed
-command row invalidates the nonce and requires a new `configure key` command.
+parse version, verb, args digest, command occurrence id, and head SHA against the
+canonical consume-once command row created from the fresh GitHub comment read. Before
+POST consumes the nonce, it re-reads the current GitHub comment and rejects the save as
+`command_superseded` if the body digest, parse version, verb, args digest, command
+occurrence id, or head SHA differs from the signed link. A missing, superseded,
+edited, or differently parsed command row invalidates the nonce and requires a new
+`configure key` command.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents

@@ -170,9 +170,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   trusted base is honored. To review fork PRs deliberately, use a
   `pull_request_target` workflow (trusted base config; PR head used only as
   untrusted context). See the README's "Fork pull requests" section.
-- The proposed managed hosted App keeps the same conservative default: v1 skips
-  fork-originated PRs before retrieval or provider calls. Any future hosted
-  fork-review opt-in requires a separate design update.
+- The proposed managed hosted App keeps the same conservative default: v1 skips all
+  fork-originated PRs before retrieval or provider calls, regardless of
+  `.prowl-review.yml`, `delivery.owner`, comments, or fork-authored configuration.
+  Forks receive a neutral security skip. Any future hosted fork-review opt-in requires
+  a separate design update before config can enable it.
 
 ### Configuration trust
 - In the GitHub Action, `.prowl-review.yml` is only loaded from a trusted
