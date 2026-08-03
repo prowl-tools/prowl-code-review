@@ -192,12 +192,17 @@ managed App.
 For each provider API attempt, the runner decrypts the key immediately after the
 final revocation/fencing check and immediately before request construction. The key
 is passed to a minimal HTTP client that does not persist headers, buffer
-authorization data beyond the active request, or enable request debugging. The
-attempt is wrapped in a `try/finally`; if request construction, send, streaming, or
-response handling fails, the `finally` block clears all runner references before any
-retry can begin, and every retry must obtain a fresh provider-call nonce/decrypt
-authorization. Credentials must stay out of prompts, provider request bodies,
-serialized URLs, structured error metadata, and generic exception inspection.
+authorization data beyond the active request, replay a constructed request object,
+or enable request debugging. Each attempt obtains a fresh lease/fencing snapshot,
+provider-call nonce, and decrypt authorization tied to the current revocation
+generation; retries cannot reuse any of those values. The attempt is wrapped in a
+`try/finally`; if request construction, send, streaming, or response handling fails,
+the `finally` block clears all runner references before any retry can begin. The
+retry loop lives outside the HTTP client and rebuilds every outbound attempt from a
+fresh decrypt after `finally`; automatic client/SDK retries, redirects, and buffered
+request replay are disabled. Credentials must stay out of prompts, provider request
+bodies, serialized URLs, structured error metadata, and generic exception
+inspection.
 Mutable buffers are zeroed best-effort, but Node/V8 cannot guarantee complete
 erasure of copied strings, headers, or HTTP-client internals; per-job process
 isolation, no long-lived provider clients, mandatory runner recycling after every
@@ -207,13 +212,16 @@ deployment only on platforms where crash-dump controls can be enforced are
 mitigations, not a guarantee that memory is clean.
 
 The provider HTTP client is a launch-blocking security component: use a minimal
-audited client or in-house wrapper with no middleware cache, no automatic request
-object retention, no SDK-level retries carrying prior request objects, no debug
-hooks, and no logging of serialized request/response objects. Tests must include
-post-attempt canary scans of available heap/debug artifacts in staging; a canary
-present after `finally` completes blocks launch until the client/wrapper is
-replaced or patched. A canary may still be observable while the request is active;
-that live-process exposure is the explicit residual risk above.
+audited client or in-house wrapper with no middleware cache, no automatic redirects,
+no automatic retries, no request/response buffering beyond the active socket or
+request stream, no automatic request object retention, no debug hooks, and no
+logging of serialized request/response objects. Abort signals must destroy active
+request and response streams plus any owned buffers; no cached request object may be
+retried. Tests must include post-attempt canary scans of available heap/debug
+artifacts in staging; a canary present after `finally` completes blocks launch until
+the client/wrapper is replaced or patched. A canary may still be observable while
+the request is active; that live-process exposure is the explicit residual risk
+above.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -262,16 +270,23 @@ only an opaque CSPRNG nonce with at least 128 bits of entropy whose server-side
 record stores a hash, and is redacted from application logs. The signed link record
 commits to installation id, repository id, sender id, comment id, head SHA, nonce,
 and expiry; the settings UI displays the target owner/repo before save and refuses
-cross-origin `Origin`/`Host` mismatches. The settings page serves no third-party
-assets, sends `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`,
-`SameSite=Lax` or stricter session cookies, and requires an explicit CSRF token tied
-cryptographically to the nonce and authenticated session; SameSite cookies are
-defense-in-depth, not the CSRF control. The key-save transaction consumes the nonce
-atomically with an `UPDATE`/`DELETE ... WHERE consumed_at IS NULL` or equivalent
-unique constraint before persisting the key, so concurrent submissions cannot reuse
-the link. A leaked link cannot save a key without the fresh GitHub OAuth/App
-authorization described in Decision 5. The UI never displays plaintext keys after
-save.
+cross-origin `Origin`/`Host` mismatches. OAuth `state` and CSRF tokens are signed
+values that commit to the nonce hash or link id, authenticated session id hash,
+sender id, installation id, repository id, and expiry. The settings page serves no
+third-party assets, sends `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`,
+`SameSite=Lax` or stricter session cookies, and requires the explicit signed CSRF
+token; SameSite cookies are defense-in-depth, not the CSRF control. The key-save
+transaction consumes the nonce atomically with an `UPDATE`/`DELETE ... WHERE
+consumed_at IS NULL` or equivalent unique constraint before persisting the key, so
+concurrent submissions cannot reuse the link. Rendering the key input also requires
+a transactional read proving the nonce is unexpired and unconsumed; the first
+authorized open binds the nonce to a hash of the authenticated session id, sender
+id, installation id, repository id, link id, and expiry, and later GET/POST requests
+must present the same binding. A second session receives the same generic
+used/expired response as an already consumed link, while multiple tabs for the same
+bound session still rely on the atomic consume-once save transaction. A leaked link
+cannot save a key without the fresh GitHub OAuth/App authorization described in
+Decision 5. The UI never displays plaintext keys after save.
 
 The key-save endpoint is rate-limited before validation by installation, user
 session, and source address. It performs constant-shape local format validation and,
@@ -279,10 +294,15 @@ where the provider supports it, a minimal live auth probe over the same sanitize
 provider-call path before marking the key verified. If live validation fails or is
 unsupported, provider error bodies are not serialized, cached, returned, traced, or
 logged; they are mapped to a fixed internal enum such as `invalid`, `unauthorized`,
-`rate_limited`, or `unknown`. The user-facing response is generic and never
-re-renders or logs the submitted key, its prefix/suffix, length, character classes,
-or partial provider error details. The input field is cleared after every submit
-attempt.
+`rate_limited`, or `unknown`. `invalid` and `unauthorized` results reject the save
+and persist no key. `rate_limited` and `unknown` also fail closed by default unless
+the provider adapter explicitly declares live validation unsupported; only then may
+the endpoint persist an `unverified` key that must be validated through the same
+guarded provider-call path before the first review can use it. The user-facing
+response distinguishes only generic not-saved versus saved-unverified outcomes and
+never re-renders or logs the submitted key, its prefix/suffix, length, character
+classes, or partial provider error details. The input field is cleared after every
+submit attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -311,19 +331,23 @@ remains authoritative if a process cannot be reached. A provider request already
 the wire cannot be recalled and may consume quota, reach provider logs, or continue
 server-side after the local stream is aborted. A revocation that lands after the
 final local check but before the external API receives the request is an unavoidable
-cross-system race; the launch docs must disclose it. The runner must re-check
-revocation immediately after response headers/stream termination and before parsing
-response content. It must re-check again immediately before the GitHub publication
-API call, or before each publication call if output is deferred/batched, and the
-publication lease/fencing token is invalidated by revocation. If revocation occurred
-in flight, the response bytes are discarded without extraction, summary generation,
-persistence, or GitHub publication; provider-side effects from the already-sent
-request cannot be undone. There is no true atomicity across the database and an
-already-started external GitHub API call, so the last re-check and fencing token are
-the final defense before publication. Integration tests must revoke an installation
-mid-review, during provider response handling, and immediately before publication,
-and verify no post-revocation publication occurs unless the external GitHub call had
-already started. Logs keep only redacted operational events. Backups remain encrypted and become
+cross-system race; the launch docs must disclose it. If revocation is observed while
+a provider response is streaming, the abort signal closes the stream immediately,
+the runner stops reading further chunks, and all bytes already received are
+discarded without parsing. The runner must re-check revocation immediately after
+response headers/stream termination and before parsing response content. It must
+re-check again immediately before the GitHub publication API call, or before each
+publication call if output is deferred/batched, and the publication lease/fencing
+token is invalidated by revocation. If revocation occurred in flight, the response
+bytes are discarded without extraction, summary generation, persistence, or GitHub
+publication; provider-side effects from the already-sent request cannot be undone.
+There is no true atomicity across the database and an already-started external
+GitHub API call, so the last re-check and fencing token are the final defense before
+publication. Integration tests must revoke an installation mid-review, during active
+provider streaming, during provider response handling, and immediately before
+publication, and verify no post-revocation publication occurs unless the external
+GitHub call had already started. Logs keep only redacted operational events. Backups
+remain encrypted and become
 cryptographically unusable once wrapping keys are destroyed; backup copies expire
 on the published 30-day retention schedule. GitHub comments/checks already posted
 to the user's repo are not deleted automatically because they are user-visible
@@ -440,19 +464,23 @@ surface.
   self-hosting. These carry the mission and are never revenue-gated.
 - **Managed instance: free at launch.** Published fairness limits apply only to the
   hosted orchestration layer: per-installation active-job concurrency, queue depth,
-  webhook token bucket, dead-letter threshold, and the existing user-visible
+  separate relevant review/command/control webhook buckets, dead-letter threshold,
+  and the existing user-visible
   per-review provider budget guard. They are not product-tier caps on what the
   user's provider key may do, and they do not apply to self-hosted deployments.
 - **Launch defaults:** start with 1 active review and 10 queued reviews per
-  installation, a 60 accepted-webhook-events/hour token bucket, a 30-minute job
-  timeout, and dead-letter after 3 consecutive runner failures for the same job.
-  Operators may tune these globally during beta, but every change must remain
-  published and audited.
-- **Limit behavior:** duplicate webhooks coalesce; concurrency excess queues with a
-  `retry_after`/pending status; abusive webhook bursts are rejected before provider
-  calls with a neutral check or explanatory summary; per-review budget exhaustion
-  ends as **Review incomplete** with approval withheld. No limit silently degrades
-  context or pretends a review completed.
+  installation, a 60 relevant command-webhook-events/hour token bucket, a separate
+  review-event bucket, a protected authorization-control bucket for permission and
+  installation invalidation events, a 30-minute job timeout, and dead-letter after 3
+  consecutive runner failures for the same job. Operators may tune these globally
+  during beta, but every change must remain published and audited.
+- **Limit behavior:** duplicate webhooks coalesce; irrelevant signed comment noise
+  is acknowledged as no-op after replay/idempotency recording and is not charged to
+  installation review, command, or authorization-control buckets; concurrency excess
+  queues with a `retry_after`/pending status; abusive webhook bursts are rejected
+  before provider calls with a neutral check or explanatory summary; per-review
+  budget exhaustion ends as **Review incomplete** with approval withheld. No limit
+  silently degrades context or pretends a review completed.
 - **Configuration and observability:** default values are globally tunable by
   operators and published in launch docs. Installation admins can view limit hits,
   queued jobs, and incomplete-review reasons in the settings UI. Repeated limit
@@ -519,43 +547,57 @@ append-only audit log.
   format with exactly 71 ASCII characters and exactly one `X-Hub-Signature-256`
   header; an absent header is a hard verification failure. Empty values, missing
   prefixes, malformed hex, truncated digests, overlong/padded digests,
-  base64-wrapped values, duplicate signature headers, and MD5/SHA1
-  signatures are rejected as generic authentication failures before any HMAC
-  computation or enqueueing. The malformed-input path does not normalize, truncate,
-  compare partial prefixes, or choose first/last duplicate headers. For validly
-  formatted signatures, the receiver computes expected digests for every currently
-  valid candidate secret selected from server config, performs equal-length
-  constant-time comparisons for every candidate regardless of match or mismatch,
-  combines the results without per-candidate branching/logging, and rejects the
-  entire request only after the full candidate set has been tested. It accepts only
-  a matched candidate whose `not_before`/`not_after` window is valid. The required
-  implementation pattern is `crypto.timingSafeEqual` or equivalent for each
-  candidate, bitwise/result accumulation instead of `some`/early `return`, no
-  per-candidate logs until the loop completes, and tests showing equivalent
-  behavior when the matching secret is first, last, or absent. Delivery ids are
-  recorded with a 24-hour replay TTL before enqueueing, keyed with delivery id,
-  payload hash, action, and accepted secret version. Verified webhooks still pass
-  through app-wide,
-  source-rate, and per-installation token buckets before a job is queued.
+  base64-wrapped values, duplicate signature headers, and MD5/SHA1 signatures are
+  rejected as generic authentication failures before any HMAC computation or
+  enqueueing. The malformed-input path does not normalize, truncate, compare partial
+  prefixes, or choose first/last duplicate headers. Webhook secrets are generated
+  and loaded as fixed-length random byte arrays, not variable-length strings. For
+  validly formatted signatures, the receiver computes expected digests for every
+  currently valid candidate secret selected from server config before any replay
+  store lookup, performs equal-length constant-time comparisons for every candidate
+  regardless of match or mismatch, combines the results without per-candidate
+  branching/logging, and rejects the entire request only after the full candidate
+  set has been tested. It accepts only a matched candidate whose
+  `not_before`/`not_after` window is valid. The required implementation pattern is
+  `crypto.timingSafeEqual` or equivalent for each candidate, bitwise/result
+  accumulation instead of `some`/early `return`, no per-candidate logs until the
+  loop completes, and tests showing equivalent behavior when the matching secret is
+  first, last, or absent. Delivery ids are recorded with a 24-hour replay TTL before
+  enqueueing, keyed with delivery id, payload hash, action, and accepted secret
+  version. After signature and replay handling, the receiver performs cheap
+  relevance classification before charging per-installation buckets: non-PR events,
+  comments without an `@prowl-review` mention/command, and other no-op signed noise
+  are acknowledged without consuming review, command, or authorization-control
+  quota. Relevant review, command, and permission/installation-control deliveries
+  use separate per-installation buckets so public comment noise cannot starve review
+  starts or cache invalidation; app-wide and source-rate abuse buckets still apply
+  before a job is queued.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
   provisioning and rotation are operator-only, App-wide flows; installation admins
   may view diagnostics for their installation but cannot rotate or resynchronize the
-  shared secret. During planned rotation, the previous secret may verify only
-  duplicate redeliveries whose delivery id and payload hash were first accepted
-  before the new secret became active; those duplicates are never re-enqueued and
-  can only return the existing accepted/duplicate outcome. New delivery ids signed
-  with the previous secret are rejected even if the HMAC matches. Old-secret HMAC
-  match is necessary but not sufficient: the receiver must find a prior replay
-  record with `first_seen_at < new_secret_active_at` before accepting the request as
-  a duplicate. Replay records for the previous secret expire at the earlier of 24
-  hours from first accepted delivery or the configured rotation grace deadline.
-  After the grace window, old-secret deliveries fail closed even if GitHub retries
-  them late. Self-host operators own the same App-wide rotation flow for their
-  registered App.
-- **Abuse controls:** per-installation queue depth/concurrency, webhook token
-  bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
-  a misbehaving repo cannot spin the queue or publish outdated reviews.
+  shared secret. During planned rotation, the previous secret remains in the
+  candidate set for a fixed 10-minute grace window from `new_secret_active_at`; the
+  window may be shortened to zero but not lengthened per delivery. Suspected
+  compromise uses zero grace and fails closed immediately. Within the planned grace
+  window, the previous secret may verify only duplicate redeliveries whose delivery
+  id and payload hash were first accepted before the new secret became active; those
+  duplicates are never re-enqueued and can only return the existing
+  accepted/duplicate outcome. New delivery ids signed with the previous secret are
+  rejected even if the HMAC matches. Old-secret HMAC is computed before the replay
+  store check, but a match is necessary only for the later duplicate decision: the
+  receiver must find a prior replay record with `first_seen_at <
+  new_secret_active_at` before accepting the request as a duplicate. Replay records
+  for the previous secret expire at the earlier of 24 hours from first accepted
+  delivery or the 10-minute rotation grace deadline. After the grace window, the old
+  secret is removed from the candidate set and old-secret deliveries fail closed
+  even if GitHub retries them late. Self-host operators own the same App-wide
+  rotation flow for their registered App.
+- **Abuse controls:** per-installation queue depth/concurrency, separate relevant
+  review/command/control webhook buckets after no-op filtering, dead-letter +
+  alerting on repeated failures, and stale-head close-out so a misbehaving repo
+  cannot spin the queue, starve authorization invalidation, or publish outdated
+  reviews.
 
 **Rationale:** operational state is necessary for reliability, but the same
 privacy line that exists today still holds: durable systems do not become a code,
@@ -582,6 +624,17 @@ their redacted state marker into the hosted review state, but it does not edit o
 comments. Check runs remain tied to their original GitHub run ids and are not
 migrated; the App creates or completes only its own `Prowl Review` check for the
 current head.
+
+Before the first external managed hosted installation, every private key for the
+reused `prowl-review` App that was distributed to repository or organization Action
+secrets such as `PROWL_APP_PRIVATE_KEY` must be revoked and rotated. The managed
+App signing credential lives only in the managed secret store, HSM, or token broker
+used by the hosted token-minter; it is never stored in this repository, workflow
+secrets, Action logs, or customer repositories. The Action path must use
+`GITHUB_TOKEN`, a user-owned GitHub App credential scoped to that operator, or a
+brokered token that can mint only for the current repository/workflow and cannot
+mint across managed hosted tenants. Sharing the managed App signing credential with
+Actions is a launch blocker.
 
 Uninstalling the `prowl-review` App immediately disables hosted reviews and token
 minting for Action workflows that depend on that App. Existing Action workflows
@@ -641,11 +694,15 @@ commands are honored only when all checks pass:
    command records store the auth generation used for authorization, and the handler
    re-checks that generation immediately before side effects; if a permission-change
    webhook invalidated the cache mid-command, the command aborts and must re-authorize
-   before retrying. State-changing or privileged commands, including `break glass`,
-   `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and `configure key`,
-   must perform a fresh GitHub permission API check after the command is claimed and
-   immediately before side effects; the positive cache is only a prefilter for those
-   commands, not final authority. `configure key` is stricter than the general
+   before retrying. State-changing, privileged, or provider-backed commands,
+   including `review`, `full review`, `docstrings`, `tests`, chat replies,
+   `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
+   `configure key`, must perform a fresh GitHub permission API check after the
+   command is claimed and immediately before side effects or provider calls; the
+   positive cache is only a prefilter for those commands, not final authority. This
+   fresh check bypasses the positive permission cache and reads GitHub permission
+   APIs directly under the current installation auth generation. `configure key` is
+   stricter than the general
    command gate: before creating any settings link, the command parser must verify
    the sender is an installation admin, defined as org-owner permission for org
    installations, repository `admin` permission for repo-only/user installations, or
@@ -655,25 +712,33 @@ commands are honored only when all checks pass:
    after the link is opened: the OAuth/App session user must match the command
    sender, the installation id and repository id must match the signed link record,
    and GitHub/allowlist state must confirm the same elevated role. If the elevated
-   role cannot be confirmed at either gate, the command fails closed and is audited.
+   role cannot be confirmed at either gate, the command fails closed, any opened
+   nonce is invalidated so later privilege regain requires a new command, and the
+   failure is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
    handler atomically claims an unconsumed command record keyed by those fields plus
    command verb and lifecycle generation, and marks it consumed in the same
    transaction. Already-consumed records are rejected even when the delivery id,
-   comment id, body digest, and head SHA match. Edited comments create a distinct
-   consume-once record keyed by edited timestamp and body digest only after a
-   comment-level execution lock keyed by `{installation, repository, pull_request,
-   comment_id, command}` is available. The lock intentionally excludes mutable PR
-   head SHA and lifecycle generation so comment edits and head changes serialize
-   behind the same command identity. That lock is held from claim through command
-   terminal state, including provider calls and publication, with its own lease and
-   fencing token. The handler validates that the current GitHub comment
-   timestamp/body digest still matches the claimed delivery immediately before side
-   effects; if it advanced, the in-flight command aborts as superseded. If an edit
-   arrives while the lock is held, the newer edit is queued behind the lock or
-   rejected with a retry-after response, never executed concurrently. Delivery-id
+   comment id, body digest, and head SHA match. The edited timestamp is GitHub's
+   `updated_at` value from a fresh GitHub API read, not a client-derived or
+   webhook-trusted clock value, and the body digest covers the full normalized
+   comment body plus command parse version and verb, not only the matched command
+   fragment. Edited comments create a distinct consume-once record keyed by that
+   API-read timestamp and digest only after a comment-level execution lock keyed by
+   `{installation, repository, pull_request, comment_id, command}` is available. The
+   lock intentionally excludes mutable PR head SHA and lifecycle generation so
+   comment edits and head changes serialize behind the same command identity. That
+   lock is held from claim through command terminal state, including provider calls
+   and publication, with its own lease and fencing token. The handler fetches the
+   current GitHub comment again and validates that its `updated_at` value/body
+   digest still matches the claimed delivery immediately before side effects; if it
+   advanced, the in-flight command aborts as superseded and records the current
+   version for later processing. If an edit arrives while the lock is held, the
+   newer edit is durably queued behind the lock and re-authorized after the current
+   command reaches terminal state; it is not dropped through a Retry-After-only
+   webhook response because GitHub will not redeliver it automatically. Delivery-id
    replay records live for 24 hours, and state-changing/costly commands are
    rate-limited to 5 commands per minute per `{installation, user, pull_request,
    command}` before any provider call. Violations are rejected, audited, and alerted
@@ -688,12 +753,14 @@ commands are honored only when all checks pass:
 cryptographically signed, stored server-side by nonce hash, bound to `{installation,
 repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
 single-use, requires fresh GitHub OAuth/App authorization with the
-installation-admin definition above, carries no key material in the URL, and uses
-standard OAuth state plus an explicit signed CSRF token bound to the nonce and
-session before accepting a provider key. The key-save POST must happen over HTTPS
-with the same authorized session, and nonce consumption plus key persistence must
-commit in one transaction; a second request for the same nonce gets a used/expired
-response and cannot write a key.
+installation-admin definition above, and carries no key material in the URL. OAuth
+state and the explicit signed CSRF token must commit to the nonce hash/link id,
+session id hash, sender id, installation id, repository id, and expiry before
+accepting a provider key. The first authorized settings GET transactionally binds
+the nonce to that session before rendering the key input, and the key-save POST must
+happen over HTTPS with the same authorized session. Nonce consumption plus key
+persistence must commit in one transaction; a second request for the same nonce gets
+a generic used/expired response and cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
@@ -719,14 +786,16 @@ The explicit records are:
 | Webhook architecture | Thin open-source webhook service using the shared TypeScript core; Cloudflare Workers + Queues is the reference managed receiver/orchestrator. | Durable idempotency, leased claims, stale-head checks, and fork skips keep instant reviews deterministic. | Queueing before durable idempotency, delivery-id-only dedupe, automatic fork review, and waiting for full checkout infrastructure. | Requires persistence before the queue and user-visible duplicate/superseded/skip states. |
 | Key custody, secret lifecycle, and least privilege | Open-source self-host path plus managed per-installation envelope encryption with KMS/HSM roles, audited grants, revocation, deletion, and explicit live-runner residual risk. | Preserves install-once UX while making Prowl's managed custody boundary verifiable. | Environment-only managed keys, plaintext queue payloads, closed-source hosting, broad PATs, and claiming Node memory erasure solves live compromise. | KMS policy, leak tests, deletion jobs, revocation fencing, incident response, and settings authorization are launch blockers. |
 | Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews and must publish retrieval limits and caveats. |
-| Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, and operator dashboards. |
-| State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, and short-lived runtime inspection. |
-| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head. | A sibling cloud App, author-agnostic hidden markers, workflow-file-only precedence, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, and a settings flow for key configuration. |
+| Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits and separate relevant review/command/control webhook buckets. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, and operator dashboards. |
+| State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing with fixed 10-minute planned rotation grace. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, and short-lived runtime inspection. |
+| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity only after Action-distributed App private keys are revoked/rotated, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus fresh GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head or sharing a cross-tenant signing key. | A sibling cloud App, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, and a settings flow for key configuration. |
 
 ## Build plan (when approved)
 
 1. Receiver + queue + installation store + persistent idempotency, using the
-   existing `prowl-review` App identity for the managed instance.
+   existing `prowl-review` App identity for the managed instance only after every
+   Action-distributed private key for that App is revoked/rotated and the managed
+   signing credential is isolated outside repository/workflow secrets.
 2. Trusted-base `delivery.owner` config plus Action/App owner checks so dual
    delivery cannot start duplicate reviews.
 3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
