@@ -216,7 +216,13 @@ and fail closed when any control is unavailable; platform-specific alternatives 
 the same equivalence report and two-person security approval before deployment. These
 controls reduce persistence after save, but they still do not protect against
 malicious code or an operator already executing inside that worker during the live
-save window.
+save window. Application code cannot prevent V8 from creating persistent or interned
+plaintext strings once a framework, parser, template, logger, or validation helper
+observes the key as a JavaScript string. Managed v1 key ingestion therefore must route
+raw request bytes to the native helper, local secret broker, or platform secret
+service before app-level parsing; any candidate implementation that requires
+plaintext provider keys to pass through normal JavaScript string APIs is not launchable
+unless a new security decision explicitly accepts and discloses that residual risk.
 
 Managed launch materials must surface that boundary before the user installs the App
 or enters a provider key. The install page, migration guide, and first key-setup
@@ -249,10 +255,14 @@ them, and the client never forwards provider responses through an intermediate c
 before redaction. Launch requires a measured decrypt-to-send budget: staging tests
 record wall-clock time from successful decrypt return to the first provider request
 byte leaving the runner process and fail if p99 exceeds 100 ms or max exceeds 250 ms
-under representative load. If the minimal client cannot prove that bound, or if it
-requires provider-key material to live in JavaScript strings outside that measured
-handoff window, managed launch requires a native secret helper, sidecar vault with
-locked memory, or equivalent transport shim before provider traffic is enabled. Each
+under representative load and contested event-loop conditions. Once plaintext key
+material is available, request construction and transport handoff run in one guarded
+synchronous call path with no `await`, timer, queue hop, microtask yield, or callback
+that can sit behind unrelated review work. If event-loop lag, HTTP-client scheduling,
+or async wrapper behavior can extend the measured handoff window, or if the minimal
+client requires provider-key material to live in JavaScript strings outside that
+window, managed launch requires a native secret helper, sidecar vault with locked
+memory, or equivalent transport shim before provider traffic is enabled. Each
 attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
 authorization tied to the current revocation generation; retries cannot reuse any of
 those values. The control plane consumes the provider-call nonce and grant in the same
@@ -403,7 +413,11 @@ allowlisted sanitized error from status code, provider error class, retryability
 and request id only. The original error is not re-thrown across the runner boundary.
 Provider request/response bodies, headers, stack traces, raw URLs, and SDK debug
 objects are not logged or retained in client/cache state. HTTP-library debug logging
-is disabled in production. Launch-blocking CI and staging tests must include canary
+is disabled in production. Debugging and incident response use only the sanitized
+provider class, retryability, request id, correlation id, and timing counters above;
+raw provider error details and stack traces are intentionally unavailable unless a new
+security decision creates a separate redacted evidence channel. Launch-blocking CI and
+staging tests must include canary
 provider keys and provider mocks that echo those keys in headers, URLs, bodies,
 timeout errors, malformed responses, thrown errors, exception stack traces,
 structured exception objects, exception causes, logger serialization, middleware
@@ -512,12 +526,19 @@ Decision 5. The UI never displays plaintext keys after save.
 
 The key-save endpoint is rate-limited before validation by installation, user
 session, and source address. It performs constant-shape local format validation.
-Managed v1 performs no synchronous live provider validation and opens no provider
-network connection before the response is committed. Provider auth validation runs
-only after the generic response, from an inactive pending-validation candidate, in the
-bounded background validator below. Adding synchronous live validation to the managed
-App requires a separate design update and launch gate that proves no timing
-distinction between no-call, success, timeout, denied, and provider-error paths. If
+Local format validation means only provider-agnostic byte-length bounds, UTF-8/raw-byte
+decodability needed by the selected storage path, and an allowlisted character-class
+scan that runs over every submitted or dummy key buffer without early returns. It does
+not check provider-specific prefixes, token shapes, or semantic key classes before the
+generic response; if a provider requires a prefix check, every provider adapter must
+execute the same fixed validation path over dummy and submitted buffers with
+conditional assignment only. Managed v1 performs no synchronous live provider
+validation and opens no provider network connection before the response is committed.
+Provider auth validation runs only after the generic response, from an inactive
+pending-validation candidate, in the bounded background validator below. Adding
+synchronous live validation to the managed App requires a separate design update and
+launch gate that proves no timing distinction between no-call, success, timeout,
+denied, and provider-error paths. If
 background live validation fails or is unsupported, provider error bodies are not
 serialized, cached, returned, traced, or logged; they are mapped to a fixed internal
 enum such as `invalid`, `unauthorized`, `rate_limited`, or `unknown`. `invalid`,
@@ -560,12 +581,14 @@ candidate writes, dummy validation work, response delay, and provider-call decis
 snapshot so timing does not reveal whether a retry supplied the same key.
 Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
-nonce, and session-race requests and block launch if p95/p99 distributions diverge
-beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms and
-p99 delta <= 50 ms between any two failure classes over at least 10,000 staging
-samples per class, after warmup, measured from ingress accept at the load balancer to
-the last response byte written, including framework parsing, nonce/session/CSRF/OAuth
-checks, database/KMS calls used by that path, and any local validation work. Because
+nonce, session-race, absent-key, valid-prefix, invalid-prefix, minimum-length,
+maximum-length, overlong, and invalid-character requests and block launch if p95/p99
+distributions diverge beyond the published bound. The managed v1 launch bound is p95
+delta <= 25 ms and p99 delta <= 50 ms between any two failure classes over at least
+10,000 staging samples per class, after warmup, measured from ingress accept at the
+load balancer to the last response byte written, including framework parsing,
+nonce/session/CSRF/OAuth checks, database/KMS calls used by that path, and any local
+validation work. Because
 managed v1 never performs a synchronous provider auth probe, the endpoint always
 returns the same generic pending envelope after the local constant-shape checks and
 enqueues or refreshes only a pending-validation candidate. That candidate has
@@ -724,7 +747,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   containing the same filenames. The suite fails unless private-repo search requests
   throw a client-boundary error before any GitHub search request is constructed,
   public-repo search requests still reach the mocked GitHub search endpoint, and
-  public search cache entries cannot satisfy private-repo retrieval keys.
+  public search cache entries cannot satisfy private-repo retrieval keys. The suite
+  includes fixtures for a public repository whose Git tree contains mode `160000`
+  submodule entries, a `.gitmodules` file pointing at a private URL, package manifests
+  that declare private registry dependencies, a public fork whose parent/source is
+  private or inaccessible to the installation, and a repository whose visibility flips
+  during retrieval. Each fixture asserts that the adapter reports incomplete context
+  with a specific reason such as `private_submodule`, `private_dependency`, or
+  `visibility_changed`, and that no REST or GraphQL code-search request object is
+  constructed even when the root repository is reported public.
   Search is completely disabled for repositories GitHub reports as private,
   regardless of submodule structure, visibility inheritance, or user configuration.
   Private submodules and cross-repo references are not traversed in managed v1;
@@ -775,7 +806,11 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   required security context is incomplete. The review state also carries an explicit
   `security_context_incomplete` flag whenever required security context is unavailable;
   the approval gate reads that flag independently of emitted findings, so approval is
-  withheld even if no concrete security finding can be generated.
+  withheld even if no concrete security finding can be generated. The flag is the
+  aggregate control-plane predicate produced by the required-context resolver, not a
+  duplicate of reviewer prose: every explicit incomplete-context finding sets it, and
+  resolver failures with no safe file/range to attach still set the flag and emit a
+  single review-level incomplete-context note.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -1004,7 +1039,11 @@ append-only audit log.
   inserted only for the current secret version
   or for the first accepted delivery before `new_secret_active_at`; an old-secret
   match during grace is never allowed to create the prior replay record it needs for
-  acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
+  acceptance. Planned rotation grace is redelivery-only: it accepts a delivery signed
+  by the previous secret after activation only when that exact delivery was first seen
+  and recorded before `new_secret_active_at`; a first-seen old-secret delivery after
+  activation is intentionally rejected rather than establishing new authority for the
+  retired secret. This is an explicit read-then-conditional-insert flow with no upsert:
   if the old-secret match has no existing pre-activation replay row, verification
   fails before any replay record is inserted and returns the same response envelope
   and fixed-path response generation as a current-secret HMAC mismatch. The old-secret
@@ -1085,14 +1124,17 @@ short-lived runtime inspection rather than durable raw content.
 check runs, command webhooks, and dual delivery can create duplicate reviews if the
 ownership model is ambiguous.
 
-**Selected option:** reuse the existing `prowl-review` GitHub App identity for the
-managed hosted App. Existing summary markers continue to be recognized only when
-they were authored by the authenticated `prowl-review[bot]` login; a one-time
-migration job may read prior `github-actions[bot]` marked summaries and copy only
-their redacted state marker into the hosted review state, but it does not edit old
-comments. Check runs remain tied to their original GitHub run ids and are not
-migrated; the App creates or completes only its own `Prowl Review` check for the
-current head.
+**Selected option:** the launch-safe default is a new managed GitHub App identity
+whose private key was never distributed to Actions. Reusing the existing
+`prowl-review` GitHub App identity is allowed only if GitHub provides deletion-grade
+evidence for every Action-distributed private key version, as defined below; otherwise
+reuse remains disabled and the managed service launches under the new App identity.
+Existing summary markers continue to be recognized only when they were authored by the
+authenticated `prowl-review[bot]` login or copied by the explicit migration job; that
+job may read prior `github-actions[bot]` marked summaries and copy only their redacted
+state marker into hosted review state, but it does not edit old comments. Check runs
+remain tied to their original GitHub run ids and are not migrated; the App creates or
+completes only its own `Prowl Review` check for the current head.
 
 Before the first external managed hosted installation, every private key for the
 reused `prowl-review` App that was distributed to repository or organization Action
@@ -1119,8 +1161,15 @@ support attestation that distinguishes deleted keys from merely disabled keys; m
 settings-screen captures are not sufficient for managed launch. The record must prove
 that every Action-distributed key version is deleted from the GitHub App registration,
 not only disabled, and must enumerate every current and historical installation id
-known to Prowl before the cutoff. The canary signs a GitHub App JWT with the sealed
-retired key material and calls GitHub's installation-token endpoint for all
+known to Prowl before the cutoff. GitHub UI "inactive" states, best-effort audit logs
+that do not distinguish disabled from deleted, and canary-only evidence never satisfy
+this gate because they cannot prove a key is non-reenableable. If a documented GitHub
+API/export is unavailable, the required evidence is a signed GitHub Security or
+support attestation that names the App id, key ids/fingerprints, deletion time,
+non-reenableable deletion semantics, and the attesting GitHub authority; absent that
+attestation, managed launch must use the new App identity default. The canary signs a
+GitHub App JWT with the sealed retired key material and calls GitHub's
+installation-token endpoint for all
 installations when fewer than 10 exist, otherwise at least 3 installations spanning
 different owners plus the controlled installation; only GitHub-origin
 `401`/invalid-signature responses count as proof, while local preflight rejection,
@@ -1179,18 +1228,25 @@ Before hosted launch, the Action must learn this field from the same trusted-bas
 config it already loads and exit with a neutral "App owns delivery" result before
 any provider call when `delivery.owner: app`. The hosted App performs the symmetric
 check and no-ops when `delivery.owner: action`. Owner is read from the trusted base
-ref/config generation associated with the PR head. Owner changes apply to the next
-PR head SHA or base-config generation; they increment lifecycle generation and
-supersede in-flight work for older generations. Subsequent deliveries for existing
-PR heads re-query the owner before enqueueing; in-flight reviews under the previous
-owner are marked superseded and stopped before provider calls and before
-publication if ownership changed. The runner also re-reads the trusted-base config
-immediately before claiming a job, before provider calls, and before publication;
-cache expiry or mismatch produces the same unclear-owner skip. The cached owner in
-the hosted store is only a UI hint. The idempotency key includes the owner and lifecycle generation:
-`{installation, repository, pull_request, head_sha, owner, lifecycle_generation}`,
-and both delivery paths re-check the owner before provider calls and publication.
-This Action/App owner check is a launch blocker for dual-delivery support.
+ref/config generation associated with the PR head. The initial owner decision records
+the trusted-base ref, config commit SHA, config blob SHA, owner value, and lifecycle
+generation. Owner changes apply only to the next PR head SHA or base-config
+generation; they increment lifecycle generation and supersede in-flight work for older
+generations. Subsequent deliveries for existing PR heads re-query the owner before
+enqueueing; in-flight reviews under the previous owner are marked `config_changed` or
+superseded and stopped before provider calls and before publication if ownership
+changed. The runner also re-reads the trusted-base config immediately before claiming
+a job, before provider calls, and before publication; if the base ref now points at a
+different config commit/blob than the recorded generation, the review never silently
+adopts the new owner mid-flight. It transitions to `config_changed`, publishes at most
+one clear skipped/superseded status under the original generation when allowed, and
+requires a new delivery under the new generation for more work. Cache expiry or
+mismatch produces the same unclear-owner skip. The cached owner in the hosted store is
+only a UI hint. The idempotency key includes the owner and lifecycle generation:
+`{installation, repository, pull_request, head_sha, owner, base_config_ref,
+base_config_commit_sha, base_config_blob_sha, lifecycle_generation}`, and both
+delivery paths re-check the owner before provider calls and publication. This
+Action/App owner check is a launch blocker for dual-delivery support.
 
 **Command authorization:** the `@prowl-review` command surface moves to
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
@@ -1311,14 +1367,18 @@ commands are honored only when all checks pass:
    trusted-base `.prowl-review.yml` scope, repository `admin` permission for
    repo-only/user installations, or membership in the audited installation-admin
    allowlist maintained by those admins. For org installations, that org-owner check
-   requires a dynamic App `Members: read` installation-permission check against the
-   current grant version or OAuth `read:org` for the authenticated session, and the
-   repository write/config check must come from the same fresh GitHub authorization
-   read. A one-time reapproval is never assumed to persist without re-checking the
-   current installation permissions. If the reused App installation has not been
-   reapproved with membership access and the session lacks `read:org`, org key
-   configuration fails closed with a GitHub reapproval/reauthorization link and does
-   not create a settings nonce. A
+   is evaluated before the repository write/config check. If the App installation has
+   `Members: read` at the current grant version, the handler uses the App permission to
+   read current org-owner status. If the App lacks that permission but the already
+   authenticated settings/command session has OAuth `read:org`, the handler uses that
+   session for the org-owner check. If neither authority is available, org key
+   configuration fails closed with a clear GitHub App reapproval or OAuth
+   reauthorization link, records which authority was missing, and does not create a
+   settings nonce. Only after org-owner eligibility is confirmed does the handler read
+   repository write/config authority for the target trusted-base `.prowl-review.yml`
+   scope under the same current installation auth generation; a repository check cannot
+   compensate for a missing org-owner authority. A one-time reapproval is never assumed
+   to persist without re-checking the current installation permissions. A
    writer/maintainer who lacks that elevated role cannot receive a key-configuration
    link. The settings UI repeats the same fresh authorization after the link is
    opened and again on key-save POST: the OAuth/App session user must match the
@@ -1341,9 +1401,14 @@ commands are honored only when all checks pass:
    transaction. Already-consumed records are rejected even when the delivery id,
    comment id, body digest, and head SHA match. The edited timestamp is GitHub's
    `updated_at` value from a fresh GitHub API read, not a client-derived or
-   webhook-trusted clock value, and the body digest covers the full normalized
-   comment body plus command parse version and verb, not only the matched command
-   fragment. Webhook payloads may enqueue edit work but cannot create the canonical
+   webhook-trusted clock value. The body digest is SHA-256 over the exact raw UTF-8
+   bytes of GitHub's REST/GraphQL `body` field as returned by that fresh API read,
+   followed by fixed-length encodings of command parse version and verb; it is not
+   rendered Markdown, trimmed text, Unicode-normalized text, line-ending-normalized
+   text, or only the matched command fragment. Cosmetic edits, including trailing
+   spaces or line-ending changes returned by GitHub, produce a different digest and
+   therefore a different consume-once record after the comment-level lock. Webhook
+   payloads may enqueue edit work but cannot create the canonical
    consume-once record. Edited comments create a distinct consume-once record keyed by
    the deployment/instance id, that API-read timestamp, and digest only after a
    comment-level execution lock keyed by
@@ -1374,7 +1439,10 @@ commands are honored only when all checks pass:
    version is recorded as superseded without a consume-once row and the latest queued
    edit is processed behind the same lock. Immediately before side effects, the handler
    repeats the current-comment read and aborts as superseded if the claimed version has
-   advanced, recording the current version for later processing. If an
+   advanced, recording the current version for later processing. Launch tests must show
+   repeated API reads of the same edited comment produce the same digest, and cosmetic
+   edits such as adding or removing trailing spaces produce a new digest and a new
+   consume-once row only after the comment-level lock path above. If an
    edit arrives while the lock is held, the newer edit is durably queued behind the
    lock and re-authorized after the current command reaches terminal state; it is not
    dropped through a Retry-After-only webhook response because GitHub will not
@@ -1459,7 +1527,7 @@ The explicit records are:
 | Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews, must publish retrieval limits and caveats, and must label or withhold security findings when required context is incomplete. |
 | Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits, separate relevant review/command buckets, and lossless control-event reconciliation. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, dropping authorization-control webhooks under burst load, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, durable control-event coalescing, and operator dashboards. |
 | State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing with fixed 10-minute planned rotation grace. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, short-lived runtime inspection, explicit rotation replay tests, and bounded streaming-abort tests. |
-| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity only after Action-distributed App private keys are revoked at the GitHub App level and verified, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus fresh GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head or sharing a cross-tenant signing key. | A sibling cloud App unless key revocation cannot be verified, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, verified credential-rotation gate, and a settings flow for key configuration. |
+| Migration from the Action, App identity, delivery precedence, and commands | Launch-safe default is a new managed App identity; reuse `prowl-review` only with GitHub deletion-grade evidence for all Action-distributed private keys, trusted-base `delivery.owner`, and signed-webhook command authorization. | Prevents old Action-distributed signing keys or dual delivery from crossing into hosted custody while preserving an explicit marker-copy migration path. | Reuse without deletion-grade GitHub evidence, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, verified credential-rotation or new-App gate, and a settings flow for key configuration. |
 
 ## Build plan (when approved)
 

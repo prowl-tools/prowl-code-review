@@ -55,7 +55,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   then to the selected provider, but not to a Prowl-hosted settings or runner process.
   In the managed Hosted App, Prowl-managed infrastructure receives the key during
   settings save/rotation, stores encrypted key material, and later decrypts it
-  transiently for reviews. The at-rest controls
+  transiently for reviews. During key ingestion and save, Prowl-managed Node.js
+  settings workers hold plaintext provider keys in process memory before encryption;
+  a compromised settings worker, malicious npm dependency, active host debugger, or
+  platform actor with access to that process memory can exfiltrate the plaintext key.
+  The at-rest controls
   limit database-only, queue-only, backup-only, and KMS-unauthorized operator access;
   they do **not** protect a plaintext provider key from active service/runtime
   compromise while the key is being handled. Examples include runtime process
