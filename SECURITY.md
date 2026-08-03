@@ -31,12 +31,14 @@ release / `main`**; please reproduce against the latest before reporting.
 
 ## Security & trust model
 
-Today's supported CLI, GitHub Action, and self-hosted modes are **BYOK**
+Today's supported CLI and GitHub Action modes are **BYOK**
 (bring-your-own-key): provider keys stay on the user's machine or chosen runner, and
 the tool is designed to process untrusted pull-request content without exposing those
-keys to Prowl-managed services or executing attacker-controlled code. The planned
-managed Hosted App is a future service with a different custody model, described
-separately below, and those managed-service controls are not deployed guarantees today.
+keys to Prowl-managed services or executing attacker-controlled code. Running the CLI
+on infrastructure you control follows the same custody model. The planned managed
+Hosted App, described separately below, and planned packaged self-hosted App are
+future offerings with different custody and operational models; those controls are
+not deployed guarantees today.
 
 ### Keys & secrets
 #### Managed Hosted App Uses A Different Custody Model
@@ -46,14 +48,14 @@ separately below, and those managed-service controls are not deployed guarantees
 > design artifacts, not deployed guarantees. Do not rely on managed hosted App
 > security claims until the signed launch attestation in
 > [`docs/security/hosted-managed-launch-attestation.md`](docs/security/hosted-managed-launch-attestation.md)
-> is published. Until then, use the CLI, GitHub Action, or self-hosted deployment,
-> which follow the environment-only BYOK model.
+> is published. Until then, use the CLI locally, run the CLI on infrastructure you
+> control, or use the GitHub Action; the packaged self-hosted App remains planned.
 
 The managed hosted GitHub App described in this section is a planned future
-service, not a capability available today. Current CLI, GitHub Action, and
-self-hosted use follows the environment-only BYOK model described immediately
-below. This section is included so the future managed service's different trust
-boundary is visible before that service exists.
+service, not a capability available today. Current CLI and GitHub Action use follows
+the environment-only BYOK model described immediately below, including when the CLI is
+run on user-controlled infrastructure. This section is included so the future managed
+service's different trust boundary is visible before that service exists.
 
 If you use the CLI or GitHub Action, your provider key lives only on your machine or
 chosen runner and is sent directly to your provider. If you use the planned managed
@@ -69,19 +71,20 @@ worker. Managed launch remains unavailable until the selected key-ingestion path
 an attested native helper, sidecar secret broker, or platform enclave/secret service
 with memory-locking, no-swap/no-core-dump/no-debug controls, explicit zeroing, and
 canary leak tests; those controls reduce accidental persistence but still do not make
-managed live-key custody equivalent to CLI, Action, or self-hosting.
+managed live-key custody equivalent to CLI, Action, or a user-controlled CLI runner.
 
 > [!WARNING]
 > The planned managed hosted App is not suitable for threat models that assume zero
 > trust of Prowl-managed infrastructure, protection against live-process compromise,
 > or protection against a malicious/backdoored dependency in the managed settings,
-> runner, or HTTP-client path. The CLI, GitHub Action, and self-hosted Docker
-> deployment keep provider keys only on your machine or chosen runner and do not send
+> runner, or HTTP-client path. The CLI, GitHub Action, and CLI runs on infrastructure
+> you control keep provider keys only on your machine or chosen runner and do not send
 > them to Prowl services. Managed users cannot prevent or independently detect a
 > plaintext key captured during a live managed key-save or provider-call window through
 > RBAC, KMS grants, or audit logs; incident response and revocation can stop future
 > decrypts but cannot undo a key already exfiltrated from process memory. Use CLI,
-> Action, or self-hosting if you require the stronger live-key custody boundary.
+> Action, or a user-controlled CLI runner if you require the stronger live-key custody
+> boundary.
 > Managed install, migration, and first key-entry screens must show this warning before
 > accepting provider keys and must require an explicit acknowledgement whose custody
 > policy version is recorded in the managed audit log. If the managed launch
@@ -130,7 +133,8 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
   decrypts, but they cannot undo plaintext disclosure that happened before the
   compromise was detected. Users who require "no Prowl infrastructure ever handles
   my key" or otherwise assume zero trust of Prowl-managed infrastructure must use
-  the CLI, Action, or self-hosted App. Migrating from CLI/Action to the managed
+  the CLI, Action, or run the CLI on infrastructure they control until the planned
+  self-hosted App is available. Migrating from CLI/Action to the managed
   Hosted App is therefore an explicit opt-in to a weaker live-key custody model in
   exchange for install-once hosted operation; hosted migration docs and setup UI must
   show that warning before key entry, require explicit acknowledgement of the active
@@ -158,8 +162,9 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
   Managed launch must prefer provider-native short-lived request credentials,
   provider-side revocation tokens, or a hardened managed egress proxy when a provider
   supports them; when a provider supports none of those controls, this remains an
-  explicitly documented managed-service residual boundary and CLI/Action/self-hosting
-  remains the recommendation for users who cannot tolerate it.
+  explicitly documented managed-service residual boundary, and CLI, Action, or a
+  user-controlled CLI runner remains the recommendation for users who cannot tolerate
+  it.
   Once that request reaches the user's selected provider, provider logging, caching,
   downstream transmission, endpoint compromise, or provider-side key misuse is
   outside Prowl's control and is not undone by Prowl revocation; users must rely on
@@ -174,10 +179,15 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
   reader limit before process recycle. That live-buffer exposure is accepted residual
   risk, not a revocation guarantee. There is
   no true atomicity across the database and an already-started external GitHub API
-  call. On uninstall or key deletion, hosted stores revoke the installation and delete
-  live key rows, queued jobs, caches, and review state through the control-plane
-  deletion flow; only encrypted backup copies of deleted key material and operational
-  records remain until the published 30-day backup-expiry schedule. Incident timers
+  call. Deleting one hosted provider credential revokes that
+  `{installation, repository scope, provider, key_row_id}` grant, disables its decrypt
+  grants, cancels or marks incomplete jobs that depended on it, and deletes that live
+  key row while preserving unrelated provider credentials, installation metadata, and
+  review state. A full uninstall or repository disable uses the installation-scoped
+  control-plane deletion flow: it revokes the installation, cancels queued jobs,
+  evicts caches, deletes provider key rows and review state, and leaves only encrypted
+  backup copies of deleted key material and operational records until the published
+  30-day backup-expiry schedule. Incident timers
   start at detection time, defined as the moment an automated control or operator
   first classifies a scoped grant, wrapping key, audit stream, or policy state as
   suspect, not when revocation processing later succeeds. Suspected scoped
@@ -209,7 +219,9 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
   the final remediation state. The managed App should not be marketed as
   independently audited until a third-party report or comparable compliance artifact
   exists; users who require independently verifiable custody controls before that
-  report must self-host. The required managed launch attestation is tracked at
+  report must avoid the managed App and use CLI or Action on infrastructure they
+  control until the planned self-hosted App is available. The required managed launch
+  attestation is tracked at
   [`docs/security/hosted-managed-launch-attestation.md`](docs/security/hosted-managed-launch-attestation.md);
   it is currently marked not issued, and managed key-save/provider traffic must remain
   disabled until that file names the deployed implementation, launch records, canary
@@ -267,27 +279,27 @@ managed live-key custody equivalent to CLI, Action, or self-hosting.
 
 ## Privacy & telemetry
 
-The no-telemetry guarantee below applies to the CLI, GitHub Action, and
-self-hosted modes. The two-endpoint guarantee applies only to the CLI and GitHub
-Action. Self-hosted hosted-App deployments may also call operator-selected queue,
-database, KMS/HSM, storage, and observability endpoints; those endpoints are under
-the self-host operator's control, not Prowl's. The managed hosted App has a
-separate operational boundary because it necessarily runs Prowl-managed queueing,
-storage, audit, and runner services.
+The no-telemetry guarantee below applies to the CLI and GitHub Action, including CLI
+runs on user-controlled infrastructure. The two-endpoint guarantee applies only to
+the CLI and GitHub Action. Planned self-hosted hosted-App deployments may also call
+operator-selected queue, database, KMS/HSM, storage, and observability endpoints;
+those endpoints are under the self-host operator's control, not Prowl's. The managed
+hosted App has a separate operational boundary because it necessarily runs
+Prowl-managed queueing, storage, audit, and runner services.
 
-- In the CLI, GitHub Action, and self-hosted modes, **prowl-review collects no
+- In the CLI and GitHub Action, **prowl-review collects no
   telemetry and no analytics.** There is no usage reporting, no phone-home, no
-  third-party tracking.
+  third-party tracking. The same guarantee applies when you run the CLI on
+  infrastructure you control.
 - In the CLI and GitHub Action, the default network path calls **your configured
   LLM provider** (to perform the review) and the **GitHub API** (to fetch the diff
   and publish the review). Optional configured grounding can also fetch an
   HTTP(S) org-guidelines URL, Semgrep registry rules, or OSV.dev dependency data as
   described in [`docs/privacy.md`](docs/privacy.md). Your provider-bound code and
   review content go only to the provider *you* chose with the key *you* supplied.
-- In CLI, GitHub Action, and self-hosted modes, cost/usage figures are computed
-  locally or in the operator-controlled deployment and written only to run logs /
-  the Action job summary / local or operator-controlled usage logs — never
-  transmitted to Prowl.
+- In CLI and GitHub Action runs, cost/usage figures are computed locally or on the
+  chosen runner and written only to run logs, the Action job summary, or
+  user-controlled usage logs -- never transmitted to Prowl.
 - The planned managed hosted GitHub App (not yet available) has different operational
   boundaries: it necessarily uses the hosted queue, installation database, audit log,
   KMS/HSM service, GitHub API, and the user's configured LLM provider. Its durable
@@ -305,7 +317,7 @@ storage, audit, and runner services.
   per-class timing histograms, and managed key-save traffic must fail closed if
   production class-pair drift exceeds the published bound for two consecutive
   five-minute windows. Users who cannot tolerate residual statistical timing leakage
-  should use CLI, Action, or self-hosting.
+  should use CLI, Action, or a user-controlled CLI runner.
 - If telemetry is ever added, it will be **opt-in and off by default**, clearly
   documented, and never include code or secrets.
 
