@@ -265,6 +265,17 @@ The placeholder `NOT ISSUED` attestation state is an explicit deny input, not a
 warning; there is no development, beta, support, feature-flag, or migration override
 that may accept managed provider keys before a concrete ingestion class, launch
 record, runtime policy check, and signed deployment binding exist.
+Bootstrap is staging-only and uses no real user provider keys: an implementation PR
+first moves key-ingestion/provider-egress artifacts from `awaiting approval` to
+`approved for staging-only testing` through two security-owner reviews on a draft
+launch record, canary/synthetic credentials, and an isolated staging environment with
+external managed installations disabled. After the implementation merges, CI builds
+the immutable artifact, emits a signed deployment record that names the source commit,
+artifact digest, environment, launch-record hashes, and feature-flag state, and then
+staging evidence is attached to the production launch attestation. Production runtime
+accepts only a production-signed attestation that references an already-built artifact
+from the reviewed source state; it does not require production traffic to run before
+the attestation exists and provides no break-glass path for real keys.
 These controls reduce persistence after save, but
 they still do not protect against malicious code or an operator already executing
 inside that worker during the live save window. Application code cannot prevent V8 from
@@ -787,7 +798,15 @@ expected user-visible latency/capacity cost, and fail closed rather than relax t
 if admin key-save traffic exceeds that budget. Key save is an admin setup/rotation
 path, not a hot request path; if future usage makes fixed timing operationally
 unacceptable, managed key-save remains disabled until a new security decision replaces
-the mitigation. Authorized saves create only
+the mitigation. The timing model is an absolute response release timestamp, not a
+claim that internal work or padding sleep is constant time: all branches compute
+`release_at = ingress_monotonic_time + configured_floor`, perform the same fixed-work
+validation/query/KMS/dummy path without provider network calls, then wait until
+`release_at` before writing the precomputed response. The variable padding duration is
+not exposed separately from total response time. Any branch that cannot complete before
+`release_at` returns the same generic envelope at or after the floor, records only
+internal redacted drift telemetry, and disables new key-save traffic for that
+runner/settings class when the published drift threshold is reached. Authorized saves create only
 an inactive pending-validation candidate for later guarded validation. The last
 verified key remains active until a
 new candidate validates; if no verified key exists, reviews remain disabled because
@@ -1477,16 +1496,23 @@ append-only audit log.
   `db_now`, and executes `INSERT ... SELECT ... WHERE db_now < new_secret_active_at`.
   That same `db_now` value becomes `first_seen_at`; the application never performs a
   separate wall-clock read, never sends `first_seen_at`, and never inserts a previous
-  secret row from a transaction that did not lock the rotation row. Planned grace
-  handling has no previous-secret insert statement at all: old-secret HMAC matches
-  after activation can only select an existing pre-activation row and cannot attempt a
-  new insert. A check constraint or equivalent trigger rejects rows where
-  `accepted_secret_version = previous` and
-  `first_seen_at >= new_secret_active_at_snapshot`; application-supplied timestamps are
-  never accepted. The launch record must name the database platform, timestamp
-  precision, transaction isolation, indexes, and lock order, and tests must race
-  deliveries at exactly `new_secret_active_at` plus concurrent rotation commits to prove
-  no post-activation old-secret row can be created. After signature
+secret row from a transaction that did not lock the rotation row. Planned grace
+handling has no previous-secret insert statement at all: old-secret HMAC matches
+after activation can only select an existing pre-activation row and cannot attempt a
+new insert. Before executing any previous-secret insert path, application code must
+evaluate `db_now < new_secret_active_at` using the database-clock value read inside the
+same locked transaction; if false, it must not execute `INSERT` and must return the
+same generic authentication-failure envelope as an old-secret match without a
+pre-activation replay row. Database constraints are a second defense only, and a
+constraint rejection is treated as a launch-blocking verifier bug, not as a duplicate
+or accepted replay. A check constraint or equivalent trigger rejects rows where
+`accepted_secret_version = previous` and
+`first_seen_at >= new_secret_active_at_snapshot`; application-supplied timestamps are
+never accepted. The launch record must name the database platform, timestamp
+precision, transaction isolation, indexes, and lock order, and tests must race
+deliveries at exactly `new_secret_active_at` plus concurrent rotation commits to prove
+the old-secret path executes no insert after activation and no post-activation
+old-secret row can be created. After signature
   and replay handling, the receiver classifies authorization-control events before no-op filtering:
   `installation`, `installation_repositories`, `membership`, `member`, `organization`,
   `team`, `team_add`, `repository`, and any documented permission, suspend, delete,
@@ -1842,17 +1868,20 @@ commands are honored only when all checks pass:
    automatic retry for provider-backed, state-changing, or privileged commands after
    authorization invalidation because retrying could execute after a role downgrade
    without explicit user intent. Operationally, guarded send is one helper:
-   after the fresh GitHub permission API result returns, it opens a serializable
-   transaction, locks the installation auth row and command row, re-reads the current
-   auth generation, and confirms it still matches the generation recorded before the
-   GitHub API call was issued plus the authorized sender/role/scope. If the generation
-   has advanced, the transaction rolls back immediately without consuming a
-   provider-call nonce, writing a side-effect fencing token, creating a publication
-   reservation, or opening an external request, and the command transitions to terminal
-   `authorization_changed`. Only if the generation still matches does the helper
-   consume any provider-call nonce or publication reservation, write a side-effect
-   fencing token, commit, and then immediately open the external request in the same
-   call stack without unrelated awaits, timers, or queue hops. The request builder
+   after the fresh GitHub permission API result returns, it immediately opens a
+   serializable transaction with no intervening awaits, timers, queue hops, cache reads,
+   or helper callbacks. It locks the installation auth row and command row, re-reads the
+   current auth generation, and treats that locked value as authoritative before parsing,
+   normalizing, caching, or using the returned GitHub permission result. If the locked
+   generation differs from the generation recorded before the GitHub API call was issued,
+   the transaction rolls back, the GitHub result is discarded unread/unused except for
+   redacted diagnostics, no provider-call nonce, side-effect fencing token, or
+   publication reservation is written, no external request opens, and the command
+   transitions to terminal `authorization_changed`. Only if the generation still
+   matches does the helper parse/use the GitHub permission result, confirm the authorized
+   sender/role/scope, and consume any provider-call nonce or publication reservation,
+   write a side-effect fencing token, commit, and then immediately open the external
+   request in the same call stack without unrelated awaits, timers, or queue hops. The request builder
    requires that fencing token and performs one final local generation read before
    opening the socket; a webhook generation bump that lands between the API read and
    socket open either blocks on the same row lock or makes that final read fail. A
@@ -1881,7 +1910,11 @@ commands are honored only when all checks pass:
    hop, or cache authorization between the guarded transaction commit and socket open.
    Race-fuzz and chaos tests must randomize lock order, transaction isolation failures,
    permission-change webhooks, command edits, helper-level cache hits, cancellation, and
-   network latency around that boundary. Launch tests must simulate a
+   network latency around that boundary. A required fixture issues a command from a
+   maintainer, starts the fresh GitHub permission call, bumps auth generation while that
+   call is in flight, returns a stale `write` result, and proves the handler discards the
+   result before use and reaches `authorization_changed` without side effects. Launch
+   tests must simulate a
    permission downgrade after API dispatch but before API return, after API return
    but before row lock acquisition, after reservation but before socket open, and
    during command execution; every case must produce terminal
