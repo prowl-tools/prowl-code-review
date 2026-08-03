@@ -18,12 +18,12 @@ All notable changes to Prowl Review will be documented in this file.
 
 - Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the
   documented `uses: prowl-tools/prowl-code-review@v1` reference now resolves). `docs/releasing.md` gains the
-  advance-on-release step plus granular-token `NPM_TOKEN` expiry/rotation notes and the Trusted Publishing
-  migration plan (#63).
+  advance-on-release step plus secure release-auth migration notes and the Trusted Publishing migration plan
+  (#63).
 
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
-  `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
+  `.github/workflows/publish.yml` no longer references a stored npm publish secret or sets `NODE_AUTH_TOKEN`;
   it authenticates to npm through GitHub OIDC (`id-token: write`, already present for provenance) and keeps
   `npm publish --provenance --access public`. The workflow toolchain moves to Node 22.14.0 with an explicit
   npm upgrade to 11.5.1 (npm 11.5.0 introduced OIDC publishing support; npm 11.5.1 is the minimum compatible
@@ -31,8 +31,8 @@ All notable changes to Prowl Review will be documented in this file.
   and CI are unchanged — a workflow-only bump satisfies the `>=22.13.0 <23 || >=24` range. **Requires a
   one-time npmjs.com config** (the `prowl-review` package's GitHub Actions trusted publisher: this repo +
   `publish.yml`) before the next release; until then the publish step fails loudly and re-runnably, with no
-  token fallback by design. After the first successful OIDC release, delete the npm token and the `NPM_TOKEN`
-  repository secret. See `docs/releasing.md`.
+  token fallback by design. After the first successful OIDC release, retire the fallback credentials. See
+  `docs/releasing.md`.
 - **Single branded checks row (#61).** A PR now shows prowl-review exactly once — the branded **Prowl
   Review** check run — instead of that row *plus* an octocat `prowl-review / review` Actions row. The
   auto-review workflow is now triggered by the **CI workflow completing** (`workflow_run`) rather than by
@@ -309,8 +309,8 @@ All notable changes to Prowl Review will be documented in this file.
 - npm + Homebrew distribution (backlog #42): a tag-triggered release pipeline. New
   `.github/workflows/publish.yml` fires on a `vX.Y.Z` tag, verifies the tag matches `package.json`, runs
   `npm ci` → build → lint → test, verifies release notes, prepares a draft GitHub Release, publishes to npm
-  with provenance (`npm publish --provenance --access public`, OIDC via `id-token: write`, `NPM_TOKEN`
-  secret), then publishes the GitHub Release. The release notes come from a new, unit-tested
+  with provenance (`npm publish --provenance --access public` using the release workflow's publish auth), then
+  publishes the GitHub Release. The release notes come from a new, unit-tested
   `scripts/changelog-section.mjs` (extracts `## [X.Y.Z]`, falls back to `## [Unreleased]`). Made the package
   publish-ready (`publishConfig.access: public`). Added a Homebrew formula template
   (`packaging/homebrew/prowl-review.rb`, for the separate `homebrew-tap` repo), a `docs/releasing.md`

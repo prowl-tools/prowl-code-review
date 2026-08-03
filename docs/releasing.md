@@ -8,7 +8,7 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
 - **npm Trusted Publishing (OIDC) — no stored token (#63).** `prowl-review` publishes
   to npm via **Trusted Publishing**: `.github/workflows/publish.yml` authenticates
   through GitHub's OIDC (`id-token: write`) and npm mints a short-lived token at
-  publish time. The workflow does not read or use `NPM_TOKEN`. This requires a
+  publish time. The workflow does not read or use a stored npm publish secret. This requires a
   **one-time npmjs.com config**: on the
   [`prowl-review` package](https://www.npmjs.com/package/prowl-review) -> *Settings
   -> Trusted Publishing*, add a **GitHub Actions** trusted publisher for this
@@ -23,12 +23,13 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
   dependence is the point of #63.
 - Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
-### Retiring the legacy npm token (do this after the first OIDC release)
+### Legacy token fallback is retired
 
-The pre-#63 flow authenticated with an npm **granular access token** stored as the
-`NPM_TOKEN` repository secret (expires **2026-10-12**). Once the first tag-triggered
-release publishes through OIDC, verify the exact tagged version is live and
-provenance-attested:
+The pre-#63 flow used a temporary npm token fallback. That fallback is now retired:
+the standard release path must stay OIDC-only, and the workflow must not read or
+use stored npm credentials for publishing.
+
+For each release, verify the exact tagged version is live and provenance-attested:
 
 ```bash
 set -euo pipefail
@@ -45,18 +46,10 @@ trap 'rm -rf "${tmpdir}"' EXIT
 )
 ```
 
-After that passes, **delete the npm token and remove the `NPM_TOKEN` repository
-secret** (Settings -> Secrets and variables -> Actions). The standard release path
-does not use it anymore.
-
-Last-resort fallback (only until the trusted publisher is configured): if an urgent
-release cannot wait for the npmjs.com config and OIDC cannot be used, rotate **only**
-to an npm granular access token scoped to package publishing for `prowl-review`, enable
-2FA bypass for noninteractive CI publishing while npm still permits direct token
-publishing, set the shortest possible expiry, wire it back into the publish step
-temporarily, and verify with the next tag-triggered publish. Treat direct token
-publishing and 2FA bypass as an interim risk; do not create or document legacy/classic
-automation tokens, and remove the secret again once OIDC is confirmed working.
+If a future emergency ever requires direct token auth, handle credential details in
+private maintainer runbooks, use only a scoped granular token with the shortest
+practical expiry, and retire it immediately after OIDC is restored. Do not add token
+values, expiry dates, or operational timelines to public documentation.
 
 ## Cut a release
 
