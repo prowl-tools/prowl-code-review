@@ -47,15 +47,21 @@ trap 'rm -rf "${tmpdir}"' EXIT
 ```
 
 If a future emergency appears to require direct token auth, stop the public
-release checklist and escalate through the private maintainer security runbook
-before creating tokens or changing CI. Do not create fallback tokens, configure CI
-secrets, or run a token-authenticated publish without maintainer approval
-recorded in that private channel. The private incident runbook owns credential
-handling and close-out verification, including token revocation/audit evidence,
-repository and CI secret removal, CI log/job-summary/artifact review,
-repository-history checks, and secret-scanning dashboard/service confirmation.
-Keep token values, expiry dates, operational timelines, deletion evidence, and
-private contact details out of public documentation.
+release checklist and escalate through the private maintainer security runbook.
+Direct token auth is permitted only for a release-blocking security or
+correctness fix that cannot wait 24 hours for OIDC repair. It requires approval
+from at least two core maintainers before creating tokens, changing CI, or
+running a token-authenticated publish. Link a public issue when safe; otherwise
+reference a private advisory or maintainer decision record from the release PR or
+commit without secret details. That record must capture the rationale, approvers,
+affected release, package-limited single-use scope, maximum 24-hour credential
+window, revocation deadline, close-out verification, and post-incident review
+owner. The private incident runbook owns credential handling and close-out
+verification, including token revocation/audit evidence, repository and CI secret
+removal, CI log/job-summary/artifact review, repository-history checks, and
+secret-scanning dashboard/service confirmation. Keep token values, operational
+timelines, deletion evidence, and private contact details out of public
+documentation.
 
 ## Cut a release
 
