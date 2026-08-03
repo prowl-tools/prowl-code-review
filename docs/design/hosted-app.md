@@ -342,9 +342,18 @@ larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
 the chunk limit at the response reader: if a read would exceed 64 KiB, the wrapper
 aborts the provider request, zeroes/discards the partial chunk, marks the provider
 attempt incomplete with no retry of that request object, and recycles the runner.
-Continuing to parse or summarize an over-limit chunk is launch-blocking. The wrapper
+Continuing to parse or summarize an over-limit chunk is launch-blocking. This is an
+active in-application buffer bound, not a guarantee that the kernel, TLS stack, socket
+receive buffer, or HTTP library has no bytes already in transit or internally
+buffered before the application read. Managed launch must either configure the runner
+socket/container to cap receive buffers at the same bound or publish the measured
+lower-layer residual exposure in the launch record; if HTTP-library internal buffers
+can expose more than 64 KiB to the Node process after revocation, the wrapper is not
+launchable without a native transport shim or network-level buffer shaper. The wrapper
 must perform a startup self-test against a provider mock that attempts over-buffering
-and expose a metric/alert if any read exceeds the bound. Revocation observation
+and slow-streams data so revocation fires between reads; the test records actual
+in-process bytes reachable after abort and exposes a metric/alert if any application
+read exceeds the bound. Revocation observation
 synchronously marks the attempt revoked and requests stream abort, but Node.js stream
 cancellation is asynchronous. The wrapper must enforce the 64 KiB limit at the reader
 level without relying on abort-signal timing, must never full-body/read-ahead buffer,
@@ -455,7 +464,14 @@ preloaded HTTPS origin and contains only an opaque nonce
 generated with `crypto.randomBytes`, WebCrypto `getRandomValues`, or an equivalent
 OS-backed CSPRNG. The nonce has at least 128 bits of entropy, is never derived from
 session/user/comment ids, has only a server-side hash persisted, and is redacted from
-application logs. Issuance is rate-limited and capped to one active unexpired
+application logs. Before the settings service binds an HTTP listener or accepts
+traffic, it must run a startup self-test through the exact configured nonce
+generator: generate at least 16 bytes, reject all-zero/all-one or repeated canary
+outputs, verify both set and clear bits exist, and fail closed with alerting if the
+OS entropy source is unavailable, blocked, or throws. Runtime nonce generation errors
+must never fall back to Math/random, timestamps, counters, session ids, or weaker
+sources; they return the generic failure envelope and alert. Issuance is
+rate-limited and capped to one active unexpired
 key-setup nonce per `{installation, repository, sender, comment_id}` plus a small
 per-sender rolling limit; exceeding either cap denies a new link and audits the
 attempt rather than creating many concurrent unexpired nonces. The signed link record
@@ -885,16 +901,18 @@ append-only audit log.
   comparison. Verification runs in the raw HTTP adapter before framework header
   normalization; a runtime that cannot expose the original header list with
   duplicate values and case variants is not eligible for launch. The signature parser
-  accepts only the strict `sha256=<64 hex chars>` format with exactly 71 ASCII
-  characters, exactly 64 hex characters after the prefix, and exactly 32 decoded
-bytes, plus exactly one `X-Hub-Signature-256` header after case-insensitive counting
-across the raw header list; an absent header is a hard verification failure. The
-parser must reject any post-prefix digest string that is not exactly 64 hexadecimal
-characters, including 63-, 65-, 66-character, overlong, padded, non-hex, or otherwise
-malformed inputs, without truncating, padding, decoding partial nibbles, normalizing
-length, or comparing prefixes; integration tests must cover 63/64/65/66 hex-character
-inputs and accept only a correct 64-character HMAC. The receiver must iterate the raw
-wire header collection and reject
+  accepts only an entire header value matching the anchored
+  `^sha256=[0-9A-Fa-f]{64}$` format with exactly 71 ASCII characters, exactly 64 hex
+  characters after the prefix, and exactly 32 decoded bytes, plus exactly one
+  `X-Hub-Signature-256` header after case-insensitive counting across the raw header
+  list; an absent header is a hard verification failure. The parser must reject
+  missing prefixes, prefixes with extra characters, whitespace/control characters,
+  suffixes after the digest, and any post-prefix digest string that is not exactly 64
+  hexadecimal characters, including 63-, 65-, 66-character, overlong, padded, non-hex,
+  or otherwise malformed inputs, without truncating, padding, decoding partial
+  nibbles, normalizing length, or comparing prefixes; integration tests must cover
+  63/64/65/66 hex-character inputs and accept only a correct 64-character HMAC. The
+  receiver must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus
   `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
@@ -907,33 +925,44 @@ wire header collection and reject
   reason logged only after the response is committed. The malformed-input path does
   not normalize, truncate, compare partial prefixes, or choose first/last duplicate
   headers. Webhook secrets are generated and loaded as 32-byte random byte arrays, not
-  variable-length strings. The receiver always builds a fixed two-slot candidate
-  array: current secret and previous-secret-or-32-byte-dummy, with version/window
-  metadata masked into the final decision after comparison. Both slots are exactly
-  32-byte buffers and both expected HMAC digests are computed unconditionally over the
-  same raw payload bytes before any replay store lookup, using the same helper and a
-  fixed slot count; sequential computation is allowed only because the slot count and
-  key length are fixed, and an implementation may compute them in parallel if it
-  preserves the same observable behavior. For every request that reaches signature
-  verification, the receiver performs equal-length constant-time comparisons for
-  every slot regardless of match or mismatch, combines match bits with bitwise
-  OR/result masking in a full-length loop, and rejects the entire request only after
-  the full candidate set has been tested. It accepts only a matched candidate whose
-  `not_before`/`not_after` window is valid. The required implementation pattern is
+  variable-length strings. Receiver startup validates that the current secret and any
+  previous secret decode to exactly 32 bytes; a missing, short, long, UTF-8 string, or
+  otherwise variable-length secret fails closed before the HTTP listener binds. The
+  receiver always builds a fixed two-slot candidate array: current secret and
+  previous-secret-or-32-byte-dummy, with version/window metadata masked into the final
+  decision after comparison. Both slots are exactly 32-byte buffers and both expected
+  HMAC digests are computed unconditionally over the same raw payload bytes before any
+  replay store lookup, using the same helper and a fixed slot count; sequential
+  computation is allowed only because the slot count and key length are fixed, and an
+  implementation may compute them in parallel if it preserves the same observable
+  behavior. For every request that reaches signature verification, the receiver
+  performs equal-length constant-time comparisons for every slot regardless of match
+  or mismatch, converts each slot's `not_before`/`not_after` validity into a
+  fixed-width mask, combines match bits and window masks with bitwise OR/result
+  masking in a full-length loop, and rejects the entire request only after the full
+  candidate set has been tested. It accepts only a masked match whose window mask is
+  valid; no branch, log, replay lookup, or response decision may reveal which slot
+  matched or whether a match failed only because its window was invalid. The required
+  implementation pattern is
   `crypto.timingSafeEqual` or
   equivalent for each candidate, fixed-count loop iteration, no `some`/early
   `return`, no per-candidate exceptions, no per-candidate internal state in logs or
   traces until the loop completes, and tests showing equivalent behavior and bounded
   timing distributions when the matching secret is current, previous, dummy/absent,
-  or outside its validity window. The launch bound is p95 delta <= 10 ms and p99
-  delta <= 25 ms between signature failure classes over at least 100,000 warmed
-  samples against the built receiver artifact, including strict signature parsing, the
-  HMAC loop, replay-store read shape, and response-envelope floor. Production records
-  the same histograms. Launch also requires a pre-production timing run against the
-  production database schema, replay-store indexes, load balancer path, TLS
-  termination, framework parser, quarantine tables, and synthetic row-present,
+  or outside its validity window. The isolated receiver-artifact target is p95 delta
+  <= 10 ms and p99 delta <= 25 ms between signature failure classes over at least
+  100,000 warmed samples, including strict signature parsing, the HMAC loop,
+  replay-store read shape, and response-envelope floor. The production launch bound is
+  derived from measured production-like baseline jitter with explicit headroom:
+  initial managed launch may use at most p95 delta <= 75 ms and p99 delta <= 150 ms
+  for the first week, then must tighten to the smaller of that ceiling or the measured
+  baseline plus approved headroom once histograms prove the lower bound is stable.
+  Production records the same histograms. Launch also requires a pre-production timing
+  run against the production database schema, replay-store indexes, load balancer
+  path, TLS termination, framework parser, quarantine tables, and synthetic row-present,
   row-absent, locked-row, malformed-header, current-secret, previous-secret, and dummy
-  cases under representative load. Production sends low-rate synthetic signed probes
+  cases under representative CPU contention and load-balancer/TLS/framework load.
+  Production sends low-rate synthetic signed probes
   for those classes, records five-minute p50/p95/p99/max deltas by class, and pages
   on-call on a single-window breach before the three-window fail-closed threshold. If
   drift exceeds the bound for three consecutive five-minute windows, the receiver
@@ -1072,24 +1101,32 @@ keys registered in the policy store; service principals and the runtime deployme
 identity cannot satisfy either signature. It includes the App id, cutoff time,
 revoked key ids/fingerprints as displayed by GitHub, replacement managed key id,
 change ticket, evidence hashes, and the canary result. Verification reads the current
-GitHub App private-key inventory from the GitHub-provided App settings surface,
-audit/export, or documented API available in the deployment environment; if only the
-settings UI is available, two independent operator captures are required and the lack
-of machine-readable evidence is itself recorded. The canary signs a GitHub App JWT
-with the sealed retired key material and calls GitHub's installation-token endpoint
-for a controlled installation; only a GitHub-origin `401`/invalid-signature response
-counts as proof, while local preflight rejection, network failure, or missing
-installation access is inconclusive and blocks launch. The canary is supporting drift
-evidence, not a substitute for GitHub-level key-list verification. The canary and
-key-inventory verification run in production before opening external installs, at
-managed App startup, after any key rotation, and at least daily as a scheduled drift
-check; failure pages the on-call and immediately disables external installation
-acceptance, hosted token minting, and review enqueueing for the managed App until
-operators either repair the revocation evidence or migrate to a new App identity. If
-GitHub-level revocation cannot be verified with high confidence, the managed service
-must register and provision a new GitHub App identity whose private key was never
-distributed to Actions; migration docs then map old Action markers to the new bot
-only through the explicit marker-copy job above. The managed App signing credential
+GitHub App private-key inventory from a GitHub API, audit export, or signed GitHub
+support attestation that distinguishes deleted keys from merely disabled keys; manual
+settings-screen captures are not sufficient for managed launch. The record must prove
+that every Action-distributed key version is deleted from the GitHub App registration,
+not only disabled, and must enumerate every current and historical installation id
+known to Prowl before the cutoff. The canary signs a GitHub App JWT with the sealed
+retired key material and calls GitHub's installation-token endpoint for all
+installations when fewer than 10 exist, otherwise at least 3 installations spanning
+different owners plus the controlled installation; only GitHub-origin
+`401`/invalid-signature responses count as proof, while local preflight rejection,
+network failure, or missing installation access is inconclusive and blocks launch.
+The launch record must also audit repository workflows and organization/repository
+secret metadata for known `PROWL_APP_PRIVATE_KEY` distribution paths; because GitHub
+does not expose secret values, any organization whose secret inventory or workflow
+usage cannot be audited is recorded as unverifiable and blocks reuse of the shared App
+identity. The canary is supporting drift evidence, not a substitute for GitHub-level
+key-list verification. The canary and key-inventory verification run in production
+before opening external installs, at managed App startup, after any key rotation, and
+monthly as a scheduled drift check that re-enumerates installations and samples
+different owners; failure pages the on-call and immediately disables external
+installation acceptance, hosted token minting, and review enqueueing for the managed
+App until operators either repair the revocation evidence or migrate to a new App
+identity. If GitHub-level revocation cannot be verified with high confidence, the
+managed service must register and provision a new GitHub App identity whose private
+key was never distributed to Actions; migration docs then map old Action markers to
+the new bot only through the explicit marker-copy job above. The managed App signing credential
 lives only in the managed secret store, HSM, or token broker used by the hosted
 token-minter; it is never stored in this repository, workflow secrets, Action logs,
 or customer repositories. The Action path must use `GITHUB_TOKEN`, a user-owned
@@ -1207,7 +1244,12 @@ commands are honored only when all checks pass:
    pattern immediately before each provider or GitHub side effect; a stale generation
    alone can never authorize execution. The handler records the locked auth
    generation before starting the fresh GitHub permission API read and compares it
-   with the locked row again inside guarded send after the read returns. If a
+   with the locked row again inside guarded send after the read returns. The fresh
+   GitHub permission API read runs with an explicit deadline, capped at the smaller of
+   5 seconds or 20% of the remaining command deadline, and no database row lock is held
+   while waiting on that network call. Timeout, cancellation, secondary-rate-limit, or
+   ambiguous API failure reaches terminal `authorization_changed` or
+   `authorization_unavailable` and writes no side-effect reservation. If a
    permission-change webhook bumps the generation while that GitHub API call is in
    flight, the result is discarded as stale before any side-effect reservation is
    written; the command then follows the same single fresh-read retry or terminal
