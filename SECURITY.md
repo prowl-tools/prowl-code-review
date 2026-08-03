@@ -35,6 +35,11 @@ prowl-review is **BYOK** (bring-your-own-key) and designed to run on untrusted
 pull-request content without leaking secrets or executing attacker-controlled code.
 
 ### Keys & secrets
+- **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
+  the proposed managed Hosted App is a pre-launch exception that would store
+  per-installation encrypted key material and transiently process plaintext keys in
+  Prowl-managed services. Treat migration from CLI/Action to the managed Hosted App as
+  an explicit trust-model change, not a transparent security-equivalent upgrade.
 - For the current CLI and GitHub Action, provider API keys are read from the
   **environment only** (`PROWL_AI_KEY` / `PROWL_AI_KEY_<PROVIDER>`) — never from
   `.prowl-review.yml`, never committed, never stored or proxied by us. Your key
@@ -125,8 +130,10 @@ pull-request content without leaking secrets or executing attacker-controlled co
   already sent. The hosted App is not approved to launch until those controls exist
   and leak tests confirm decryption fails after revocation.
 - Managed Hosted App custody controls are not user-verifiable until Prowl publishes
-  evidence for them. Before managed launch, Prowl must provide installation-admin
-  audit exports for key create/update/delete, decrypt grant creation/denial,
+  evidence for them. These audit export, attestation, and audit-packet artifacts do
+  not exist for users today and are pre-launch requirements, not current production
+  guarantees. Before managed launch, Prowl must provide installation-admin audit
+  exports for key create/update/delete, decrypt grant creation/denial,
   revocation, deletion, staff access, and incident containment events; a public
   control attestation naming the deployed KMS/HSM policy classes, launch-record
   commits, and latest drift-test status; and a documented process for installation

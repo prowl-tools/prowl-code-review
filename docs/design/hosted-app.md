@@ -213,11 +213,18 @@ or (3) a platform enclave/secret service with equivalent no-swap, no-core-dump,
 no-debug, and explicit-zero guarantees. Startup self-tests must prove the selected
 path can lock memory, block core dumps/swap/inspector access, zero a canary buffer,
 and fail closed when any control is unavailable; platform-specific alternatives need
-the same equivalence report and two-person security approval before deployment. These
-controls reduce persistence after save, but they still do not protect against
-malicious code or an operator already executing inside that worker during the live
-save window. Application code cannot prevent V8 from creating persistent or interned
-plaintext strings once a framework, parser, template, logger, or validation helper
+the same equivalence report and two-person security approval before deployment.
+Managed v1 has no approved key-ingestion implementation until a follow-up PR selects
+one of those classes, adds the named worker/broker path, key-ingestion test harness,
+startup self-test, SBOM/dependency provenance, and
+`docs/security/hosted-key-ingestion-launch-record.md`, and records approval from the
+same two-person security-owner quorum used for provider egress. Build-plan step 4 is
+the tracked artifact for this gate; approval of this design record un-parks that work
+but does not allow key-save traffic. These controls reduce persistence after save, but
+they still do not protect against malicious code or an operator already executing
+inside that worker during the live save window. Application code cannot prevent V8 from
+creating persistent or interned plaintext strings once a framework, parser, template,
+logger, or validation helper
 observes the key as a JavaScript string. Managed v1 key ingestion therefore must route
 raw request bytes to the native helper, local secret broker, or platform secret
 service before app-level parsing; any candidate implementation that requires
@@ -262,7 +269,16 @@ that can sit behind unrelated review work. If event-loop lag, HTTP-client schedu
 or async wrapper behavior can extend the measured handoff window, or if the minimal
 client requires provider-key material to live in JavaScript strings outside that
 window, managed launch requires a native secret helper, sidecar vault with locked
-memory, or equivalent transport shim before provider traffic is enabled. Each
+memory, or equivalent transport shim before provider traffic is enabled. The full
+provider-call window also has a hard outer deadline, measured from decrypt start
+through request send, response streaming, response finalization, and `finally`; managed
+v1 defaults to 120 seconds and cannot exceed 180 seconds without a new security
+decision. Timeout aborts the provider stream, zeroes owned key/header/response buffers
+in `finally`, marks the job incomplete rather than retrying the same request object,
+and recycles the runner. The launch record must publish provider-specific p95/p99
+successful-call latency, DNS/TLS timing, and timeout rates under representative
+provider and network conditions, with enough headroom that normal successful calls do
+not approach the hard deadline. Each
 attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
 authorization tied to the current revocation generation; retries cannot reuse any of
 those values. The control plane consumes the provider-call nonce and grant in the same
@@ -355,12 +371,19 @@ fixture corpus, dependency lockfile, signed reviewers, or drift thresholds do no
 match. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
-larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
-the chunk limit at the response reader: if a read would exceed 64 KiB, the wrapper
-aborts the provider request, zeroes/discards the partial chunk, marks the provider
-attempt incomplete with no retry of that request object, and recycles the runner.
-Continuing to parse or summarize an over-limit chunk is launch-blocking. This is an
-active in-application buffer bound, not a guarantee that the kernel, TLS stack, socket
+larger read-ahead or full-body buffering blocks launch. The 64 KiB limit is per
+application read and per revocation-check interval, not the cumulative provider
+response size; cumulative accepted provider bytes are streamed through the parser under
+a separate per-provider attempt cap published in the launch record, with managed v1
+starting at <= 2 MiB unless a provider-specific measurement justifies a lower cap.
+Large provider responses are acceptable only when the chosen transport can split them
+into application reads at or below 64 KiB with a revocation check between reads. The
+wrapper must enforce the chunk limit at the response reader: if a read would exceed 64
+KiB or the cumulative cap would be crossed, the wrapper aborts the provider request,
+zeroes/discards the partial chunk, marks the provider attempt incomplete with no retry
+of that request object, and recycles the runner. Continuing to parse or summarize an
+over-limit chunk is launch-blocking. This is an active in-application buffer bound,
+not a guarantee that the kernel, TLS stack, socket
 receive buffer, or HTTP library has no bytes already in transit or internally
 buffered before the application read. Managed launch must either configure the runner
 socket/container to cap receive buffers at the same bound or publish the measured
@@ -368,9 +391,11 @@ lower-layer residual exposure in the launch record; if HTTP-library internal buf
 can expose more than 64 KiB to the Node process after revocation, the wrapper is not
 launchable without a native transport shim or network-level buffer shaper. The wrapper
 must perform a startup self-test against a provider mock that attempts over-buffering
-and slow-streams data so revocation fires between reads; the test records actual
-in-process bytes reachable after abort and exposes a metric/alert if any application
-read exceeds the bound. Revocation observation
+and slow-streams data so revocation fires between reads; the test includes <=64 KiB,
+64 KiB + 1 byte, 500 KiB, and cumulative-cap-crossing responses, records actual
+in-process bytes reachable after abort, verifies large responses are either safely
+streamed or marked incomplete, and exposes a metric/alert if any application read
+exceeds the bound. Revocation observation
 synchronously marks the attempt revoked and requests stream abort, but Node.js stream
 cancellation is asynchronous. The wrapper must enforce the 64 KiB limit at the reader
 level without relying on abort-signal timing, must never full-body/read-ahead buffer,
@@ -566,7 +591,17 @@ return the same generic envelope, alert, and do not persist a verified key. Fail
 branches run the same local nonce/session/CSRF/Origin checks, provider-adapter
 selection, key-hash/HMAC comparisons, and dummy validation path with conditional
 assignments instead of early returns; unauthorized or expired-nonce requests use
-dummy credentials and never contact the real provider. Authorized saves create only
+dummy credentials and never contact the real provider. Nonce, session-binding, CSRF,
+Origin, and key-fingerprint comparisons use fixed-length HMAC or digest buffers and
+`crypto.timingSafeEqual` or equivalent; variable-length strings are decoded to fixed
+candidate buffers plus validity masks before comparison. Nonce lookup uses one
+prepared query shape over a keyed nonce hash and indexed tenant/scope columns for
+present, absent, expired, and consumed rows, followed by the same dummy-row merge and
+authorization transaction shape. The design does not claim database planner constant
+time or KMS constant time; launch records must publish per-operation p50/p95/p99/max
+for nonce lookup, session binding, CSRF/Origin validation, KMS/envelope operations,
+dummy path, and total request timing, and production histograms include those classes
+inside the fixed response floor. Authorized saves create only
 an inactive pending-validation candidate for later guarded validation. The last
 verified key remains active until a
 new candidate validates; if no verified key exists, reviews remain disabled because
@@ -967,8 +1002,13 @@ append-only audit log.
   HMAC mismatch: same HTTP status, header names/order/values, body bytes,
   `Content-Length`, cache headers, and bounded timing floor, with detailed parser
   reason logged only after the response is committed. The malformed-input path does
-  not normalize, truncate, compare partial prefixes, or choose first/last duplicate
-  headers. Webhook secrets are generated and loaded as 32-byte random byte arrays, not
+  not normalize, truncate, compare partial prefixes, choose first/last duplicate
+  headers, or return early before the response floor. Header counting, prefix
+  validation, length validation, and hex validation reduce into a single validity mask;
+  the receiver still constructs the dummy digest, runs the fixed two-slot HMAC loop,
+  and applies the same response delay for missing headers, duplicate/case-variant
+  headers, malformed prefixes, too-short/too-long hex, non-hex characters, and
+  valid-format mismatches. Webhook secrets are generated and loaded as 32-byte random byte arrays, not
   variable-length strings. Receiver startup validates that the current secret and any
   previous secret decode to exactly 32 bytes; a missing, short, long, UTF-8 string, or
   otherwise variable-length secret fails closed before the HTTP listener binds. The
@@ -993,10 +1033,11 @@ append-only audit log.
   `return`, no per-candidate exceptions, no per-candidate internal state in logs or
   traces until the loop completes, and tests showing equivalent behavior and bounded
   timing distributions when the matching secret is current, previous, dummy/absent,
-  or outside its validity window. The isolated receiver-artifact target is p95 delta
-  <= 10 ms and p99 delta <= 25 ms between signature failure classes over at least
-  100,000 warmed samples, including strict signature parsing, the HMAC loop,
-  replay-store read shape, and response-envelope floor. The production launch bound is
+  outside its validity window, missing, duplicated, malformed, too short, too long, or
+  non-hex. The isolated receiver-artifact target is p95 delta <= 10 ms and p99 delta
+  <= 25 ms between signature failure classes over at least 100,000 warmed samples,
+  including strict signature parsing, the HMAC loop, replay-store read shape, and
+  response-envelope floor. The production launch bound is
   derived from measured production-like baseline jitter with explicit headroom:
   initial managed launch may use at most p95 delta <= 75 ms and p99 delta <= 150 ms
   for the first week, then must tighten to the smaller of that ceiling or the measured
@@ -1167,9 +1208,12 @@ this gate because they cannot prove a key is non-reenableable. If a documented G
 API/export is unavailable, the required evidence is a signed GitHub Security or
 support attestation that names the App id, key ids/fingerprints, deletion time,
 non-reenableable deletion semantics, and the attesting GitHub authority; absent that
-attestation, managed launch must use the new App identity default. The canary signs a
-GitHub App JWT with the sealed retired key material and calls GitHub's
-installation-token endpoint for all
+attestation, managed launch must use the new App identity default. This design does
+not assume GitHub currently exposes a public deletion-grade private-key inventory API;
+the launch record for any reuse attempt must cite the exact GitHub-documented API,
+export schema, or signed-attestation format used, and no unpublished/operator-only
+claim can satisfy the automated startup gate. The canary signs a GitHub App JWT with
+the sealed retired key material and calls GitHub's installation-token endpoint for all
 installations when fewer than 10 exist, otherwise at least 3 installations spanning
 different owners plus the controlled installation; only GitHub-origin
 `401`/invalid-signature responses count as proof, while local preflight rejection,
