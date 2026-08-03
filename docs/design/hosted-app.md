@@ -200,12 +200,18 @@ For each provider API attempt, the runner decrypts the key immediately after the
 final revocation/fencing check and immediately before request construction. The key
 is passed to a minimal HTTP client that does not persist headers, buffer
 authorization data beyond the active request, replay a constructed request object,
-or enable request debugging. Each attempt obtains a fresh lease/fencing snapshot,
-provider-call nonce, and decrypt authorization tied to the current revocation
-generation; retries cannot reuse any of those values. The control plane consumes
-the provider-call nonce and grant in the same transaction that authorizes decrypt,
-with a unique key over `{installation, job, attempt, nonce}` so a buggy retry loop
-or attacker cannot resubmit a failed attempt's nonce. The attempt is wrapped in a
+or enable request debugging. Provider calls use direct TLS egress from the runner to
+the configured provider endpoint: no shared outbound HTTP cache, no CDN, no
+transparent proxy, no inherited `HTTP_PROXY`/`HTTPS_PROXY` environment, and no
+tenant-shared connection pool that can retain provider headers or bodies. Requests
+include `Cache-Control: no-store` and `Pragma: no-cache` where the provider accepts
+them, and the client never forwards provider responses through an intermediate cache
+before redaction. Each attempt obtains a fresh lease/fencing snapshot, provider-call
+nonce, and decrypt authorization tied to the current revocation generation; retries
+cannot reuse any of those values. The control plane consumes the provider-call nonce
+and grant in the same transaction that authorizes decrypt, with a unique key over
+`{installation, job, attempt, nonce}` so a buggy retry loop or attacker cannot
+resubmit a failed attempt's nonce. The attempt is wrapped in a
 `try/finally` that starts before decrypt and encloses request construction, send,
 streaming, and response handling; catch/finally code may reference only local
 mutable buffers and sanitized enum state, never generic exception serialization over
@@ -297,10 +303,14 @@ by those admins. The installing user is recorded but is not the only permanent
 admin. Organization-owner checks require either GitHub App `Members: read`
 permission on the installation or an OAuth session with `read:org`; hosted org key
 setup fails closed with a reapproval/reauthorization prompt until one of those
-membership-reading authorities is available. `@prowl-review configure key` never
-accepts a raw key in a public comment; it only opens a short-lived, single-use
-settings link after the command authorization in Decision 5 succeeds. The link is an
-HTTPS-only App URL protected by HSTS, contains
+membership-reading authorities is available. The settings service stores the latest
+observed App permission grant version and dynamically re-checks it before every org
+key command and settings save; if the grant is missing or stale, the UI links to the
+GitHub App reapproval flow and does not create or consume a key-save nonce unless
+OAuth `read:org` can prove owner status for that session. `@prowl-review configure
+key` never accepts a raw key in a public comment; it only opens a short-lived,
+single-use settings link after the command authorization in Decision 5 succeeds. The
+link is an HTTPS-only App URL protected by HSTS, contains
 only an opaque CSPRNG nonce with at least 128 bits of entropy whose server-side
 record stores a hash, and is redacted from application logs. The signed link record
 commits to installation id, repository id, sender id, comment id, head SHA, nonce,
@@ -308,10 +318,14 @@ and expiry; the settings UI displays the target owner/repo before save and refus
 cross-origin `Origin`/`Host` mismatches. OAuth `state` and CSRF tokens are signed
 values that commit to the nonce hash or link id, authenticated session id hash,
 sender id, installation id, repository id, and expiry. The settings page serves no
-third-party assets, sends `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`,
-`SameSite=Lax` or stricter session cookies, and requires the explicit signed CSRF
-token; SameSite cookies are defense-in-depth, not the CSRF control. Rendering the
-key input requires a transactional read proving the nonce is unexpired and
+third-party assets, sends `Referrer-Policy: no-referrer`, `Content-Security-Policy:
+form-action 'self'; frame-ancestors 'none'`, and HSTS, uses a dedicated `Secure`,
+`HttpOnly`, `SameSite=Strict` key-setup session cookie, and requires the explicit
+signed CSRF token on every key-save POST. SameSite cookies are defense-in-depth; the
+POST fails unless `Origin`, `Host`, forwarded host/proto, CSRF token, session-binding
+hash, and `Sec-Fetch-Site: same-origin` or equivalent browser signal all match the
+signed link record and server origin. Rendering the key input requires a
+transactional read proving the nonce is unexpired and
 unconsumed; the first authorized open binds the nonce row to a hash of the
 authenticated session id, sender id, installation id, repository id, link id, row
 version, and expiry. The key-save transaction consumes the nonce atomically with an
@@ -342,9 +356,13 @@ body bytes for `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation
 unsupported, and nonce/session race-loss outcomes. The immediate response never
 distinguishes saved, saved-unverified, or not-saved; any later authenticated status
 view uses a generic verification-pending/failed state and never includes provider
-details. The response never re-renders or logs the submitted key, its prefix/suffix,
-length, character classes, or partial provider error details. The input field is
-cleared after every submit attempt.
+details. "Identical" means the same status code, same header names/order/values,
+same `Content-Length`, same precomputed body bytes, same cookie mutation behavior,
+same redirect behavior, and the same externally observable state-machine transition;
+the provider enum is stored only in internal audit state after the response budget
+has elapsed. The response never re-renders or logs the submitted key, its
+prefix/suffix, length, character classes, or partial provider error details. The
+input field is cleared after every submit attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -620,12 +638,16 @@ append-only audit log.
   HMAC-SHA256 verification using the App-wide webhook secret and constant-time
   comparison. The signature parser accepts only the strict `sha256=<64 hex chars>`
   format with exactly 71 ASCII characters and exactly one `X-Hub-Signature-256`
-  header; an absent header is a hard verification failure. Empty values, missing
-  prefixes, malformed hex, truncated digests, overlong/padded digests,
-  base64-wrapped values, duplicate signature headers, and MD5/SHA1 signatures are
-  rejected as generic authentication failures before any HMAC computation or
-  enqueueing. The malformed-input path does not normalize, truncate, compare partial
-  prefixes, or choose first/last duplicate headers. Webhook secrets are generated
+  header after case-insensitive header-name normalization across the raw header
+  list; an absent header is a hard verification failure. The receiver must iterate
+  the raw `Headers`/wire header collection and reject multiple values, comma-joined
+  values, framework-coalesced duplicates, and case-variant duplicates such as
+  `x-hub-signature-256` plus `X-Hub-Signature-256`. Empty values, missing prefixes,
+  malformed hex, truncated digests, overlong/padded digests, base64-wrapped values,
+  duplicate signature headers, and MD5/SHA1 signatures are rejected as generic
+  authentication failures before any HMAC computation or enqueueing. The
+  malformed-input path does not normalize, truncate, compare partial prefixes, or
+  choose first/last duplicate headers. Webhook secrets are generated
   and loaded as 32-byte random byte arrays, not variable-length strings. The receiver
   always builds a fixed two-slot candidate array: current secret and
   previous-secret-or-32-byte-dummy, with version/window metadata masked into the
@@ -849,18 +871,21 @@ commands are honored only when all checks pass:
    the sender is an installation admin, defined as org-owner permission for org
    installations, repository `admin` permission for repo-only/user installations, or
    membership in the audited installation-admin allowlist maintained by those
-   admins. For org installations, that org-owner check requires App `Members: read`
-   installation permission or OAuth `read:org` for the authenticated session; if the
-   reused App installation has not been reapproved with membership access, org key
-   configuration fails closed with a reapproval prompt. A writer/maintainer who lacks
-   that elevated role cannot receive a key-configuration link. The settings UI
-   repeats the same fresh authorization after the link is opened: the OAuth/App
-   session user must match the command sender, the installation id and repository id
-   must match the signed link record, and GitHub/allowlist state must confirm the
-   same elevated role using the same membership-reading authority. If the elevated
-   role cannot be confirmed at either gate, the command fails closed, any opened
-   nonce is invalidated so later privilege regain requires a new command, and the
-   failure is audited.
+   admins. For org installations, that org-owner check requires a dynamic App
+   `Members: read` installation-permission check against the current grant version or
+   OAuth `read:org` for the authenticated session; a one-time reapproval is never
+   assumed to persist without re-checking the current installation permissions. If
+   the reused App installation has not been reapproved with membership access and the
+   session lacks `read:org`, org key configuration fails closed with a GitHub
+   reapproval/reauthorization link and does not create a settings nonce. A
+   writer/maintainer who lacks that elevated role cannot receive a key-configuration
+   link. The settings UI repeats the same fresh authorization after the link is
+   opened: the OAuth/App session user must match the command sender, the installation
+   id and repository id must match the signed link record, and GitHub/allowlist state
+   must confirm the same elevated role using the same current membership-reading
+   authority. If the elevated role cannot be confirmed at either gate, the command
+   fails closed, any opened nonce is invalidated so later privilege regain requires a
+   new command, and the failure is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
