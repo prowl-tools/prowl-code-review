@@ -30,8 +30,12 @@ and superseded heads must not trigger duplicate or out-of-order provider calls.
 
 **Selected option:** build a thin, open-source webhook service around the **same
 TypeScript core** the Action and CLI use. The reference managed runtime is
-Cloudflare Workers + Queues for receiver/orchestration, with the runner tier
-defined in Decision 2.
+Cloudflare Workers + Queues for receiver/orchestration only, with the runner tier
+defined in Decision 2. Workers is not an eligible runtime for key ingestion,
+provider-key decrypt, or provider HTTP calls unless it can prove the native
+memory-locking and process-isolation controls in Decision 1; managed v1 must use a
+hardened ingestion service, sidecar/broker, container runner, or alternative platform
+for those key-handling paths, or managed launch remains blocked.
 
 ```text
 PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
@@ -319,7 +323,19 @@ self-test behavior, failure-mode behavior, and two security reviewers from the
 security-owner quorum. Managed v1 bans provider SDKs, SDK middleware/plugin systems,
 retry/redirect helpers, proxy-agent/global-agent packages, request instrumentation,
 and generic HTTP clients outside the named wrapper on the provider-key path unless a
-future design decision adds them to the same harness and launch record. The
+future design decision adds them to the same harness and launch record. The initial
+reserved artifact names are `src/hosted/provider-http-client.ts`,
+`test/hosted/provider-http-client.test.ts`,
+`test/fixtures/hosted/provider-mock.ts`, and
+`docs/security/hosted-provider-http-launch-record.md`; step 5 must either create
+those paths or update this decision before provider traffic can be enabled. The
+security-owner quorum is two repository maintainers with write/admin access who are
+not the wrapper author and not the production deployment approver; their approval is
+recorded as GitHub review approvals on the launch-record PR plus their names and
+commit SHAs in the launch record. Deployment and runner startup load the launch
+record from the exact deployed commit and fail closed if the named wrapper path,
+fixture corpus, dependency lockfile, signed reviewers, or drift thresholds do not
+match. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
@@ -473,14 +489,13 @@ Decision 5. The UI never displays plaintext keys after save.
 
 The key-save endpoint is rate-limited before validation by installation, user
 session, and source address. It performs constant-shape local format validation.
-Synchronous live provider validation is disabled by default and can be enabled only
-by an installation-independent deployment setting after staging proves the
-provider/network path, hard timeout, and response deadline fit the published timing
-bound. The wall-clock budget includes network round-trip time, TLS setup, provider
-latency, timeout handling, database/KMS calls, and response write time for that path.
-If a provider response has not completed before the per-request deadline, the result
-is ignored for key promotion and the request follows the skipped-validation pending
-path. If live validation fails or is unsupported, provider error bodies are not
+Managed v1 performs no synchronous live provider validation and opens no provider
+network connection before the response is committed. Provider auth validation runs
+only after the generic response, from an inactive pending-validation candidate, in the
+bounded background validator below. Adding synchronous live validation to the managed
+App requires a separate design update and launch gate that proves no timing
+distinction between no-call, success, timeout, denied, and provider-error paths. If
+background live validation fails or is unsupported, provider error bodies are not
 serialized, cached, returned, traced, or logged; they are mapped to a fixed internal
 enum such as `invalid`, `unauthorized`, `rate_limited`, or `unknown`. `invalid`,
 `unauthorized`, `rate_limited`, `unknown`,
@@ -507,9 +522,9 @@ return the same generic envelope, alert, and do not persist a verified key. Fail
 branches run the same local nonce/session/CSRF/Origin checks, provider-adapter
 selection, key-hash/HMAC comparisons, and dummy validation path with conditional
 assignments instead of early returns; unauthorized or expired-nonce requests use
-dummy credentials and never contact the real provider. Authorized live probes either
-finish behind the same response deadline or leave only an inactive pending-validation
-candidate for later guarded validation. The last verified key remains active until a
+dummy credentials and never contact the real provider. Authorized saves create only
+an inactive pending-validation candidate for later guarded validation. The last
+verified key remains active until a
 new candidate validates; if no verified key exists, reviews remain disabled because
 there is no usable key, not because an `unverified` row replaced authority. Staging
 and production key-save code never compares submitted key material to stored key
@@ -527,25 +542,21 @@ beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms an
 p99 delta <= 50 ms between any two failure classes over at least 10,000 staging
 samples per class, after warmup, measured from ingress accept at the load balancer to
 the last response byte written, including framework parsing, nonce/session/CSRF/OAuth
-checks, database/KMS calls used by that path, and any synchronous validation work. If
-including a live provider auth probe would exceed the bound, the endpoint must skip
-that synchronous provider call, return the same generic pending envelope, and enqueue
-or refresh only a pending-validation candidate after the local constant-shape checks
-pass. That candidate has per-installation, per-sender, and per-source creation and
+checks, database/KMS calls used by that path, and any local validation work. Because
+managed v1 never performs a synchronous provider auth probe, the endpoint always
+returns the same generic pending envelope after the local constant-shape checks and
+enqueues or refreshes only a pending-validation candidate. That candidate has
+per-installation, per-sender, and per-source creation and
 retry limits stricter than the command-ingress buckets; repeated pending candidates
 coalesce by installation/provider and cannot make an existing verified key unusable.
 The background validator uses the same guarded provider-call path, never starts while
 another validation for that installation/provider is active, destroys failed or
 superseded candidates, and promotes exactly one candidate to the active verified-key
 table only after successful validation in a serializable compare-and-swap
-transaction. Probe selection is a provider/adapter deployment setting read once
-before branch-specific work, not a per-key, per-format, or per-request branch. The
-monitor/controller may flip that setting only between requests after timing windows
-close; an in-flight request never changes behavior based on its own probe result.
-Both the live-probe-enabled and no-live-probe paths release responses only at the same
-configured deadline with the same dummy validation work when no provider call is
-made. If either the no-live-probe path or the later guarded validation cannot meet its
-own published bound, launch is blocked. The residual timing threat
+transaction. The no-live-probe path releases responses only at the configured
+deadline with the same dummy validation work for every immediate outcome. If either
+that path or the later guarded validation cannot meet its own published bound, launch
+is blocked. The residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
@@ -918,10 +929,17 @@ wire header collection and reject
   delta <= 25 ms between signature failure classes over at least 100,000 warmed
   samples against the built receiver artifact, including strict signature parsing, the
   HMAC loop, replay-store read shape, and response-envelope floor. Production records
-  the same histograms. If drift exceeds the bound for three consecutive five-minute
-  windows, the receiver enters verifier-quarantine mode: it continues raw verification
-  and replay reads for signed deliveries, durably quarantines verified review/command
-  and authorization-control events, blocks job processing, blocks new job claims and
+  the same histograms. Launch also requires a pre-production timing run against the
+  production database schema, replay-store indexes, load balancer path, TLS
+  termination, framework parser, quarantine tables, and synthetic row-present,
+  row-absent, locked-row, malformed-header, current-secret, previous-secret, and dummy
+  cases under representative load. Production sends low-rate synthetic signed probes
+  for those classes, records five-minute p50/p95/p99/max deltas by class, and pages
+  on-call on a single-window breach before the three-window fail-closed threshold. If
+  drift exceeds the bound for three consecutive five-minute windows, the receiver
+  enters verifier-quarantine mode: it continues raw verification and replay reads for
+  signed deliveries, durably quarantines verified review/command and
+  authorization-control events, blocks job processing, blocks new job claims and
   decrypts for affected scopes, and reconciles installation/repository/permission
   state from GitHub before processing resumes. If the receiver cannot verify and
   persist to quarantine, the system globally fails closed by blocking hosted job claims
@@ -1323,13 +1341,20 @@ row-locked compare-and-swap; read-committed read-then-update flows are not allow
 Cleanup is storage hygiene only and is never part of authorization. The key-save POST
 must happen over HTTPS with the same authorized same-sender session and a fresh
 cache-bypassing GitHub/allowlist elevated-role read reserved through the guarded-send
-auth-generation pattern above. Nonce consumption plus key persistence must commit in
-one transaction using the same database-clock expiry predicate plus nonce hash,
-session-binding hash, sender id, OAuth user id, installation id, repository id, row
-version, locked auth generation, and `consumed_at IS NULL`; a second request,
-different session, different OAuth user, expired nonce, cache-hit authorization
-attempt, or permission-change generation mismatch gets a generic used/expired or
-unauthorized response and cannot write a key.
+auth-generation pattern above. Before the GitHub read starts, the handler records the
+current installation auth generation from the database auth row. After the GitHub read
+returns, nonce consumption plus key persistence must commit in one serializable
+transaction that locks the nonce row and the same auth row, re-reads the current auth
+generation under that lock, and compares it to the pre-read generation before
+consuming the nonce. If the generation changed while the GitHub call was in flight,
+the result is discarded as stale and no key candidate is persisted; there is no write
+path that "adopts" the older generation after the lock is acquired. The transaction
+uses the same database-clock expiry predicate plus nonce hash, session-binding hash,
+sender id, OAuth user id, installation id, repository id, row version, locked auth
+generation, and `consumed_at IS NULL`; a second request, different session, different
+OAuth user, expired nonce, cache-hit authorization attempt, or permission-change
+generation mismatch gets a generic used/expired or unauthorized response and cannot
+write a key.
 Settings GET and POST also compare the nonce row's `comment_updated_at`, body digest,
 parse version, and verb against the canonical consume-once command row created from
 the fresh GitHub comment read. A missing, superseded, edited, or differently parsed
