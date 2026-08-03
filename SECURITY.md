@@ -120,6 +120,19 @@ pull-request content without leaking secrets or executing attacker-controlled co
   detection, from a live compromised runner, or from a provider request that was
   already sent. The hosted App is not approved to launch until those controls exist
   and leak tests confirm decryption fails after revocation.
+- Managed Hosted App custody controls are not user-verifiable until Prowl publishes
+  evidence for them. Before managed launch, Prowl must provide installation-admin
+  audit exports for key create/update/delete, decrypt grant creation/denial,
+  revocation, deletion, staff access, and incident containment events; a public
+  control attestation naming the deployed KMS/HSM policy classes, launch-record
+  commits, and latest drift-test status; and a documented process for installation
+  admins to request an installation-scoped security audit packet after suspected key
+  compromise. That packet must include redacted KMS grant/audit decisions, relevant
+  app audit events, incident timeline timestamps, containment-deadline evidence, and
+  the final remediation state. The managed App should not be marketed as
+  independently audited until a third-party report or comparable compliance artifact
+  exists; users who require independently verifiable custody controls before that
+  report must self-host.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
