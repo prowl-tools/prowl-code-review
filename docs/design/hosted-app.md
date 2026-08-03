@@ -1819,7 +1819,18 @@ commands are honored only when all checks pass:
    revocation that occurs after the final local read but before the first outbound
    packet leaves the process remains a residual GitHub/event-delivery race, is bounded
    by the guarded-send telemetry in Decision 2, and is not claimed as atomic
-   cancellation. This guarded-send transaction is the only path allowed to create a
+   cancellation. After an external provider or GitHub request returns, the response
+   handler must re-read the current revocation/auth generation under the side-effect
+   fencing token before parsing, buffering, logging, publishing follow-up work, or
+   returning provider/GitHub response content to any caller. If the generation advanced
+   while the request was in flight, the handler aborts parsing, discards and zeroes
+   owned response buffers, records `external_request_sent_then_revoked`, and transitions
+   the command to terminal `authorization_changed`/`authorization_unavailable` or
+   `incomplete` without using the response body. Provider streams perform the same check
+   before each accepted chunk and again after the final byte; GitHub publication
+   responses that arrive after revocation may be used only for idempotent reconciliation
+   or deletion/repair bookkeeping, never to authorize another side effect. This
+   guarded-send transaction is the only path allowed to create a
    side-effect reservation for commands: there is no implementation path where an
    initial permission check, positive cache hit, or GitHub response held only in
    memory can consume the command record or start work without re-locking the auth row
