@@ -117,16 +117,17 @@ tests, and drift alerts rather than by a manual runbook alone:
   provider name, provider-call nonce, revocation generation, and fencing token.
   They cannot list, export, rotate, or re-wrap keys. The provider-call nonce is
   allocated by the control plane in the same transaction that checks the active job
-  lease/fencing token and advances a per-job counter; runners cannot choose or reuse
-  it. A decrypt broker issues one decrypt authorization for that allocated nonce,
-  marks it consumed before returning plaintext, and rejects stale/replayed nonces,
-  including after runner crashes or network retries. Each provider API request or
-  retry therefore requires a fresh decrypt authorization; the decrypted key is used
-  to construct exactly one outbound provider attempt and then cleared in `finally`
-  before any subsequent retry or provider call can start. This adds KMS latency/cost
-  but prevents a normal runner path from reusing one decrypt across multiple calls;
-  it does not protect against a runner already compromised during that authorized
-  call.
+  lease, refreshes the fencing token for that attempt, and advances a per-job
+  counter; runners cannot choose or reuse it. A decrypt broker issues one decrypt
+  authorization for that allocated nonce/fencing-token pair, marks it consumed
+  before returning plaintext, and rejects stale/replayed nonces or stale fencing
+  tokens, including after runner crashes or network retries. Each provider API
+  request or retry therefore requires a fresh decrypt authorization and current
+  fencing token; the decrypted key is used to construct exactly one outbound
+  provider attempt and then cleared in `finally` before any subsequent retry or
+  provider call can start. This adds KMS latency/cost but prevents a normal runner
+  path from reusing one decrypt across multiple calls; it does not protect against a
+  runner already compromised during that authorized call.
 - Rewrap/deletion workers may re-wrap or destroy affected data keys for an
   approved incident/deletion job, but they cannot call providers or GitHub as a
   review runner.
@@ -162,17 +163,20 @@ row/provider pairing fails closed, revokes the job grant, and emits an audit eve
 the runner never sends a provider request with a key whose envelope does not match
 the installation being processed.
 
-Plaintext provider keys exist only inside the runner process while constructing and
-sending the direct provider request. Most critically, a compromised runner process
-while decrypting or sending the provider request exposes the plaintext key in
-memory; no Node/V8 mitigation can prevent that. The managed v1 boundary is therefore
-not suitable for users who require protection against live runner compromise,
+Plaintext provider keys exist in two managed-service places only: the settings
+key-ingestion path while an admin saves or rotates a key, and the runner process
+while constructing and sending the direct provider request. Most critically, a
+compromised settings process during key save or a compromised runner process while
+decrypting/sending the provider request exposes the plaintext key in memory; no
+Node/V8 mitigation can prevent that. The managed v1 boundary is therefore not
+suitable for users who require protection against live process compromise,
 host-level memory disclosure, malicious platform operators, CPU side channels, or a
-provider endpoint compromise. Those users should self-host the Docker runner on
-hardware/runtime they control; a native secret helper or sidecar vault with
-memory-locking is required before Prowl can claim stronger live-custody protection
-for the managed service. The controls below reduce accidental persistence,
-ordinary crash dumps, logs, traces, and reuse after a job exits.
+provider endpoint compromise. Those users should self-host the Docker runner and
+settings service on hardware/runtime they control; a native secret helper or
+sidecar vault with memory-locking is required before Prowl can claim stronger
+live-custody protection for the managed service. The controls below reduce
+accidental persistence, ordinary crash dumps, logs, traces, and reuse after a job
+exits.
 
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
@@ -254,16 +258,20 @@ by those admins. The installing user is recorded but is not the only permanent
 admin. `@prowl-review configure key` never accepts a raw key in a public comment; it
 only opens a short-lived, single-use settings link after the command authorization
 in Decision 5 succeeds. The link is an HTTPS-only App URL protected by HSTS, contains
-only an opaque random nonce whose server-side record stores a hash, and is redacted
-from application logs. The settings page serves no third-party assets, sends
-`Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`, `SameSite=Lax` or stricter
-session cookies, and requires an explicit CSRF token tied cryptographically to the
-nonce and authenticated session; SameSite cookies are defense-in-depth, not the
-CSRF control. The key-save transaction consumes the nonce atomically with an
-`UPDATE`/`DELETE ... WHERE consumed_at IS NULL` or equivalent unique constraint
-before persisting the key, so concurrent submissions cannot reuse the link. A
-leaked link cannot save a key without the fresh GitHub OAuth/App authorization
-described in Decision 5. The UI never displays plaintext keys after save.
+only an opaque CSPRNG nonce with at least 128 bits of entropy whose server-side
+record stores a hash, and is redacted from application logs. The signed link record
+commits to installation id, repository id, sender id, comment id, head SHA, nonce,
+and expiry; the settings UI displays the target owner/repo before save and refuses
+cross-origin `Origin`/`Host` mismatches. The settings page serves no third-party
+assets, sends `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`,
+`SameSite=Lax` or stricter session cookies, and requires an explicit CSRF token tied
+cryptographically to the nonce and authenticated session; SameSite cookies are
+defense-in-depth, not the CSRF control. The key-save transaction consumes the nonce
+atomically with an `UPDATE`/`DELETE ... WHERE consumed_at IS NULL` or equivalent
+unique constraint before persisting the key, so concurrent submissions cannot reuse
+the link. A leaked link cannot save a key without the fresh GitHub OAuth/App
+authorization described in Decision 5. The UI never displays plaintext keys after
+save.
 
 The key-save endpoint is rate-limited before validation by installation, user
 session, and source address. It performs constant-shape local format validation and,
@@ -633,15 +641,21 @@ commands are honored only when all checks pass:
    command records store the auth generation used for authorization, and the handler
    re-checks that generation immediately before side effects; if a permission-change
    webhook invalidated the cache mid-command, the command aborts and must re-authorize
-   before retrying. `configure key` is stricter than the general command gate:
-   before creating any settings link, the command parser must verify the sender is
-   an installation admin, defined as org-owner permission for org installations or
-   repository `admin` permission for repo-only/user installations; a writer/maintainer
-   cannot receive a key-configuration link. The settings UI repeats the same fresh
-   authorization after the link is opened: the OAuth/App session user must match the
-   command sender, the installation id and repository id must match the signed link
-   record, and GitHub must confirm the same elevated role. If GitHub cannot confirm
-   the role at either gate, the command fails closed and is audited.
+   before retrying. State-changing or privileged commands, including `break glass`,
+   `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and `configure key`,
+   must perform a fresh GitHub permission API check after the command is claimed and
+   immediately before side effects; the positive cache is only a prefilter for those
+   commands, not final authority. `configure key` is stricter than the general
+   command gate: before creating any settings link, the command parser must verify
+   the sender is an installation admin, defined as org-owner permission for org
+   installations, repository `admin` permission for repo-only/user installations, or
+   membership in the audited installation-admin allowlist maintained by those
+   admins. A writer/maintainer who lacks that elevated role cannot receive a
+   key-configuration link. The settings UI repeats the same fresh authorization
+   after the link is opened: the OAuth/App session user must match the command
+   sender, the installation id and repository id must match the signed link record,
+   and GitHub/allowlist state must confirm the same elevated role. If the elevated
+   role cannot be confirmed at either gate, the command fails closed and is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
@@ -650,16 +664,18 @@ commands are honored only when all checks pass:
    transaction. Already-consumed records are rejected even when the delivery id,
    comment id, body digest, and head SHA match. Edited comments create a distinct
    consume-once record keyed by edited timestamp and body digest only after a
-   comment-level execution lock keyed by `{installation, comment_id, command,
-   head_sha, lifecycle_generation}` is available. That lock is held from claim
-   through command terminal state, including provider calls and publication, with
-   its own lease and fencing token. The handler validates that the current GitHub
-   comment timestamp/body digest still matches the claimed delivery immediately
-   before side effects; if it advanced, the in-flight command aborts as superseded.
-   If an edit arrives while the lock is held, the newer edit is queued behind the
-   lock or rejected with a retry-after response, never executed concurrently.
-   Delivery-id replay records live for 24 hours, and state-changing/costly commands
-   are rate-limited to 5 commands per minute per `{installation, user, pull_request,
+   comment-level execution lock keyed by `{installation, repository, pull_request,
+   comment_id, command}` is available. The lock intentionally excludes mutable PR
+   head SHA and lifecycle generation so comment edits and head changes serialize
+   behind the same command identity. That lock is held from claim through command
+   terminal state, including provider calls and publication, with its own lease and
+   fencing token. The handler validates that the current GitHub comment
+   timestamp/body digest still matches the claimed delivery immediately before side
+   effects; if it advanced, the in-flight command aborts as superseded. If an edit
+   arrives while the lock is held, the newer edit is queued behind the lock or
+   rejected with a retry-after response, never executed concurrently. Delivery-id
+   replay records live for 24 hours, and state-changing/costly commands are
+   rate-limited to 5 commands per minute per `{installation, user, pull_request,
    command}` before any provider call. Violations are rejected, audited, and alerted
    on repeated abuse.
 4. The command is in the explicit current allowlist: `review`, `full review`,
