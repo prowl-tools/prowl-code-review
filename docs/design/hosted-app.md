@@ -282,7 +282,14 @@ in `finally`, marks the job incomplete rather than retrying the same request obj
 and recycles the runner. The launch record must publish provider-specific p95/p99
 successful-call latency, DNS/TLS timing, and timeout rates under representative
 provider and network conditions, with enough headroom that normal successful calls do
-not approach the hard deadline. Each
+not approach the hard deadline. The decrypt-to-send startup and staging suite must
+deliberately create CPU contention, GC pressure, large-buffer allocation, and event-loop
+lag; if p99 exceeds 100 ms or max exceeds 250 ms, managed launch either switches this
+path to a native transport shim or requires a new security decision with a larger
+published risk budget. Production records decrypt-to-send p50/p95/p99/max histograms;
+two consecutive five-minute windows over p99 100 ms or any max over 250 ms disable
+hosted provider calls for the affected runner class and page on-call until repaired.
+Each
 attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
 authorization tied to the current revocation generation; retries cannot reuse any of
 those values. The control plane consumes the provider-call nonce and grant in the same
@@ -571,7 +578,10 @@ generic response; if a provider requires a prefix check, every provider adapter 
 execute the same fixed validation path over dummy and submitted buffers with full-length
 iteration, bitwise validity masks, and conditional assignment only. The scan never
 exits early or takes a branch based on the first invalid character, prefix, length, or
-provider type. Managed v1 performs no synchronous live provider
+provider type, and prefix mismatch is not reported before the generic response
+deadline. If a provider's semantic key validation cannot be represented by that fixed
+local loop, the provider is not launchable until the post-response background validator
+can check it without exposing user-queryable pending state. Managed v1 performs no synchronous live provider
 validation and opens no provider network connection before the response is committed.
 Provider auth validation runs only after the generic response, from an inactive
 pending-validation candidate, in the bounded background validator below. Adding
@@ -591,9 +601,9 @@ launchable in managed v1. The endpoint responds under a fixed wall-clock respons
 budget, with identical HTTP status, headers, and body bytes for `invalid`,
 `unauthorized`, `rate_limited`, `unknown`, validation unsupported, skipped
 synchronous validation, and nonce/session race-loss outcomes. The immediate response
-never distinguishes saved, validation-pending, or not-saved; any later authenticated
-status view uses a generic verification-pending/failed state and never includes
-provider details. "Identical" means the same status code, same header
+never distinguishes saved, validation pending, or not-saved; later authenticated
+settings views expose only terminal `key_valid`, `key_required`, `key_invalid`, or
+`key_expired` states and never include provider details. "Identical" means the same status code, same header
 names/order/values,
 same `Content-Length`, same precomputed body bytes, same cookie mutation behavior,
 same redirect behavior, and the same externally observable state-machine transition;
@@ -644,6 +654,12 @@ enqueues or refreshes only a pending-validation candidate. That candidate has
 per-installation, per-sender, and per-source creation and
 retry limits stricter than the command-ingress buckets; repeated pending candidates
 coalesce by installation/provider and cannot make an existing verified key unusable.
+No user-facing endpoint reveals pending-validation candidate existence, provider error
+reason, attempt count, or validation timing. Settings UI and APIs expose only terminal
+states: `key_valid`, `key_required`, `key_invalid`, or `key_expired`; until a candidate
+reaches a terminal result, the authenticated user sees the same generic post-submit
+state they saw immediately after save. Background validation outcomes stay in
+append-only audit/operator state with staff/audit access and query logging.
 The background validator uses the same guarded provider-call path, never starts while
 another validation for that installation/provider is active, destroys failed or
 superseded candidates, and promotes exactly one candidate to the active verified-key
@@ -797,8 +813,17 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   incomplete PR-file pagination, missing required blobs, and exact-read SHA/type
   mismatches as completeness failures.
   Grep/find-reference behavior runs only over the proven-complete bounded tree/file
-  cache. Every retrieval endpoint validates installation id, repository id,
-  visibility, requested ref, and path bounds before making a GitHub request. GitHub
+  cache. `find_definition`/`find_references` first use bounded tree reads and local
+  grep over that cache. If the retrieval planner or tool contract determines that
+  complete caller/callee discovery requires GitHub code search, it emits an explicit
+  `requires_search` request with reason, query, language/symbol scope, and whether the
+  search is required or optional; search is never invoked implicitly from an empty grep
+  result. For private repositories, private forks, private submodules, private
+  dependency scopes, or any unknown visibility state, required search fails as
+  `private_repo_search_unavailable` and marks the review incomplete rather than
+  returning empty results; optional search is skipped with the same caveat. Every
+  retrieval endpoint validates installation id, repository id, visibility, requested
+  ref, and path bounds before making a GitHub request. GitHub
   code search is disabled for private
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
@@ -818,7 +843,10 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   during retrieval. Each fixture asserts that the adapter reports incomplete context
   with a specific reason such as `private_submodule`, `private_dependency`, or
   `visibility_changed`, and that no REST or GraphQL code-search request object is
-  constructed even when the root repository is reported public.
+  constructed even when the root repository is reported public. A separate fixture
+  forces `find_references` to emit a required `requires_search` request on a private
+  repository and asserts the review state becomes incomplete with
+  `private_repo_search_unavailable`, not an empty result set or clean caveat.
   Search is completely disabled for repositories GitHub reports as private,
   regardless of submodule structure, visibility inheritance, or user configuration.
   Private submodules and cross-repo references are not traversed in managed v1;
@@ -1336,14 +1364,16 @@ commands are honored only when all checks pass:
    authorized-command quota is charged only after permission is confirmed; denied or
    unauthenticated mentions are audited and rate-limited through the untrusted
    ingress buckets, not through the authorized command budget. A short-lived positive
-   permission cache may avoid repeated GitHub calls for non-provider,
-   non-state-changing commands only when it was minted from GitHub for the same
-   `{installation, repository, sender, required_role}` within the last 60 seconds.
-   Positive entries use a hard, non-sliding expiry, are evicted by a minutely sweeper,
-   are dropped on process restart, and are never refreshed by cache hits. Enterprise,
-   branch-protection, SAML/IP, admin, key-setup, provider-backed, privileged, and
-   state-changing commands cannot rely on that cache for authorization; at most it
-   suppresses repeated unauthenticated ingress before the required fresh GitHub read.
+   permission cache may suppress repeated unauthenticated ingress noise only when it was
+   minted from GitHub for the same `{installation, repository, sender, required_role}`
+   within the last 60 seconds; it is never final authority for any current allowlisted
+   command. Positive entries use a hard, non-sliding expiry, are evicted by a minutely
+   sweeper, are dropped on process restart, and are never refreshed by cache hits. Every
+   current command, including `help`, `review`, `full review`, `docstrings`, `tests`,
+   chat replies, `pause`, `resume`, `configure`, `configure key`, `break glass`,
+   `ignore`, and `resolve`, must perform a fresh GitHub API read before execution,
+   provider calls, publication, or user-visible command output; a cache hit attempt on
+   the final authorization path returns a sentinel failure, alerts, and aborts.
    Cache invalidation is atomic with webhook ingestion for permission-changing
    events, including `member` collaborator add/remove/edit, `membership` add/remove,
    `organization` member add/remove/invite/role/rename changes, `team`

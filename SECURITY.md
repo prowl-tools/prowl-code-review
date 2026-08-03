@@ -35,6 +35,14 @@ prowl-review is **BYOK** (bring-your-own-key) and designed to run on untrusted
 pull-request content without leaking secrets or executing attacker-controlled code.
 
 ### Keys & secrets
+#### Managed Hosted App Uses A Different Custody Model
+If you use the CLI or GitHub Action, your provider key lives only on your machine or
+chosen runner and is sent directly to your provider. If you use the proposed managed
+Hosted App, plaintext keys are briefly handled in Prowl-managed infrastructure during
+key save and provider calls, and encrypted key material is stored for later reviews.
+That is an explicit trust-model change; the managed Hosted App is not a
+security-equivalent replacement for CLI/Action live-key custody.
+
 - **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
   the proposed managed Hosted App is a pre-launch exception that would store
   per-installation encrypted key material and transiently process plaintext keys in
