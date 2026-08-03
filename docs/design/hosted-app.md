@@ -178,10 +178,13 @@ decrypting/sending the provider request exposes the plaintext key in memory; no
 Node/V8 mitigation can prevent that. The managed v1 boundary is therefore not
 suitable for users who require protection against live process compromise,
 host-level memory disclosure, malicious platform operators, CPU side channels, or a
-provider endpoint compromise. Those users should self-host the Docker runner and
-settings service on hardware/runtime they control; a native secret helper or
-sidecar vault with memory-locking is required before Prowl can claim stronger
-live-custody protection for the managed service. The controls below reduce
+provider endpoint compromise. Post-detection containment and revocation reduce only
+future exposure; they cannot undo plaintext disclosure that occurred before
+detection. The managed service is therefore incompatible with a
+zero-trust-of-Prowl-infrastructure threat model. Those users should self-host the
+Docker runner and settings service on hardware/runtime they control; a native secret
+helper or sidecar vault with memory-locking is required before Prowl can claim
+stronger live-custody protection for the managed service. The controls below reduce
 accidental persistence, ordinary crash dumps, logs, traces, and reuse after a job
 exits.
 
@@ -230,13 +233,15 @@ header, and canary buffer with `Buffer.fill(0)` or an equivalent native
 `sodium_memzero`/secure-zero primitive in `finally`, then dropping references before
 the runner exits. If a provider SDK or HTTP primitive forces a transient string copy
 for an authorization header, that copy is treated as live-process residual risk and
-is allowed only inside the audited minimal client above. Node/V8 cannot guarantee
-complete erasure of copied strings, interned values, header normalization buffers,
-or HTTP-client internals; per-job process isolation, no long-lived provider clients,
-mandatory runner recycling after every job before any other installation's work,
-disabled swap/core dumps/heap snapshots/process inspection, startup self-checks for
-those controls, and deployment only on platforms where crash-dump controls can be
-enforced are mitigations, not a guarantee that memory is clean.
+is allowed only inside the audited minimal client above. Buffer zeroing is hygiene,
+not cryptographic erasure and not the primary defense against process compromise.
+Node/V8 cannot guarantee complete erasure of copied strings, interned values, CPU
+caches, header normalization buffers, kernel buffers, or HTTP-client internals;
+per-job process isolation, no long-lived provider clients, mandatory runner
+recycling after every job before any other installation's work, disabled swap/core
+dumps/heap snapshots/process inspection, startup self-checks for those controls, and
+deployment only on platforms where crash-dump controls can be enforced are
+mitigations, not a guarantee that memory is clean.
 
 The provider HTTP client is a launch-blocking security component: use a minimal
 audited wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, or an
@@ -383,10 +388,12 @@ never grants authority: the transactional read must match the current lease toke
 revocation generation, and publication token exactly. Provider and GitHub calls are
 made only through guarded send functions that perform the transactional check,
 allocate/consume any provider-call nonce, attach an abort signal tied to revocation,
-and immediately start the external request in the same synchronous operation without
-intervening async work. Staging telemetry must measure the final-check-to-HTTP-client
-handoff and keep it under a published millisecond-scale budget; exceeding that
-budget blocks launch until the guarded sender is redesigned. The
+and immediately start the external request in the same guarded function without
+unrelated awaits or queue hops. Staging telemetry must measure the
+final-check-to-HTTP-client handoff, publish p95/p99/max values, and block launch only
+if the path is unbounded, contains avoidable async gaps, or regresses beyond the
+published SLO for the chosen runtime; it is not a promise of atomic or
+microsecond-scale cancellation in Node.js. The
 worker control plane also cancels active provider HTTP streams, sends a graceful
 termination signal to active runner processes after the revocation transaction
 commits, and escalates to a hard kill after a short published deadline; fencing
@@ -502,11 +509,14 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   the affected file/range rather than silently dropping the concern; the finding
   states that the changed content was unavailable, approval is withheld, and no clean
   security result is claimed for that scope. If the changed line is available but
-  required surrounding, caller, lockfile, dependency, or repository context is
-  missing, any emitted security finding must be marked **incomplete context**,
-  approval remains withheld, and the output states which verification context was
-  unavailable. The hosted App must never publish a clean or fully verified security
-  result for a PR whose required security context is incomplete.
+  required surrounding, caller, manifest, lockfile, package index, private
+  dependency, submodule, or repository context is missing, any emitted security
+  finding must be marked **incomplete context**, approval remains withheld, and the
+  output states which verification context was unavailable. A changed lockfile whose
+  package metadata or private dependency cannot be resolved produces an incomplete
+  dependency-security finding rather than a clean dependency result. The hosted App
+  must never publish a clean or fully verified security result for a PR whose
+  required security context is incomplete.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -719,7 +729,13 @@ prompt, or review-content warehouse.
 
 **Rejected alternatives:** storing full prompts/provider payloads for debugging,
 mutable audit logs, shared runner credentials across installations, and relying on
-webhook retries without local replay/idempotency state.
+webhook retries without local replay/idempotency state. Per-installation webhook
+secrets are also rejected for the managed GitHub App because GitHub App webhook
+delivery supports one App registration secret, not tenant-specific webhook secrets;
+blast-radius reduction must come from strict signature/replay validation, tenant
+authorization after verification, zero-grace App-wide rotation on compromise, and
+suspending affected processing until rotation completes. If GitHub later supports
+per-installation webhook secrets, that becomes the preferred managed rotation model.
 
 **Consequences:** debugging must rely on redacted traces, structured outcomes, and
 short-lived runtime inspection rather than durable raw content.
@@ -749,10 +765,13 @@ have a hard runtime launch gate, implemented as startup and per-request policy c
 rather than a checklist: external installation acceptance, token minting, and review
 enqueueing remain disabled until the policy store contains a two-operator-signed
 credential-rotation record. That record must name the revoked GitHub App key
-versions, include CI evidence from the GitHub App credential audit/export, name the
-replacement managed key version generated after the cutoff, and include a production
-canary showing a retired key cannot mint an installation token. The canary runs in
-production before opening external installs and as a scheduled drift check; failure
+versions, include direct inspection evidence from the GitHub App's registered
+private-key list or audit/export proving those key ids are no longer active on
+GitHub, name the replacement managed key version generated after the cutoff, and
+include a production canary showing a retired key cannot mint an installation token.
+The canary is supporting drift evidence, not a substitute for GitHub-level key-list
+verification. The canary runs in production before opening external installs and as
+a scheduled drift check; failure
 after launch immediately disables external installation acceptance, hosted token
 minting, and review enqueueing for the managed App until operators either repair the
 revocation evidence or migrate to a new App identity. If GitHub-level revocation
@@ -768,10 +787,14 @@ current repository/workflow and cannot mint across managed hosted tenants. Shari
 the managed App signing credential with Actions is a launch blocker.
 
 Uninstalling the `prowl-review` App immediately disables hosted reviews and token
-minting for Action workflows that depend on that App. Existing Action workflows
-fall back to `GITHUB_TOKEN` only when they are written with the current tolerant
-token-minting path; otherwise they fail visibly until the App is reinstalled or the
-workflow is reconfigured.
+minting for Action workflows that depend on that App. The uninstall webhook is a
+lossless control event: it bumps lifecycle/auth generation, cancels hosted jobs,
+marks `delivery.owner: app` state as unavailable, and records a durable uninstall
+status that the Action reads before attempting App-token minting. Existing Action
+workflows fall back to `GITHUB_TOKEN` only when they are written with the current
+tolerant token-minting path; otherwise they fail visibly with an "App uninstalled;
+set `delivery.owner: action` or reinstall/reconfigure" message rather than silently
+losing review coverage.
 
 **Delivery ownership:** the shared authority is GitHub-backed, not a private hosted
 database row: the trusted-base `.prowl-review.yml` gains `delivery.owner: action |
@@ -842,16 +865,22 @@ commands are honored only when all checks pass:
    admin command flows expose a cache-bust operation that bumps the installation auth
    generation after permission changes. Cache hits, misses, and invalidations are
    audited; stale, missing, or lower-role cache entries cannot authorize a command.
-   The command claim transaction runs under serializable isolation or an equivalent
-   compare-and-swap over the installation auth row. It reads the current auth
-   generation inside the transaction, requires any prefetched cache generation to
-   equal that row, and writes the claimed command with the row version it actually
-   locked. If a permission-change webhook lands after the prefilter but before
-   claim, the generation bump wins or forces the claim transaction to retry/fail
-   before any command record can be consumed. Claimed command records store the auth
-   generation used for authorization, and the handler re-checks that generation plus
-   performs the fresh GitHub permission API check immediately before side effects; a
-   stale generation alone can never authorize execution. If a permission-change
+   The command claim transaction and permission-change generation bump both lock the
+   same installation auth row through serializable isolation, `SELECT ... FOR
+   UPDATE`, or a compare-and-swap version update; asynchronous invalidation workers
+   may enqueue work, but the generation bump itself is synchronous with webhook
+   ingestion before ack. The claim transaction reads the current auth generation
+   inside the transaction, requires any prefetched cache generation to equal that row,
+   and writes the claimed command with the row version it actually locked. If a
+   permission-change webhook lands after the prefilter but before claim, the
+   generation bump wins or forces the claim transaction to retry/fail before any
+   command record can be consumed. Claimed command records store the auth generation
+   used for authorization, and the handler re-checks that generation plus performs
+   the fresh GitHub permission API check through the same guarded-send pattern
+   immediately before each provider or GitHub side effect; a stale generation alone
+   can never authorize execution. If a permission-change webhook invalidated the
+   cache after the fresh check but before an external call, the guarded send sees the
+   generation mismatch, aborts, and no side effect starts. If a permission-change
    webhook invalidated the cache mid-command, the command is marked
    `authorization_changed`, no provider/GitHub side effect runs, and the user-visible
    response asks the sender to re-run the command after permissions settle. There is
@@ -928,13 +957,14 @@ installation-admin definition above, and carries no key material in the URL. OAu
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
 session id hash, sender id, installation id, repository id, row version, and expiry
 before accepting a provider key. The first authorized settings GET transactionally
-binds the nonce row to that session before rendering the key input, and the key-save
-POST must happen over HTTPS with the same authorized session. Nonce consumption plus
-key persistence must commit in one transaction using a predicate that includes the
-nonce hash, session-binding hash, sender id, installation id, repository id, row
-version, unexpired timestamp, and `consumed_at IS NULL`; a second request or
-different session for the same nonce gets a generic used/expired response and
-cannot write a key.
+binds the nonce row to that session before rendering the key input only with a
+predicate that includes `expires_at > now()` and `consumed_at IS NULL`; expired
+nonces cannot be bound even if cleanup has not run. The key-save POST must happen
+over HTTPS with the same authorized session. Nonce consumption plus key persistence
+must commit in one transaction using a predicate that includes the nonce hash,
+session-binding hash, sender id, installation id, repository id, row version,
+`expires_at > now()`, and `consumed_at IS NULL`; a second request, different session,
+or expired nonce gets a generic used/expired response and cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
