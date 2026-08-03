@@ -269,9 +269,12 @@ The key-save endpoint is rate-limited before validation by installation, user
 session, and source address. It performs constant-shape local format validation and,
 where the provider supports it, a minimal live auth probe over the same sanitized
 provider-call path before marking the key verified. If live validation fails or is
-unsupported, the response is generic and never re-renders or logs the submitted key,
-its prefix/suffix, length, character classes, or partial provider error details.
-The input field is cleared after every submit attempt.
+unsupported, provider error bodies are not serialized, cached, returned, traced, or
+logged; they are mapped to a fixed internal enum such as `invalid`, `unauthorized`,
+`rate_limited`, or `unknown`. The user-facing response is generic and never
+re-renders or logs the submitted key, its prefix/suffix, length, character classes,
+or partial provider error details. The input field is cleared after every submit
+attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -287,25 +290,32 @@ Active runners perform a transactional read of installation state, revocation
 generation, lease expiry, and fencing token immediately before every external call
 (provider or GitHub) and before publication. If generation advanced, the lease
 expired, the token mismatches, or decrypt access was revoked, the runner drops any
-plaintext key reference and exits without making another call. The worker control
-plane also cancels active provider HTTP streams, sends a graceful termination signal
-to active runner processes after the revocation transaction commits, and escalates
-to a hard kill after a short published deadline; fencing remains authoritative if a
-process cannot be reached. A provider request already on the wire cannot be recalled
-and may consume quota, reach provider logs, or continue server-side after the local
-stream is aborted. The runner must re-check revocation immediately after response
-headers/stream termination and before parsing response content. It must re-check
-again immediately before the GitHub publication API call, or before each publication
-call if output is deferred/batched, and the publication lease/fencing token is
-invalidated by revocation. If revocation occurred in flight, the response bytes are
-discarded without extraction, summary generation, persistence, or GitHub
-publication; provider-side effects from the already-sent request cannot be undone.
-There is no true atomicity across the database and an already-started external
-GitHub API call, so the last re-check and fencing token are the final defense before
-publication. Integration tests must revoke an installation mid-review, during
-provider response handling, and immediately before publication, and verify no
-post-revocation publication occurs unless the external GitHub call had already
-started. Logs keep only redacted operational events. Backups remain encrypted and become
+plaintext key reference and exits without making another call. A stale fencing token
+never grants authority: the transactional read must match the current lease token,
+revocation generation, and publication token exactly. Provider and GitHub calls are
+made only through guarded send functions that perform the transactional check,
+allocate/consume any provider-call nonce, attach an abort signal tied to revocation,
+and immediately start the external request without intervening async work. The
+worker control plane also cancels active provider HTTP streams, sends a graceful
+termination signal to active runner processes after the revocation transaction
+commits, and escalates to a hard kill after a short published deadline; fencing
+remains authoritative if a process cannot be reached. A provider request already on
+the wire cannot be recalled and may consume quota, reach provider logs, or continue
+server-side after the local stream is aborted. A revocation that lands after the
+final local check but before the external API receives the request is an unavoidable
+cross-system race; the launch docs must disclose it. The runner must re-check
+revocation immediately after response headers/stream termination and before parsing
+response content. It must re-check again immediately before the GitHub publication
+API call, or before each publication call if output is deferred/batched, and the
+publication lease/fencing token is invalidated by revocation. If revocation occurred
+in flight, the response bytes are discarded without extraction, summary generation,
+persistence, or GitHub publication; provider-side effects from the already-sent
+request cannot be undone. There is no true atomicity across the database and an
+already-started external GitHub API call, so the last re-check and fencing token are
+the final defense before publication. Integration tests must revoke an installation
+mid-review, during provider response handling, and immediately before publication,
+and verify no post-revocation publication occurs unless the external GitHub call had
+already started. Logs keep only redacted operational events. Backups remain encrypted and become
 cryptographically unusable once wrapping keys are destroyed; backup copies expire
 on the published 30-day retention schedule. GitHub comments/checks already posted
 to the user's repo are not deleted automatically because they are user-visible
@@ -498,9 +508,10 @@ append-only audit log.
 - **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
   HMAC-SHA256 verification using the App-wide webhook secret and constant-time
   comparison. The signature parser accepts only the strict `sha256=<64 hex chars>`
-  format with exactly 71 ASCII characters and exactly one signature header; empty
-  values, missing prefixes, malformed hex, truncated digests, overlong/padded
-  digests, base64-wrapped values, duplicate signature headers, and MD5/SHA1
+  format with exactly 71 ASCII characters and exactly one `X-Hub-Signature-256`
+  header; an absent header is a hard verification failure. Empty values, missing
+  prefixes, malformed hex, truncated digests, overlong/padded digests,
+  base64-wrapped values, duplicate signature headers, and MD5/SHA1
   signatures are rejected as generic authentication failures before any HMAC
   computation or enqueueing. The malformed-input path does not normalize, truncate,
   compare partial prefixes, or choose first/last duplicate headers. For validly
@@ -526,11 +537,14 @@ append-only audit log.
   duplicate redeliveries whose delivery id and payload hash were first accepted
   before the new secret became active; those duplicates are never re-enqueued and
   can only return the existing accepted/duplicate outcome. New delivery ids signed
-  with the previous secret are rejected. Replay records for the previous secret
-  expire at the earlier of 24 hours from first accepted delivery or the configured
-  rotation grace deadline. After the grace window, old-secret deliveries fail closed
-  even if GitHub retries them late. Self-host operators own the same App-wide
-  rotation flow for their registered App.
+  with the previous secret are rejected even if the HMAC matches. Old-secret HMAC
+  match is necessary but not sufficient: the receiver must find a prior replay
+  record with `first_seen_at < new_secret_active_at` before accepting the request as
+  a duplicate. Replay records for the previous secret expire at the earlier of 24
+  hours from first accepted delivery or the configured rotation grace deadline.
+  After the grace window, old-secret deliveries fail closed even if GitHub retries
+  them late. Self-host operators own the same App-wide rotation flow for their
+  registered App.
 - **Abuse controls:** per-installation queue depth/concurrency, webhook token
   bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
   a misbehaving repo cannot spin the queue or publish outdated reviews.
@@ -571,21 +585,28 @@ workflow is reconfigured.
 database row: the trusted-base `.prowl-review.yml` gains `delivery.owner: action |
 app`. The hosted installation store may cache the last observed owner for the UI,
 but it cannot override the trusted-base config. If the field is absent, setup uses
-a deterministic fallback: App defers when an Action workflow is present, and App
-owns only when no Action workflow is detected. Workflow-file detection is only this
-bootstrap fallback; it cannot override an explicit config owner.
+a deterministic fallback: when an Action workflow is present, the App yields
+entirely for that PR head and posts at most a neutral "Action owns delivery" status;
+it does not stand by, retry ownership, or take over because the Action is broken,
+disabled, or slow. The App owns only when no Action workflow is detected. Workflow
+file detection is only this bootstrap fallback; it cannot override an explicit
+config owner. Repos that want hosted failover must set an explicit owner in trusted
+base config rather than relying on broken-workflow detection.
 
 Before hosted launch, the Action must learn this field from the same trusted-base
 config it already loads and exit with a neutral "App owns delivery" result before
 any provider call when `delivery.owner: app`. The hosted App performs the symmetric
-check and no-ops when `delivery.owner: action`. Owner changes apply to the next PR
-head SHA. Subsequent deliveries for existing PR heads re-query the owner before
-enqueueing; in-flight reviews under the previous owner are marked superseded and
-stopped before publication if ownership changed. The idempotency key includes the
-owner and lifecycle generation: `{installation, repository, pull_request, head_sha,
-owner, lifecycle_generation}`, and both delivery paths re-check the owner before
-provider calls and publication. This Action/App owner check is a launch blocker for
-dual-delivery support.
+check and no-ops when `delivery.owner: action`. Owner is read from the trusted base
+ref/config generation associated with the PR head. Owner changes apply to the next
+PR head SHA or base-config generation; they increment lifecycle generation and
+supersede in-flight work for older generations. Subsequent deliveries for existing
+PR heads re-query the owner before enqueueing; in-flight reviews under the previous
+owner are marked superseded and stopped before provider calls and before
+publication if ownership changed. The cached owner in the hosted store is only a UI
+hint. The idempotency key includes the owner and lifecycle generation:
+`{installation, repository, pull_request, head_sha, owner, lifecycle_generation}`,
+and both delivery paths re-check the owner before provider calls and publication.
+This Action/App owner check is a launch blocker for dual-delivery support.
 
 **Command authorization:** the `@prowl-review` command surface moves to
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
@@ -606,9 +627,13 @@ commands are honored only when all checks pass:
    repository add/remove, `team_add`, `repository` visibility/transfer/archive/delete
    changes, `installation_repositories`, and `installation` suspend/delete. Unknown
    membership, team, collaborator, repository-permission, or installation-scope
-   events invalidate the whole installation permission cache. Cache hits, misses,
-   and invalidations are audited; stale, missing, or lower-role cache entries cannot
-   authorize a command. `configure key` is stricter than the general command gate:
+   events invalidate the whole installation permission cache and bump an
+   installation auth generation. Cache hits, misses, and invalidations are audited;
+   stale, missing, or lower-role cache entries cannot authorize a command. Claimed
+   command records store the auth generation used for authorization, and the handler
+   re-checks that generation immediately before side effects; if a permission-change
+   webhook invalidated the cache mid-command, the command aborts and must re-authorize
+   before retrying. `configure key` is stricter than the general command gate:
    before creating any settings link, the command parser must verify the sender is
    an installation admin, defined as org-owner permission for org installations or
    repository `admin` permission for repo-only/user installations; a writer/maintainer
