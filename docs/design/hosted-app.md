@@ -169,18 +169,33 @@ memory-locking is required before Prowl can claim stronger live-custody protecti
 for the managed service. The controls below reduce accidental persistence,
 ordinary crash dumps, logs, traces, and reuse after a job exits.
 
-The runner decrypts the key immediately before the provider call, passes it to a
-minimal HTTP client that does not persist headers or enable request debugging, and
-clears all references in a `finally` block after the response body is fully consumed
-or the request errors. Credentials must stay out of prompts, provider request
-bodies, serialized URLs, structured error metadata, and generic exception
-inspection. Mutable buffers are zeroed best-effort, but Node/V8 cannot guarantee
-complete erasure of copied strings or headers; per-job process isolation, no
-long-lived provider clients, mandatory runner recycling after every job before any
-other installation's work, disabled swap/core dumps/heap snapshots/process
-inspection, startup self-checks for those controls, and deployment only on
-platforms where crash-dump controls can be enforced are mitigations, not a guarantee
-that memory is clean.
+Provider endpoint compromise is also outside Prowl's control. The managed App
+sends the user's BYOK credential to the user's chosen provider over normal provider
+authentication, so a compromised provider endpoint, provider-side logging system,
+or TLS interception outside Prowl's trust boundary can capture the key or review
+content. The App must enforce TLS certificate validation, no custom CA bypasses,
+and no local SDK debug logging, but it cannot force provider-side redaction or
+per-request credentials unless the provider supports them. Launch docs must direct
+users to provider-side key scoping, spend limits, monitoring, and rotation; users
+who do not trust a provider with their key should not use that provider through the
+managed App.
+
+For each provider API attempt, the runner decrypts the key immediately after the
+final revocation/fencing check and immediately before request construction. The key
+is passed to a minimal HTTP client that does not persist headers, buffer
+authorization data beyond the active request, or enable request debugging. The
+attempt is wrapped in a `try/finally`; if request construction, send, streaming, or
+response handling fails, the `finally` block clears all runner references before any
+retry can begin, and every retry must obtain a fresh provider-call nonce/decrypt
+authorization. Credentials must stay out of prompts, provider request bodies,
+serialized URLs, structured error metadata, and generic exception inspection.
+Mutable buffers are zeroed best-effort, but Node/V8 cannot guarantee complete
+erasure of copied strings, headers, or HTTP-client internals; per-job process
+isolation, no long-lived provider clients, mandatory runner recycling after every
+job before any other installation's work, disabled swap/core dumps/heap
+snapshots/process inspection, startup self-checks for those controls, and
+deployment only on platforms where crash-dump controls can be enforced are
+mitigations, not a guarantee that memory is clean.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -236,6 +251,14 @@ before persisting the key, so concurrent submissions cannot reuse the link. A
 leaked link cannot save a key without the fresh GitHub OAuth/App authorization
 described in Decision 5. The UI never displays plaintext keys after save.
 
+The key-save endpoint is rate-limited before validation by installation, user
+session, and source address. It performs constant-shape local format validation and,
+where the provider supports it, a minimal live auth probe over the same sanitized
+provider-call path before marking the key verified. If live validation fails or is
+unsupported, the response is generic and never re-renders or logs the submitted key,
+its prefix/suffix, length, character classes, or partial provider error details.
+The input field is cleared after every submit attempt.
+
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
 the installation revoked, bumps the revocation generation, invalidates outstanding
@@ -251,12 +274,17 @@ generation, lease expiry, and fencing token immediately before every external ca
 (provider or GitHub) and before publication. If generation advanced, the lease
 expired, the token mismatches, or decrypt access was revoked, the runner drops any
 plaintext key reference and exits without making another call. The worker control
-plane also cancels and kills active runner processes for the installation after the
-revocation transaction commits; fencing remains authoritative if a process cannot
-be reached. A provider request already on the wire cannot be recalled, so revocation
-does not claim to erase that exposure; the runner must re-check revocation after
-the provider response and discard the response without posting to GitHub. Logs keep
-only redacted operational events. Backups remain encrypted and become
+plane also cancels active provider HTTP streams, sends a graceful termination signal
+to active runner processes after the revocation transaction commits, and escalates
+to a hard kill after a short published deadline; fencing remains authoritative if a
+process cannot be reached. A provider request already on the wire cannot be recalled
+and may consume quota, reach provider logs, or continue server-side after the local
+stream is aborted. The runner must re-check revocation immediately after response
+headers/stream termination and before parsing response content or publishing. If
+revocation occurred in flight, the response bytes are discarded without extraction,
+summary generation, persistence, or GitHub publication; provider-side effects from
+the already-sent request cannot be undone. Logs keep only redacted operational
+events. Backups remain encrypted and become
 cryptographically unusable once wrapping keys are destroyed; backup copies expire
 on the published 30-day retention schedule. GitHub comments/checks already posted
 to the user's repo are not deleted automatically because they are user-visible
@@ -449,9 +477,12 @@ append-only audit log.
 - **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
   HMAC-SHA256 verification using the App-wide webhook secret and constant-time
   comparison. The signature parser accepts only the strict `sha256=<64 hex chars>`
-  format; missing prefixes, malformed hex, truncated digests, overlong digests,
-  duplicate signature headers, and MD5/SHA1 signatures are rejected as generic
-  authentication failures before any HMAC computation or enqueueing. For validly
+  format with exactly 71 ASCII characters and exactly one signature header; empty
+  values, missing prefixes, malformed hex, truncated digests, overlong/padded
+  digests, base64-wrapped values, duplicate signature headers, and MD5/SHA1
+  signatures are rejected as generic authentication failures before any HMAC
+  computation or enqueueing. The malformed-input path does not normalize, truncate,
+  compare partial prefixes, or choose first/last duplicate headers. For validly
   formatted signatures, the receiver computes expected digests for every currently
   valid candidate secret selected from server config, performs equal-length
   constant-time comparisons for every candidate regardless of match or mismatch,
