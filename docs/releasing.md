@@ -48,8 +48,12 @@ trap 'rm -rf "${tmpdir}"' EXIT
 
 If a future emergency ever requires direct token auth, handle credential details in
 private maintainer runbooks, use only a scoped granular token with the shortest
-practical expiry, and retire it immediately after OIDC is restored. Do not add token
-values, expiry dates, or operational timelines to public documentation.
+practical expiry, and inject it only through repository or CI secret storage for
+the emergency run. Never log, commit, paste into issues or PRs, or store the token
+in repository artifacts. After use, rotate and delete it from npm, repository
+secrets, and CI/CD systems, then confirm no workflow logs or artifacts expose it
+before closing the emergency. Do not add token values, expiry dates, or operational
+timelines to public documentation.
 
 ## Cut a release
 
