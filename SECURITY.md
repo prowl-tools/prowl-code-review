@@ -55,12 +55,15 @@ pull-request content without leaking secrets or executing attacker-controlled co
   compromise while the key is being handled. Examples include runtime process
   inspection, a malicious dependency in the settings/runner/HTTP-client path, a
   host debugger, CPU or memory side channels, supply-chain compromise of the live
-  service, or a platform/operator actor with access to active process memory. Users
-  who require "no Prowl infrastructure ever handles my key" must use the CLI,
-  Action, or self-hosted App. It also cannot protect against compromise, logging, or
-  policy choices inside the user's selected LLM provider after the key/content is
-  sent to that provider; provider key scoping, spend limits, monitoring, and
-  rotation remain the user's provider controls.
+  service, or a platform/operator actor with access to active process memory. This
+  is pre-detection exposure: incident response and revocation can reduce future
+  decrypts, but they cannot undo plaintext disclosure that happened before the
+  compromise was detected. Users who require "no Prowl infrastructure ever handles
+  my key" or otherwise assume zero trust of Prowl-managed infrastructure must use
+  the CLI, Action, or self-hosted App. It also cannot protect against compromise,
+  logging, or policy choices inside the user's selected LLM provider after the
+  key/content is sent to that provider; provider key scoping, spend limits,
+  monitoring, and rotation remain the user's provider controls.
 - Hosted App revocation is an ordered, fenced sequence. The application database
   transaction marks the installation revoked, bumps the revocation generation,
   invalidates outstanding leases/fencing tokens, and prevents new job claims. After
