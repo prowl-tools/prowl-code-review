@@ -157,8 +157,7 @@ security-equivalent replacement for CLI/Action live-key custody.
   terminated immediately with a 30-second hard deadline, queued work is cancelled,
   and affected installations stay suspended until data keys are re-wrapped under the
   replacement root or destroyed. Those incident timers are post-detection containment
-  for future
-  decrypts and stored ciphertext; they cannot undo plaintext exposure before
+  for future decrypts and stored ciphertext; they cannot undo plaintext exposure before
   detection, from a live compromised runner, or from a provider request that was
   already sent. The hosted App is not approved to launch until those controls exist
   and leak tests confirm decryption fails after revocation.
@@ -181,7 +180,9 @@ security-equivalent replacement for CLI/Action live-key custody.
   it is currently marked not issued, and managed key-save/provider traffic must remain
   disabled until that file names the deployed implementation, launch records, canary
   leak-test results, platform controls, re-verification schedule, and two security-owner
-  signatures.
+  signatures. Install, migration, and key-entry UX must show the same disabled state
+  and must not accept provider keys until the attestation is signed and matches the
+  deployed commit.
 - **Verification:** before managed launch, plaintext provider keys must be proved
   through canary-injection tests not to reach logs, errors, exception stacks, traces,
   queues, caches, persisted state, process environment, crash-dump locations, or
@@ -251,10 +252,10 @@ storage, audit, and runner services.
   locally or in the operator-controlled deployment and written only to run logs /
   the Action job summary / local or operator-controlled usage logs — never
   transmitted to Prowl.
-- The planned managed hosted GitHub App (not yet available) has different operational boundaries:
-  it necessarily uses the hosted queue, installation database, audit log, KMS/HSM
-  service, GitHub API, and the user's configured LLM provider. Its durable systems
-  may store only the operational metadata described in
+- The planned managed hosted GitHub App (not yet available) has different operational
+  boundaries: it necessarily uses the hosted queue, installation database, audit log,
+  KMS/HSM service, GitHub API, and the user's configured LLM provider. Its durable
+  systems may store only the operational metadata described in
   [`docs/design/hosted-app.md`](docs/design/hosted-app.md). This no-content rule
   applies to every hosted store, including queues and shared caches: no raw diffs,
   review bodies, prompts, provider responses, API-retrieved content, or plaintext
