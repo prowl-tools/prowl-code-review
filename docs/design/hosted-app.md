@@ -1856,11 +1856,13 @@ commands are honored only when all checks pass:
    first stored in a durable `command_comment_events` row keyed by delivery id with a
    secondary index over `{deployment_id, installation, repository, pull_request,
    comment_id}` and untrusted expected fields for sender id, GitHub `updated_at`, raw
-   body digest, parsed verb, parsed arguments, command occurrence, and observed head
-   SHA. The canonical claim path acquires the deployment-scoped comment-level lock,
+   body digest, parsed verb, parsed argument digest, command occurrence, and observed
+   head SHA. Raw parsed arguments are never persisted in this row; they exist only in
+   the transient parser state derived from the fresh GitHub comment read. The canonical
+   claim path acquires the deployment-scoped comment-level lock,
    re-reads the current GitHub comment and PR head, obtains the fresh cache-bypassing
    authorization proof required by step 2, compares the fresh author id, `updated_at`,
-   full-body digest, verb, arguments, occurrence id, and head SHA to the queued row
+   full-body digest, verb, args digest, occurrence id, and head SHA to the queued row
    before creating a consume-once record, and only then inserts or consumes the command
    record. If the fresh state differs, that queued row is marked `superseded` without a
    consume-once row; the latest queued row for the same comment key is selected under
@@ -1887,7 +1889,7 @@ commands are honored only when all checks pass:
    payloads may enqueue edit work but cannot create the canonical
    consume-once record. Edited comments follow the same consume-once rule: they create
    a distinct consume-once record keyed by the deployment/instance id, that API-read
-   timestamp, digest, parsed command occurrence, and canonical arguments only after a
+   timestamp, digest, parsed command occurrence, and canonical args digest only after a
    comment-level execution lock keyed by
    `{deployment_id, installation, repository, pull_request, comment_id}` is available.
    After the lock is acquired, the handler performs the fresh GitHub API read that
