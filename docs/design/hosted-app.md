@@ -101,10 +101,12 @@ self-host path**, and run a managed instance of the same code.
 database and outside queues, in a provider-managed KMS/HSM-style service with a
 dedicated service identity. Per-installation data keys wrap provider keys; rotating
 the root key at least every 90 days re-wraps data keys, and suspected compromise
-disables decrypt access immediately before re-encryption. Runners receive decrypt
-permission only for the installation/job they are processing. Queue messages carry
-installation, repo, PR, head SHA, and key row identifiers, never plaintext keys or
-encrypted key blobs.
+alerts operators within 5 minutes, disables decrypt access within 15 minutes,
+suspends new managed reviews for affected installations, and re-wraps or destroys
+affected data keys within 4 hours before hosted reviews resume. Runners receive
+decrypt permission only for the installation/job they are processing. Queue
+messages carry installation, repo, PR, head SHA, and key row identifiers, never
+plaintext keys or encrypted key blobs.
 
 Plaintext provider keys exist only inside the runner process while constructing and
 sending the direct provider request. The runner decrypts the key immediately before
@@ -117,6 +119,14 @@ provider clients, runner recycling after each job, disabled swap/core dumps/heap
 snapshots/process inspection, and no deployment on platforms where those crash-dump
 controls cannot be enforced. A native secret helper with memory locking is a future
 hardening option, not an assumption in v1.
+
+Residual risk is explicit: these controls protect against accidental persistence,
+ordinary crash dumps, logs, traces, and reuse after a job exits. They do **not**
+protect against host-level memory disclosure, a malicious infrastructure operator,
+CPU side channels, a live runner compromise while the key is in use, or a provider
+endpoint compromise. Users requiring that assurance should self-host the Docker
+runner on hardware/runtime they control; the managed launch docs must disclose this
+custody risk instead of presenting Node memory handling as secure erasure.
 
 Every provider-call error path catches exceptions before any logging, redacts
 authorization headers and known key patterns, and rethrows/logs only the redacted
@@ -268,7 +278,7 @@ custody, but storing review content would violate the current privacy posture.
 append-only audit log.
 
 - **Persistence (D1/Postgres, small):** installations (org, repo set, App install
-  id), encrypted provider key rows, delivery-owner records (Decision 5), per-repo
+  id), encrypted provider key rows, delivery-owner cache records (Decision 5), per-repo
   review state (marker/review ids, posted finding fingerprints, learnings
   pointers), webhook idempotency records, queue/dead-letter metadata, deletion
   jobs, and audit events.
@@ -337,16 +347,22 @@ fall back to `GITHUB_TOKEN` only when they are written with the current tolerant
 token-minting path; otherwise they fail visibly until the App is reinstalled or the
 workflow is reconfigured.
 
-**Delivery ownership:** each repository has one persisted delivery owner:
-`action` or `app`. The installation UI seeds this value during setup, and
-`.prowl-review.yml` may declare the same owner from the trusted base branch, but
-runtime decisions read the persisted owner record. Workflow-file detection is
-advisory only; it can recommend `action` during setup but cannot start or stop
-reviews at runtime. Owner changes apply to the next PR head SHA: active jobs for
-the previous owner are marked superseded, the idempotency table records the owner
-with `{installation, repository, pull_request, head_sha}`, and both the Action and
-App must check the same owner before provider calls. This is a launch blocker for
-dual-delivery support.
+**Delivery ownership:** the shared authority is GitHub-backed, not a private hosted
+database row: the trusted-base `.prowl-review.yml` gains `delivery.owner: action |
+app`. The hosted installation store may cache the last observed owner for the UI,
+but it cannot override the trusted-base config. If the field is absent, setup uses
+a deterministic fallback: App defers when an Action workflow is present, and App
+owns only when no Action workflow is detected. Workflow-file detection is only this
+bootstrap fallback; it cannot override an explicit config owner.
+
+Before hosted launch, the Action must learn this field from the same trusted-base
+config it already loads and exit with a neutral "App owns delivery" result before
+any provider call when `delivery.owner: app`. The hosted App performs the symmetric
+check and no-ops when `delivery.owner: action`. Owner changes apply to the next PR
+head SHA: active jobs for the previous owner are marked superseded, the idempotency
+table records the owner with `{installation, repository, pull_request, head_sha}`,
+and both delivery paths re-check the owner before provider calls and publication.
+This Action/App owner check is a launch blocker for dual-delivery support.
 
 **Command authorization:** the `@prowl-review` command surface moves to
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
@@ -359,14 +375,18 @@ commands are honored only when all checks pass:
    authorization in the settings UI.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
-   idempotency record for the command.
-4. The command is in the explicit allowlist: `review`, `full review`, `pause`,
-   `resume`, `help`, chat replies, and `configure key` link creation. No command
-   executes repository code or arbitrary shell, and fork PRs still follow Decision
-   0's managed skip policy.
+   idempotency record for the command. Delivery-id replay records live for 24
+   hours, and state-changing/costly commands are rate-limited to 5 commands per
+   minute per `{installation, user, pull_request, command}` before any provider
+   call. Violations are rejected, audited, and alerted on repeated abuse.
+4. The command is in the explicit current allowlist: `review`, `full review`,
+   `break glass`, `ignore`, `resolve`, per-PR `configure`, `pause`, `resume`,
+   `docstrings`, `tests`, `help`, chat replies, and `configure key` link creation.
+   No command executes repository code or arbitrary shell, and fork PRs still
+   follow Decision 0's managed skip policy.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
-current `prowl-review[bot]` summaries, while persisted delivery ownership prevents
+current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
 both the Action and App from starting reviews for the same PR head.
 
 **Rejected alternatives:** registering a sibling cloud App with a different bot
@@ -374,16 +394,16 @@ login, treating hidden markers as delivery-agnostic regardless of author, decidi
 delivery precedence from live workflow-file detection, and accepting commands from
 any commenter with a syntactically valid mention.
 
-**Consequences:** hosted launch requires a delivery-owner store, owner checks in
-both delivery paths, command replay records, and an installation-admin settings
-flow before command parity is considered complete.
+**Consequences:** hosted launch requires delivery-owner config/cache support, owner
+checks in both delivery paths, command replay records, and an installation-admin
+settings flow before command parity is considered complete.
 
 ## Build plan (when approved)
 
 1. Receiver + queue + installation store + persistent idempotency, using the
    existing `prowl-review` App identity for the managed instance.
-2. Delivery-owner store and Action/App owner checks so dual delivery cannot start
-   duplicate reviews.
+2. Trusted-base `delivery.owner` config plus Action/App owner checks so dual
+   delivery cannot start duplicate reviews.
 3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
    and deletion lifecycle.
 4. API-retrieval adapter for the core's repo-tools interface with the Decision 2

@@ -46,8 +46,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   the database and queues, decrypt permission scoped to the active runner job, no
   plaintext keys in queue payloads/logs/audit events, settings access limited to
   installation admins, and deletion covering key rows, queued jobs, caches,
-  review state, and backup key material on a 30-day retention schedule. The hosted
-  App is not approved to launch until those controls and leak tests exist.
+  review state, and backup key material on a 30-day retention schedule. Suspected
+  wrapping-key compromise must alert operators within 5 minutes, disable decrypt
+  access within 15 minutes, and re-wrap or destroy affected data keys within 4
+  hours before hosted reviews resume. The hosted App is not approved to launch
+  until those controls and leak tests exist.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
