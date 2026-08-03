@@ -103,12 +103,23 @@ permission only for the installation/job they are processing. Queue messages car
 installation, repo, PR, head SHA, and key row identifiers, never plaintext keys or
 encrypted key blobs.
 
-Plaintext provider keys exist only inside the runner process while constructing the
-direct provider request. Runners are isolated per job, block core dumps/process
-inspection where the platform allows it, redact stdout/stderr/trace/event payloads
-at the sink boundary, and scrub key buffers after use on runtimes that expose
-mutable buffers. Tests must include canary provider keys and fail if those canaries
-appear in logs, thrown errors, audit events, provider error summaries, or persisted
+Plaintext provider keys exist only inside the runner process while constructing and
+sending the direct provider request. The runner decrypts the key immediately before
+the provider call, passes it to a minimal HTTP client that does not persist headers
+or enable request debugging, and clears all references in a `finally` block after
+the response body is fully consumed or the request errors. Mutable buffers are
+zeroed best-effort, but Node/V8 cannot guarantee complete secure erasure of copied
+strings or headers; the real controls are per-job process isolation, no long-lived
+provider clients, runner recycling after each job, disabled swap/core dumps/heap
+snapshots/process inspection, and no deployment on platforms where those crash-dump
+controls cannot be enforced. A native secret helper with memory locking is a future
+hardening option, not an assumption in v1.
+
+Every provider-call error path catches exceptions before any logging, redacts
+authorization headers and known key patterns, and rethrows/logs only the redacted
+message. HTTP-library debug logging is disabled in production. Tests must include
+canary provider keys and fail if those canaries appear in logs, thrown errors, audit
+events, provider error summaries, traces, provider request metadata, or persisted
 state.
 
 Keys are set through a settings UI authorized by GitHub installation admin rights.
