@@ -183,11 +183,15 @@ managed live-key custody equivalent to CLI, Action, or a user-controlled CLI run
   `{installation, repository scope, provider, key_row_id}` grant, disables its decrypt
   grants, cancels or marks incomplete jobs that depended on it, and deletes that live
   key row while preserving unrelated provider credentials, installation metadata, and
-  review state. A full uninstall or repository disable uses the installation-scoped
-  control-plane deletion flow: it revokes the installation, cancels queued jobs,
-  evicts caches, deletes provider key rows and review state, and leaves only encrypted
-  backup copies of deleted key material and operational records until the published
-  30-day backup-expiry schedule. Incident timers
+  review state. Disabling or removing one repository from a multi-repository
+  installation is repository-scoped: it bumps that repository's revocation generation,
+  cancels or marks incomplete only that repository's queued/running work, evicts that
+  repository's caches, removes repository review state, and disables or detaches only
+  grants scoped to that repository while sibling repositories remain enabled. A full
+  uninstall uses the installation-scoped control-plane deletion flow: it revokes the
+  installation, cancels queued jobs, evicts caches, deletes provider key rows and
+  review state, and leaves only encrypted backup copies of deleted key material and
+  operational records until the published 30-day backup-expiry schedule. Incident timers
   start at detection time, defined as the moment an automated control or operator
   first classifies a scoped grant, wrapping key, audit stream, or policy state as
   suspect, not when revocation processing later succeeds. Suspected scoped

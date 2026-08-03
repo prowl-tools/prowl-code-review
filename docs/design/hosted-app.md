@@ -32,13 +32,18 @@ the CLI, Action, App source, or self-hosting, and they never become a feature ga
 and superseded heads must not trigger duplicate or out-of-order provider calls.
 
 **Selected option:** build a thin, open-source webhook service around the **same
-TypeScript core** the Action and CLI use. The reference managed runtime is
-Cloudflare Workers + Queues for receiver/orchestration only, with the runner tier
-defined in Decision 2. Workers is not an eligible runtime for key ingestion,
-provider-key decrypt, or provider HTTP calls unless it can prove the native
-memory-locking and process-isolation controls in Decision 1; managed v1 must use a
-hardened ingestion service, sidecar/broker, container runner, or alternative platform
-for those key-handling paths, or managed launch remains blocked.
+TypeScript core** the Action and CLI use. Managed v1 webhook intake must run first
+through a raw-header-preserving receiver or edge proxy that exposes the original
+wire header list before Fetch/framework normalization, including duplicate and
+case-variant signature headers. Cloudflare Workers + Queues may remain the
+reference orchestration layer only after that raw receiver has verified and
+durably recorded the delivery; a pure Worker `fetch` handler that sees only the
+normalized `Headers` object is not eligible for signature verification or launch.
+Workers is also not an eligible runtime for key ingestion, provider-key decrypt,
+or provider HTTP calls unless it can prove the native memory-locking and
+process-isolation controls in Decision 1; managed v1 must use a hardened
+ingestion service, sidecar/broker, container runner, or alternative platform for
+those key-handling paths, or managed launch remains blocked.
 
 ```text
 PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
@@ -406,15 +411,20 @@ decrypt after `finally`; automatic client/SDK retries, redirects, and buffered
 request replay are disabled. Credentials must stay out of prompts, provider request
 bodies, serialized URLs, structured error metadata, and generic exception
 inspection.
-Provider keys are decoded from the envelope into owned `Buffer`/`Uint8Array`
-instances and stay out of long-lived JavaScript strings until the final transport
-header boundary. Best-effort zeroing means overwriting every owned mutable key,
-header, and canary buffer with `Buffer.fill(0)` or an equivalent native
-`sodium_memzero`/secure-zero primitive in `finally`, then dropping references before
-the runner exits. If a provider SDK or HTTP primitive forces a transient string copy
-for an authorization header, that copy is treated as live-process residual risk and
-is allowed only inside the audited minimal client above. Buffer zeroing is hygiene,
-not cryptographic erasure and not the primary defense against process compromise.
+Provider keys are decoded from the envelope only inside the native helper, sidecar
+broker, or platform secret service that also owns credential-bearing header
+construction and socket open. The JavaScript runner receives only an opaque
+provider-call grant, non-credential request metadata, and sanitized outcome
+handles; it must never receive the long-lived key as a JavaScript string,
+`Buffer`, `Uint8Array`, header object, request object, exception value, or loggable
+field. Best-effort zeroing means the helper overwrites every helper-owned mutable
+key, header, and canary buffer with an approved secure-zero primitive in `finally`,
+then drops references before the provider attempt closes. If a candidate provider
+SDK or HTTP primitive requires JavaScript to materialize a credential-bearing
+header, that candidate is not launchable for managed v1 unless a later security
+decision explicitly accepts and discloses the weaker live-custody model. Buffer
+zeroing is hygiene, not cryptographic erasure and not the primary defense against
+process compromise.
 Node/V8 cannot guarantee complete erasure of copied strings, interned values, CPU
 caches, header normalization buffers, kernel buffers, or HTTP-client internals;
 per-job process isolation, no long-lived provider clients, mandatory runner
@@ -903,15 +913,24 @@ audit event. Deleting one provider credential revokes only that
 `{installation, repository scope, provider, key_row_id}` credential, bumps a
 credential-scoped revocation generation, disables its decrypt grants, cancels or
 marks incomplete jobs that depended on that key, and leaves unrelated provider
-credentials, installation metadata, and review state intact unless the request is an
-installation uninstall or repository disable. Uninstall starts with a single database
-transaction that marks the installation revoked, bumps the installation revocation
-generation, invalidates outstanding job leases and fencing tokens, records
-deletion-started with a timestamp, and prevents new jobs from being claimed. Only
-after that transaction commits does the control plane disable KMS decrypt grants,
-cancel queued jobs, evict runner/cache entries, delete provider key rows and review
-state, and write the deletion-complete audit event. Outstanding leases are
-invalidated before revocation is reported as complete.
+credentials, installation metadata, and review state intact unless the request is a
+repository disable or full installation uninstall. Repository disable is
+repository-scoped: one serializable transaction marks only that repository disabled,
+bumps a repository revocation generation, invalidates job leases and fencing tokens
+for that repository, records disable-started with a timestamp, and prevents new jobs
+for that repository from being claimed while preserving sibling repositories in the
+same installation. Only after that transaction commits does the control plane cancel
+that repository's queued/running work, evict its runner/cache entries, delete or
+detach repository-scoped provider-key grants where applicable, remove repository
+review state, and write the repository-disable-complete audit event. Full uninstall
+uses the installation-scoped flow: it marks the installation revoked, bumps the
+installation revocation generation, invalidates all outstanding job leases and
+fencing tokens for the installation, records deletion-started with a timestamp,
+prevents new jobs from being claimed anywhere in that installation, then disables
+KMS decrypt grants, cancels queued jobs, evicts runner/cache entries, deletes
+provider key rows and review state, and writes the deletion-complete audit event.
+Outstanding leases are invalidated before repository disable or uninstall is
+reported as complete.
 
 Active runners perform a transactional read of installation state, revocation
 generation, lease expiry, and fencing token immediately before every external call
@@ -1772,9 +1791,21 @@ acquires the deployment-scoped comment lock, re-reads the current GitHub comment
 head, author, and repository state, parses the current body only in memory, compares
 the fresh state to the queued event's digests and metadata, performs the fresh
 authorization checks below, creates or claims the consume-once command record, and
-holds the lock through terminal command state. Comment edits that arrive before or
-during execution remain queued behind the same comment key and re-enter this canonical
-claim path after the current command reaches terminal state.
+holds the lock through terminal command state under a bounded lease. The lock records
+`lease_expires_at`, command deadline, fencing token, and heartbeat timestamp; command
+workers refresh it only while the same process still owns the current fencing token.
+Managed v1 command execution has a launch-published hard deadline, defaulting to 120
+seconds and capped at 180 seconds without a new security decision. Timeout,
+cancellation, worker crash, heartbeat expiry, process restart, or any terminal failure
+releases the lock by compare-and-swapping the current fencing token to a terminal
+state; a sweeper may release only expired locks after proving the owner heartbeat is
+stale and marking the abandoned command `timed_out` or `incomplete`. Retries must
+claim a new fencing token and re-enter the canonical claim path from the latest
+comment state; they cannot continue under the old permission proof, provider-call
+nonce, or side-effect reservation. Comment edits that arrive before or during
+execution remain queued behind the same comment key and re-enter this canonical claim
+path after the current command reaches terminal state or after the bounded lease is
+expired and safely swept.
 
 1. The comment belongs to a pull request in a repository covered by the active App
    installation.
@@ -2143,7 +2174,7 @@ The explicit records are:
 
 | Backlog decision | Selected option | Rationale | Rejected alternatives | Consequences |
 | --- | --- | --- | --- | --- |
-| Webhook architecture | Thin open-source webhook service using the shared TypeScript core; Cloudflare Workers + Queues is the reference managed receiver/orchestrator. | Durable idempotency, leased claims, stale-head checks, and fork skips keep instant reviews deterministic. | Queueing before durable idempotency, delivery-id-only dedupe, automatic fork review, and waiting for full checkout infrastructure. | Requires persistence before the queue and user-visible duplicate/superseded/skip states. |
+| Webhook architecture | Thin open-source webhook service using the shared TypeScript core; managed intake starts at a raw-header-preserving receiver or edge proxy, with Cloudflare Workers + Queues allowed only as the post-verification orchestration layer. | Durable idempotency, leased claims, stale-head checks, raw signature-header cardinality, and fork skips keep instant reviews deterministic. | Queueing before durable idempotency, delivery-id-only dedupe, automatic fork review, pure Worker `fetch` signature verification, and waiting for full checkout infrastructure. | Requires raw-header-preserving ingress, persistence before the queue, and user-visible duplicate/superseded/skip states. |
 | Key custody, secret lifecycle, and least privilege | Open-source self-host path plus managed per-installation envelope encryption with KMS/HSM roles, audited grants, revocation, deletion, and explicit live-runner residual risk. | Preserves install-once UX while making Prowl's managed custody boundary verifiable. | Environment-only managed keys, plaintext queue payloads, closed-source hosting, broad PATs, and claiming Node memory erasure solves live compromise. | KMS policy, leak tests, deletion jobs, revocation fencing, incident response, and settings authorization are launch blockers. |
 | Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews, must publish retrieval limits and caveats, and must label or withhold security findings when required context is incomplete. |
 | Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits, separate relevant review/command buckets, and lossless control-event reconciliation. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, dropping authorization-control webhooks under burst load, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, durable control-event coalescing, and operator dashboards. |
