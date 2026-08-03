@@ -771,7 +771,14 @@ authorization transaction shape. The design does not claim database planner cons
 time or KMS constant time; launch records must publish per-operation p50/p95/p99/max
 for nonce lookup, session binding, CSRF/Origin validation, KMS/envelope operations,
 dummy path, and total request timing, and production histograms include those classes
-inside the fixed response floor. Authorized saves create only
+inside the fixed response floor. The response floor is not a hard-coded maximum: each
+launch record must set the smallest measured deadline that covers the slowest required
+failure/success path plus published headroom under production-like load, publish the
+expected user-visible latency/capacity cost, and fail closed rather than relax timing
+if admin key-save traffic exceeds that budget. Key save is an admin setup/rotation
+path, not a hot request path; if future usage makes fixed timing operationally
+unacceptable, managed key-save remains disabled until a new security decision replaces
+the mitigation. Authorized saves create only
 an inactive pending-validation candidate for later guarded validation. The last
 verified key remains active until a
 new candidate validates; if no verified key exists, reviews remain disabled because
@@ -854,7 +861,7 @@ jitter after that bound, never plaintext key material, provider error detail, ke
 prefix/length/class, or authorization reason.
 Production records p50/p95/p99/max latency histograms by internal outcome class only
 after the response is committed, never in user-visible output. If any class pair
-exceeds the published p95/p99 delta for three consecutive five-minute windows, the
+exceeds the published p95/p99 delta for two consecutive five-minute windows, the
 settings service disables new managed key-save traffic for affected runner/settings
 classes, pages on-call, keeps already verified keys unchanged, and allows runners to
 use only the last successfully verified key. Installations with no verified key receive
@@ -896,7 +903,12 @@ afterward. The published managed v1 bound for final-check-to-wrapper-handoff is 
 path is unmeasured, contains avoidable async gaps, or exceeds the bound. DNS, TLS, and
 provider processing after wrapper handoff are already part of the external request and
 remain residual cross-system exposure; this is not a promise of atomic or
-microsecond-scale cancellation in Node.js. The
+microsecond-scale cancellation in Node.js. Managed launch must use provider-native
+short-lived request credentials, provider-side revocation tokens, or an egress proxy
+that can deny authentication before the request leaves Prowl when the selected provider
+supports those controls. Providers that support only a long-lived user BYOK credential
+remain launchable only with a signed residual-risk acceptance in the launch record and
+the CLI/Action/self-host recommendation in user-facing custody docs. The
 GitHub publication path uses the same guarded-send boundary: provider-derived output
 may be held only in runner-local buffers until the helper locks the installation state
 row and review/publication row, re-reads revocation generation, allocates a
@@ -1316,6 +1328,12 @@ append-only audit log.
   duplicate/case-variant headers sent through the exact load-balancer/proxy/runtime
   stack, comma-coalesced values, current-secret, previous-secret, dummy-secret,
   row-present/row-absent replay cases, and verifier-quarantine behavior. The receiver
+  pre-production integration suite must send duplicate, case-variant, empty,
+  comma-coalesced, and conflicting `X-Hub-Signature-256` headers through the deployed
+  load balancer and runtime, capture the raw header list seen by the HTTP adapter
+  before framework parsing, and prove every variant is rejected before HMAC
+  verification can authorize the request. The same suite runs as a daily drift check;
+  any failure disables managed webhook intake and pages on-call. The receiver
   must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus

@@ -52,7 +52,11 @@ security-equivalent replacement for CLI/Action live-key custody.
 For the managed Hosted App, your plaintext provider key is decrypted into
 Prowl-controlled settings or runner memory when you save or validate it and before
 every provider call; it cannot be protected against live-process compromise of that
-worker.
+worker. Managed launch remains unavailable until the selected key-ingestion path uses
+an attested native helper, sidecar secret broker, or platform enclave/secret service
+with memory-locking, no-swap/no-core-dump/no-debug controls, explicit zeroing, and
+canary leak tests; those controls reduce accidental persistence but still do not make
+managed live-key custody equivalent to CLI, Action, or self-hosting.
 
 > [!WARNING]
 > The planned managed hosted App is not suitable for threat models that assume zero
@@ -138,6 +142,11 @@ worker.
   already sent cannot be recalled; it may consume provider quota, reach the provider,
   continue server-side after the local stream is aborted, and expose the provider key
   in the request authorization material plus PR content to provider-side systems.
+  Managed launch must prefer provider-native short-lived request credentials,
+  provider-side revocation tokens, or a hardened managed egress proxy when a provider
+  supports them; when a provider supports none of those controls, this remains an
+  explicitly documented managed-service residual boundary and CLI/Action/self-hosting
+  remains the recommendation for users who cannot tolerate it.
   Once that request reaches the user's selected provider, provider logging, caching,
   downstream transmission, endpoint compromise, or provider-side key misuse is
   outside Prowl's control and is not undone by Prowl revocation; users must rely on
@@ -277,6 +286,13 @@ storage, audit, and runner services.
   transiently in receiver memory for signature verification/routing, and review
   content may exist transiently in active runner memory for the review currently
   being processed; neither may be persisted as durable content.
+- Managed key-save timing uses a fixed response floor to reduce user-queryable
+  validation or authorization distinctions, but the managed service does not claim
+  database planner, KMS/HSM, network, or CPU constant time. Launch records must publish
+  per-class timing histograms, and managed key-save traffic must fail closed if
+  production class-pair drift exceeds the published bound for two consecutive
+  five-minute windows. Users who cannot tolerate residual statistical timing leakage
+  should use CLI, Action, or self-hosting.
 - If telemetry is ever added, it will be **opt-in and off by default**, clearly
   documented, and never include code or secrets.
 
