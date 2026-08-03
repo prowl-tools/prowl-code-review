@@ -142,16 +142,23 @@ runner credential can decrypt only the active installation/job grant, not all
 installations. A KMS administrator can deny service or rotate keys but cannot
 decrypt provider keys without the two-operator break-glass path, which expires
 automatically and is separately audited. Per-installation data keys wrap provider
-keys; rotating the root key at least every 90 days re-wraps data keys. Suspected
-scoped compromise disables affected decrypt grants immediately and alerts operators
-within 5 minutes; broad or critical wrapping-key compromise freezes all affected
-managed decrypts within 15 minutes. Re-wrap/destruction begins immediately, affected
-installations stay suspended until it completes, and the 4-hour target is a maximum
-restoration objective for scoped events, not a period where compromised grants keep
-working. These incident timers are post-detection containment for future decrypts
-and stored ciphertext; they do not undo plaintext exposure from a live compromised
-runner. Queue messages carry installation, repo, PR, head SHA, and key row
-identifiers, never plaintext keys or encrypted key blobs.
+keys; rotating the root key at least every 90 days re-wraps data keys. Incident
+timers start at detection time, defined as the moment an automated control or
+operator first classifies a scoped grant, root key, audit stream, or policy state as
+suspect; they do not start when revocation processing later succeeds. Suspected
+scoped compromise disables affected decrypt grants immediately, blocks new job
+claims for affected installations, and alerts operators within 5 minutes. Broad or
+critical wrapping-key compromise freezes all affected managed decrypts within 15
+minutes. In both cases, the control plane immediately cancels queued work and
+terminates active runners with a 30-second hard deadline rather than waiting for the
+next decrypt check. Re-wrap/destruction begins immediately, affected installations
+stay suspended until it completes, and the 4-hour target is a maximum restoration
+objective for scoped events, not a period where compromised grants keep working.
+These incident timers are post-detection containment for future decrypts and stored
+ciphertext; they do not undo plaintext exposure that occurred before detection or
+provider requests already sent by a live compromised runner. Queue messages carry
+installation, repo, PR, head SHA, and key row identifiers, never plaintext keys or
+encrypted key blobs.
 
 Each encrypted provider-key row is an authenticated envelope, not just ciphertext.
 The envelope metadata commits to installation id, key row id, provider name, data
@@ -212,16 +219,23 @@ deployment only on platforms where crash-dump controls can be enforced are
 mitigations, not a guarantee that memory is clean.
 
 The provider HTTP client is a launch-blocking security component: use a minimal
-audited client or in-house wrapper with no middleware cache, no automatic redirects,
-no automatic retries, no request/response buffering beyond the active socket or
-request stream, no automatic request object retention, no debug hooks, and no
-logging of serialized request/response objects. Abort signals must destroy active
-request and response streams plus any owned buffers; no cached request object may be
-retried. Tests must include post-attempt canary scans of available heap/debug
-artifacts in staging; a canary present after `finally` completes blocks launch until
-the client/wrapper is replaced or patched. A canary may still be observable while
-the request is active; that live-process exposure is the explicit residual risk
-above.
+audited wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, or an
+equivalent wrapper only if tests prove the same behavior. The wrapper has no
+middleware cache, no automatic redirects, no automatic retries, no request/response
+buffering beyond the active socket or one bounded read chunk, no automatic request
+object retention, no debug hooks, and no logging of serialized request/response
+objects. The launch maximum buffered provider response chunk is 64 KiB before the
+runner performs a revocation check and either processes that chunk or discards it;
+larger read-ahead or full-body buffering blocks launch. Abort signals must destroy
+active request and response streams plus any owned buffers within a 1-second
+deadline, then the runner process exits if the stream is still open; no cached
+request object may be retried. Tests must include post-attempt canary scans of
+available heap/debug artifacts in staging and abort tests proving revocation fires
+before full-body buffering on slow, single-chunk, and already-completed provider
+responses; a canary present after `finally` completes blocks launch until the
+client/wrapper is replaced or patched. A canary may still be observable while the
+request is active or inside unavoidable kernel/HTTP-library buffers before abort is
+honored; that live-process exposure is the explicit residual risk above.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -275,14 +289,17 @@ values that commit to the nonce hash or link id, authenticated session id hash,
 sender id, installation id, repository id, and expiry. The settings page serves no
 third-party assets, sends `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`,
 `SameSite=Lax` or stricter session cookies, and requires the explicit signed CSRF
-token; SameSite cookies are defense-in-depth, not the CSRF control. The key-save
-transaction consumes the nonce atomically with an `UPDATE`/`DELETE ... WHERE
-consumed_at IS NULL` or equivalent unique constraint before persisting the key, so
-concurrent submissions cannot reuse the link. Rendering the key input also requires
-a transactional read proving the nonce is unexpired and unconsumed; the first
-authorized open binds the nonce to a hash of the authenticated session id, sender
-id, installation id, repository id, link id, and expiry, and later GET/POST requests
-must present the same binding. A second session receives the same generic
+token; SameSite cookies are defense-in-depth, not the CSRF control. Rendering the
+key input requires a transactional read proving the nonce is unexpired and
+unconsumed; the first authorized open binds the nonce row to a hash of the
+authenticated session id, sender id, installation id, repository id, link id, row
+version, and expiry. The key-save transaction consumes the nonce atomically with an
+`UPDATE`/`DELETE` predicate over nonce hash, session-binding hash, sender id,
+installation id, repository id, row version, `consumed_at IS NULL`, and unexpired
+timestamp, or an equivalent unique constraint, before persisting the key. Concurrent
+submissions cannot reuse the link, and a POST from an unbound or different session
+cannot create or steal the binding. Later GET/POST requests must present the same
+signed session binding and CSRF token. A second session receives the same generic
 used/expired response as an already consumed link, while multiple tabs for the same
 bound session still rely on the atomic consume-once save transaction. A leaked link
 cannot save a key without the fresh GitHub OAuth/App authorization described in
@@ -298,11 +315,15 @@ logged; they are mapped to a fixed internal enum such as `invalid`, `unauthorize
 and persist no key. `rate_limited` and `unknown` also fail closed by default unless
 the provider adapter explicitly declares live validation unsupported; only then may
 the endpoint persist an `unverified` key that must be validated through the same
-guarded provider-call path before the first review can use it. The user-facing
-response distinguishes only generic not-saved versus saved-unverified outcomes and
-never re-renders or logs the submitted key, its prefix/suffix, length, character
-classes, or partial provider error details. The input field is cleared after every
-submit attempt.
+guarded provider-call path before the first review can use it. The endpoint responds
+under a fixed wall-clock response budget, with identical HTTP status, headers, and
+body bytes for `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation
+unsupported, and nonce/session race-loss outcomes. The immediate response never
+distinguishes saved, saved-unverified, or not-saved; any later authenticated status
+view uses a generic verification-pending/failed state and never includes provider
+details. The response never re-renders or logs the submitted key, its prefix/suffix,
+length, character classes, or partial provider error details. The input field is
+cleared after every submit attempt.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -334,19 +355,24 @@ final local check but before the external API receives the request is an unavoid
 cross-system race; the launch docs must disclose it. If revocation is observed while
 a provider response is streaming, the abort signal closes the stream immediately,
 the runner stops reading further chunks, and all bytes already received are
-discarded without parsing. The runner must re-check revocation immediately after
-response headers/stream termination and before parsing response content. It must
-re-check again immediately before the GitHub publication API call, or before each
-publication call if output is deferred/batched, and the publication lease/fencing
-token is invalidated by revocation. If revocation occurred in flight, the response
-bytes are discarded without extraction, summary generation, persistence, or GitHub
-publication; provider-side effects from the already-sent request cannot be undone.
-There is no true atomicity across the database and an already-started external
-GitHub API call, so the last re-check and fencing token are the final defense before
-publication. Integration tests must revoke an installation mid-review, during active
-provider streaming, during provider response handling, and immediately before
-publication, and verify no post-revocation publication occurs unless the external
-GitHub call had already started. Logs keep only redacted operational events. Backups
+discarded without parsing. The runner must re-check revocation after response
+headers, before and after every bounded response chunk, after stream termination, and
+before parsing response content. If a provider or HTTP library has already buffered
+up to the 64 KiB chunk limit before the abort is honored, those bytes are discarded
+and the event is audited as residual live-buffer exposure; a client that can buffer
+more than that limit is not launchable. The runner must re-check again immediately
+before the GitHub publication API call, or before each publication call if output is
+deferred/batched, and the publication lease/fencing token is invalidated by
+revocation. If revocation occurred in flight, the response bytes are discarded
+without extraction, summary generation, persistence, or GitHub publication;
+provider-side effects from the already-sent request cannot be undone. There is no
+true atomicity across the database and an already-started external GitHub API call,
+so the last re-check and fencing token are the final defense before publication.
+Integration tests must revoke an installation mid-review, during active provider
+streaming before and after the first chunk, during provider response handling, and
+immediately before publication, and verify no post-revocation publication occurs
+unless the external GitHub call had already started. Logs keep only redacted
+operational events. Backups
 remain encrypted and become
 cryptographically unusable once wrapping keys are destroyed; backup copies expire
 on the published 30-day retention schedule. GitHub comments/checks already posted
@@ -423,7 +449,16 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   clean-with-caveat review. If required changed-file retrieval fails, permissions
   are denied, response sizes exceed bounds, the rate state is exhausted, or
   completeness is unknown, the review is marked **Review incomplete**, approval is
-  withheld, and the output names the missing context.
+  withheld, and the output names the missing context. Security findings from
+  Gitleaks, dependency scanning, SAST, or equivalent detectors use the same
+  completeness state as the review approval. If changed-line content cannot be read
+  completely, the finding is withheld and reported only in the incomplete-context
+  note. If the changed line is available but required surrounding, caller, lockfile,
+  dependency, or repository context is missing, any emitted security finding must be
+  marked **incomplete context**, approval remains withheld, and the output states
+  which verification context was unavailable. The hosted App must never publish a
+  clean or fully verified security result for a PR whose required security context is
+  incomplete.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -562,9 +597,13 @@ append-only audit log.
   `crypto.timingSafeEqual` or equivalent for each candidate, bitwise/result
   accumulation instead of `some`/early `return`, no per-candidate logs until the
   loop completes, and tests showing equivalent behavior when the matching secret is
-  first, last, or absent. Delivery ids are recorded with a 24-hour replay TTL before
-  enqueueing, keyed with delivery id, payload hash, action, and accepted secret
-  version. After signature and replay handling, the receiver performs cheap
+  first, last, or absent. Only after the full signature loop completes does the
+  receiver consult the replay store. Delivery ids are recorded with a 24-hour replay
+  TTL before enqueueing, keyed with delivery id, payload hash, action, and accepted
+  secret version. New replay rows may be inserted only for the current secret version
+  or for the first accepted delivery before `new_secret_active_at`; an old-secret
+  match during grace is never allowed to create the prior replay record it needs for
+  acceptance. After signature and replay handling, the receiver performs cheap
   relevance classification before charging per-installation buckets: non-PR events,
   comments without an `@prowl-review` mention/command, and other no-op signed noise
   are acknowledged without consuming review, command, or authorization-control
@@ -586,13 +625,18 @@ append-only audit log.
   accepted/duplicate outcome. New delivery ids signed with the previous secret are
   rejected even if the HMAC matches. Old-secret HMAC is computed before the replay
   store check, but a match is necessary only for the later duplicate decision: the
-  receiver must find a prior replay record with `first_seen_at <
-  new_secret_active_at` before accepting the request as a duplicate. Replay records
-  for the previous secret expire at the earlier of 24 hours from first accepted
-  delivery or the 10-minute rotation grace deadline. After the grace window, the old
-  secret is removed from the candidate set and old-secret deliveries fail closed
-  even if GitHub retries them late. Self-host operators own the same App-wide
-  rotation flow for their registered App.
+  receiver must find an existing immutable replay record with matching delivery id,
+  payload hash, action, and old accepted secret version whose `first_seen_at <
+  new_secret_active_at` before accepting the request as a duplicate. If that prior
+  record is missing or violates the timestamp/version invariant, the request is
+  rejected and no new old-secret replay row is inserted. Replay records for the
+  previous secret expire at the earlier of 24 hours from first accepted delivery or
+  the 10-minute rotation grace deadline. After the grace window, the old secret is
+  removed from the candidate set and old-secret deliveries fail closed even if GitHub
+  retries them late. Tests must cover old-secret new delivery rejection during grace,
+  old-secret duplicate acceptance only with a pre-activation replay row, and
+  old-secret rejection after grace despite a matching HMAC. Self-host operators own
+  the same App-wide rotation flow for their registered App.
 - **Abuse controls:** per-installation queue depth/concurrency, separate relevant
   review/command/control webhook buckets after no-op filtering, dead-letter +
   alerting on repeated failures, and stale-head close-out so a misbehaving repo
@@ -627,14 +671,23 @@ current head.
 
 Before the first external managed hosted installation, every private key for the
 reused `prowl-review` App that was distributed to repository or organization Action
-secrets such as `PROWL_APP_PRIVATE_KEY` must be revoked and rotated. The managed
-App signing credential lives only in the managed secret store, HSM, or token broker
-used by the hosted token-minter; it is never stored in this repository, workflow
-secrets, Action logs, or customer repositories. The Action path must use
-`GITHUB_TOKEN`, a user-owned GitHub App credential scoped to that operator, or a
-brokered token that can mint only for the current repository/workflow and cannot
-mint across managed hosted tenants. Sharing the managed App signing credential with
-Actions is a launch blocker.
+secrets such as `PROWL_APP_PRIVATE_KEY` must be revoked at the GitHub App level and
+rotated. Deleting repository secrets is not sufficient; the old App private-key
+versions must be removed from the GitHub App registration so a copied key can no
+longer mint installation tokens anywhere. The managed installer and token-minter
+have a hard launch gate backed by an operator-signed credential-rotation record:
+external installation acceptance, token minting, and review enqueueing remain
+disabled until the record names the revoked GitHub App key versions, the replacement
+managed key version generated after the cutoff, and a canary proving a retired key
+cannot mint an installation token. If GitHub-level revocation cannot be verified
+with high confidence, the managed service must use a new GitHub App identity whose
+private key was never distributed to Actions. The managed App signing credential
+lives only in the managed secret store, HSM, or token broker used by the hosted
+token-minter; it is never stored in this repository, workflow secrets, Action logs,
+or customer repositories. The Action path must use `GITHUB_TOKEN`, a user-owned
+GitHub App credential scoped to that operator, or a brokered token that can mint only
+for the current repository/workflow and cannot mint across managed hosted tenants.
+Sharing the managed App signing credential with Actions is a launch blocker.
 
 Uninstalling the `prowl-review` App immediately disables hosted reviews and token
 minting for Action workflows that depend on that App. Existing Action workflows
@@ -644,15 +697,19 @@ workflow is reconfigured.
 
 **Delivery ownership:** the shared authority is GitHub-backed, not a private hosted
 database row: the trusted-base `.prowl-review.yml` gains `delivery.owner: action |
-app`. The hosted installation store may cache the last observed owner for the UI,
-but it cannot override the trusted-base config. If the field is absent, setup uses
-a deterministic fallback: when an Action workflow is present, the App yields
-entirely for that PR head and posts at most a neutral "Action owns delivery" status;
-it does not stand by, retry ownership, or take over because the Action is broken,
-disabled, or slow. The App owns only when no Action workflow is detected. Workflow
-file detection is only this bootstrap fallback; it cannot override an explicit
-config owner. Repos that want hosted failover must set an explicit owner in trusted
-base config rather than relying on broken-workflow detection.
+app`. The hosted installation store may cache the last observed owner for the UI for
+at most 5 minutes, but it cannot override the trusted-base config and is never used
+as runner authority. If the trusted-base config cannot be read, cannot be parsed, or
+comes from an untrusted ref, the App fails closed as "unclear delivery owner" and
+does not fall through to workflow detection. If `delivery.owner` is absent, setup
+uses workflow-file detection only as a bootstrap aid: repositories with both Action
+workflows and the hosted App must set the field explicitly, and the App yields with
+an explanatory "delivery owner not configured" status rather than guessing. The App
+owns by fallback only when a fresh trusted-base read proves the owner field is absent
+and no Action or reusable Action workflow is present for that PR head. Workflow file
+detection cannot override an explicit config owner and is re-run from the trusted
+base before claim; repos that want hosted failover must set an explicit owner in
+trusted-base config rather than relying on broken-workflow detection.
 
 Before hosted launch, the Action must learn this field from the same trusted-base
 config it already loads and exit with a neutral "App owns delivery" result before
@@ -663,8 +720,10 @@ PR head SHA or base-config generation; they increment lifecycle generation and
 supersede in-flight work for older generations. Subsequent deliveries for existing
 PR heads re-query the owner before enqueueing; in-flight reviews under the previous
 owner are marked superseded and stopped before provider calls and before
-publication if ownership changed. The cached owner in the hosted store is only a UI
-hint. The idempotency key includes the owner and lifecycle generation:
+publication if ownership changed. The runner also re-reads the trusted-base config
+immediately before claiming a job, before provider calls, and before publication;
+cache expiry or mismatch produces the same unclear-owner skip. The cached owner in
+the hosted store is only a UI hint. The idempotency key includes the owner and lifecycle generation:
 `{installation, repository, pull_request, head_sha, owner, lifecycle_generation}`,
 and both delivery paths re-check the owner before provider calls and publication.
 This Action/App owner check is a launch blocker for dual-delivery support.
@@ -680,21 +739,30 @@ commands are honored only when all checks pass:
    10 per minute per sender, then the existing per-command limit below. The sender
    must have repository `write`, `maintain`, or `admin` permission, verified through
    repository collaborator/permission APIs. A short-lived positive permission cache
-   may avoid repeated GitHub calls only when it was minted from GitHub for the same
-   `{installation, repository, sender, required_role}` within the last 5 minutes.
+   may avoid repeated GitHub calls for non-provider, non-state-changing commands only
+   when it was minted from GitHub for the same `{installation, repository, sender,
+   required_role}` within the last 60 seconds.
    Cache invalidation is atomic with webhook ingestion for permission-changing
    events, including `member` collaborator add/remove/edit, `membership` add/remove,
-   `organization` member add/remove/invite/role changes, `team` edit/delete and
-   repository add/remove, `team_add`, `repository` visibility/transfer/archive/delete
-   changes, `installation_repositories`, and `installation` suspend/delete. Unknown
-   membership, team, collaborator, repository-permission, or installation-scope
-   events invalidate the whole installation permission cache and bump an
-   installation auth generation. Cache hits, misses, and invalidations are audited;
-   stale, missing, or lower-role cache entries cannot authorize a command. Claimed
-   command records store the auth generation used for authorization, and the handler
-   re-checks that generation immediately before side effects; if a permission-change
-   webhook invalidated the cache mid-command, the command aborts and must re-authorize
-   before retrying. State-changing, privileged, or provider-backed commands,
+   `organization` member add/remove/invite/role/rename changes, `team`
+   edit/delete/repository add/remove, `team_add`, `repository`
+   visibility/transfer/archive/delete changes, `installation_repositories`, and
+   `installation` created/deleted/suspend/unsuspend/new-permissions-accepted events.
+   Unknown membership, team, collaborator, repository-permission, organization,
+   enterprise-policy, branch-protection, or installation-scope events invalidate the
+   whole installation permission cache and bump an installation auth generation.
+   Because some permission-affecting changes, including branch protection and
+   enterprise SAML/IP policy changes, may not arrive as reliable App webhooks, the
+   cache is never final authority for commands whose required role depends on those
+   policies; those commands must perform a fresh GitHub API read. Settings UI and
+   admin command flows expose a cache-bust operation that bumps the installation auth
+   generation after permission changes. Cache hits, misses, and invalidations are
+   audited; stale, missing, or lower-role cache entries cannot authorize a command.
+   Claimed command records store the auth generation used for authorization, and the
+   handler re-checks that generation immediately before side effects; if a
+   permission-change webhook invalidated the cache mid-command, the command aborts
+   and must re-authorize before retrying. State-changing, privileged, or
+   provider-backed commands,
    including `review`, `full review`, `docstrings`, `tests`, chat replies,
    `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
    `configure key`, must perform a fresh GitHub permission API check after the
@@ -755,25 +823,31 @@ repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
 single-use, requires fresh GitHub OAuth/App authorization with the
 installation-admin definition above, and carries no key material in the URL. OAuth
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
-session id hash, sender id, installation id, repository id, and expiry before
-accepting a provider key. The first authorized settings GET transactionally binds
-the nonce to that session before rendering the key input, and the key-save POST must
-happen over HTTPS with the same authorized session. Nonce consumption plus key
-persistence must commit in one transaction; a second request for the same nonce gets
-a generic used/expired response and cannot write a key.
+session id hash, sender id, installation id, repository id, row version, and expiry
+before accepting a provider key. The first authorized settings GET transactionally
+binds the nonce row to that session before rendering the key input, and the key-save
+POST must happen over HTTPS with the same authorized session. Nonce consumption plus
+key persistence must commit in one transaction using a predicate that includes the
+nonce hash, session-binding hash, sender id, installation id, repository id, row
+version, unexpired timestamp, and `consumed_at IS NULL`; a second request or
+different session for the same nonce gets a generic used/expired response and
+cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
 both the Action and App from starting reviews for the same PR head.
 
 **Rejected alternatives:** registering a sibling cloud App with a different bot
-login, treating hidden markers as delivery-agnostic regardless of author, deciding
-delivery precedence from live workflow-file detection, and accepting commands from
-any commenter with a syntactically valid mention.
+login when GitHub-level key revocation can be verified, treating hidden markers as
+delivery-agnostic regardless of author, deciding delivery precedence from stale
+workflow-file detection, sharing managed signing credentials with Actions, and
+accepting commands from any commenter with a syntactically valid mention.
 
-**Consequences:** hosted launch requires delivery-owner config/cache support, owner
-checks in both delivery paths, command replay records, and an installation-admin
-settings flow before command parity is considered complete.
+**Consequences:** hosted launch requires verified GitHub-level revocation of
+Action-distributed App keys or a new App identity, delivery-owner config/cache
+support with fail-closed trusted-base reads, owner checks in both delivery paths,
+command replay records, and an installation-admin settings flow before command
+parity is considered complete.
 
 ## Decision-record coverage for #62
 
@@ -785,19 +859,22 @@ The explicit records are:
 | --- | --- | --- | --- | --- |
 | Webhook architecture | Thin open-source webhook service using the shared TypeScript core; Cloudflare Workers + Queues is the reference managed receiver/orchestrator. | Durable idempotency, leased claims, stale-head checks, and fork skips keep instant reviews deterministic. | Queueing before durable idempotency, delivery-id-only dedupe, automatic fork review, and waiting for full checkout infrastructure. | Requires persistence before the queue and user-visible duplicate/superseded/skip states. |
 | Key custody, secret lifecycle, and least privilege | Open-source self-host path plus managed per-installation envelope encryption with KMS/HSM roles, audited grants, revocation, deletion, and explicit live-runner residual risk. | Preserves install-once UX while making Prowl's managed custody boundary verifiable. | Environment-only managed keys, plaintext queue payloads, closed-source hosting, broad PATs, and claiming Node memory erasure solves live compromise. | KMS policy, leak tests, deletion jobs, revocation fencing, incident response, and settings authorization are launch blockers. |
-| Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews and must publish retrieval limits and caveats. |
+| Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews, must publish retrieval limits and caveats, and must label or withhold security findings when required context is incomplete. |
 | Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits and separate relevant review/command/control webhook buckets. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, charging no-op comment noise to tenant review/control buckets, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, and operator dashboards. |
-| State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing with fixed 10-minute planned rotation grace. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, and short-lived runtime inspection. |
-| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity only after Action-distributed App private keys are revoked/rotated, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus fresh GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head or sharing a cross-tenant signing key. | A sibling cloud App, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, and a settings flow for key configuration. |
+| State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing with fixed 10-minute planned rotation grace. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, short-lived runtime inspection, explicit rotation replay tests, and bounded streaming-abort tests. |
+| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity only after Action-distributed App private keys are revoked at the GitHub App level and verified, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus fresh GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head or sharing a cross-tenant signing key. | A sibling cloud App unless key revocation cannot be verified, author-agnostic hidden markers, workflow-file-only precedence, sharing the managed App private key with Actions, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, managed signing-key isolation, verified credential-rotation gate, and a settings flow for key configuration. |
 
 ## Build plan (when approved)
 
 1. Receiver + queue + installation store + persistent idempotency, using the
    existing `prowl-review` App identity for the managed instance only after every
-   Action-distributed private key for that App is revoked/rotated and the managed
-   signing credential is isolated outside repository/workflow secrets.
-2. Trusted-base `delivery.owner` config plus Action/App owner checks so dual
-   delivery cannot start duplicate reviews.
+   Action-distributed private key for that App is revoked at the GitHub App level,
+   a canary proves retired keys cannot mint installation tokens, and the managed
+   signing credential is isolated outside repository/workflow secrets. If that
+   verification cannot complete, register a new managed App identity before launch.
+2. Trusted-base `delivery.owner` config plus fail-closed Action/App owner checks so
+   dual delivery cannot start duplicate reviews when config is missing, stale, or
+   unreadable.
 3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
    and deletion lifecycle.
 4. API-retrieval adapter for the core's repo-tools interface with the Decision 2
