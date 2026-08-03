@@ -11,8 +11,8 @@ All notable changes to Prowl Review will be documented in this file.
   whose fairness limits are not BYOK monetization caps, state/isolation/audit controls, migration identity,
   deterministic Action/App delivery ownership, command authorization, and a build plan. The doc now explicitly
   scopes managed-key residual risk, KMS role enforcement, revocation race handling, private-repo retrieval
-  boundaries, webhook signature parsing, and the #62 decision-record coverage table. Status: proposed; #47 stays
-  parked until the doc is approved.
+  boundaries, webhook signature parsing/rotation, command consume-once idempotency, configure-key link hardening,
+  and the #62 decision-record coverage table. Status: proposed; #47 stays parked until the doc is approved.
 
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**

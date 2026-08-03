@@ -50,14 +50,21 @@ PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
 ```
 
 The receiver verifies the webhook signature, then records the GitHub delivery id
-and a coalescing key of `{installation, repository, pull_request, head_sha}` before
-enqueueing. Duplicate deliveries reuse the existing job record. Before work starts,
-a runner atomically claims the job by writing a persistent lease with an expiry and
-monotonic fencing token. Every provider call and publication re-reads the current
-PR head, App installation state, delivery owner, revocation generation, and fencing
-token; stale, expired, or superseded claims stop without posting review content.
-Retries acquire a new fencing token, so concurrent deliveries cannot process the
-same job simultaneously.
+before enqueueing. Delivery id deduplicates exact GitHub retries only; review
+eligibility is tracked separately with a coalescing key of `{installation,
+repository, pull_request, head_sha, lifecycle_generation}`. The lifecycle
+generation increments on state transitions that can make the same head newly
+reviewable or newly owned, including `ready_for_review`, `reopened`, base-branch
+changes, `delivery.owner` changes, key configuration, and resume/unpause actions.
+Terminal skipped states can therefore be re-armed without treating a real state
+transition as a duplicate retry. Duplicate deliveries for the same lifecycle
+generation reuse the existing job record. Before work starts, a runner atomically
+claims the job by writing a persistent lease with an expiry and monotonic fencing
+token. Every provider call and publication re-reads the current PR head, App
+installation state, delivery owner, revocation generation, and fencing token;
+stale, expired, or superseded claims stop without posting review content. Retries
+acquire a new fencing token, so concurrent deliveries cannot process the same job
+simultaneously.
 
 Fork-originated pull requests are **skipped by the managed App in v1**. The service
 may post a neutral check or summary explaining the skip, but it makes no provider
@@ -157,6 +164,21 @@ inspection, startup self-checks for those controls, and deployment only on
 platforms where crash-dump controls can be enforced are mitigations, not a guarantee
 that memory is clean.
 
+The runner isolation boundary is an OS process per review job, not just a queueing
+convention. Even two jobs for the same installation run in separate processes, and
+concurrency uses additional isolated processes rather than batching keys in one
+process. The managed runner tier must launch with swap disabled, core dumps
+disabled, Node inspector/heap snapshots unavailable, process inspection denied, an
+ephemeral filesystem, and an equivalent hardened sandbox policy such as
+seccomp/AppArmor/gVisor/Firecracker for the chosen platform. If the startup
+self-check cannot verify those controls, the runner fails closed before decrypting.
+Launch-blocking staging tests deliberately exercise canary-key provider calls,
+provider errors, runner crashes, attempted debug/snapshot paths, and post-job
+process exit; they verify no canary reaches captured logs, audit events, queues,
+caches, persisted state, provider error summaries, process environment snapshots,
+or crash-dump locations. These tests verify the operational controls only; they do
+not prove safety against live host/process compromise.
+
 Every provider-call error path catches exceptions before any logging, drops the
 original exception object from log/audit serialization, and constructs an
 allowlisted error summary from status code, provider error class, retryability, and
@@ -175,7 +197,13 @@ repo-only/user installations, or an audited installation-admin allowlist maintai
 by those admins. The installing user is recorded but is not the only permanent
 admin. `@prowl-review configure key` never accepts a raw key in a public comment; it
 only opens a short-lived, single-use settings link after the command authorization
-in Decision 5 succeeds. The UI never displays plaintext keys after save.
+in Decision 5 succeeds. The link is an HTTPS-only App URL protected by HSTS, contains
+only an opaque random nonce whose server-side record stores a hash, and is redacted
+from application logs. The settings page serves no third-party assets, sends
+`Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`, `SameSite=Lax` or stricter
+session cookies, and consumes the nonce before any key-save side effect. A leaked
+link cannot save a key without the fresh GitHub OAuth/App authorization described
+in Decision 5. The UI never displays plaintext keys after save.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -377,21 +405,27 @@ append-only audit log.
   time-bound approval, is separately audited, and never grants plaintext provider
   key access.
 - **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
-  HMAC-SHA256 verification using active App webhook secret(s) and constant-time
+  HMAC-SHA256 verification using the App-wide webhook secret and constant-time
   comparison. The signature parser accepts only the strict `sha256=<64 hex chars>`
   format; missing prefixes, malformed hex, truncated digests, overlong digests,
   duplicate signature headers, and MD5/SHA1 signatures are rejected as generic
-  authentication failures before enqueueing. Constant-time comparison runs only
-  after both computed and supplied digests decode to exactly 32 bytes, so malformed
-  inputs do not create timing or parse-error side channels. Webhook secrets rotate
-  at least every 90 days or immediately on suspected compromise; the previous secret
-  is accepted for at most 24 hours for in-flight retries. Delivery ids are recorded
-  with a replay TTL before enqueueing. Initial provisioning and rotation happen
-  through the App settings flow: the new secret is written to the App secret store
-  and marked pending before GitHub is updated, then marked active only after a
-  signed test delivery verifies it. Manual GitHub-UI webhook secret rotation is not
-  supported; if the GitHub secret and stored active secret diverge, webhooks fail
-  closed and installation admins must resynchronize through the App settings flow.
+  authentication failures before any HMAC computation or enqueueing. For validly
+  formatted signatures, the receiver computes expected digests for every currently
+  valid candidate secret, performs equal-length constant-time comparisons for all
+  candidates without short-circuiting, and accepts only a matched candidate whose
+  `not_before`/`not_after` window is valid. Delivery ids are recorded with a 24-hour
+  replay TTL before enqueueing, keyed with delivery id, payload hash, action, and
+  accepted secret version. Verified webhooks still pass through app-wide,
+  source-rate, and per-installation token buckets before a job is queued.
+  Webhook secrets rotate at least every 90 days or immediately on suspected
+  compromise. Because the secret belongs to the GitHub App registration, managed
+  provisioning and rotation are operator-only, App-wide flows; installation admins
+  may view diagnostics for their installation but cannot rotate or resynchronize the
+  shared secret. During planned rotation, the previous secret may verify only
+  duplicate redeliveries whose delivery id and payload hash were first accepted
+  before the new secret became active; new delivery ids signed with the previous
+  secret are rejected. After the grace window, old-secret deliveries fail closed.
+  Self-host operators own the same App-wide rotation flow for their registered App.
 - **Abuse controls:** per-installation queue depth/concurrency, webhook token
   bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
   a misbehaving repo cannot spin the queue or publish outdated reviews.
@@ -443,9 +477,10 @@ check and no-ops when `delivery.owner: action`. Owner changes apply to the next 
 head SHA. Subsequent deliveries for existing PR heads re-query the owner before
 enqueueing; in-flight reviews under the previous owner are marked superseded and
 stopped before publication if ownership changed. The idempotency key includes the
-owner: `{installation, repository, pull_request, head_sha, owner}`, and both
-delivery paths re-check the owner before provider calls and publication. This
-Action/App owner check is a launch blocker for dual-delivery support.
+owner and lifecycle generation: `{installation, repository, pull_request, head_sha,
+owner, lifecycle_generation}`, and both delivery paths re-check the owner before
+provider calls and publication. This Action/App owner check is a launch blocker for
+dual-delivery support.
 
 **Command authorization:** the `@prowl-review` command surface moves to
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
@@ -453,20 +488,33 @@ commands are honored only when all checks pass:
 
 1. The comment belongs to a pull request in a repository covered by the active App
    installation.
-2. The sender has repository `write`, `maintain`, or `admin` permission, verified
-   from GitHub at command time through repository collaborator/permission APIs;
-   cached role data is not authoritative. `configure key` additionally requires a
-   fresh settings-UI authorization after the link is opened: the OAuth/App session
-   user must match the command sender, the installation id and repository id must
-   match the signed link record, and GitHub must confirm org-owner permission for
-   org installations or repository `admin` permission for repo-only/user
-   installations. If GitHub cannot confirm the role, the command fails closed.
+2. A cheap mention prefilter and token bucket run before GitHub permission APIs:
+   30 command authorization attempts per minute and 300 per hour per installation,
+   10 per minute per sender, then the existing per-command limit below. The sender
+   must have repository `write`, `maintain`, or `admin` permission, verified through
+   repository collaborator/permission APIs. A short-lived positive permission cache
+   may avoid repeated GitHub calls only when it was minted from GitHub for the same
+   `{installation, repository, sender, required_role}` within the last 5 minutes and
+   no membership/repository webhook invalidated it; stale, missing, or lower-role
+   cache entries cannot authorize a command. `configure key` always requires a fresh
+   settings-UI authorization after the link is opened: the OAuth/App session user
+   must match the command sender, the installation id and repository id must match
+   the signed link record, and GitHub must confirm org-owner permission for org
+   installations or repository `admin` permission for repo-only/user installations.
+   If GitHub cannot confirm the role, the command fails closed.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
-   idempotency record for the command. Delivery-id replay records live for 24
-   hours, and state-changing/costly commands are rate-limited to 5 commands per
-   minute per `{installation, user, pull_request, command}` before any provider
-   call. Violations are rejected, audited, and alerted on repeated abuse.
+   idempotency record for the command. Before any provider call or side effect, the
+   handler atomically claims an unconsumed command record keyed by those fields plus
+   command verb and lifecycle generation, and marks it consumed in the same
+   transaction. Already-consumed records are rejected even when the delivery id,
+   comment id, body digest, and head SHA match. Edited comments create a distinct
+   consume-once record keyed by edited timestamp and body digest, so an edit can be
+   processed once without reopening the original delivery. Delivery-id replay
+   records live for 24 hours, and state-changing/costly commands are rate-limited to
+   5 commands per minute per `{installation, user, pull_request, command}` before
+   any provider call. Violations are rejected, audited, and alerted on repeated
+   abuse.
 4. The command is in the explicit current allowlist: `review`, `full review`,
    `break glass`, `ignore`, `resolve`, per-PR `configure`, `pause`, `resume`,
    `docstrings`, `tests`, `help`, chat replies, and `configure key` link creation.
@@ -474,10 +522,12 @@ commands are honored only when all checks pass:
    follow Decision 0's managed skip policy.
 
 `configure key` link creation is not sufficient to save a key. The settings link is
-bound to `{installation, repository, sender, comment_id, nonce}`, expires in 10
-minutes, is single-use, requires fresh GitHub OAuth/App authorization with the
+cryptographically signed, stored server-side by nonce hash, bound to `{installation,
+repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
+single-use, requires fresh GitHub OAuth/App authorization with the
 installation-admin definition above, carries no key material in the URL, and uses
-standard CSRF/state validation before accepting a provider key.
+standard CSRF/state validation before accepting a provider key. The key-save POST
+must happen over HTTPS with the same authorized session that consumed the nonce.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
@@ -505,7 +555,7 @@ The explicit records are:
 | Retrieval strategy | Managed v1 uses bounded GitHub API retrieval; sandbox/container checkout is v2; Docker self-host keeps full local parity. | API-first ships install-once reviews without unbounded runtime cost, while incomplete context is surfaced honestly. | Unbounded traversal, treating partial retrieval as complete, user PATs for dependency traversal, and blocking launch on containers. | Managed v1 can produce incomplete reviews and must publish retrieval limits and caveats. |
 | Free/paid boundary and abuse controls | CLI, Action, App source, and self-host stay free forever; managed launches free with published orchestration fairness limits. | Protects shared hosted infrastructure without monetizing BYOK inference or gating source/self-host features. | Inference resale, self-host feature gates, silent throttling, and applying hosted limits to local/Action paths. | Requires queue visibility, limit state, retry semantics, and operator dashboards. |
 | State, persistence, tenant isolation, audit, and webhook verification | Persist operational metadata only, key every row/message/cache/audit event by installation id, keep append-only audit logs, and strictly verify webhook signatures before enqueueing. | Reliability needs state, but durable systems must not become a code, prompt, or review-content warehouse. | Durable prompts/provider payloads, mutable audit logs, shared runner credentials, and webhook retries without local replay state. | Debugging relies on redacted traces, structured outcomes, and short-lived runtime inspection. |
-| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity, select delivery owner through trusted-base `delivery.owner: action | app`, and authorize commands through signed webhooks plus GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head. | A sibling cloud App, author-agnostic hidden markers, workflow-file-only precedence, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, and a settings flow for key configuration. |
+| Migration from the Action, App identity, delivery precedence, and commands | Reuse the `prowl-review` App identity, select delivery owner through trusted-base `delivery.owner` set to `action` or `app`, and authorize commands through signed webhooks plus GitHub permission checks. | Preserves update-in-place behavior while preventing the Action and App from reviewing the same PR head. | A sibling cloud App, author-agnostic hidden markers, workflow-file-only precedence, and accepting commands from any mention. | Launch requires owner checks in both delivery paths, command replay/rate records, and a settings flow for key configuration. |
 
 ## Build plan (when approved)
 
