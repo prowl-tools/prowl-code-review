@@ -164,7 +164,12 @@ security-equivalent replacement for CLI/Action live-key custody.
   the final remediation state. The managed App should not be marketed as
   independently audited until a third-party report or comparable compliance artifact
   exists; users who require independently verifiable custody controls before that
-  report must self-host.
+  report must self-host. The required managed launch attestation is tracked at
+  [`docs/security/hosted-managed-launch-attestation.md`](docs/security/hosted-managed-launch-attestation.md);
+  it is currently marked not issued, and managed key-save/provider traffic must remain
+  disabled until that file names the deployed implementation, launch records, canary
+  leak-test results, platform controls, re-verification schedule, and two security-owner
+  signatures.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter

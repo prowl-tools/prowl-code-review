@@ -156,7 +156,10 @@ suspect; they do not start when revocation processing later succeeds. Suspected
 scoped compromise disables affected decrypt grants immediately, blocks new job
 claims for affected installations, and alerts operators within 5 minutes. Broad or
 critical wrapping-key compromise freezes all affected managed decrypts within 15
-minutes. In both cases, the control plane immediately cancels queued work and
+minutes, disables/revokes the compromised envelope root before restoration starts,
+and permits re-wrap only under a newly generated replacement root key. Data keys that
+cannot be re-wrapped under the replacement root are destroyed before hosted reviews
+resume. In both cases, the control plane immediately cancels queued work and
 terminates active runners with a 30-second hard deadline rather than waiting for the
 next decrypt check. Re-wrap/destruction begins immediately, affected installations
 stay suspended until it completes, and the 4-hour target is a maximum restoration
@@ -223,7 +226,13 @@ startup self-test, SBOM/dependency provenance, and
 `docs/security/hosted-key-ingestion-launch-record.md`, and records approval from the
 same two-person security-owner quorum used for provider egress. Build-plan step 3 is
 the tracked artifact for this gate; approval of this design record un-parks that work
-but does not allow key-save traffic. These controls reduce persistence after save, but
+but does not allow key-save traffic. The deployment-wide
+`docs/security/hosted-managed-launch-attestation.md` must also be signed before launch
+and must name the selected ingestion class, startup self-test evidence, canary leak-test
+results, deployment platform controls, re-verification schedule, and two security-owner
+reviewers. If that attestation is absent, stale, unsigned, or names artifacts that do
+not match the deployed commit, managed key-save and provider traffic remain disabled.
+These controls reduce persistence after save, but
 they still do not protect against malicious code or an operator already executing
 inside that worker during the live save window. Application code cannot prevent V8 from
 creating persistent or interned plaintext strings once a framework, parser, template,
@@ -279,14 +288,21 @@ them, and the client never forwards provider responses through an intermediate c
 before redaction. Launch requires a measured decrypt-to-send budget: staging tests
 record wall-clock time from successful decrypt return to the first provider request
 byte leaving the runner process and fail if p99 exceeds 100 ms or max exceeds 250 ms
-under representative load and contested event-loop conditions. Once plaintext key
+under representative production hardware, real DNS/TLS/socket handoff, documented CPU
+counts, GC pressure, large-buffer allocation, and contested event-loop conditions. Each
+staging condition must run at least 50,000 warmed samples and publish confidence
+intervals for p95/p99/max in the provider-egress launch record. Once plaintext key
 material is available, request construction and transport handoff run in one guarded
 synchronous call path with no `await`, timer, queue hop, microtask yield, or callback
-that can sit behind unrelated review work. If event-loop lag, HTTP-client scheduling,
-or async wrapper behavior can extend the measured handoff window, or if the minimal
-client requires provider-key material to live in JavaScript strings outside that
-window, managed launch requires a native secret helper, sidecar vault with locked
-memory, or equivalent transport shim before provider traffic is enabled. The full
+that can sit behind unrelated review work. A runtime event-loop monitor is armed while
+plaintext key material exists; if the loop is blocked for more than 50 ms before the
+first request byte leaves the process, the attempt aborts, zeroes owned buffers, marks
+the runner class unhealthy, and disables hosted provider calls until repaired. If
+event-loop lag, HTTP-client scheduling, or async wrapper behavior can extend the
+measured handoff window, or if the minimal client requires provider-key material to
+live in JavaScript strings outside that window, managed launch requires a native secret
+helper, sidecar vault with locked memory, or equivalent transport shim before provider
+traffic is enabled. The full
 provider-call window also has a hard outer deadline, measured from decrypt start
 through request send, response streaming, response finalization, and `finally`; managed
 v1 defaults to 120 seconds and cannot exceed 180 seconds without a new security
@@ -296,12 +312,14 @@ and recycles the runner. The launch record must publish provider-specific p95/p9
 successful-call latency, DNS/TLS timing, and timeout rates under representative
 provider and network conditions, with enough headroom that normal successful calls do
 not approach the hard deadline. The decrypt-to-send startup and staging suite must
-deliberately create CPU contention, GC pressure, large-buffer allocation, and event-loop
-lag; if p99 exceeds 100 ms or max exceeds 250 ms, managed launch either switches this
-path to a native transport shim or requires a new security decision with a larger
-published risk budget. Production records decrypt-to-send p50/p95/p99/max histograms;
-two consecutive five-minute windows over p99 100 ms or any max over 250 ms disable
-hosted provider calls for the affected runner class and page on-call until repaired.
+deliberately create CPU contention, GC pressure, large-buffer allocation, event-loop
+lag, real TLS handshakes, slow DNS, and kernel socket-buffer pressure; if p99 exceeds
+100 ms, max exceeds 250 ms, confidence intervals overlap the bound, or the production
+platform differs materially from staging, managed launch either switches this path to a
+native transport shim or requires a new security decision with a larger published risk
+budget. Production records decrypt-to-send p50/p95/p99/max histograms; any max over
+250 ms or two five-minute windows out of five over p99 100 ms disable hosted provider
+calls for the affected runner class and page on-call until repaired.
 Each
 attempt obtains a fresh lease/fencing snapshot, provider-call nonce, and decrypt
 authorization tied to the current revocation generation; retries cannot reuse any of
@@ -598,7 +616,12 @@ execute the same fixed validation path over dummy and submitted buffers with ful
 iteration, bitwise validity masks, and conditional assignment only. The scan never
 exits early or takes a branch based on the first invalid character, prefix, length, or
 provider type, and prefix mismatch is not reported before the generic response
-deadline. If a provider's semantic key validation cannot be represented by that fixed
+deadline. The provider selector may choose only post-response background validation
+behavior; it cannot change the synchronous scan depth, lookup tables, branch shape,
+dummy-buffer length, response deadline, or number of memory reads. Submitted and dummy
+buffers are padded or truncated into the same fixed maximum scan window before any
+character-class work, and provider-specific prefixes are treated as masked data, not as
+control flow. If a provider's semantic key validation cannot be represented by that fixed
 local loop, the provider is not launchable until the post-response background validator
 can check it without exposing user-queryable pending state. Managed v1 performs no synchronous live provider
 validation and opens no provider network connection before the response is committed.
@@ -671,7 +694,11 @@ delta <= 25 ms and p99 delta <= 50 ms between any two failure classes over at le
 10,000 staging samples per class, after warmup, measured from ingress accept at the
 load balancer to the last response byte written, including framework parsing,
 nonce/session/CSRF/OAuth checks, database/KMS calls used by that path, and any local
-validation work. Because
+validation work. The launch record must also publish absolute p50/p95/p99/max timing
+for each prefix, character-class, and length fixture, not only pairwise deltas; any
+valid-prefix, invalid-prefix, no-prefix, invalid-character, or overlong class whose
+absolute distribution falls outside the fixed response-floor envelope blocks launch.
+Because
 managed v1 never performs a synchronous provider auth probe, the endpoint always
 returns the same generic pending envelope after the local constant-shape checks and
 enqueues or refreshes only a pending-validation candidate. That candidate has
@@ -852,14 +879,27 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
-  Repository visibility is a fresh-search precondition, not a cached hint: the adapter
-  re-reads visibility immediately before each code-search call and again before caching
-  or serving results. If a result was produced under a public visibility state and a
-  later check shows private, unknown, transferred, renamed, or inaccessible visibility,
-  the result is discarded without use, any cache entry for the prior state is evicted,
-  in-flight search is aborted, and the review is marked incomplete with
-  `visibility_changed` or the more specific access reason.
-  The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
+	  Repository visibility is a fresh-search precondition, not a cached hint: the adapter
+	  re-reads visibility immediately before each code-search call and again before caching
+	  or serving results. If a result was produced under a public visibility state and a
+	  later check shows private, unknown, transferred, renamed, or inaccessible visibility,
+	  the result is discarded without use, any cache entry for the prior state is evicted,
+	  in-flight search is aborted, and the review is marked incomplete with
+	  `visibility_changed` or the more specific access reason. GitHub code search does
+	  not expose an atomic "execute only if repository is still public" visibility token
+	  that the App can bind to a request, so managed v1 treats the final-check-to-search
+	  handoff as a launch-blocking boundary rather than a solved atomic primitive. Public
+	  search may be enabled only through a guarded-search helper that reads GitHub
+	  visibility, records a local visibility generation, builds the search request, and
+	  opens the outbound request in the same call stack without unrelated awaits, timers,
+	  queue hops, or cache lookups. Visibility-changing webhooks synchronously bump that
+	  local generation and abort in-flight guarded searches before send when the bump wins
+	  the race; a mismatch after response receipt discards the response before cache/use.
+	  If the chosen GitHub API path, runtime, or tests cannot keep that handoff within the
+	  published bound or prove no private/unknown search request object is sent after a
+	  visibility bump visible to the App, public code search remains disabled for managed
+	  v1 and required search reports incomplete context.
+	  The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
   before every managed retrieval deploy and in startup smoke tests. It covers
   private repository metadata, private submodules, visibility changes, renamed or
   transferred repositories, fork/private-base combinations, and public/private repos
@@ -1085,13 +1125,27 @@ append-only audit log.
   path. It scans the fixed 71-byte candidate window, maps missing/overlong bytes to
   dummy byte values, accumulates prefix, length, and hex validity into masks, and
   does not branch, return, log, or select a response from the first invalid position.
-  Only after that mask-building pass does it decode into either the presented
-  32-byte digest buffer or the fixed dummy digest. Any digest that is not exactly 64
-  hex characters, including 63-, 65-,
+  The mask-building pass may store candidate nibbles in fixed arrays, but it must not
+  call `parseInt`, `Buffer.from(hex, "hex")`, or any decoder that can truncate,
+  normalize, or ignore invalid/overlong input. Only after the full loop confirms the
+  prefix, length, and all 64 hex positions are valid may the verifier run the fixed
+  32-iteration hex-pair decoder. If any validity bit is unset, the decode step is
+  skipped entirely and the verifier copies the fixed dummy digest into the presented
+  digest slot; malformed inputs never produce "best effort" decoded bytes. Any digest
+  that is not exactly 64 hex characters, including 63-, 65-,
   66-character, overlong, padded, non-hex, or otherwise malformed inputs, is rejected
   without truncation, padding, prefix comparison, or length normalization; integration
   tests must cover 63/64/65/66 hex-character inputs and accept only a correct
-  64-character HMAC. The receiver must iterate the raw wire header collection and reject
+  64-character HMAC. The required reference shape is:
+
+  ```text
+  mask = scan_exact_71_ascii_bytes_without_early_return(header_or_dummy)
+  presented_digest = mask.all_valid ? decode_exact_64_hex_chars() : dummy_digest
+  compare every candidate HMAC against presented_digest, then apply mask
+  ```
+
+  Production code must match that ordering or prove equivalent fixed-work behavior in
+  the launch record. The receiver must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus
   `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
@@ -1206,10 +1260,16 @@ append-only audit log.
   `new_secret_active_at_snapshot`, `expires_at`, and `payload_tenant_hash`, with a
   unique index over `{deployment_id, installation_id, repository_id, delivery_id,
   payload_hash, action, accepted_secret_version}`. Inserts for the previous secret are
-  allowed only before activation through `INSERT ... SELECT` from the locked secret
-  version row where `database_transaction_timestamp() < new_secret_active_at`; planned
-  grace handling has no previous-secret insert statement at all. A check constraint or
-  equivalent trigger rejects rows where `accepted_secret_version = previous` and
+  allowed only before activation inside the same serializable transaction that locks
+  the secret-rotation row, reads `new_secret_active_at`, reads one database-clock
+  `db_now`, and executes `INSERT ... SELECT ... WHERE db_now < new_secret_active_at`.
+  That same `db_now` value becomes `first_seen_at`; the application never performs a
+  separate wall-clock read, never sends `first_seen_at`, and never inserts a previous
+  secret row from a transaction that did not lock the rotation row. Planned grace
+  handling has no previous-secret insert statement at all: old-secret HMAC matches
+  after activation can only select an existing pre-activation row and cannot attempt a
+  new insert. A check constraint or equivalent trigger rejects rows where
+  `accepted_secret_version = previous` and
   `first_seen_at >= new_secret_active_at_snapshot`; application-supplied timestamps are
   never accepted. The launch record must name the database platform, timestamp
   precision, transaction isolation, indexes, and lock order, and tests must race
@@ -1481,24 +1541,26 @@ commands are honored only when all checks pass:
    inside the transaction; any generation from the earlier prefilter cache is treated
    only as an expected value and never becomes authority. If that expected value
    differs from the locked row, the transaction rolls back before writing or consuming
-   a command record, records a `stale_prefilter_generation` audit event, and re-enters
-   authorization only by locking the installation auth row and command row in a new
-   serializable transaction before making the fresh GitHub permission API read. The
-   old cached result is discarded and can never authorize the retry. If the generation
-   changes again before the fresh read result is reserved under the locked row, the
-   command reaches terminal `stale_authorization`/`authorization_changed` rather than
-   proceeding. At most one fresh read applies only to retrying a transient GitHub API
-   read, not to retrying the generation check or command authorization decision. It
-   never tolerates a generation mismatch and never claims work under the old cache
-   generation. If a permission-change webhook lands after the prefilter but before
-   claim, the generation bump wins or forces the claim transaction to retry/fail
-   before any command record can be consumed. Claimed command records store the auth
+   a command record, records a `stale_prefilter_generation` audit event, and reaches
+   terminal `authorization_changed`; it does not refresh the prefilter cache, issue a
+   fresh GitHub permission API read for that delivery, or retry under the newer
+   generation. At most one fresh read applies only to retrying a transient GitHub API
+   read after a claimed generation has been locked and recorded, not to retrying the
+   generation check or command authorization decision. It never tolerates a generation
+   mismatch and never claims work under the old cache generation. If a
+   permission-change webhook lands after the prefilter but before claim, the generation
+   bump wins or forces the claim transaction to fail before any command record can be
+   consumed. Claimed command records store the auth
    generation used for authorization, and the handler re-checks that generation plus
    performs the fresh GitHub permission API check through the same guarded-send
    pattern immediately before each provider or GitHub side effect; a stale generation
-   alone can never authorize execution. The handler records the locked auth
-   generation before starting the fresh GitHub permission API read and compares it
-   with the locked row again inside guarded send after the read returns. The fresh
+   alone can never authorize execution. Before starting the fresh GitHub permission
+   API read, the handler opens a short serializable transaction, locks the installation
+   auth row and command row, re-reads the current auth generation, and records that
+   locked value as the only valid pre-read generation. If it has advanced from the
+   claimed command generation, the command reaches terminal `authorization_changed`
+   before any cache lookup or GitHub read. The handler compares that locked pre-read
+   generation with the locked row again inside guarded send after the read returns. The fresh
    GitHub permission API read runs with an explicit deadline, capped at the smaller of
    5 seconds or 20% of the remaining command deadline, and no database row lock is held
    while waiting on that network call. Timeout, cancellation, secondary-rate-limit, or
