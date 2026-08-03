@@ -77,14 +77,20 @@ pull-request content without leaking secrets or executing attacker-controlled co
   generation, persistence, or GitHub publication if revocation is observed. There is
   no true atomicity across the database and an already-started external GitHub API
   call. Hosted stores purge key rows, queued jobs, caches, review
-  state, and backup key material on the published 30-day schedule. Suspected
-  wrapping-key compromise must alert operators within 5 minutes, freeze affected
-  managed decrypts within 15 minutes, and keep affected installations suspended
-  until data keys are re-wrapped or destroyed. Those incident timers are
-  post-detection containment for future decrypts and stored ciphertext; they cannot
-  undo plaintext exposure from a live compromised runner or provider request that
-  was already sent. The hosted App is not approved to launch until those controls
-  exist and leak tests confirm decryption fails after revocation.
+  state, and backup key material on the published 30-day schedule. Incident timers
+  start at detection time, defined as the moment an automated control or operator
+  first classifies a scoped grant, wrapping key, audit stream, or policy state as
+  suspect, not when revocation processing later succeeds. Suspected scoped
+  compromise must block new job claims and alert operators within 5 minutes; broad
+  or critical wrapping-key compromise must freeze all affected managed decrypts
+  within 15 minutes. In either case, active runners for affected installations are
+  terminated immediately with a 30-second hard deadline, queued work is cancelled,
+  and affected installations stay suspended until data keys are re-wrapped or
+  destroyed. Those incident timers are post-detection containment for future
+  decrypts and stored ciphertext; they cannot undo plaintext exposure before
+  detection, from a live compromised runner, or from a provider request that was
+  already sent. The hosted App is not approved to launch until those controls exist
+  and leak tests confirm decryption fails after revocation.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
