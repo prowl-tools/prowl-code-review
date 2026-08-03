@@ -45,12 +45,13 @@ pull-request content without leaking secrets or executing attacker-controlled co
   per-installation envelope-encrypted ciphertext, with the wrapping key outside
   the database and queues, decrypt permission scoped to the active runner job, no
   plaintext keys in queue payloads/logs/audit events, settings access limited to
-  installation admins, and deletion covering key rows, queued jobs, caches,
-  review state, and backup key material on a 30-day retention schedule. Suspected
-  wrapping-key compromise must alert operators within 5 minutes, disable decrypt
-  access within 15 minutes, and re-wrap or destroy affected data keys within 4
-  hours before hosted reviews resume. The hosted App is not approved to launch
-  until those controls and leak tests exist.
+  installation admins, immediate revocation that disables active wrapping-key
+  versions and runner decrypt grants, and 30-day purge of key rows, queued jobs,
+  caches, review state, and backup key material. Suspected wrapping-key compromise
+  must alert operators within 5 minutes, disable decrypt access within 15 minutes,
+  and re-wrap or destroy affected data keys within 4 hours before hosted reviews
+  resume. The hosted App is not approved to launch until those controls exist and
+  leak tests confirm decryption fails after revocation.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
@@ -101,9 +102,12 @@ pull-request content without leaking secrets or executing attacker-controlled co
 - The proposed managed hosted GitHub App has different operational boundaries:
   it necessarily uses the hosted queue, installation database, audit log, KMS/HSM
   service, GitHub API, and the user's configured LLM provider. Its durable systems
-  may store only the operational state described in
-  [`docs/design/hosted-app.md`](docs/design/hosted-app.md), not raw diffs, review
-  bodies, prompts, provider responses, or plaintext provider keys.
+  may store only the operational metadata described in
+  [`docs/design/hosted-app.md`](docs/design/hosted-app.md). This no-content rule
+  applies to every hosted store, including queues and shared caches: no raw diffs,
+  review bodies, prompts, provider responses, API-retrieved content, or plaintext
+  provider keys. Raw content may exist only in active runner memory for the review
+  currently being processed.
 - If telemetry is ever added, it will be **opt-in and off by default**, clearly
   documented, and never include code or secrets.
 
