@@ -189,16 +189,18 @@ security-equivalent replacement for CLI/Action live-key custody.
   leak-test results, platform controls, re-verification schedule, and two security-owner
   signatures. Install, migration, and key-entry UX must show the same disabled state
   and must not accept provider keys until the attestation is signed and matches the
-  deployed commit.
+  deployed source commit, immutable post-build artifact digest, externally signed
+  deployment record, and environment.
 - **Verification:** before managed launch, plaintext provider keys must be proved
   through canary-injection tests not to reach logs, errors, exception stacks, traces,
   queues, caches, persisted state, process environment, crash-dump locations, or
   process-inspection interfaces. Startup self-tests must verify that swap, core dumps,
   heap snapshots, debugger access, and process inspection are disabled before any key
   material is accepted or decrypted. The attestation file above must publish that
-  evidence, match the deployed commit, carry two security-reviewer signatures, and be
-  re-verified at least annually and after relevant platform, runtime, dependency,
-  key-ingestion, provider-wrapper, observability, or KMS/HSM policy changes.
+  evidence, match the deployed source commit, immutable post-build artifact digest,
+  externally signed deployment record, and environment, carry two security-reviewer
+  signatures, and be re-verified at least annually and after relevant platform, runtime,
+  dependency, key-ingestion, provider-wrapper, observability, or KMS/HSM policy changes.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter

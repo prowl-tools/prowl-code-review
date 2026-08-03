@@ -192,7 +192,9 @@ and include a post-revocation decrypt-failure test proving old grants and the
 compromised root cannot decrypt or re-wrap any affected data key. The runtime loads
 that attestation at startup and keeps key-save, decrypt, and provider traffic disabled
 if the attestation is absent, unsigned, stale, or names policy evidence that does not
-match the deployed commit and environment.
+match the deployed source commit, immutable post-build artifact digest, externally
+signed deployment record, and environment. The attestation never relies on a commit
+SHA embedded in this file to validate its own contents.
 
 Each encrypted provider-key row is an authenticated envelope, not just ciphertext.
 The immutable envelope AAD commits to installation id, key row id, provider name,
@@ -257,7 +259,8 @@ but does not allow key-save traffic. The deployment-wide
 and must name the selected ingestion class, startup self-test evidence, canary leak-test
 results, deployment platform controls, re-verification schedule, and two security-owner
 reviewers. If that attestation is absent, stale, unsigned, or names artifacts that do
-not match the deployed commit, managed key-save and provider traffic remain disabled.
+not match the deployed source commit, post-build artifact digest, signed deployment
+record, and environment, managed key-save and provider traffic remain disabled.
 These controls reduce persistence after save, but
 they still do not protect against malicious code or an operator already executing
 inside that worker during the live save window. Application code cannot prevent V8 from
@@ -756,8 +759,11 @@ No user-facing endpoint reveals pending-validation candidate existence, provider
 reason, attempt count, or validation timing. Settings UI and APIs expose only terminal
 states: `key_valid`, `key_required`, `key_invalid`, or `key_expired`; until a candidate
 reaches a terminal result, the authenticated user sees the same generic post-submit
-state they saw immediately after save. Background validation outcomes stay in
-append-only audit/operator state with staff/audit access and query logging.
+state they saw immediately after save. Review-visible check, comment, and PR status
+must not expose `key_validation_pending`; until a verified key exists, reviewers see
+only the indistinguishable `key_required` disabled state. Background validation
+outcomes stay in append-only audit/operator state with staff/audit access and query
+logging.
 The background validator uses the same guarded provider-call path, never starts while
 another validation for that installation/provider is active, destroys failed or
 superseded candidates, and promotes exactly one candidate to the active verified-key
@@ -768,11 +774,11 @@ id, and candidate id for every validation attempt. A pending-validation candidat
 has no terminal validation result within 1 hour expires automatically, is removed from
 the pending table, alerts on-call after repeated occurrences, and never becomes
 runner-authoritative. Runners read only the active verified-key table; if no verified
-key exists, reviews remain disabled with `key_validation_pending`/`key_required`
-status and approval withheld. The no-live-probe path releases responses only at the configured
-deadline with the same dummy validation work for every immediate outcome. If either
-that path or the later guarded validation cannot meet its own published bound, launch
-is blocked. The residual timing threat
+key exists, reviews remain disabled with `key_required`
+status and approval withheld. The no-live-probe path releases responses only at the
+configured deadline with the same dummy validation work for every immediate outcome.
+If either that path or the later guarded validation cannot meet its own published
+bound, launch is blocked. The residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
@@ -1354,13 +1360,24 @@ append-only audit log.
   suspend/delete, installation-repository, or permission-invalidation control events.
   The raw receiver also enforces a managed-launch request-body ceiling before any
   framework parser, JSON decoder, queue write, or provider work can observe the body.
-  The ceiling is published in the launch record and defaults to 2 MiB for v1 webhook
-  payloads. The raw adapter streams bytes through the HMAC input while counting them;
-  an over-limit body drains or terminates according to the platform's safe connection
-  policy, records only redacted metadata, follows the same generic failure envelope and
-  timing floor as other authentication failures, and never persists or enqueues the
-  payload. A receiver that must buffer an unbounded body before signature verification
-  is not eligible for managed launch.
+  The ceiling is published in the launch record. Review, command, and irrelevant no-op
+  events default to 2 MiB, but authorization-control events named above default to
+  GitHub's delivered webhook payload cap, currently 25 MiB, so legitimate bulk
+  installation/repository-scope changes can reach the durable fail-closed control path.
+  The raw adapter selects the control-event ceiling from the bounded raw
+  `X-GitHub-Event` header before JSON parsing; that selection grants only body-size
+  allowance, not event trust. It streams bytes through the HMAC input while counting
+  them and verifies the signature before any body content is trusted. If an
+  authorization-control delivery exceeds the normal 2 MiB review/command ceiling but
+  is within the control ceiling, the receiver records redacted delivery metadata,
+  bumps the affected authorization generation or an App-wide quarantine generation
+  when scope cannot yet be parsed, blocks new job claims/decrypts for that scope, and
+  schedules GitHub API reconciliation before reopening it. Bodies that exceed the
+  relevant published ceiling drain or terminate according to the platform's safe
+  connection policy, record only redacted metadata, follow the same generic failure
+  envelope and timing floor as other authentication failures, and never persist or
+  enqueue the payload. A receiver that must buffer an unbounded body before signature
+  verification is not eligible for managed launch.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
   provisioning and rotation are operator-only, App-wide flows; installation admins

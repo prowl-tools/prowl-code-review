@@ -5,8 +5,9 @@ this attestation has not been signed. External managed installations, key-save
 traffic, and provider traffic remain blocked until this file is replaced with a
 complete, reviewed launch attestation.
 
-Before managed launch, this document must name and link the exact deployed commit,
-launch records, runtime feature-flag state, and evidence for:
+Before managed launch, this document must name and link the source commit used to
+build the deployment, the immutable post-build artifact digest, an externally signed
+deployment record, launch records, runtime feature-flag state, and evidence for:
 
 - The selected key-ingestion implementation class: pinned N-API/libsodium, external
   hardened secret broker, or platform enclave/secret service.
@@ -33,12 +34,14 @@ launch records, runtime feature-flag state, and evidence for:
 - Evidence that managed install, migration, and first key-entry screens display the
   custody warning, require acknowledgement of the active policy version, and keep
   key-save/provider traffic disabled until this attestation matches the deployed
-  commit.
+  artifact digest and signed deployment record.
 - Two security-owner signatures from maintainers who did not author the relevant
   implementation and are not the production deployment approver.
 
 The attestation must be re-verified at least annually and after any relevant runtime,
 platform, dependency, KMS/HSM policy, key-ingestion, provider-wrapper, or observability
 change. If the attestation is missing, stale, unsigned, or names artifacts that do not
-match the deployed commit, the managed App must fail closed for key-save and provider
-traffic.
+match the deployed source commit, artifact digest, deployment record, and environment,
+the managed App must fail closed for key-save and provider traffic. The launch gate
+must not depend on a Git commit SHA embedded in this file to prove the contents of the
+same commit; the signed deployment record and artifact digest are the runtime binding.
