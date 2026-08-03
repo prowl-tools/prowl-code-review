@@ -828,6 +828,13 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
+  Repository visibility is a fresh-search precondition, not a cached hint: the adapter
+  re-reads visibility immediately before each code-search call and again before caching
+  or serving results. If a result was produced under a public visibility state and a
+  later check shows private, unknown, transferred, renamed, or inaccessible visibility,
+  the result is discarded without use, any cache entry for the prior state is evicted,
+  in-flight search is aborted, and the review is marked incomplete with
+  `visibility_changed` or the more specific access reason.
   The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
   before every managed retrieval deploy and in startup smoke tests. It covers
   private repository metadata, private submodules, visibility changes, renamed or
@@ -902,6 +909,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   duplicate of reviewer prose: every explicit incomplete-context finding sets it, and
   resolver failures with no safe file/range to attach still set the flag and emit a
   single review-level incomplete-context note.
+  A changed line is completely read only when its content is fetched from the Git tree
+  by the verified tree-entry SHA, the response type and SHA match the preflight, the
+  path is not denied as sensitive, and the line byte range is within the retrieved
+  bytes. A changed line is incompletely read when the file cannot be fetched, the
+  response type/SHA mismatches, the path is denied, the file/range exceeds bounds, or
+  the byte range is unavailable; that triggers an incomplete-security-context finding
+  naming the file, range, and reason. Missing callers, callees, manifests, or
+  dependencies are surrounding-context incompleteness, not changed-line read
+  incompleteness, but both set the aggregate flag and withhold approval.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -1105,16 +1121,22 @@ append-only audit log.
   cases under representative CPU contention and load-balancer/TLS/framework load.
   Production sends low-rate synthetic signed probes
   for those classes, records five-minute p50/p95/p99/max deltas by class, and pages
-  on-call on a single-window breach before the three-window fail-closed threshold. If
-  drift exceeds the bound for three consecutive five-minute windows, the receiver
-  enters verifier-quarantine mode: it continues raw verification and replay reads for
+  on-call on a single-window breach before the three-window fail-closed threshold. A
+  single-window breach records the failing classes, alerts on-call immediately, and
+  continues intake while preserving quarantine readiness. If drift exceeds the bound
+  for three consecutive five-minute windows, the receiver automatically, without
+  waiting for operator confirmation, enters verifier-quarantine mode: it continues raw
+  verification and replay reads for
   signed deliveries, durably quarantines verified review/command and
   authorization-control events, blocks job processing, blocks new job claims and
   decrypts for affected scopes, and reconciles installation/repository/permission
   state from GitHub before processing resumes. If the receiver cannot verify and
   persist to quarantine, the system globally fails closed by blocking hosted job claims
   and decrypts until reconciliation completes; it does not rely on GitHub redelivery as
-  the only preservation mechanism. The verifier module is static, has no dynamic code
+  the only preservation mechanism. Operators can re-enable job processing only after
+  documenting whether the cause was load jitter, infrastructure drift, or verifier-code
+  drift; verifier-code drift requires rollback or a new passing launch timing run
+  before processing resumes. The verifier module is static, has no dynamic code
   generation, and its timing tests run against the production bundle, but this is a
   remote timing mitigation, not a claim against local microarchitectural observation
   of the receiver process. Only after the full signature loop completes does the
@@ -1316,13 +1338,16 @@ does not fall through to workflow detection. If `delivery.owner` is absent, setu
 uses workflow-file detection only as a bootstrap aid: repositories with both Action
 workflows and the hosted App must set the field explicitly, and the App yields with
 an explanatory "delivery owner not configured" status rather than guessing. The App
-owns by fallback only when a fresh trusted-base read proves the owner field is absent
-and no Prowl Action or reusable Action workflow file exists in the trusted-base tree.
-A present-but-disabled, skipped, broken, renamed, or non-running workflow still
-counts as Action ownership and cannot trigger hosted failover. Workflow file
-detection cannot override an explicit config owner and is re-run from the trusted
-base before claim; repos that want hosted failover must set `delivery.owner: app` in
-trusted-base config rather than relying on workflow failure detection.
+owns by fallback only when a fresh trusted-base read proves the owner field is absent,
+no file matching `**/.github/workflows/*prowl-review*.yml` or
+`**/.github/workflows/*prowl*.yml` exists in the trusted-base tree, and no other
+workflow file contains a step using `prowl-tools/prowl-code-review@*`. Any present
+Prowl workflow file, including disabled, skipped, broken, renamed, commented-out,
+non-running, legacy, or v2 variants, counts as Action ownership ambiguity and cannot
+trigger hosted failover. Workflow file detection cannot override an explicit config
+owner and is re-run from the trusted base before claim; repos that want hosted failover
+must set `delivery.owner: app` in trusted-base config rather than relying on workflow
+failure detection.
 
 Before hosted launch, the Action must learn this field from the same trusted-base
 config it already loads and exit with a neutral "App owns delivery" result before
