@@ -68,12 +68,17 @@ pull-request content without leaking secrets or executing attacker-controlled co
   jobs, evicts caches, cancels active provider HTTP streams, and terminates active
   runners with graceful-then-hard deadlines. Runners must re-check revocation and
   fencing immediately before every provider or GitHub call and before publication;
-  stale fencing tokens are rejected, never accepted as authority. A provider request
-  already sent cannot be recalled; it may consume provider quota, reach the
-  provider, continue server-side after the local stream is aborted, and expose
-  content to provider-side systems. If revocation happens in flight, the runner must
-  re-check before parsing the provider response and again immediately before each
-  GitHub publication call, then discard response bytes without extraction, summary
+  stale fencing tokens are rejected, never accepted as authority. Guarded provider
+  sends decrypt, construct, and hand the request to the HTTP client in the same
+  synchronous operation immediately after the final check, with staging telemetry
+  required to keep the check-to-send handoff under a published millisecond-scale
+  budget. A revocation that lands after that final check but before the provider
+  receives the request is still an unavoidable cross-system race. A provider request
+  already sent cannot be recalled; it may consume provider quota, reach the provider,
+  continue server-side after the local stream is aborted, and expose content to
+  provider-side systems. If revocation happens in flight, the runner must re-check
+  before parsing the provider response and again immediately before each GitHub
+  publication call, then discard response bytes without extraction, summary
   generation, persistence, or GitHub publication if revocation is observed. There is
   no true atomicity across the database and an already-started external GitHub API
   call. Hosted stores purge key rows, queued jobs, caches, review
