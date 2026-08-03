@@ -43,15 +43,26 @@ pull-request content without leaking secrets or executing attacker-controlled co
   [`docs/design/hosted-app.md`](docs/design/hosted-app.md) is the only planned
   exception to the environment-only rule. It may store provider keys only as
   per-installation envelope-encrypted ciphertext, with the wrapping key outside
-  the database and queues, decrypt permission scoped to the active runner job, no
-  plaintext keys in queue payloads/logs/audit events, settings access limited to
-  installation admins, immediate revocation that disables active wrapping-key
-  versions and runner decrypt grants, and 30-day purge of key rows, queued jobs,
-  caches, review state, and backup key material. Suspected wrapping-key compromise
-  must alert operators within 5 minutes, disable decrypt access within 15 minutes,
-  and re-wrap or destroy affected data keys within 4 hours before hosted reviews
-  resume. The hosted App is not approved to launch until those controls exist and
-  leak tests confirm decryption fails after revocation.
+  the database and queues. Provider IAM/HSM policy, infrastructure-as-code policy
+  tests, provider-side KMS audit logs, and drift alerts enforce separation between
+  KMS administration, database administration, backup/restore, deletion workers,
+  and runner decrypt identities. This protects stored ciphertext, queues, and
+  backups; it does **not** protect a plaintext provider key from a runner that is
+  compromised while decrypting or sending the active provider request. Users who
+  need that threat model should self-host on infrastructure they control.
+- Hosted App revocation must atomically mark the installation revoked, bump the
+  revocation generation, invalidate outstanding leases/fencing tokens, disable
+  active KMS decrypt grants, cancel queued jobs, and cancel or kill active runners.
+  Runners must re-check revocation and fencing immediately before every provider
+  or GitHub call and before publication, then discard any provider response if
+  revocation happened while the request was in flight. A provider request already
+  sent cannot be recalled, but no further calls or GitHub publication may occur.
+  Hosted stores purge key rows, queued jobs, caches, review state, and backup key
+  material on the published 30-day schedule. Suspected wrapping-key compromise must
+  alert operators within 5 minutes, freeze affected managed decrypts within 15
+  minutes, and keep affected installations suspended until data keys are re-wrapped
+  or destroyed. The hosted App is not approved to launch until those controls exist
+  and leak tests confirm decryption fails after revocation.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
@@ -88,6 +99,10 @@ pull-request content without leaking secrets or executing attacker-controlled co
   checkout, so a contributor can't weaken review policy from their branch.
 
 ## Privacy & telemetry
+
+The first three guarantees below apply to the CLI, GitHub Action, and self-hosted
+modes only. The managed hosted App has a separate operational boundary because it
+necessarily runs Prowl-managed queueing, storage, audit, and runner services.
 
 - In the CLI, GitHub Action, and self-hosted modes, **prowl-review collects no
   telemetry and no analytics.** There is no usage reporting, no phone-home, no

@@ -9,8 +9,10 @@ All notable changes to Prowl Review will be documented in this file.
   Phase-2 hosted-App decisions: persistent webhook idempotency, managed key custody via an open-source
   self-hostable service, bounded API-first retrieval with a later sandbox tier, a free-at-launch managed tier
   whose fairness limits are not BYOK monetization caps, state/isolation/audit controls, migration identity,
-  deterministic Action/App delivery ownership, command authorization, and a build plan. Status: proposed; #47
-  stays parked until the doc is approved.
+  deterministic Action/App delivery ownership, command authorization, and a build plan. The doc now explicitly
+  scopes managed-key residual risk, KMS role enforcement, revocation race handling, private-repo retrieval
+  boundaries, webhook signature parsing, and the #62 decision-record coverage table. Status: proposed; #47 stays
+  parked until the doc is approved.
 
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
