@@ -4,6 +4,16 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Hosted GitHub App design doc** (`docs/design/hosted-app.md`, backlog #62) — proposed resolutions for the
+  Phase-2 hosted-App decisions: persistent webhook idempotency, managed key custody via an open-source
+  self-hostable service, bounded API-first retrieval with a later sandbox tier, a free-at-launch managed tier
+  whose fairness limits are not BYOK monetization caps, state/isolation/audit controls, migration identity,
+  deterministic Action/App delivery ownership, command authorization, and a build plan. The doc now explicitly
+  scopes managed-key residual risk, KMS role enforcement, revocation race handling, private-repo retrieval
+  boundaries, webhook signature parsing/rotation, command consume-once idempotency, configure-key link hardening,
+  and the #62 decision-record coverage table. Status: proposed; #47 stays parked until the doc is approved.
+
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
   `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
