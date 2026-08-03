@@ -26,6 +26,10 @@ const CALLERS = ["caller-prowl-review.yml", "caller-prowl-review-command.yml"] a
 const ALL_WORKFLOWS = [...REUSABLE, ...CALLERS] as const;
 const DOGFOOD_WORKFLOWS = [".github/workflows/prowl-review.yml", ".github/workflows/prowl-review-command.yml"] as const;
 const CREATE_GITHUB_APP_TOKEN_PIN = "actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1";
+const CALLER_ORG_PLACEHOLDER = "YOUR-ORG";
+const CALLER_ORG_REPLACEMENT_NOTICE = "TODO: replace YOUR-ORG with your GitHub organization before copying.";
+const PRODUCTION_ORG_WORKFLOW_REF =
+  /^(?!YOUR-ORG\/)[A-Za-z0-9](?:[A-Za-z0-9-]{0,37}[A-Za-z0-9])?\/\.github\/\.github\/workflows\/.+@v1$/;
 
 const permissionSchema = z.record(z.string(), z.enum(["read", "write", "none"]));
 const expressionOrLiteralSchema = z.union([z.string(), z.number(), z.boolean()]);
@@ -364,11 +368,38 @@ describe("reusable org workflows (#37)", () => {
     expect(hasCompletePrMetadata(input)).toBe(expected);
   });
 
-  it.each(CALLERS)("%s invokes the org workflow with inherited secrets in a few lines", (name) => {
+  it.each(CALLERS)("%s keeps the org workflow placeholder explicit and substitutes to a valid ref", (name) => {
     const doc = parseWorkflow(name) as { jobs: Record<string, { uses?: string; secrets?: unknown }> };
     const job = Object.values(doc.jobs)[0];
-    expect(job.uses).toMatch(/^Prowl-qa\/\.github\/\.github\/workflows\/.+@v1$/);
+    const uses = job.uses;
+    expect(typeof uses).toBe("string");
+    if (typeof uses !== "string") {
+      throw new Error(`${name} must define a reusable workflow reference`);
+    }
+    expect(uses.startsWith(CALLER_ORG_PLACEHOLDER + "/.github/.github/workflows/")).toBe(true);
+    expect(uses.endsWith("@v1")).toBe(true);
+    expect(uses).not.toMatch(PRODUCTION_ORG_WORKFLOW_REF);
+    expect(uses.replace(CALLER_ORG_PLACEHOLDER + "/", "acme-corp/")).toMatch(PRODUCTION_ORG_WORKFLOW_REF);
     expect(job.secrets).toBe("inherit");
+  });
+
+  it.each(CALLERS)("%s marks YOUR-ORG as a required in-file replacement", (name) => {
+    const text = read(name);
+    expect(text).toContain(
+      "# " + CALLER_ORG_REPLACEMENT_NOTICE + "\n    uses: " + CALLER_ORG_PLACEHOLDER + "/.github/.github/workflows/"
+    );
+  });
+
+  it("the reusable README marks YOUR-ORG as a required replacement before copy-paste snippets", () => {
+    const text = read("README.md");
+    expect(text).toContain("Replace `YOUR-ORG` with the organization that");
+    expect(text).toContain(
+      "# " +
+        CALLER_ORG_REPLACEMENT_NOTICE +
+        "\n    uses: " +
+        CALLER_ORG_PLACEHOLDER +
+        "/.github/.github/workflows/prowl-review.yml@v1"
+    );
   });
 
   it("the reusable auto-review caller enables the branded replacement check by default", () => {
