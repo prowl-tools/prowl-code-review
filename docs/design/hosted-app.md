@@ -201,6 +201,15 @@ the ingestion step. The native primitive is not provided by the general Node req
 handler: it must be implemented by a pinned, audited N-API/libsodium binding inside
 the short-lived ingestion worker or by a separate local secret broker that receives
 the key over local authenticated IPC and returns only the encrypted envelope. These
+are the only managed v1 implementation classes allowed without a new security
+decision: (1) pinned N-API/libsodium using `sodium_malloc`, `sodium_mlock` or
+platform-verified locked pages, and `sodium_memzero`; (2) an external hardened secret
+broker over authenticated local IPC whose process owns plaintext and locked memory;
+or (3) a platform enclave/secret service with equivalent no-swap, no-core-dump,
+no-debug, and explicit-zero guarantees. Startup self-tests must prove the selected
+path can lock memory, block core dumps/swap/inspector access, zero a canary buffer,
+and fail closed when any control is unavailable; platform-specific alternatives need
+the same equivalence report and two-person security approval before deployment. These
 controls reduce persistence after save, but they still do not protect against
 malicious code or an operator already executing inside that worker during the live
 save window.
@@ -303,7 +312,14 @@ an unnamed "equivalent" wrapper is itself a launch blocker. The reference harnes
 the only source of accepted alternatives, and each alternative must pass the same
 fixtures before it can be enabled. Build-plan step 5 below is the tracked artifact
 for this gate; approval of this decision record can un-park implementation planning
-but not managed runtime launch. The
+but not managed runtime launch. The signed launch record must name the wrapper repo
+path, implementation commit, canonical mock path, fixture corpus version, minimum
+pass criteria, timing/drift thresholds, SBOM and pinned dependency versions, startup
+self-test behavior, failure-mode behavior, and two security reviewers from the
+security-owner quorum. Managed v1 bans provider SDKs, SDK middleware/plugin systems,
+retry/redirect helpers, proxy-agent/global-agent packages, request instrumentation,
+and generic HTTP clients outside the named wrapper on the provider-key path unless a
+future design decision adds them to the same harness and launch record. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
@@ -386,6 +402,18 @@ closed as stale and links to GitHub App reapproval. The OAuth `read:org` path
 performs the owner check with the current OAuth session token for that same request;
 no cached App grant can substitute for it. If neither current membership-reading
 authority is available, the command/UI does not create or consume a key-save nonce.
+For repository-scoped key configuration under an org installation, org-owner status
+alone is not enough: the same fresh GitHub read must also confirm that the sender can
+write the target repository's trusted-base `.prowl-review.yml` scope, or is in the
+audited installation-admin allowlist for that repository. A fresh grant read occurs
+at command/link creation, again before settings GET render, and again immediately
+before settings POST commit. The GET grant version is stored on the nonce row, and the
+POST transaction locks the nonce/auth rows, repeats the GitHub/App or OAuth read, and
+requires the current grant version plus repository-write/config authority to still
+match before any key candidate is persisted. Any permission-change webhook, 403/404,
+grant downgrade, repository access loss, or generation mismatch between GET and POST
+fails closed with a generic authorization response, invalidates the nonce, surfaces a
+reapproval/retry prompt when safe, and writes no key.
 The command handler performs this fresh installation-admin check synchronously inside
 the guarded command/link-creation path immediately before creating a settings link;
 if the auth generation changes between the command authorization check and nonce
@@ -484,7 +512,15 @@ finish behind the same response deadline or leave only an inactive pending-valid
 candidate for later guarded validation. The last verified key remains active until a
 new candidate validates; if no verified key exists, reviews remain disabled because
 there is no usable key, not because an `unverified` row replaced authority. Staging
-timing tests must issue repeated
+and production key-save code never compares submitted key material to stored key
+material with string equality, prefix checks, length-dependent early exits, or direct
+plaintext byte comparisons. If the save path needs duplicate/overwrite detection, it
+computes fixed-length keyed fingerprints such as HMAC-SHA256 over the submitted and
+stored-key records and compares only equal-length buffers with `crypto.timingSafeEqual`
+or equivalent. Key-match and key-mismatch paths perform the same database reads,
+candidate writes, dummy validation work, response delay, and provider-call decision
+snapshot so timing does not reveal whether a retry supplied the same key.
+Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, and session-race requests and block launch if p95/p99 distributions diverge
 beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms and
@@ -647,6 +683,14 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
+  The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
+  before every managed retrieval deploy and in startup smoke tests. It covers
+  private repository metadata, private submodules, visibility changes, renamed or
+  transferred repositories, fork/private-base combinations, and public/private repos
+  containing the same filenames. The suite fails unless private-repo search requests
+  throw a client-boundary error before any GitHub search request is constructed,
+  public-repo search requests still reach the mocked GitHub search endpoint, and
+  public search cache entries cannot satisfy private-repo retrieval keys.
   Search is completely disabled for repositories GitHub reports as private,
   regardless of submodule structure, visibility inheritance, or user configuration.
   Private submodules and cross-repo references are not traversed in managed v1;
@@ -831,9 +875,15 @@ append-only audit log.
   normalization; a runtime that cannot expose the original header list with
   duplicate values and case variants is not eligible for launch. The signature parser
   accepts only the strict `sha256=<64 hex chars>` format with exactly 71 ASCII
-  characters and exactly one `X-Hub-Signature-256` header after case-insensitive
-  counting across the raw header list; an absent header is a hard verification
-  failure. The receiver must iterate the raw wire header collection and reject
+  characters, exactly 64 hex characters after the prefix, and exactly 32 decoded
+bytes, plus exactly one `X-Hub-Signature-256` header after case-insensitive counting
+across the raw header list; an absent header is a hard verification failure. The
+parser must reject any post-prefix digest string that is not exactly 64 hexadecimal
+characters, including 63-, 65-, 66-character, overlong, padded, non-hex, or otherwise
+malformed inputs, without truncating, padding, decoding partial nibbles, normalizing
+length, or comparing prefixes; integration tests must cover 63/64/65/66 hex-character
+inputs and accept only a correct 64-character HMAC. The receiver must iterate the raw
+wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
   case-variant duplicates such as `x-hub-signature-256` plus
   `X-Hub-Signature-256`. Empty values, missing prefixes, malformed hex, truncated
@@ -1179,15 +1229,18 @@ commands are honored only when all checks pass:
    stricter than the general
    command gate: before creating any settings link, the command parser must verify
    the sender is an installation admin, defined as org-owner permission for org
-   installations, repository `admin` permission for repo-only/user installations, or
-   membership in the audited installation-admin allowlist maintained by those
-   admins. For org installations, that org-owner check requires a dynamic App
-   `Members: read` installation-permission check against the current grant version or
-   OAuth `read:org` for the authenticated session; a one-time reapproval is never
-   assumed to persist without re-checking the current installation permissions. If
-   the reused App installation has not been reapproved with membership access and the
-   session lacks `read:org`, org key configuration fails closed with a GitHub
-   reapproval/reauthorization link and does not create a settings nonce. A
+   installations plus explicit write/config authority for the target repository's
+   trusted-base `.prowl-review.yml` scope, repository `admin` permission for
+   repo-only/user installations, or membership in the audited installation-admin
+   allowlist maintained by those admins. For org installations, that org-owner check
+   requires a dynamic App `Members: read` installation-permission check against the
+   current grant version or OAuth `read:org` for the authenticated session, and the
+   repository write/config check must come from the same fresh GitHub authorization
+   read. A one-time reapproval is never assumed to persist without re-checking the
+   current installation permissions. If the reused App installation has not been
+   reapproved with membership access and the session lacks `read:org`, org key
+   configuration fails closed with a GitHub reapproval/reauthorization link and does
+   not create a settings nonce. A
    writer/maintainer who lacks that elevated role cannot receive a key-configuration
    link. The settings UI repeats the same fresh authorization after the link is
    opened and again on key-save POST: the OAuth/App session user must match the
