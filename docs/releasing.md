@@ -46,23 +46,39 @@ trap 'rm -rf "${tmpdir}"' EXIT
 )
 ```
 
-If a future emergency appears to require direct token auth, stop the public
-release checklist before creating credentials or CI secrets and escalate through
-the private maintainer security runbook. Direct token auth is permitted only for
-a release-blocking security or correctness fix when waiting at least 24 hours for
-OIDC repair would create greater user risk than delaying the release. It
-requires approval from at least two core maintainers, recorded before any token
-creation, CI change, or token-authenticated publish. The release PR or commit
-message must link a public issue when safe; otherwise it must reference a private
-advisory or maintainer decision record without secret details. That record must
-capture the rationale, approvers, affected release, package-limited single-use
-scope, maximum 24-hour credential window, revocation deadline, close-out
-verification, and post-incident review owner. The private incident runbook owns
-credential handling and close-out verification, including token revocation/audit
-evidence, repository and CI secret removal, CI log/job-summary/artifact review,
-repository-history checks, and secret-scanning dashboard/service confirmation.
-Keep token values, operational timelines, deletion evidence, and private contact
-details out of public documentation.
+Emergency direct-token auth is private-runbook-only. If a future emergency
+appears to require it, stop the public release checklist before creating any
+credential, repository secret, or CI change. The private maintainer security
+runbook must already exist, be reviewed, and be accessible to every release
+maintainer; it owns escalation contacts, the approval form, the revocation
+checklist, the evidence archive location, and incident-closure criteria.
+
+Direct token auth is permitted only for a release-blocking security or
+correctness fix when waiting at least 24 hours for OIDC repair would create
+greater user risk than delaying the release. Before any token is created, record
+written approval from at least two core maintainers in a private issue, private
+security advisory, or maintainer decision record. The release PR or emergency
+commit message must link a public issue when safe; otherwise it must reference
+the private record ID without secret details. That record must capture the
+rationale, approvers, affected release, token scope, npm-side expiry, planned CI
+secret location, revocation deadline, publish run URL, and owner for close-out
+verification.
+
+If approved, create a fresh, single-use npm granular access token scoped only to
+publishing `prowl-review`, set its npm-side expiry to 24 hours or less at
+creation, and add it to CI only for the emergency publish run. Never commit the
+token or leave the secret available to later workflow runs. Immediately after the
+package version and provenance are verified, revoke or delete the npm token,
+remove the repository or CI secret, and verify revocation in npm and GitHub.
+Download or archive the CI logs, job summary, and publish artifacts immediately,
+then record the token ID, creation and revocation timestamps, secret-removal
+evidence, publish run URL, and any npm or GitHub secret-scanning exposure checks
+in the private incident record.
+
+Do not create long-lived or reusable tokens, rely on later cleanup, use
+classic/legacy automation tokens, publish without the second approver present, or
+put token values, private contacts, operational timelines, deletion evidence, or
+private record contents in public docs.
 
 ## Cut a release
 
