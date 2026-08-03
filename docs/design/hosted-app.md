@@ -99,12 +99,16 @@ self-host path**, and run a managed instance of the same code.
 
 **Managed key controls:** the envelope root key lives outside the application
 database and outside queues, in a provider-managed KMS/HSM-style service with a
-dedicated service identity. Per-installation data keys wrap provider keys; rotating
-the root key at least every 90 days re-wraps data keys, and suspected compromise
-alerts operators within 5 minutes, disables decrypt access within 15 minutes,
-suspends new managed reviews for affected installations, and re-wraps or destroys
-affected data keys within 4 hours before hosted reviews resume. Runners receive
-decrypt permission only for the installation/job they are processing. Queue
+dedicated service identity. KMS administration is separate from database and runner
+administration; no DB operator or runner can export root key material, and decrypt
+grants are time-bound, audited, and scoped with encryption context/AAD containing
+installation id, key row id, and job id. Break-glass grant changes require two
+operators and expire automatically. Per-installation data keys wrap provider keys;
+rotating the root key at least every 90 days re-wraps data keys, and suspected
+compromise alerts operators within 5 minutes, disables decrypt access within 15
+minutes, suspends new managed reviews for affected installations, and re-wraps or
+destroys affected data keys within 4 hours before hosted reviews resume. Runners
+receive decrypt permission only for the installation/job they are processing. Queue
 messages carry installation, repo, PR, head SHA, and key row identifiers, never
 plaintext keys or encrypted key blobs.
 
@@ -113,12 +117,12 @@ sending the direct provider request. The runner decrypts the key immediately bef
 the provider call, passes it to a minimal HTTP client that does not persist headers
 or enable request debugging, and clears all references in a `finally` block after
 the response body is fully consumed or the request errors. Mutable buffers are
-zeroed best-effort, but Node/V8 cannot guarantee complete secure erasure of copied
-strings or headers; the real controls are per-job process isolation, no long-lived
-provider clients, runner recycling after each job, disabled swap/core dumps/heap
-snapshots/process inspection, and no deployment on platforms where those crash-dump
-controls cannot be enforced. A native secret helper with memory locking is a future
-hardening option, not an assumption in v1.
+zeroed best-effort, but Node/V8 cannot guarantee complete erasure of copied
+strings or headers; per-job process isolation, no long-lived provider clients,
+runner recycling after each job, disabled swap/core dumps/heap snapshots/process
+inspection, and deployment only on platforms where those crash-dump controls can be
+enforced are mitigations, not a guarantee that memory is clean. A native secret helper
+with memory locking is a future hardening option, not an assumption in v1.
 
 Residual risk is explicit: these controls protect against accidental persistence,
 ordinary crash dumps, logs, traces, and reuse after a job exits. They do **not**
@@ -126,19 +130,25 @@ protect against host-level memory disclosure, a malicious infrastructure operato
 CPU side channels, a live runner compromise while the key is in use, or a provider
 endpoint compromise. Users requiring that assurance should self-host the Docker
 runner on hardware/runtime they control; the managed launch docs must disclose this
-custody risk instead of presenting Node memory handling as secure erasure.
+custody risk instead of presenting Node memory handling as a complete erasure
+mechanism.
 
 Every provider-call error path catches exceptions before any logging, redacts
 authorization headers and known key patterns, and rethrows/logs only the redacted
-message. HTTP-library debug logging is disabled in production. Tests must include
-canary provider keys and fail if those canaries appear in logs, thrown errors, audit
-events, provider error summaries, traces, provider request metadata, or persisted
-state.
+message. HTTP-library debug logging is disabled in production. Launch-blocking CI
+and staging tests must include canary provider keys and fail if those canaries
+appear in logs, thrown errors, audit events, provider error summaries, traces,
+provider request metadata, queue payloads, cache entries, or persisted state. The
+same test suite must verify that decrypting an installation key fails after
+revocation.
 
-Keys are set through a settings UI authorized by GitHub installation admin rights.
-`@prowl-review configure key` never accepts a raw key in a public comment; it only
-opens a short-lived, single-use settings link after the command authorization in
-Decision 5 succeeds. The UI never displays plaintext keys after save.
+Keys are set through a settings UI authorized by explicit GitHub permissions:
+org-owner permission for org installations, repository-admin permission for
+repo-only/user installations, or an audited installation-admin allowlist maintained
+by those admins. The installing user is recorded but is not the only permanent
+admin. `@prowl-review configure key` never accepts a raw key in a public comment; it
+only opens a short-lived, single-use settings link after the command authorization
+in Decision 5 succeeds. The UI never displays plaintext keys after save.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall immediately marks the installation revoked, bumps the
@@ -186,8 +196,12 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   Git tree `truncated` responses, incomplete PR-file pagination, and missing
   required blobs as completeness failures. Grep/find-reference behavior runs only
   over the proven-complete bounded tree/file cache. GitHub code search is disabled
-  for private repositories in v1 and opt-in only for public repositories, because
-  search has different rate limits and visibility semantics.
+  for private repositories in v1 because it exposes repository content to GitHub's
+  global search index, which has different access-control semantics than
+  fine-grained repository reads. Public-repo search is disabled by default and
+  opt-in only to avoid excessive API load. Future retrieval of GitHub Advanced
+  Security findings must not expose secret-scanning or custom-pattern findings
+  through code search or any externally indexed surface.
 - **Bounds:** each review has a bounded LRU cache keyed by `{head_sha, tool, path,
   query}` with launch defaults of 128 MiB or 2,000 entries, whichever comes first.
   The runner also starts with a 1,000-request retrieval ceiling, 25 MiB aggregate
@@ -291,8 +305,10 @@ append-only audit log.
   transmission. Credential-bearing transport headers are attached only at the
   transport boundary and sent unchanged only to the intended provider or GitHub API;
   authentication headers are never logged, stored, audited, traced, or included in
-  provider request metadata. Redaction counts remain reportable; secret values do
-  not.
+  provider request metadata. Shared queues and durable/shared caches may contain
+  only approved operational metadata; API response bodies and diff content live only
+  in runner memory, and the runner-local retrieval cache stores redacted content
+  only. Redaction counts remain reportable; secret values do not.
 - **Tenant isolation:** every queue message, DB row, cache key, audit event, and
   runner credential is keyed by installation id. Runners process one installation's
   job with only that installation's decrypted provider key and scoped GitHub token
@@ -303,14 +319,22 @@ append-only audit log.
   deletion jobs, unplanned termination, and staff access. Events include timestamp,
   actor, installation, repository/PR when applicable, action, outcome, and reason.
 - **Retention/access:** audit logs are append-only, retained for at least 180 days,
-  and exportable by installation admins for their own installation. Staff access is
-  separately audited; staff cannot read plaintext provider keys.
+  and scoped by GitHub App installation id. Installation admins may export audit
+  logs only for installation ids they administer and only for the repositories in
+  that installation. Staff cross-installation or aggregate audit access requires
+  time-bound approval, is separately audited, and never grants plaintext provider
+  key access.
 - **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
   HMAC-SHA256 verification using active App webhook secret(s) and constant-time
   comparison. MD5/SHA1 signatures are rejected. Webhook secrets rotate at least
   every 90 days or immediately on suspected compromise; the previous secret is
   accepted for at most 24 hours for in-flight retries. Delivery ids are recorded
-  with a replay TTL before enqueueing.
+  with a replay TTL before enqueueing. Initial provisioning and rotation happen
+  through the App settings flow: the new secret is written to the App secret store
+  and marked pending before GitHub is updated, then marked active only after a
+  signed test delivery verifies it. Manual GitHub-UI webhook secret rotation is not
+  supported; if the GitHub secret and stored active secret diverge, webhooks fail
+  closed and installation admins must resynchronize through the App settings flow.
 - **Abuse controls:** per-installation queue depth/concurrency, webhook token
   bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
   a misbehaving repo cannot spin the queue or publish outdated reviews.
@@ -359,10 +383,12 @@ Before hosted launch, the Action must learn this field from the same trusted-bas
 config it already loads and exit with a neutral "App owns delivery" result before
 any provider call when `delivery.owner: app`. The hosted App performs the symmetric
 check and no-ops when `delivery.owner: action`. Owner changes apply to the next PR
-head SHA: active jobs for the previous owner are marked superseded, the idempotency
-table records the owner with `{installation, repository, pull_request, head_sha}`,
-and both delivery paths re-check the owner before provider calls and publication.
-This Action/App owner check is a launch blocker for dual-delivery support.
+head SHA. Subsequent deliveries for existing PR heads re-query the owner before
+enqueueing; in-flight reviews under the previous owner are marked superseded and
+stopped before publication if ownership changed. The idempotency key includes the
+owner: `{installation, repository, pull_request, head_sha, owner}`, and both
+delivery paths re-check the owner before provider calls and publication. This
+Action/App owner check is a launch blocker for dual-delivery support.
 
 **Command authorization:** the `@prowl-review` command surface moves to
 `issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
@@ -384,6 +410,12 @@ commands are honored only when all checks pass:
    `docstrings`, `tests`, `help`, chat replies, and `configure key` link creation.
    No command executes repository code or arbitrary shell, and fork PRs still
    follow Decision 0's managed skip policy.
+
+`configure key` link creation is not sufficient to save a key. The settings link is
+bound to `{installation, repository, sender, comment_id, nonce}`, expires in 10
+minutes, is single-use, requires fresh GitHub OAuth/App authorization with the
+installation-admin definition above, carries no key material in the URL, and uses
+standard CSRF/state validation before accepting a provider key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
