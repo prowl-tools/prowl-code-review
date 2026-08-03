@@ -432,17 +432,20 @@ where the provider supports it, a minimal live auth probe over the same sanitize
 provider-call path before marking the key verified. If live validation fails or is
 unsupported, provider error bodies are not serialized, cached, returned, traced, or
 logged; they are mapped to a fixed internal enum such as `invalid`, `unauthorized`,
-`rate_limited`, or `unknown`. `invalid` and `unauthorized` results reject the save
-and persist no key. `rate_limited` and `unknown` also fail closed by default unless
-the provider adapter explicitly declares live validation unsupported; only then may
-the endpoint persist an `unverified` key that must be validated through the same
-guarded provider-call path before the first review can use it. The endpoint responds
-under a fixed wall-clock response budget, with identical HTTP status, headers, and
-body bytes for `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation
-unsupported, and nonce/session race-loss outcomes. The immediate response never
-distinguishes saved, saved-unverified, or not-saved; any later authenticated status
-view uses a generic verification-pending/failed state and never includes provider
-details. "Identical" means the same status code, same header names/order/values,
+`rate_limited`, or `unknown`. `invalid`, `unauthorized`, `rate_limited`, `unknown`,
+and validation-unsupported results never replace an existing verified key and never
+promote a key for reviews. They either persist no key material or store only an
+encrypted pending-validation candidate that is not part of the active provider-key
+table, is invisible to runners, and is eligible only for a bounded post-response
+validation job. Providers without a supported bounded pre-use validation path are not
+launchable in managed v1. The endpoint responds under a fixed wall-clock response
+budget, with identical HTTP status, headers, and body bytes for `invalid`,
+`unauthorized`, `rate_limited`, `unknown`, validation unsupported, skipped
+synchronous validation, and nonce/session race-loss outcomes. The immediate response
+never distinguishes saved, validation-pending, or not-saved; any later authenticated
+status view uses a generic verification-pending/failed state and never includes
+provider details. "Identical" means the same status code, same header
+names/order/values,
 same `Content-Length`, same precomputed body bytes, same cookie mutation behavior,
 same redirect behavior, and the same externally observable state-machine transition;
 the provider enum is stored only in internal audit state after the response budget
@@ -454,8 +457,11 @@ branches run the same local nonce/session/CSRF/Origin checks, provider-adapter
 selection, key-hash/HMAC comparisons, and dummy validation path with conditional
 assignments instead of early returns; unauthorized or expired-nonce requests use
 dummy credentials and never contact the real provider. Authorized live probes either
-finish behind the same response deadline or leave the key in the generic pending
-state for later guarded validation. Staging timing tests must issue repeated
+finish behind the same response deadline or leave only an inactive pending-validation
+candidate for later guarded validation. The last verified key remains active until a
+new candidate validates; if no verified key exists, reviews remain disabled because
+there is no usable key, not because an `unverified` row replaced authority. Staging
+timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, and session-race requests and block launch if p95/p99 distributions diverge
 beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms and
@@ -464,24 +470,32 @@ samples per class, after warmup, measured from ingress accept at the load balanc
 the last response byte written, including framework parsing, nonce/session/CSRF/OAuth
 checks, database/KMS calls used by that path, and any synchronous validation work. If
 including a live provider auth probe would exceed the bound, the endpoint must skip
-that synchronous provider call, persist only an `unverified` encrypted key row after
-the local constant-shape checks pass, return the same generic pending envelope, and
-withhold all reviews for that installation until a later guarded validation job marks
-the key verified. Probe selection is a provider/adapter deployment setting, not a
-per-key, per-format, or per-request branch, and both the live-probe-enabled and
-no-live-probe paths release responses only at the same configured deadline with the
-same dummy validation work when no provider call is made. If either the no-live-probe
-path or the later guarded validation cannot meet its own published bound, launch is
-blocked. The residual timing threat
+that synchronous provider call, return the same generic pending envelope, and enqueue
+or refresh only a pending-validation candidate after the local constant-shape checks
+pass. That candidate has per-installation, per-sender, and per-source creation and
+retry limits stricter than the command-ingress buckets; repeated pending candidates
+coalesce by installation/provider and cannot make an existing verified key unusable.
+The background validator uses the same guarded provider-call path, never starts while
+another validation for that installation/provider is active, destroys failed or
+superseded candidates, and promotes exactly one candidate to the active verified-key
+table only after successful validation in a serializable compare-and-swap
+transaction. Probe selection is a provider/adapter deployment setting, not a per-key,
+per-format, or per-request branch, and both the live-probe-enabled and no-live-probe
+paths release responses only at the same configured deadline with the same dummy
+validation work when no provider call is made. If either the no-live-probe path or the
+later guarded validation cannot meet its own published bound, launch is blocked. The
+residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
 Production records p50/p95/p99/max latency histograms by internal outcome class only
 after the response is committed, never in user-visible output. If any class pair
 exceeds the published p95/p99 delta for three consecutive five-minute windows, the
-settings service disables synchronous live validation, stores only unusable
-`unverified` rows behind the generic pending envelope, pages on-call, and withholds
-reviews until drift is repaired or launch is rolled back.
+settings service disables synchronous live validation, accepts only inactive
+pending-validation candidates behind the generic pending envelope, pages on-call, and
+allows runners to use only the last successfully verified key. Installations with no
+verified key receive no reviews until validation drift is repaired or launch is rolled
+back.
 The response never re-renders or logs the submitted key, its prefix/suffix, length,
 character classes, or partial provider error details. The input field is cleared
 after every submit attempt.
@@ -582,13 +596,19 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   separate decision.
 - **v1 endpoints:** read uses blob/contents APIs by exact path/ref; changed-file
   discovery and repository tree traversal use bounded pagination with an explicit
-  page ceiling. Every page, retry attempt, response byte, and retrieved byte counts
-  against the request, response-size, and timeout ceilings below. The adapter treats
-  Git tree `truncated` responses, incomplete PR-file pagination, and missing
-  required blobs as completeness failures. Grep/find-reference behavior runs only
-  over the proven-complete bounded tree/file cache. Every retrieval endpoint
-  validates installation id, repository id, visibility, requested ref, and path
-  bounds before making a GitHub request. GitHub code search is disabled for private
+  page ceiling. Exact-path reads must preflight the requested path through the trusted
+  Git tree for the pinned ref before any GitHub Contents API request can run. The
+  adapter rejects symlinks, submodules, mode/type mismatches, and tree entries whose
+  target path would violate the sensitive-path denylist; accepted reads fetch the blob
+  by the verified tree-entry SHA or prove the Contents response type and SHA match
+  that preflight before bytes enter the retrieval cache. Every page, retry attempt,
+  response byte, and retrieved byte counts against the request, response-size, and
+  timeout ceilings below. The adapter treats Git tree `truncated` responses,
+  incomplete PR-file pagination, and missing required blobs as completeness failures.
+  Grep/find-reference behavior runs only over the proven-complete bounded tree/file
+  cache. Every retrieval endpoint validates installation id, repository id,
+  visibility, requested ref, and path bounds before making a GitHub request. GitHub
+  code search is disabled for private
   repositories in v1 at the API-client capability boundary, not only at call sites:
   the search helper rejects private-repo requests before building REST/GraphQL
   search calls, and tests assert that no private-repo path can reach GitHub search.
@@ -1112,12 +1132,17 @@ commands are honored only when all checks pass:
    reapproval/reauthorization link and does not create a settings nonce. A
    writer/maintainer who lacks that elevated role cannot receive a key-configuration
    link. The settings UI repeats the same fresh authorization after the link is
-   opened: the OAuth/App session user must match the command sender, the installation
-   id and repository id must match the signed link record, and GitHub/allowlist state
-   must confirm the same elevated role using the same current membership-reading
-   authority. If the elevated role cannot be confirmed at either gate, the command
-   fails closed, any opened nonce is invalidated so later privilege regain requires a
-   new command, and the failure is audited.
+   opened and again on key-save POST: the OAuth/App session user must match the
+   command sender, the installation id and repository id must match the signed link
+   record, and GitHub/allowlist state must confirm the same elevated role using the
+   same current membership-reading authority. These settings GET/POST authorization
+   checks bypass the positive permission cache entirely and read GitHub/allowlist
+   state under the current installation auth generation; cache-hit attempts in this
+   code path must return a sentinel failure, alert, and abort the render/save rather
+   than silently authorizing. If the elevated role cannot be confirmed at either gate,
+   or if the auth generation changes between the fresh read and the render/save
+   transaction, the command fails closed, any opened nonce is invalidated so later
+   privilege regain requires a new command, and the failure is audited.
 3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
    installation id, repository id, PR number, and current head SHA match the
    idempotency record for the command. Before any provider call or side effect, the
@@ -1168,8 +1193,9 @@ commands are honored only when all checks pass:
 `configure key` link creation is not sufficient to save a key. The settings link is
 cryptographically signed, stored server-side by nonce hash, bound to `{installation,
 repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
-single-use, requires fresh GitHub OAuth/App authorization with the
-installation-admin definition above, and carries no key material in the URL. OAuth
+single-use, requires cache-bypassing fresh GitHub OAuth/App authorization with the
+installation-admin definition above on both settings GET and POST, and carries no key
+material in the URL. OAuth
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
 session id hash, sender id, installation id, repository id, row version, and expiry
 before accepting a provider key. The OAuth-authenticated GitHub user id on the
@@ -1184,12 +1210,15 @@ serializable `UPDATE ... WHERE nonce_hash = ? AND row_version = ? AND expires_at
 database_transaction_timestamp() AND consumed_at IS NULL RETURNING ...` or equivalent
 row-locked compare-and-swap; read-committed read-then-update flows are not allowed.
 Cleanup is storage hygiene only and is never part of authorization. The key-save POST
-must happen over HTTPS with the same authorized same-sender session. Nonce consumption
-plus key persistence must commit in one transaction using the same database-clock
-expiry predicate plus nonce hash, session-binding hash, sender id, OAuth user id,
-installation id, repository id, row version, and `consumed_at IS NULL`; a second
-request, different session, different OAuth user, or expired nonce gets a generic
-used/expired response and cannot write a key.
+must happen over HTTPS with the same authorized same-sender session and a fresh
+cache-bypassing GitHub/allowlist elevated-role read reserved through the guarded-send
+auth-generation pattern above. Nonce consumption plus key persistence must commit in
+one transaction using the same database-clock expiry predicate plus nonce hash,
+session-binding hash, sender id, OAuth user id, installation id, repository id, row
+version, locked auth generation, and `consumed_at IS NULL`; a second request,
+different session, different OAuth user, expired nonce, cache-hit authorization
+attempt, or permission-change generation mismatch gets a generic used/expired or
+unauthorized response and cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
