@@ -217,13 +217,20 @@ decrypt after `finally`; automatic client/SDK retries, redirects, and buffered
 request replay are disabled. Credentials must stay out of prompts, provider request
 bodies, serialized URLs, structured error metadata, and generic exception
 inspection.
-Mutable buffers are zeroed best-effort, but Node/V8 cannot guarantee complete
-erasure of copied strings, headers, or HTTP-client internals; per-job process
-isolation, no long-lived provider clients, mandatory runner recycling after every
-job before any other installation's work, disabled swap/core dumps/heap
-snapshots/process inspection, startup self-checks for those controls, and
-deployment only on platforms where crash-dump controls can be enforced are
-mitigations, not a guarantee that memory is clean.
+Provider keys are decoded from the envelope into owned `Buffer`/`Uint8Array`
+instances and stay out of long-lived JavaScript strings until the final transport
+header boundary. Best-effort zeroing means overwriting every owned mutable key,
+header, and canary buffer with `Buffer.fill(0)` or an equivalent native
+`sodium_memzero`/secure-zero primitive in `finally`, then dropping references before
+the runner exits. If a provider SDK or HTTP primitive forces a transient string copy
+for an authorization header, that copy is treated as live-process residual risk and
+is allowed only inside the audited minimal client above. Node/V8 cannot guarantee
+complete erasure of copied strings, interned values, header normalization buffers,
+or HTTP-client internals; per-job process isolation, no long-lived provider clients,
+mandatory runner recycling after every job before any other installation's work,
+disabled swap/core dumps/heap snapshots/process inspection, startup self-checks for
+those controls, and deployment only on platforms where crash-dump controls can be
+enforced are mitigations, not a guarantee that memory is clean.
 
 The provider HTTP client is a launch-blocking security component: use a minimal
 audited wrapper over Node's `undici`/WHATWG `fetch` streaming primitives, or an
@@ -469,13 +476,15 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   withheld, and the output names the missing context. Security findings from
   Gitleaks, dependency scanning, SAST, or equivalent detectors use the same
   completeness state as the review approval. If changed-line content cannot be read
-  completely, the finding is withheld and reported only in the incomplete-context
-  note. If the changed line is available but required surrounding, caller, lockfile,
-  dependency, or repository context is missing, any emitted security finding must be
-  marked **incomplete context**, approval remains withheld, and the output states
-  which verification context was unavailable. The hosted App must never publish a
-  clean or fully verified security result for a PR whose required security context is
-  incomplete.
+  completely, detectors emit a synthetic **incomplete security context** finding for
+  the affected file/range rather than silently dropping the concern; the finding
+  states that the changed content was unavailable, approval is withheld, and no clean
+  security result is claimed for that scope. If the changed line is available but
+  required surrounding, caller, lockfile, dependency, or repository context is
+  missing, any emitted security finding must be marked **incomplete context**,
+  approval remains withheld, and the output states which verification context was
+  unavailable. The hosted App must never publish a clean or fully verified security
+  result for a PR whose required security context is incomplete.
 - **Security parity:** the API adapter rejects symlinks, submodules, traversal
   outside the installed repo, sensitive files, and over-limit files using the same
   redaction and skip-reporting invariants as local retrieval. The hosted adapter
@@ -796,11 +805,16 @@ commands are honored only when all checks pass:
    admin command flows expose a cache-bust operation that bumps the installation auth
    generation after permission changes. Cache hits, misses, and invalidations are
    audited; stale, missing, or lower-role cache entries cannot authorize a command.
-   The command claim transaction includes `auth_generation = current_auth_generation`
-   in its predicate; if a permission-change webhook lands after the prefilter but
-   before claim, the claim fails before any command record can be consumed. Claimed
-   command records store the auth generation used for authorization, and the handler
-   re-checks that generation immediately before side effects; if a permission-change
+   The command claim transaction runs under serializable isolation or an equivalent
+   compare-and-swap over the installation auth row. It reads the current auth
+   generation inside the transaction, requires any prefetched cache generation to
+   equal that row, and writes the claimed command with the row version it actually
+   locked. If a permission-change webhook lands after the prefilter but before
+   claim, the generation bump wins or forces the claim transaction to retry/fail
+   before any command record can be consumed. Claimed command records store the auth
+   generation used for authorization, and the handler re-checks that generation plus
+   performs the fresh GitHub permission API check immediately before side effects; a
+   stale generation alone can never authorize execution. If a permission-change
    webhook invalidated the cache mid-command, the command is marked
    `authorization_changed`, no provider/GitHub side effect runs, and the user-visible
    response asks the sender to re-run the command after permissions settle. There is
