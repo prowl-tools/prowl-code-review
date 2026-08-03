@@ -197,11 +197,16 @@ Provider request/response bodies, headers, stack traces, raw URLs, and SDK debug
 objects are not logged or retained in client/cache state. HTTP-library debug logging
 is disabled in production. Launch-blocking CI and staging tests must include canary
 provider keys and provider mocks that echo those keys in headers, URLs, bodies,
-timeout errors, malformed responses, and thrown errors; the tests fail if canaries
-appear in logs, thrown errors, audit events, provider error summaries, traces,
-provider request metadata, queue payloads, cache entries, or persisted state. The
-same test suite must verify that decrypting an installation key fails after
-revocation.
+timeout errors, malformed responses, thrown errors, exception stack traces,
+structured exception objects, exception causes, logger serialization, middleware
+caches, retry/backoff state, request builders, transient object references, and any
+enabled Node/V8 tracing output. The tests fail if canaries appear in stdout,
+stderr, structured logs, exception messages/stacks, audit events, provider error
+summaries, traces, provider request metadata, queue payloads, cache entries, or
+persisted state. Startup/staging checks must also verify that Node debugging,
+inspection, heap snapshot, and tracing interfaces are disabled or blocked before
+any provider key can be decrypted. The same test suite must verify that decrypting
+an installation key fails after revocation.
 
 Keys are set through a settings UI authorized by explicit GitHub permissions:
 org-owner permission for org installations, repository-admin permission for
@@ -213,9 +218,13 @@ in Decision 5 succeeds. The link is an HTTPS-only App URL protected by HSTS, con
 only an opaque random nonce whose server-side record stores a hash, and is redacted
 from application logs. The settings page serves no third-party assets, sends
 `Referrer-Policy: no-referrer`, uses `Secure`, `HttpOnly`, `SameSite=Lax` or stricter
-session cookies, and consumes the nonce before any key-save side effect. A leaked
-link cannot save a key without the fresh GitHub OAuth/App authorization described
-in Decision 5. The UI never displays plaintext keys after save.
+session cookies, and requires an explicit CSRF token tied cryptographically to the
+nonce and authenticated session; SameSite cookies are defense-in-depth, not the
+CSRF control. The key-save transaction consumes the nonce atomically with an
+`UPDATE`/`DELETE ... WHERE consumed_at IS NULL` or equivalent unique constraint
+before persisting the key, so concurrent submissions cannot reuse the link. A
+leaked link cannot save a key without the fresh GitHub OAuth/App authorization
+described in Decision 5. The UI never displays plaintext keys after save.
 
 **Deletion and revocation:** overwrite rotates the encrypted key row and emits an
 audit event. Delete/uninstall starts with a single database transaction that marks
@@ -253,7 +262,12 @@ hosted service, and asking users for broad personal GitHub tokens.
 
 **Consequences:** the managed instance carries real security/compliance obligations:
 KMS operations, deletion jobs, audit access, key-leak tests, and settings UI
-authorization are launch blockers rather than implementation details.
+authorization are launch blockers rather than implementation details. Even with
+those controls, managed v1 does not mitigate determined active-process or
+platform-level memory compromise while a key is being decrypted or used; that
+residual risk must be documented in launch materials, and stronger live-custody
+claims require a native secret helper, sidecar vault, or self-hosted controlled
+runtime.
 
 ## Decision 2 — Retrieval: bounded API-first now, sandbox tier later
 
@@ -429,11 +443,14 @@ append-only audit log.
   duplicate signature headers, and MD5/SHA1 signatures are rejected as generic
   authentication failures before any HMAC computation or enqueueing. For validly
   formatted signatures, the receiver computes expected digests for every currently
-  valid candidate secret, performs equal-length constant-time comparisons for all
-  candidates without short-circuiting, and accepts only a matched candidate whose
-  `not_before`/`not_after` window is valid. Delivery ids are recorded with a 24-hour
-  replay TTL before enqueueing, keyed with delivery id, payload hash, action, and
-  accepted secret version. Verified webhooks still pass through app-wide,
+  valid candidate secret selected from server config, performs equal-length
+  constant-time comparisons for every candidate regardless of match or mismatch,
+  combines the results without per-candidate branching/logging, and rejects the
+  entire request only after the full candidate set has been tested. It accepts only
+  a matched candidate whose `not_before`/`not_after` window is valid. Delivery ids
+  are recorded with a 24-hour replay TTL before enqueueing, keyed with delivery id,
+  payload hash, action, and accepted secret version. Verified webhooks still pass
+  through app-wide,
   source-rate, and per-installation token buckets before a job is queued.
   Webhook secrets rotate at least every 90 days or immediately on suspected
   compromise. Because the secret belongs to the GitHub App registration, managed
@@ -552,8 +569,11 @@ cryptographically signed, stored server-side by nonce hash, bound to `{installat
 repository, sender, comment_id, head_sha, nonce}`, expires in 10 minutes, is
 single-use, requires fresh GitHub OAuth/App authorization with the
 installation-admin definition above, carries no key material in the URL, and uses
-standard CSRF/state validation before accepting a provider key. The key-save POST
-must happen over HTTPS with the same authorized session that consumed the nonce.
+standard OAuth state plus an explicit signed CSRF token bound to the nonce and
+session before accepting a provider key. The key-save POST must happen over HTTPS
+with the same authorized session, and nonce consumption plus key persistence must
+commit in one transaction; a second request for the same nonce gets a used/expired
+response and cannot write a key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
