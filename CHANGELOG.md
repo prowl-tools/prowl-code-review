@@ -16,6 +16,11 @@ All notable changes to Prowl Review will be documented in this file.
   boundaries, webhook signature parsing/rotation, command consume-once idempotency, configure-key link hardening,
   and the #62 decision-record coverage table. Status: proposed; #47 stays parked until the doc is approved.
 
+- Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the
+  documented `uses: prowl-tools/prowl-code-review@v1` reference now resolves). `docs/releasing.md` gains the
+  advance-on-release step plus granular-token `NPM_TOKEN` expiry/rotation notes and the Trusted Publishing
+  migration plan (#63).
+
 ### Changed
 - **npm publishing now uses Trusted Publishing (OIDC), not a stored token (#63).**
   `.github/workflows/publish.yml` no longer references the `NPM_TOKEN` secret or sets `NODE_AUTH_TOKEN`;
@@ -53,11 +58,6 @@ All notable changes to Prowl Review will be documented in this file.
     Action input that can override `checkRun.enabled` for trusted workflow paths without changing standalone
     Action users.
 
-### Added
-- Floating **`v1` Action tag**, pointing at the latest stable release (first created at `v0.2.0` — the
-  documented `uses: prowl-tools/prowl-code-review@v1` reference now resolves). `docs/releasing.md` gains the
-  advance-on-release step plus granular-token `NPM_TOKEN` expiry/rotation notes and the Trusted Publishing
-  migration plan (#63).
 
 ## [0.2.0] - 2026-07-27
 
