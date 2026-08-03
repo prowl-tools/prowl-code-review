@@ -95,8 +95,10 @@ pull-request content without leaking secrets or executing attacker-controlled co
   publication call, then discard response bytes without extraction, summary
   generation, persistence, or GitHub publication if revocation is observed. There is
   no true atomicity across the database and an already-started external GitHub API
-  call. Hosted stores purge key rows, queued jobs, caches, review
-  state, and backup key material on the published 30-day schedule. Incident timers
+  call. On uninstall or key deletion, hosted stores revoke the installation and delete
+  live key rows, queued jobs, caches, and review state through the control-plane
+  deletion flow; only encrypted backup copies of deleted key material and operational
+  records remain until the published 30-day backup-expiry schedule. Incident timers
   start at detection time, defined as the moment an automated control or operator
   first classifies a scoped grant, wrapping key, audit stream, or policy state as
   suspect, not when revocation processing later succeeds. Suspected scoped
