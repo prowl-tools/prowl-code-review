@@ -601,7 +601,13 @@ the guarded command/link-creation path immediately before creating a settings li
 if the auth generation changes between the command authorization check and nonce
 creation, the link transaction aborts and no key material can be handled. The settings
 GET and POST repeat the same current-admin check before rendering the key input or
-accepting key bytes.
+accepting key bytes. The settings GET render path cannot be authorized by a positive
+permission cache, remembered installer status, or a link-opening prefilter: it locks
+the nonce/auth-generation rows, performs the current GitHub/App or OAuth read, records
+the render auth generation on the nonce row, and renders only if that fresh proof
+matches the row state. If a permission-change webhook arrives before or during that
+render transaction, the GET fails closed with the generic authorization response; if it
+arrives between GET and POST, the POST invalidates the nonce and writes no key.
 `@prowl-review configure key` never accepts a raw key in a public comment; it only
 opens a short-lived, single-use settings link after the command authorization in
 Decision 5 succeeds. Immediately before nonce creation, the command handler re-reads
@@ -693,7 +699,16 @@ behavior; it cannot change the synchronous scan depth, lookup tables, branch sha
 dummy-buffer length, response deadline, or number of memory reads. Submitted and dummy
 buffers are padded or truncated into the same fixed maximum scan window before any
 character-class work, and provider-specific prefixes are treated as masked data, not as
-control flow. If a provider's semantic key validation cannot be represented by that fixed
+control flow. The fixed-work validation loop must allocate all buffers before entering
+the response-timed section and must not throw, allocate, call provider adapters, decode
+variable-length strings, or dispatch exception-dependent code based on submitted key
+bytes. Unexpected type, encoding, allocation, or adapter errors are converted before
+the loop into the same dummy-buffer path and fixed response envelope; if a runtime error
+can escape the loop or alter the response deadline, managed key-save traffic remains
+disabled. Launch tests monkeypatch allocation, decoder, lookup-table, and provider
+adapter failure points and fail if any injected exception changes status, headers, body
+bytes, persistence, logging, or p95/p99 timing. If a provider's semantic key validation
+cannot be represented by that fixed
 local loop, the provider is not launchable until the post-response background validator
 can check it without exposing user-queryable pending state. Managed v1 performs no synchronous live provider
 validation and opens no provider network connection before the response is committed.
