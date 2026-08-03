@@ -202,11 +202,18 @@ is passed to a minimal HTTP client that does not persist headers, buffer
 authorization data beyond the active request, replay a constructed request object,
 or enable request debugging. Each attempt obtains a fresh lease/fencing snapshot,
 provider-call nonce, and decrypt authorization tied to the current revocation
-generation; retries cannot reuse any of those values. The attempt is wrapped in a
-`try/finally`; if request construction, send, streaming, or response handling fails,
-the `finally` block clears all runner references before any retry can begin. The
-retry loop lives outside the HTTP client and rebuilds every outbound attempt from a
-fresh decrypt after `finally`; automatic client/SDK retries, redirects, and buffered
+generation; retries cannot reuse any of those values. The control plane consumes
+the provider-call nonce and grant in the same transaction that authorizes decrypt,
+with a unique key over `{installation, job, attempt, nonce}` so a buggy retry loop
+or attacker cannot resubmit a failed attempt's nonce. The attempt is wrapped in a
+`try/finally` that starts before decrypt and encloses request construction, send,
+streaming, and response handling; catch/finally code may reference only local
+mutable buffers and sanitized enum state, never generic exception serialization over
+objects that may contain the key. If request construction, send, streaming, or
+response handling fails, the `finally` block zeroes owned mutable buffers
+best-effort and clears all runner references before any retry can begin. The retry
+loop lives outside the HTTP client and rebuilds every outbound attempt from a fresh
+decrypt after `finally`; automatic client/SDK retries, redirects, and buffered
 request replay are disabled. Credentials must stay out of prompts, provider request
 bodies, serialized URLs, structured error metadata, and generic exception
 inspection.
@@ -226,16 +233,19 @@ buffering beyond the active socket or one bounded read chunk, no automatic reque
 object retention, no debug hooks, and no logging of serialized request/response
 objects. The launch maximum buffered provider response chunk is 64 KiB before the
 runner performs a revocation check and either processes that chunk or discards it;
-larger read-ahead or full-body buffering blocks launch. Abort signals must destroy
-active request and response streams plus any owned buffers within a 1-second
-deadline, then the runner process exits if the stream is still open; no cached
-request object may be retried. Tests must include post-attempt canary scans of
-available heap/debug artifacts in staging and abort tests proving revocation fires
-before full-body buffering on slow, single-chunk, and already-completed provider
-responses; a canary present after `finally` completes blocks launch until the
-client/wrapper is replaced or patched. A canary may still be observable while the
-request is active or inside unavoidable kernel/HTTP-library buffers before abort is
-honored; that live-process exposure is the explicit residual risk above.
+larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
+the chunk limit at the response reader, perform a startup self-test against a
+provider mock that attempts over-buffering, and expose a metric/alert if any read
+exceeds the bound. Abort signals fire synchronously when revocation is observed and
+must destroy active request and response streams plus any owned buffers within a
+1-second deadline, then the runner process exits if the stream is still open; no
+cached request object may be retried. Tests must include post-attempt canary scans
+of available heap/debug artifacts in staging and abort tests proving revocation
+fires before full-body buffering on slow, single-chunk, and already-completed
+provider responses; a canary present after `finally` completes blocks launch until
+the client/wrapper is replaced or patched. A canary may still be observable while
+the request is active or inside unavoidable kernel/HTTP-library buffers before abort
+is honored; that live-process exposure is the explicit residual risk above.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -344,7 +354,10 @@ never grants authority: the transactional read must match the current lease toke
 revocation generation, and publication token exactly. Provider and GitHub calls are
 made only through guarded send functions that perform the transactional check,
 allocate/consume any provider-call nonce, attach an abort signal tied to revocation,
-and immediately start the external request without intervening async work. The
+and immediately start the external request in the same synchronous operation without
+intervening async work. Staging telemetry must measure the final-check-to-HTTP-client
+handoff and keep it under a published millisecond-scale budget; exceeding that
+budget blocks launch until the guarded sender is redesigned. The
 worker control plane also cancels active provider HTTP streams, sends a graceful
 termination signal to active runner processes after the revocation transaction
 commits, and escalates to a hard kill after a short published deadline; fencing
@@ -355,13 +368,17 @@ final local check but before the external API receives the request is an unavoid
 cross-system race; the launch docs must disclose it. If revocation is observed while
 a provider response is streaming, the abort signal closes the stream immediately,
 the runner stops reading further chunks, and all bytes already received are
-discarded without parsing. The runner must re-check revocation after response
-headers, before and after every bounded response chunk, after stream termination, and
-before parsing response content. If a provider or HTTP library has already buffered
-up to the 64 KiB chunk limit before the abort is honored, those bytes are discarded
-and the event is audited as residual live-buffer exposure; a client that can buffer
-more than that limit is not launchable. The runner must re-check again immediately
-before the GitHub publication API call, or before each publication call if output is
+discarded without parsing. Revocation handling is sequenced as signal, synchronous
+abort, buffer discard/zero-owned-buffers best-effort, then process exit if the
+stream is still open after the abort deadline. The runner must re-check revocation
+after response headers, before and after every bounded response chunk, after stream
+termination, and before parsing response content. If a provider or HTTP library has
+already buffered up to the 64 KiB chunk limit before the abort is honored, those
+bytes are discarded and the event is audited as residual live-buffer exposure; a
+client that can buffer more than that limit in process is not launchable. OS/TCP
+buffers outside runner memory cannot be zeroed and remain part of the disclosed
+live-process/host residual risk. The runner must re-check again immediately before
+the GitHub publication API call, or before each publication call if output is
 deferred/batched, and the publication lease/fencing token is invalidated by
 revocation. If revocation occurred in flight, the response bytes are discarded
 without extraction, summary generation, persistence, or GitHub publication;
@@ -591,19 +608,22 @@ append-only audit log.
   rejected as generic authentication failures before any HMAC computation or
   enqueueing. The malformed-input path does not normalize, truncate, compare partial
   prefixes, or choose first/last duplicate headers. Webhook secrets are generated
-  and loaded as fixed-length random byte arrays, not variable-length strings. For
-  validly formatted signatures, the receiver computes expected digests for every
-  currently valid candidate secret selected from server config before any replay
-  store lookup, performs equal-length constant-time comparisons for every candidate
-  regardless of match or mismatch, combines the results without per-candidate
-  branching/logging, and rejects the entire request only after the full candidate
-  set has been tested. It accepts only a matched candidate whose
-  `not_before`/`not_after` window is valid. The required implementation pattern is
-  `crypto.timingSafeEqual` or equivalent for each candidate, bitwise/result
-  accumulation instead of `some`/early `return`, no per-candidate logs until the
-  loop completes, and tests showing equivalent behavior when the matching secret is
-  first, last, or absent. Only after the full signature loop completes does the
-  receiver consult the replay store. Delivery ids are recorded with a 24-hour replay
+  and loaded as 32-byte random byte arrays, not variable-length strings. The receiver
+  always builds a fixed two-slot candidate array: current secret and
+  previous-secret-or-32-byte-dummy, with version/window metadata masked into the
+  final decision after comparison. For validly formatted signatures, the receiver
+  computes expected digests for every candidate slot before any replay store lookup,
+  performs equal-length constant-time comparisons for every slot regardless of match
+  or mismatch, combines match bits with bitwise OR/result masking in a full-length
+  loop, and rejects the entire request only after the full candidate set has been
+  tested. It accepts only a matched candidate whose `not_before`/`not_after` window
+  is valid. The required implementation pattern is `crypto.timingSafeEqual` or
+  equivalent for each candidate, fixed-count loop iteration, no `some`/early
+  `return`, no per-candidate exceptions, no per-candidate internal state in logs or
+  traces until the loop completes, and tests showing equivalent behavior when the
+  matching secret is first, last, dummy/absent, or outside its validity window. Only
+  after the full signature loop completes does the receiver consult the replay
+  store. Delivery ids are recorded with a 24-hour replay
   TTL before enqueueing, keyed with delivery id, payload hash, action, and accepted
   secret version. New replay rows may be inserted only for the current secret version
   or for the first accepted delivery before `new_secret_active_at`; an old-secret
@@ -685,19 +705,27 @@ secrets such as `PROWL_APP_PRIVATE_KEY` must be revoked at the GitHub App level 
 rotated. Deleting repository secrets is not sufficient; the old App private-key
 versions must be removed from the GitHub App registration so a copied key can no
 longer mint installation tokens anywhere. The managed installer and token-minter
-have a hard launch gate backed by an operator-signed credential-rotation record:
-external installation acceptance, token minting, and review enqueueing remain
-disabled until the record names the revoked GitHub App key versions, the replacement
-managed key version generated after the cutoff, and a canary proving a retired key
-cannot mint an installation token. If GitHub-level revocation cannot be verified
-with high confidence, the managed service must use a new GitHub App identity whose
-private key was never distributed to Actions. The managed App signing credential
-lives only in the managed secret store, HSM, or token broker used by the hosted
-token-minter; it is never stored in this repository, workflow secrets, Action logs,
-or customer repositories. The Action path must use `GITHUB_TOKEN`, a user-owned
-GitHub App credential scoped to that operator, or a brokered token that can mint only
-for the current repository/workflow and cannot mint across managed hosted tenants.
-Sharing the managed App signing credential with Actions is a launch blocker.
+have a hard runtime launch gate, implemented as startup and per-request policy code
+rather than a checklist: external installation acceptance, token minting, and review
+enqueueing remain disabled until the policy store contains a two-operator-signed
+credential-rotation record. That record must name the revoked GitHub App key
+versions, include CI evidence from the GitHub App credential audit/export, name the
+replacement managed key version generated after the cutoff, and include a production
+canary showing a retired key cannot mint an installation token. The canary runs in
+production before opening external installs and as a scheduled drift check; failure
+after launch immediately disables external installation acceptance, hosted token
+minting, and review enqueueing for the managed App until operators either repair the
+revocation evidence or migrate to a new App identity. If GitHub-level revocation
+cannot be verified with high confidence, the managed service must register and
+provision a new GitHub App identity whose private key was never distributed to
+Actions; migration docs then map old Action markers to the new bot only through the
+explicit marker-copy job above. The managed App signing credential lives only in the
+managed secret store, HSM, or token broker used by the hosted token-minter; it is
+never stored in this repository, workflow secrets, Action logs, or customer
+repositories. The Action path must use `GITHUB_TOKEN`, a user-owned GitHub App
+credential scoped to that operator, or a brokered token that can mint only for the
+current repository/workflow and cannot mint across managed hosted tenants. Sharing
+the managed App signing credential with Actions is a launch blocker.
 
 Uninstalling the `prowl-review` App immediately disables hosted reviews and token
 minting for Action workflows that depend on that App. Existing Action workflows
@@ -768,10 +796,17 @@ commands are honored only when all checks pass:
    admin command flows expose a cache-bust operation that bumps the installation auth
    generation after permission changes. Cache hits, misses, and invalidations are
    audited; stale, missing, or lower-role cache entries cannot authorize a command.
-   Claimed command records store the auth generation used for authorization, and the
-   handler re-checks that generation immediately before side effects; if a
-   permission-change webhook invalidated the cache mid-command, the command aborts
-   and must re-authorize before retrying. State-changing, privileged, or
+   The command claim transaction includes `auth_generation = current_auth_generation`
+   in its predicate; if a permission-change webhook lands after the prefilter but
+   before claim, the claim fails before any command record can be consumed. Claimed
+   command records store the auth generation used for authorization, and the handler
+   re-checks that generation immediately before side effects; if a permission-change
+   webhook invalidated the cache mid-command, the command is marked
+   `authorization_changed`, no provider/GitHub side effect runs, and the user-visible
+   response asks the sender to re-run the command after permissions settle. There is
+   no automatic retry for provider-backed, state-changing, or privileged commands
+   after authorization invalidation because retrying could execute after a role
+   downgrade without explicit user intent. State-changing, privileged, or
    provider-backed commands,
    including `review`, `full review`, `docstrings`, `tests`, chat replies,
    `break glass`, `ignore`, `resolve`, `pause`, `resume`, per-PR `configure`, and
