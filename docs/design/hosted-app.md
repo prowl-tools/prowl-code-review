@@ -370,6 +370,12 @@ closed as stale and links to GitHub App reapproval. The OAuth `read:org` path
 performs the owner check with the current OAuth session token for that same request;
 no cached App grant can substitute for it. If neither current membership-reading
 authority is available, the command/UI does not create or consume a key-save nonce.
+The command handler performs this fresh installation-admin check synchronously inside
+the guarded command/link-creation path immediately before creating a settings link;
+if the auth generation changes between the command authorization check and nonce
+creation, the link transaction aborts and no key material can be handled. The settings
+GET and POST repeat the same current-admin check before rendering the key input or
+accepting key bytes.
 `@prowl-review configure key` never accepts a raw key in a public comment; it only
 opens a short-lived, single-use settings link after the command authorization in
 Decision 5 succeeds. The settings hostname must be HTTPS-only at the network
@@ -454,8 +460,12 @@ including a live provider auth probe would exceed the bound, the endpoint must s
 that synchronous provider call, persist only an `unverified` encrypted key row after
 the local constant-shape checks pass, return the same generic pending envelope, and
 withhold all reviews for that installation until a later guarded validation job marks
-the key verified. If either the no-live-probe path or the later guarded validation
-cannot meet its own published bound, launch is blocked. The residual timing threat
+the key verified. Probe selection is a provider/adapter deployment setting, not a
+per-key, per-format, or per-request branch, and both the live-probe-enabled and
+no-live-probe paths release responses only at the same configured deadline with the
+same dummy validation work when no provider call is made. If either the no-live-probe
+path or the later guarded validation cannot meet its own published bound, launch is
+blocked. The residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
@@ -1011,10 +1021,15 @@ commands are honored only when all checks pass:
    inside the transaction; any generation from the earlier prefilter cache is treated
    only as an expected value and never becomes authority. If that expected value
    differs from the locked row, the transaction rolls back before writing or consuming
-   a command record, records a `stale_prefilter_generation` audit event, and may
-   perform at most one fresh GitHub permission read before retrying under the new
-   generation if the delivery, comment body, and head SHA are still current. It never
-   tolerates a generation mismatch and never claims work under the old cache
+   a command record, records a `stale_prefilter_generation` audit event, and re-enters
+   authorization only by locking the installation auth row and command row in a new
+   serializable transaction before making the fresh GitHub permission API read. The
+   old cached result is discarded and can never authorize the retry. If the generation
+   changes again before the fresh read result is reserved under the locked row, the
+   command reaches terminal `stale_authorization`/`authorization_changed` rather than
+   proceeding. At most one fresh read applies only to retrying a transient GitHub API
+   read, not to retrying the generation check or command authorization decision. It
+   never tolerates a generation mismatch and never claims work under the old cache
    generation. If a permission-change webhook lands after the prefilter but before
    claim, the generation bump wins or forces the claim transaction to retry/fail
    before any command record can be consumed. Claimed command records store the auth
@@ -1098,7 +1113,14 @@ commands are honored only when all checks pass:
    authoritative `updated_at` value, full body digest, parsed verb, and head SHA. If
    the API state no longer matches the queued delivery, the queued version is recorded
    as superseded without creating a consume-once record, and the latest queued edit is
-   processed behind the same lock. The lock intentionally excludes the mutable parsed
+   processed behind the same lock. While holding the lock, the handler allocates a
+   monotonic local `comment_version_seq` for the current API state and inserts the
+   consume-once row through a unique constraint over `{installation, repository,
+   pull_request, comment_id, api_updated_at, body_digest, parse_version, verb}` plus
+   the local sequence. Insert conflicts are treated as duplicates and do not execute
+   again; identical `updated_at`/digest/verb values represent the same observed
+   comment version, and different digests under the same GitHub timestamp serialize
+   through the local sequence. The lock intentionally excludes the mutable parsed
    command verb, PR head SHA, and lifecycle generation so every edit of one comment
    serializes behind the same comment identity. That lock is held from claim through
    command terminal state, including provider calls and publication, with its own
@@ -1127,15 +1149,20 @@ single-use, requires fresh GitHub OAuth/App authorization with the
 installation-admin definition above, and carries no key material in the URL. OAuth
 state and the explicit signed CSRF token must commit to the nonce hash/link id,
 session id hash, sender id, installation id, repository id, row version, and expiry
-before accepting a provider key. The first authorized settings GET transactionally
-binds the nonce row to that session before rendering the key input only with a
-predicate that includes `expires_at > now()` and `consumed_at IS NULL`; expired
-nonces cannot be bound even if cleanup has not run. The key-save POST must happen
-over HTTPS with the same authorized session. Nonce consumption plus key persistence
-must commit in one transaction using a predicate that includes the nonce hash,
-session-binding hash, sender id, installation id, repository id, row version,
-`expires_at > now()`, and `consumed_at IS NULL`; a second request, different session,
-or expired nonce gets a generic used/expired response and cannot write a key.
+before accepting a provider key. The OAuth-authenticated GitHub user id on the
+settings GET and POST must exactly equal the signed sender id from the command
+webhook; a mismatch fails with the same generic unauthorized envelope, invalidates no
+other user's nonce, and audits a possible social-engineering attempt. The first
+authorized settings GET transactionally binds the nonce row to that same-sender
+session before rendering the key input only with a predicate that includes
+`expires_at > now()` and `consumed_at IS NULL`; expired nonces cannot be bound even if
+cleanup has not run. The key-save POST must happen over HTTPS with the same
+authorized same-sender session. Nonce consumption plus key persistence must commit in
+one transaction using a predicate that includes the nonce hash, session-binding hash,
+sender id, OAuth user id, installation id, repository id, row version, `expires_at >
+now()`, and `consumed_at IS NULL`; a second request, different session, different
+OAuth user, or expired nonce gets a generic used/expired response and cannot write a
+key.
 
 **Rationale:** reusing the bot identity preserves update-in-place behavior for
 current `prowl-review[bot]` summaries, while shared delivery-owner config prevents
