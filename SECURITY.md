@@ -78,8 +78,13 @@ pull-request content without leaking secrets or executing attacker-controlled co
   budget. A revocation that lands after that final check but before the provider
   receives the request is still an unavoidable cross-system race. A provider request
   already sent cannot be recalled; it may consume provider quota, reach the provider,
-  continue server-side after the local stream is aborted, and expose content to
-  provider-side systems. If revocation happens in flight, the runner must re-check
+  continue server-side after the local stream is aborted, and expose the provider key
+  in the request authorization material plus PR content to provider-side systems.
+  Once that request reaches the user's selected provider, provider logging, caching,
+  downstream transmission, endpoint compromise, or provider-side key misuse is
+  outside Prowl's control and is not undone by Prowl revocation; users must rely on
+  provider-side key scoping, spend limits, monitoring, and rotation for that boundary.
+  If revocation happens in flight, the runner must re-check
   before parsing the provider response and again immediately before each GitHub
   publication call, then discard response bytes without extraction, summary
   generation, persistence, or GitHub publication if revocation is observed. There is

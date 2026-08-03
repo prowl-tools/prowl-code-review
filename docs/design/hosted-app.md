@@ -188,6 +188,19 @@ memory-locking is required before Prowl can claim stronger live-custody protecti
 for the managed service. The controls below reduce accidental persistence, ordinary
 crash dumps, logs, traces, and reuse after a job exits.
 
+For managed v1 launch, the settings key-ingestion path is not a long-lived web
+process once plaintext key bytes are present. Each save/rotation runs in a hardened
+short-lived worker with the same no-debug, no-core-dump, no-swap, blocked
+inspection/heap-snapshot, sanitized logging, and mandatory post-request recycle
+requirements as the runner. Submitted key bytes are copied out of framework request
+objects into native secure allocation with memory locking and explicit zeroing
+(`sodium_malloc`/`sodium_memzero` or platform equivalent) before validation and
+envelope encryption; if the managed platform cannot provide that primitive for key
+ingestion, launch is blocked until an external secret helper or sidecar vault owns
+the ingestion step. These controls reduce persistence after save, but they still do
+not protect against malicious code or an operator already executing inside that
+worker during the live save window.
+
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
 authentication, so a compromised provider endpoint, provider-side logging system,
@@ -265,22 +278,33 @@ attempt per provider-call nonce, no redirect follow, no automatic retry, no inhe
 proxy use, no retained `Authorization` header after `finally`, no serialized
 request/response object containing credentials, no cross-tenant connection reuse, and
 enforced abort/buffer limits. Approval requires the test report plus security-owner
-sign-off by someone who did not author the wrapper. The launch maximum buffered
-provider response chunk is 64 KiB before the runner performs a revocation check and
-either processes that chunk or discards it;
+sign-off by a two-person security quorum whose members did not author the wrapper and
+are not the deployment approver. The wrapper reruns the equivalence suite at startup,
+after dependency updates, and at least daily as a drift check; failure disables hosted
+provider calls and pages on-call until the wrapper or dependency set is repaired. The
+launch maximum buffered provider response chunk is 64 KiB before the runner performs
+a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The wrapper must enforce
-the chunk limit at the response reader, perform a startup self-test against a
-provider mock that attempts over-buffering, and expose a metric/alert if any read
-exceeds the bound. Abort signals fire synchronously when revocation is observed and
+the chunk limit at the response reader: if a read would exceed 64 KiB, the wrapper
+aborts the provider request, zeroes/discards the partial chunk, marks the provider
+attempt incomplete with no retry of that request object, and recycles the runner.
+Continuing to parse or summarize an over-limit chunk is launch-blocking. The wrapper
+must perform a startup self-test against a provider mock that attempts over-buffering
+and expose a metric/alert if any read exceeds the bound. Abort signals fire
+synchronously when revocation is observed and
 must destroy active request and response streams plus any owned buffers within a
 1-second deadline, then the runner process exits if the stream is still open; no
 cached request object may be retried. Tests must include post-attempt canary scans
-of available heap/debug artifacts in staging and abort tests proving revocation
-fires before full-body buffering on slow, single-chunk, and already-completed
-provider responses; a canary present after `finally` completes blocks launch until
-the client/wrapper is replaced or patched. A canary may still be observable while
-the request is active or inside unavoidable kernel/HTTP-library buffers before abort
-is honored; that live-process exposure is the explicit residual risk above.
+of owned buffers, structured logs, traces, serialized errors, and available
+heap/debug artifacts in staging after the wrapper has run `finally`, dropped
+references, forced an explicit GC where the runtime permits, and recycled the worker.
+A full canary token, authorization header, or configured contiguous canary fragment in
+those owned artifacts blocks launch until the client/wrapper is replaced or patched.
+Abort tests must prove revocation fires before full-body buffering on slow,
+single-chunk, and already-completed provider responses. A canary may still be
+observable while the request is active or inside unavoidable kernel/HTTP-library
+buffers before abort is honored; that live-process exposure is the explicit residual
+risk above.
 
 The runner isolation boundary is an OS process per review job, not just a queueing
 convention. Even two jobs for the same installation run in separate processes, and
@@ -411,9 +435,14 @@ finish behind the same response deadline or leave the key in the generic pending
 state for later guarded validation. Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, and session-race requests and block launch if p95/p99 distributions diverge
-beyond the published bound. The residual timing threat model is statistical leakage
-of a generic save-state transition under runtime/network jitter, never plaintext key
-material, provider error detail, key prefix/length/class, or authorization reason.
+beyond the published bound. The managed v1 launch bound is p95 delta <= 25 ms and
+p99 delta <= 50 ms between any two failure classes over at least 10,000 staging
+samples per class, after warmup, on the chosen runtime and ingress path. If the
+environment cannot meet that bound, synchronous live validation is disabled in favor
+of the generic pending state or launch is blocked. The residual timing threat model
+is statistical leakage of a generic save-state transition under runtime/network
+jitter after that bound, never plaintext key material, provider error detail, key
+prefix/length/class, or authorization reason.
 The response never re-renders or logs the submitted key, its prefix/suffix, length,
 character classes, or partial provider error details. The input field is cleared
 after every submit attempt.
@@ -734,8 +763,11 @@ append-only audit log.
   timing distributions when the matching secret is current, previous, dummy/absent,
   or outside its validity window. Only after the full signature loop completes does
   the receiver consult the replay store. Delivery ids are recorded with a 24-hour replay
-  TTL before enqueueing, keyed with delivery id, payload hash, action, and accepted
-  secret version. New replay rows may be inserted only for the current secret version
+  TTL before enqueueing, keyed with installation id, repository id when present,
+  delivery id, payload hash, action, and accepted secret version. The installation id
+  is parsed from the signed payload before replay insertion and must match the row's
+  tenant scope before any job or control event is enqueued. New replay rows may be
+  inserted only for the current secret version
   or for the first accepted delivery before `new_secret_active_at`; an old-secret
   match during grace is never allowed to create the prior replay record it needs for
   acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
