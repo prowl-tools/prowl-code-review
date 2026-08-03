@@ -205,6 +205,13 @@ controls reduce persistence after save, but they still do not protect against
 malicious code or an operator already executing inside that worker during the live
 save window.
 
+Managed launch materials must surface that boundary before the user installs the App
+or enters a provider key. The install page, migration guide, and first key-setup
+screen must state that managed hosting is weaker than CLI/Action for live key
+custody because plaintext keys exist briefly in Prowl-controlled workers; key entry
+requires an explicit acknowledgement, while CLI, Action, and self-host remain the
+recommended paths for users who reject that boundary.
+
 Provider endpoint compromise is also outside Prowl's control. The managed App
 sends the user's BYOK credential to the user's chosen provider over normal provider
 authentication, so a compromised provider endpoint, provider-side logging system,
@@ -469,6 +476,12 @@ blocked. The residual timing threat
 model is statistical leakage of a generic save-state transition under runtime/network
 jitter after that bound, never plaintext key material, provider error detail, key
 prefix/length/class, or authorization reason.
+Production records p50/p95/p99/max latency histograms by internal outcome class only
+after the response is committed, never in user-visible output. If any class pair
+exceeds the published p95/p99 delta for three consecutive five-minute windows, the
+settings service disables synchronous live validation, stores only unusable
+`unverified` rows behind the generic pending envelope, pages on-call, and withholds
+reviews until drift is repaired or launch is rolled back.
 The response never re-renders or logs the submitted key, its prefix/suffix, length,
 character classes, or partial provider error details. The input field is cleared
 after every submit attempt.
@@ -787,8 +800,15 @@ append-only audit log.
   `return`, no per-candidate exceptions, no per-candidate internal state in logs or
   traces until the loop completes, and tests showing equivalent behavior and bounded
   timing distributions when the matching secret is current, previous, dummy/absent,
-  or outside its validity window. Only after the full signature loop completes does
-  the receiver consult the replay store. The replay decision receives the immutable
+  or outside its validity window. The launch bound is p95 delta <= 10 ms and p99
+  delta <= 25 ms between signature failure classes over at least 100,000 warmed
+  samples against the built receiver artifact; production records the same histograms
+  and disables hosted ingress, relying on GitHub redelivery, if drift exceeds the
+  bound for three consecutive five-minute windows. The verifier module is static, has
+  no dynamic code generation, and its timing tests run against the production bundle,
+  but this is a remote timing mitigation, not a claim against local microarchitectural
+  observation of the receiver process. Only after the full signature loop completes
+  does the receiver consult the replay store. The replay decision receives the immutable
   match-bit set from that just-completed HMAC loop; replay-store state alone is never
   authentication. Old-secret duplicate acceptance requires both the old-secret match
   bit for the exact immutable raw payload bytes just hashed and an existing
@@ -802,8 +822,11 @@ append-only audit log.
   match during grace is never allowed to create the prior replay record it needs for
   acceptance. This is an explicit read-then-conditional-insert flow with no upsert:
   if the old-secret match has no existing pre-activation replay row, verification
-  fails before any replay record is inserted. After signature and replay handling,
-  the receiver classifies authorization-control events before no-op filtering:
+  fails before any replay record is inserted. Current-secret first-delivery insertions
+  run in a serializable transaction with a unique index over the replay key above;
+  old-secret duplicate checks use `SELECT ... FOR UPDATE` on the existing
+  pre-activation row and never execute an insert path during grace. After signature
+  and replay handling, the receiver classifies authorization-control events before no-op filtering:
   `installation`, `installation_repositories`, `membership`, `member`, `organization`,
   `team`, `team_add`, `repository`, and any documented permission, suspend, delete,
   transfer, visibility, SAML/IP, or policy event bypass the non-PR no-op path and are
@@ -1211,12 +1234,18 @@ The explicit records are:
    dual delivery cannot start duplicate reviews when config is missing, stale, or
    unreadable.
 3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
-   org-membership permission/reapproval for org key setup, and deletion lifecycle.
+   org-membership permission/reapproval for org key setup, deletion lifecycle,
+   explicit managed-custody warning in install/migration/key-entry UX, and either the
+   audited native key-ingestion worker or an external secret-helper/sidecar vault.
 4. API-retrieval adapter for the core's repo-tools interface with the Decision 2
    bounds and incomplete-review states.
-5. Runner + posting path (core unchanged) + command authorization/replay handling.
-6. Self-host packaging (Workers deploy button + Dockerfile) and SECURITY.md/docs.
-7. Beta on our own repos → publish policy docs/limit defaults → announce.
+5. Provider HTTP reference wrapper, canonical provider mock, equivalence harness,
+   canary fixtures, dependency provenance report, timing/drift monitors, and
+   two-security-reviewer launch record.
+6. Runner + posting path (core unchanged) + command authorization/replay handling,
+   blocked on step 5 for any provider call.
+7. Self-host packaging (Workers deploy button + Dockerfile) and SECURITY.md/docs.
+8. Beta on our own repos → publish policy docs/limit defaults → announce.
 
 Each step lands as its own backlog item once #47 is un-parked; this doc's approval
 is the gate.
