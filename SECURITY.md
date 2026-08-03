@@ -47,9 +47,12 @@ pull-request content without leaking secrets or executing attacker-controlled co
   tests, provider-side KMS audit logs, and drift alerts enforce separation between
   KMS administration, database administration, backup/restore, deletion workers,
   and runner decrypt identities. This protects stored ciphertext, queues, and
-  backups. This is a material change from the CLI/Action model: Prowl-managed
-  infrastructure receives the key during settings save/rotation, stores encrypted
-  key material, and later decrypts it transiently for reviews. The at-rest controls
+  backups. This is a material change from the CLI/Action model: in CLI/Action use,
+  the plaintext key is exposed to the user's local machine or chosen GitHub runner
+  and then to the selected provider, but not to a Prowl-hosted settings or runner
+  process. In the managed Hosted App, Prowl-managed infrastructure receives the key
+  during settings save/rotation, stores encrypted key material, and later decrypts it
+  transiently for reviews. The at-rest controls
   limit database-only, queue-only, backup-only, and KMS-unauthorized operator access;
   they do **not** protect a plaintext provider key from active service/runtime
   compromise while the key is being handled. Examples include runtime process
