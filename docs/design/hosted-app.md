@@ -261,6 +261,10 @@ results, deployment platform controls, re-verification schedule, and two securit
 reviewers. If that attestation is absent, stale, unsigned, or names artifacts that do
 not match the deployed source commit, post-build artifact digest, signed deployment
 record, and environment, managed key-save and provider traffic remain disabled.
+The placeholder `NOT ISSUED` attestation state is an explicit deny input, not a
+warning; there is no development, beta, support, feature-flag, or migration override
+that may accept managed provider keys before a concrete ingestion class, launch
+record, runtime policy check, and signed deployment binding exist.
 These controls reduce persistence after save, but
 they still do not protect against malicious code or an operator already executing
 inside that worker during the live save window. Application code cannot prevent V8 from
@@ -464,7 +468,10 @@ those paths or update this decision before provider traffic can be enabled. The
 managed runtime starts with provider egress disabled and checks this launch record
 before every runner startup and provider-call feature-flag enablement; an absent,
 draft, unsigned, or mismatched record keeps decrypt and provider traffic disabled
-even if the rest of the App is deployed. The
+even if the rest of the App is deployed. The provider-egress feature flag has no
+override path: startup must verify the named files exist, match the deployed source
+commit and artifact digest, and have passing launch-blocking CI evidence before any
+runner can decrypt for provider traffic. The
 security-owner quorum is two repository maintainers with write/admin access who are
 not the wrapper author and not the production deployment approver; their approval is
 recorded as GitHub review approvals on the launch-record PR plus their names and
@@ -500,7 +507,12 @@ buffered before the application read. Managed launch must either configure the r
 socket/container to cap receive buffers at the same bound or publish the measured
 lower-layer residual exposure in the launch record; if HTTP-library internal buffers
 can expose more than 64 KiB to the Node process after revocation, the wrapper is not
-launchable without a native transport shim or network-level buffer shaper. The wrapper
+launchable without a native transport shim or network-level buffer shaper. The launch
+record must name the concrete OS, container, TLS, and HTTP-client receive-buffer
+controls used for the runner class, such as `SO_RCVBUF`, Linux
+`net.core.rmem_max`/`net.ipv4.tcp_rmem`, container network limits, TLS record buffering
+behavior, and HTTP-library high-water marks where applicable; absent platform evidence
+is fail-closed rather than an accepted default. The wrapper
 must perform a startup self-test against a provider mock that attempts over-buffering
 and slow-streams data so revocation fires between reads; the test includes <=64 KiB,
 64 KiB + 1 byte, 500 KiB, and cumulative-cap-crossing responses, records actual
@@ -1022,7 +1034,12 @@ filesystem, and API retrieval can hit rate, latency, and completeness limits.
   path, runtime, or tests cannot keep that handoff within the published bound or prove
   no private/unknown search request object is sent after a visibility bump visible to
   the App, public code search remains disabled for managed v1 and required search
-  reports incomplete context. Production telemetry records visibility-change/search
+  reports incomplete context. Even when those bounds pass, the residual risk remains
+  that GitHub visibility could change after the final visibility read and before the
+  first outbound search byte reaches GitHub; without a GitHub atomic visibility token,
+  the App can only bound, monitor, and disclose that send-side race, not eliminate it.
+  The launch record must explicitly accept that residual metadata-exposure risk before
+  public search is enabled. Production telemetry records visibility-change/search
   races and automatically disables public code search for the affected runner class
   when the bound drifts or a race reaches the guarded send.
   The launch-blocking `api-retrieval-private-search-boundary` suite must run in CI
@@ -1261,8 +1278,11 @@ append-only audit log.
   characters after the prefix, and exactly 32 decoded bytes, plus exactly one
   `X-Hub-Signature-256` header after case-insensitive counting across the raw header
   list; an absent header is a hard verification failure. The regex notation is the
-  accepted grammar, not permission to use a branchy auth decision. The parser must
-  reject missing prefixes, prefixes with extra characters, whitespace/control
+  accepted single-value grammar only; it is not a duplicate-header defense and is not
+  permission to use a branchy auth decision. Header cardinality is validated first
+  against the raw wire header list obtained before proxy/framework normalization,
+  coalescing, lowercasing, or first/last-value selection. The parser must reject
+  missing prefixes, prefixes with extra characters, whitespace/control
   characters, and suffixes after the digest through the same fixed-work validation
   path. It scans the fixed 71-byte candidate window, maps missing/overlong bytes to
   dummy byte values, accumulates prefix, length, and hex validity into masks, and
@@ -1293,7 +1313,8 @@ append-only audit log.
   the launch record. This design is not an implementation approval: managed launch
   requires an isolated verifier module, launch-blocking CI, and production-bundle
   timing tests covering 63/64/65/66 hex-character inputs, malformed prefixes,
-  duplicate/case-variant headers, current-secret, previous-secret, dummy-secret,
+  duplicate/case-variant headers sent through the exact load-balancer/proxy/runtime
+  stack, comma-coalesced values, current-secret, previous-secret, dummy-secret,
   row-present/row-absent replay cases, and verifier-quarantine behavior. The receiver
   must iterate the raw wire header collection and reject
   multiple values, comma-joined values, framework-coalesced duplicates, and
@@ -1802,7 +1823,14 @@ commands are honored only when all checks pass:
    side-effect reservation for commands: there is no implementation path where an
    initial permission check, positive cache hit, or GitHub response held only in
    memory can consume the command record or start work without re-locking the auth row
-   and command row after the network call returns. Launch tests must simulate a
+   and command row after the network call returns. All privileged command code must call
+   one audited guarded-send module; static checks and launch-blocking tests fail if a
+   provider call, settings-link creation, GitHub publication, or state-changing handler
+   imports a lower-level side-effect client directly or inserts an `await`, timer, queue
+   hop, or cache authorization between the guarded transaction commit and socket open.
+   Race-fuzz and chaos tests must randomize lock order, transaction isolation failures,
+   permission-change webhooks, command edits, helper-level cache hits, cancellation, and
+   network latency around that boundary. Launch tests must simulate a
    permission downgrade after API dispatch but before API return, after API return
    but before row lock acquisition, after reservation but before socket open, and
    during command execution; every case must produce terminal
