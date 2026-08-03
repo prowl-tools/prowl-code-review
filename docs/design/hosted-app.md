@@ -294,9 +294,13 @@ Keys are set through a settings UI authorized by explicit GitHub permissions:
 org-owner permission for org installations, repository-admin permission for
 repo-only/user installations, or an audited installation-admin allowlist maintained
 by those admins. The installing user is recorded but is not the only permanent
-admin. `@prowl-review configure key` never accepts a raw key in a public comment; it
-only opens a short-lived, single-use settings link after the command authorization
-in Decision 5 succeeds. The link is an HTTPS-only App URL protected by HSTS, contains
+admin. Organization-owner checks require either GitHub App `Members: read`
+permission on the installation or an OAuth session with `read:org`; hosted org key
+setup fails closed with a reapproval/reauthorization prompt until one of those
+membership-reading authorities is available. `@prowl-review configure key` never
+accepts a raw key in a public comment; it only opens a short-lived, single-use
+settings link after the command authorization in Decision 5 succeeds. The link is an
+HTTPS-only App URL protected by HSTS, contains
 only an opaque CSPRNG nonce with at least 128 bits of entropy whose server-side
 record stores a hash, and is redacted from application logs. The signed link record
 commits to installation id, repository id, sender id, comment id, head SHA, nonce,
@@ -538,15 +542,20 @@ surface.
 - **Limit behavior:** duplicate webhooks coalesce; irrelevant signed comment noise
   is acknowledged as no-op after replay/idempotency recording and is not charged to
   installation review, command, or authorization-control processing. Review and
-  command concurrency excess queues with a `retry_after`/pending status; abusive
-  review/command webhook bursts are rejected before provider calls with a neutral
-  check or explanatory summary. Authorization-control deliveries are never
-  burst-dropped: if their processing capacity is exhausted, the receiver persists
-  and coalesces the latest control state, pessimistically bumps the installation auth
-  generation, blocks new job claims and decrypts for the affected scope, and schedules
-  reconciliation before allowing more provider work. Per-review budget exhaustion
-  ends as **Review incomplete** with approval withheld. No limit silently degrades
-  context or pretends a review completed.
+  command concurrency excess queues with a `retry_after`/pending status. If review
+  queue depth or review-event capacity is exhausted, the receiver durably records a
+  coalesced `pending_latest_head` per `{installation, repository, pull_request}`
+  instead of dropping the newest delivery; older queued heads stale-close, and the
+  latest desired head is enqueued when capacity returns. Abusive review/command
+  webhook bursts are rejected before provider calls only after durable latest-head
+  coalescing or pre-auth command throttling has preserved legitimate work.
+  Authorization-control deliveries are never burst-dropped: if their processing
+  capacity is exhausted, the receiver persists and coalesces the latest control
+  state, pessimistically bumps the installation auth generation, blocks new job
+  claims and decrypts for the affected scope, and schedules reconciliation before
+  allowing more provider work. Per-review budget exhaustion ends as **Review
+  incomplete** with approval withheld. No limit silently degrades context or pretends
+  a review completed.
 - **Configuration and observability:** default values are globally tunable by
   operators and published in launch docs. Installation admins can view limit hits,
   queued jobs, and incomplete-review reasons in the settings UI. Repeated limit
@@ -576,9 +585,9 @@ append-only audit log.
 
 - **Persistence (D1/Postgres, small):** installations (org, repo set, App install
   id), encrypted provider key rows, delivery-owner cache records (Decision 5), per-repo
-  review state (marker/review ids, posted finding fingerprints, learnings
-  pointers), webhook idempotency records, queue/dead-letter metadata, deletion
-  jobs, and audit events.
+  review state (marker/review ids, posted finding fingerprints, learnings pointers,
+  coalesced `pending_latest_head` for overloaded PRs), webhook idempotency records,
+  queue/dead-letter metadata, deletion jobs, and audit events.
 - **Privacy invariant:** no diff contents, API-retrieved file contents, review
   bodies, `issue_comment` bodies, thread context, logs, prompts, provider
   responses, or provider payloads are stored as durable content. Content payloads
@@ -783,10 +792,16 @@ commands are honored only when all checks pass:
    installation.
 2. A cheap mention prefilter and token bucket run before GitHub permission APIs:
    30 command authorization attempts per minute and 300 per hour per installation,
-   10 per minute per sender, then the existing per-command limit below. The sender
-   must have repository `write`, `maintain`, or `admin` permission, verified through
-   repository collaborator/permission APIs. A short-lived positive permission cache
-   may avoid repeated GitHub calls for non-provider, non-state-changing commands only
+   10 per minute per sender, then the existing per-command limit below. These
+   pre-auth buckets are separate from the authorized-command quota and are charged to
+   untrusted ingress only; they cannot exhaust reserved authorized capacity for
+   maintainers. The sender must have repository `write`, `maintain`, or `admin`
+   permission, verified through repository collaborator/permission APIs. The shared
+   authorized-command quota is charged only after permission is confirmed; denied or
+   unauthenticated mentions are audited and rate-limited through the untrusted
+   ingress buckets, not through the authorized command budget. A short-lived positive
+   permission cache may avoid repeated GitHub calls for non-provider,
+   non-state-changing commands only
    when it was minted from GitHub for the same `{installation, repository, sender,
    required_role}` within the last 60 seconds.
    Cache invalidation is atomic with webhook ingestion for permission-changing
@@ -834,11 +849,15 @@ commands are honored only when all checks pass:
    the sender is an installation admin, defined as org-owner permission for org
    installations, repository `admin` permission for repo-only/user installations, or
    membership in the audited installation-admin allowlist maintained by those
-   admins. A writer/maintainer who lacks that elevated role cannot receive a
-   key-configuration link. The settings UI repeats the same fresh authorization
-   after the link is opened: the OAuth/App session user must match the command
-   sender, the installation id and repository id must match the signed link record,
-   and GitHub/allowlist state must confirm the same elevated role. If the elevated
+   admins. For org installations, that org-owner check requires App `Members: read`
+   installation permission or OAuth `read:org` for the authenticated session; if the
+   reused App installation has not been reapproved with membership access, org key
+   configuration fails closed with a reapproval prompt. A writer/maintainer who lacks
+   that elevated role cannot receive a key-configuration link. The settings UI
+   repeats the same fresh authorization after the link is opened: the OAuth/App
+   session user must match the command sender, the installation id and repository id
+   must match the signed link record, and GitHub/allowlist state must confirm the
+   same elevated role using the same membership-reading authority. If the elevated
    role cannot be confirmed at either gate, the command fails closed, any opened
    nonce is invalidated so later privilege regain requires a new command, and the
    failure is audited.
@@ -935,7 +954,7 @@ The explicit records are:
    dual delivery cannot start duplicate reviews when config is missing, stale, or
    unreadable.
 3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
-   and deletion lifecycle.
+   org-membership permission/reapproval for org key setup, and deletion lifecycle.
 4. API-retrieval adapter for the core's repo-tools interface with the Decision 2
    bounds and incomplete-review states.
 5. Runner + posting path (core unchanged) + command authorization/replay handling.
