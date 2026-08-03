@@ -49,14 +49,18 @@ pull-request content without leaking secrets or executing attacker-controlled co
   and runner decrypt identities. This protects stored ciphertext, queues, and
   backups. This is a material change from the CLI/Action model: Prowl-managed
   infrastructure receives the key during settings save/rotation, stores encrypted
-  key material, and later decrypts it transiently for reviews. It does **not**
-  protect a plaintext provider key from a settings service or runner that is
-  compromised while handling the active key. Users who require "no Prowl
-  infrastructure ever handles my key" must use the CLI, Action, or self-hosted App.
-  It also cannot protect against compromise, logging, or policy choices inside the
-  user's selected LLM provider after the key/content is sent to that provider;
-  provider key scoping, spend limits, monitoring, and rotation remain the user's
-  provider controls.
+  key material, and later decrypts it transiently for reviews. The at-rest controls
+  limit database-only, queue-only, backup-only, and KMS-unauthorized operator access;
+  they do **not** protect a plaintext provider key from active service/runtime
+  compromise while the key is being handled. Examples include runtime process
+  inspection, a malicious dependency in the settings/runner/HTTP-client path, a
+  host debugger, CPU or memory side channels, supply-chain compromise of the live
+  service, or a platform/operator actor with access to active process memory. Users
+  who require "no Prowl infrastructure ever handles my key" must use the CLI,
+  Action, or self-hosted App. It also cannot protect against compromise, logging, or
+  policy choices inside the user's selected LLM provider after the key/content is
+  sent to that provider; provider key scoping, spend limits, monitoring, and
+  rotation remain the user's provider controls.
 - Hosted App revocation is an ordered, fenced sequence. The application database
   transaction marks the installation revoked, bumps the revocation generation,
   invalidates outstanding leases/fencing tokens, and prevents new job claims. After
