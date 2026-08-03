@@ -35,9 +35,19 @@ prowl-review is **BYOK** (bring-your-own-key) and designed to run on untrusted
 pull-request content without leaking secrets or executing attacker-controlled code.
 
 ### Keys & secrets
-- Provider API keys are read from the **environment only** (`PROWL_AI_KEY` /
-  `PROWL_AI_KEY_<PROVIDER>`) — never from `.prowl-review.yml`, never committed,
-  never stored or proxied by us. Your key pays your provider directly.
+- For the current CLI and GitHub Action, provider API keys are read from the
+  **environment only** (`PROWL_AI_KEY` / `PROWL_AI_KEY_<PROVIDER>`) — never from
+  `.prowl-review.yml`, never committed, never stored or proxied by us. Your key
+  pays your provider directly.
+- The proposed hosted GitHub App in
+  [`docs/design/hosted-app.md`](docs/design/hosted-app.md) is the only planned
+  exception to the environment-only rule. It may store provider keys only as
+  per-installation envelope-encrypted ciphertext, with the wrapping key outside
+  the database and queues, decrypt permission scoped to the active runner job, no
+  plaintext keys in queue payloads/logs/audit events, settings access limited to
+  installation admins, and deletion covering key rows, queued jobs, caches,
+  review state, and backup key material on a 30-day retention schedule. The hosted
+  App is not approved to launch until those controls and leak tests exist.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
@@ -64,6 +74,9 @@ pull-request content without leaking secrets or executing attacker-controlled co
   trusted base is honored. To review fork PRs deliberately, use a
   `pull_request_target` workflow (trusted base config; PR head used only as
   untrusted context). See the README's "Fork pull requests" section.
+- The proposed managed hosted App keeps the same conservative default: v1 skips
+  fork-originated PRs before retrieval or provider calls. Any future hosted
+  fork-review opt-in requires a separate design update.
 
 ### Configuration trust
 - In the GitHub Action, `.prowl-review.yml` is only loaded from a trusted

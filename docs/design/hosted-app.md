@@ -17,159 +17,353 @@ single-row presentation #61), but three things only a hosted App can deliver:
    and repos that simply have no CI to chain from.
 3. **Instant reviews** — no runner spin-up, no waiting for CI to complete.
 
-The mission constraints are non-negotiable and inherited from the workspace: **BYOK
-(the user's key pays the provider), no inference resale, no usage caps we impose, no
-data lock-in.** Every decision below is evaluated against them.
+The mission constraints are non-negotiable and inherited from the workspace:
+**BYOK (the user's key pays the provider), no inference resale, no monetization
+caps on BYOK inference, no data lock-in.** The managed service may enforce
+published orchestration limits for abuse control, but those limits never apply to
+the CLI, Action, App source, or self-hosting, and they never become a feature gate.
 
-## Architecture overview
+## Decision 0 — Hosted architecture and webhook intake
 
-A thin, open-source webhook service wrapping the **same TypeScript core** the Action
-and CLI use. The core is untouched; this is delivery wrapper #3.
+**Tension:** the hosted App has to feel instant, but duplicate webhooks, fork PRs,
+and superseded heads must not trigger duplicate or out-of-order provider calls.
 
-```
-PR opened/updated ──► GitHub webhook ──► receiver (verify signature, enqueue)
+**Selected option:** build a thin, open-source webhook service around the **same
+TypeScript core** the Action and CLI use. The reference managed runtime is
+Cloudflare Workers + Queues for receiver/orchestration, with the runner tier
+defined in Decision 2.
+
+```text
+PR opened/updated ──► GitHub webhook ──► receiver (verify signature)
+                                              │
+                                  persistent idempotency + owner check
                                               │
                                         job queue (per-installation isolation)
                                               │
                                         review runner
-                                          ├─ mint installation token (App key)
-                                          ├─ load .prowl-review.yml from TRUSTED BASE branch (unchanged)
+                                          ├─ re-check current PR head + owner
+                                          ├─ mint scoped installation token(s)
+                                          ├─ load .prowl-review.yml from TRUSTED BASE branch
                                           ├─ agentic retrieval (Decision 2)
                                           ├─ LLM calls with the INSTALLATION'S OWN key (BYOK)
-                                          └─ post review + branded "Prowl Review" check run (existing core)
+                                          └─ post review + branded "Prowl Review" check run
 ```
 
-Reference runtime: **Cloudflare Workers + Queues** for receiver/orchestration
-(near-zero idle cost, generous free tier — the "our marginal cost stays ~zero"
-property the mission's economics depend on), with the runner tier per Decision 2.
-The service is **stateless per review** except for the persistence in Decision 4.
+The receiver verifies the webhook signature, then records the GitHub delivery id
+and a coalescing key of `{installation, repository, pull_request, head_sha}` before
+enqueueing. Duplicate deliveries reuse the existing job record. A runner re-checks
+the current PR head, App installation state, and delivery owner immediately before
+any provider call and again before publishing; stale jobs close out as superseded
+without posting review content.
+
+Fork-originated pull requests are **skipped by the managed App in v1**. The service
+may post a neutral check or summary explaining the skip, but it makes no provider
+call and does not run retrieval on fork content. A future maintainer opt-in path
+requires a separate design update proving that trusted-base configuration, forced
+workspace distrust, and sanitized context keep fork content from becoming an
+implicit secret-bearing review path. The existing Action `pull_request_target`
+pattern remains the deliberate fork-review escape hatch.
+
+**Rationale:** persistent idempotency keeps retries cheap and deterministic; stale
+guards prevent publishing on old heads; and the fork skip preserves the current
+security posture while the hosted custody model is new.
+
+**Rejected alternatives:** enqueueing before durable idempotency, using only
+GitHub's delivery id without PR/head coalescing, reviewing forks automatically with
+trusted-base config, and waiting for a full container checkout before shipping any
+hosted path.
+
+**Consequences:** the managed App starts with trusted in-repo PRs only, requires a
+small persistence layer before the queue, and must expose superseded/skip states
+clearly so users understand when no provider review ran.
 
 ## Decision 1 — Key custody: hosted convenience, self-hostable sovereignty
 
-**The tension:** hosted BYOK means we hold users' provider keys — exactly the custody
-model the mission positions against.
+**Tension:** hosted BYOK means we hold users' provider keys, which is the custody
+model the mission normally avoids.
 
-**Decision (proposed):** ship the App service **open source with a first-class
+**Selected option:** ship the App service **open source with a first-class
 self-host path**, and run a managed instance of the same code.
 
-- **Managed instance** (`app.review.prowl.tools` or similar): keys stored encrypted at
-  rest (per-installation envelope encryption; KMS-style master key outside the DB),
-  decrypted only in the runner for the duration of a review, never logged, never
-  proxied through additional services (LLM calls remain direct provider calls, as the
-  privacy docs promise today).
-- **Self-hosted instance**: one-click deploy (Workers deploy button + Docker image).
-  The operator registers their *own* GitHub App, holds their own keys, and gets full
-  parity. Identical codebase; the managed instance is just our deployment of it.
+- **Managed instance** (`app.review.prowl.tools` or similar): provider keys are
+  stored in the database only as per-installation envelope-encrypted ciphertext.
+  This is the one exception to the current Action/CLI environment-only key rule;
+  it applies only to the managed hosted App and must be called out in SECURITY.md.
+- **Self-hosted instance:** one-click deploy (Workers deploy button + Docker image).
+  The operator registers their own GitHub App, holds their own provider keys and
+  KMS material, and gets feature parity. Identical codebase; the managed instance
+  is just our deployment of it.
 
-This turns the custody tension into the differentiator: *hosted by us for
-convenience, self-hostable for sovereignty, same core either way.* No competitor
-offers the spectrum.
+**Managed key controls:** the envelope root key lives outside the application
+database and outside queues, in a provider-managed KMS/HSM-style service with a
+dedicated service identity. Per-installation data keys wrap provider keys; rotating
+the root key at least every 90 days re-wraps data keys, and suspected compromise
+disables decrypt access immediately before re-encryption. Runners receive decrypt
+permission only for the installation/job they are processing. Queue messages carry
+installation, repo, PR, head SHA, and key row identifiers, never plaintext keys or
+encrypted key blobs.
 
-**Key lifecycle (managed):** keys are set via a minimal settings UI or a
-`@prowl-review configure key` flow; rotation = overwrite; revocation = delete
-(hard-delete row + audit event); uninstalling the App cascades deletion of the
-installation record, its key, and its review state within 24h. Least privilege: the
-App requests only `pull-requests:write`, `checks:write`, `issues:write`,
-`contents:read`, metadata — the same scopes the #59 App holds today.
+Plaintext provider keys exist only inside the runner process while constructing the
+direct provider request. Runners are isolated per job, block core dumps/process
+inspection where the platform allows it, redact stdout/stderr/trace/event payloads
+at the sink boundary, and scrub key buffers after use on runtimes that expose
+mutable buffers. Tests must include canary provider keys and fail if those canaries
+appear in logs, thrown errors, audit events, provider error summaries, or persisted
+state.
 
-## Decision 2 — Retrieval: API-first now, sandbox tier later
+Keys are set through a settings UI authorized by GitHub installation admin rights.
+`@prowl-review configure key` never accepts a raw key in a public comment; it only
+opens a short-lived, single-use settings link after the command authorization in
+Decision 5 succeeds. The UI never displays plaintext keys after save.
 
-**The tension:** the #1 differentiator (agentic cross-file retrieval) and the #3
-one (linter/SAST grounding) assume a local checkout. A Workers runtime has no
-filesystem.
+**Deletion and revocation:** overwrite rotates the encrypted key row and emits an
+audit event. Delete/uninstall immediately marks the installation revoked, disables
+decrypt access, cancels queued jobs, evicts runner/cache entries, deletes provider
+key rows and review state, and writes a deletion audit event. Logs keep only
+redacted operational events. Backups remain encrypted and become cryptographically
+unusable once wrapping keys are destroyed; backup copies expire on the published
+30-day retention schedule. GitHub comments/checks already posted to the user's
+repo are not deleted automatically because they are user-visible repository history.
 
-**Decision (proposed): phase it.**
+**Rationale:** this preserves the install-once UX while making the custody boundary
+explicit and verifiable. Self-hosting remains the sovereignty answer for users who
+do not want Prowl to hold encrypted keys at all.
 
-- **v1 (API retrieval):** implement the agentic grep/read tool surface against the
-  GitHub REST/GraphQL APIs (contents, git trees, code search) with an in-memory
-  cache per review. This preserves cross-file context — the #1 lever — with zero
-  container infrastructure. **Grounding (ESLint/Semgrep/Gitleaks) is skipped in v1
-  and reported in the review** per the no-silent-truncation principle ("linter
-  grounding unavailable in hosted mode" note), exactly as the core already reports
-  skipped content.
+**Rejected alternatives:** environment-only keys for the managed App (not compatible
+with install-once UX), plaintext keys in queues or job payloads, a closed-source
+hosted service, and asking users for broad personal GitHub tokens.
+
+**Consequences:** the managed instance carries real security/compliance obligations:
+KMS operations, deletion jobs, audit access, key-leak tests, and settings UI
+authorization are launch blockers rather than implementation details.
+
+## Decision 2 — Retrieval: bounded API-first now, sandbox tier later
+
+**Tension:** the #1 differentiator (agentic cross-file retrieval) and the #3 one
+(linter/SAST grounding) assume a local checkout. A Workers runtime has no
+filesystem, and API retrieval can hit rate, latency, and completeness limits.
+
+**Selected option:** phase retrieval, with explicit v1 bounds.
+
+- **v1 (API retrieval):** implement the agentic grep/read tool surface against
+  GitHub REST/GraphQL APIs using a request-scoped, read-only installation token
+  minted separately from the posting token. The token is limited to the installed
+  repository and required read permissions only. Private dependencies outside the
+  installed repo are out of scope for v1; adding optional broader credentials is a
+  separate decision.
+- **v1 endpoints:** read uses blob/contents APIs by exact path/ref; file discovery
+  uses bounded git-tree traversal; grep/find-reference behavior runs over the
+  bounded tree/file cache. GitHub code search is disabled for private repositories
+  in v1 and opt-in only for public repositories, because search has different rate
+  limits and visibility semantics.
+- **Bounds:** each review has a bounded LRU cache keyed by `{head_sha, tool, path,
+  query}` with launch defaults of 128 MiB or 2,000 entries, whichever comes first.
+  The runner also starts with a 1,000-request retrieval ceiling, 25 MiB aggregate
+  API response ceiling, 1 MiB per-file read ceiling, and 90-second retrieval
+  timeout per review. A typical small PR should need one tree read plus changed
+  file reads and fewer than 100 follow-up grep/read calls; large monorepos may hit
+  the explicit incomplete-review path below. Launch docs publish the effective
+  limits and any beta adjustments.
+- **Rate and failure behavior:** the runner checks remaining GitHub rate budget
+  before search-heavy work, applies bounded retry/backoff for `Retry-After` and
+  secondary-rate-limit responses, and stops retrieval before starving other jobs
+  for the same installation. Bounded, known partial context is reported as a
+  clean-with-caveat review. If required changed-file retrieval fails, permissions
+  are denied, response sizes exceed bounds, the rate state is exhausted, or
+  completeness is unknown, the review is marked **Review incomplete**, approval is
+  withheld, and the output names the missing context.
+- **Security parity:** the API adapter rejects symlinks, submodules, traversal
+  outside the installed repo, sensitive files, and over-limit files using the same
+  redaction and skip-reporting invariants as local retrieval.
 - **v2 (sandbox tier):** ephemeral per-review containers (Cloudflare Containers or
   equivalent) doing a shallow clone; restores full grounding parity and native grep
   semantics. Gated on real usage data justifying the cost/complexity.
-- **Self-hosted Docker deployments get full parity immediately** — they have a real
-  filesystem, so the runner uses the existing local-checkout path from day one.
-  (Self-host on Workers shares v1's API-retrieval limits.)
+- **Self-hosted Docker deployments:** full parity immediately, because they have a
+  real filesystem and use the existing local-checkout path from day one.
 
-Consequence to accept openly: in v1, the managed instance's reviews are slightly
-weaker than Action reviews (no linter grounding). The review output says so — users
-who want full parity keep the Action or self-host with Docker. This is honest and
-temporary; the alternative (shipping nothing until containers are built) delays the
-install-once UX for a feature many repos don't configure anyway.
+**Rationale:** API-first delivers install-once reviews without container
+infrastructure, while explicit bounds keep large repos from becoming unbounded
+memory, latency, or rate-limit failures.
+
+**Rejected alternatives:** shipping unbounded API traversal, treating partial
+retrieval as complete, requiring user PATs for private dependency traversal, and
+blocking the hosted launch until container grounding exists.
+
+**Consequences:** managed v1 reviews are weaker than Action/Docker reviews: no
+linter/SAST grounding and bounded API context. The review output must say so every
+time those limits affect coverage.
 
 ## Decision 3 — Free/paid boundary
 
-**The tension:** the Action costs us nothing, so "free forever" is trivially
-credible there. A managed service has real (small) compute/storage costs that scale
-with adoption, plus abuse surface.
+**Tension:** the Action costs us nothing, so "free forever" is trivially credible
+there. A managed service has small but real compute/storage costs plus abuse
+surface.
 
-**Decision (proposed):**
+**Selected option:**
 
-- **Free forever, guaranteed in writing:** the CLI, the Action, the App *source*,
-  and self-hosting. These carry the mission and are never revenue-gated.
-- **Managed instance: free at launch**, with published *fairness* limits that exist
-  for abuse control, not monetization (per-installation concurrency cap, per-PR
-  budget cap reusing the existing config, webhook rate limiting). BYOK means our
-  per-review cost is orchestration-only — cents per thousand reviews on the
-  Workers free/paid tier. Revisit only if managed-instance costs become material;
-  if that day comes, the boundary is **the managed convenience tier** (hosting,
-  support, SLAs) — never inference, never caps on what the user's own key can do,
-  and never features withheld from self-host.
-- Publish this policy in the docs the day the App ships, so the commitment is
-  auditable and the CodeRabbit-contrast stays sharp.
+- **Free forever, guaranteed in writing:** the CLI, the Action, the App source, and
+  self-hosting. These carry the mission and are never revenue-gated.
+- **Managed instance: free at launch.** Published fairness limits apply only to the
+  hosted orchestration layer: per-installation active-job concurrency, queue depth,
+  webhook token bucket, dead-letter threshold, and the existing user-visible
+  per-review provider budget guard. They are not product-tier caps on what the
+  user's provider key may do, and they do not apply to self-hosted deployments.
+- **Launch defaults:** start with 1 active review and 10 queued reviews per
+  installation, a 60 accepted-webhook-events/hour token bucket, a 30-minute job
+  timeout, and dead-letter after 3 consecutive runner failures for the same job.
+  Operators may tune these globally during beta, but every change must remain
+  published and audited.
+- **Limit behavior:** duplicate webhooks coalesce; concurrency excess queues with a
+  `retry_after`/pending status; abusive webhook bursts are rejected before provider
+  calls with a neutral check or explanatory summary; per-review budget exhaustion
+  ends as **Review incomplete** with approval withheld. No limit silently degrades
+  context or pretends a review completed.
+- **Configuration and observability:** default values are globally tunable by
+  operators and published in launch docs. Installation admins can view limit hits,
+  queued jobs, and incomplete-review reasons in the settings UI. Repeated limit
+  hits emit operator alerts and audit events.
 
-## Decision 4 — State, isolation, and abuse controls
+If managed-instance costs become material, the paid boundary is the managed
+convenience tier (hosting, support, SLAs), never inference resale, never withheld
+self-host features, and never caps on the user's own provider usage in the open
+source paths.
+
+**Rationale:** fairness limits protect a free hosted queue from accidental or
+malicious load while preserving the BYOK economic promise.
+
+**Rejected alternatives:** monetizing inference, feature-gating self-hosting,
+silently throttling reviews, or applying hosted limits to the Action/CLI.
+
+**Consequences:** the hosted service needs visible queue/limit state, retry
+semantics, and operator dashboards before launch.
+
+## Decision 4 — State, isolation, audit, and abuse controls
+
+**Tension:** the App needs enough state to avoid duplicate reviews and support key
+custody, but storing review content would violate the current privacy posture.
+
+**Selected option:** persist only operational state, with tenant isolation and an
+append-only audit log.
 
 - **Persistence (D1/Postgres, small):** installations (org, repo set, App install
-  id), encrypted provider keys, per-repo review state (the same review-state
-  records the Action persists today — marker/review ids, learnings pointers), audit
-  log (installs, key changes, deletions). **No diff contents, no review bodies, no
-  provider payloads are stored** — parity with today's privacy posture.
-- **Tenant isolation:** every queue message and DB row is keyed by installation id;
-  runners process one installation's job with only that installation's decrypted
-  key and installation token in scope. No cross-tenant batching.
-- **Abuse/cost controls:** per-PR budget cap (existing core feature) enforced as a
-  hosted default; per-installation concurrency (queue depth) limits; signature-
-  verified webhooks only; dead-letter + alerting on repeated failures so a
-  misbehaving repo can't spin the queue.
+  id), encrypted provider key rows, delivery-owner records (Decision 5), per-repo
+  review state (marker/review ids, posted finding fingerprints, learnings
+  pointers), webhook idempotency records, queue/dead-letter metadata, deletion
+  jobs, and audit events.
+- **Privacy invariant:** no diff contents, API-retrieved file contents, review
+  bodies, `issue_comment` bodies, thread context, logs, or provider payloads are
+  stored as durable content. API-retrieved content, command/comment bodies, thread
+  context, logs, generated review text, and outbound provider requests all pass
+  through the shared redaction boundary before storage, publication, logging, or
+  transmission. Redaction counts remain reportable; secret values do not.
+- **Tenant isolation:** every queue message, DB row, cache key, audit event, and
+  runner credential is keyed by installation id. Runners process one installation's
+  job with only that installation's decrypted provider key and scoped GitHub token
+  in process. No cross-tenant batching.
+- **Audit events:** installation create/delete, repository enable/disable,
+  delivery-owner changes, key create/update/delete, failed authentication, command
+  authorization failure, review start/complete/incomplete, fairness-limit hits,
+  deletion jobs, unplanned termination, and staff access. Events include timestamp,
+  actor, installation, repository/PR when applicable, action, outcome, and reason.
+- **Retention/access:** audit logs are append-only, retained for at least 180 days,
+  and exportable by installation admins for their own installation. Staff access is
+  separately audited; staff cannot read plaintext provider keys.
+- **Webhook verification:** all webhooks require GitHub `X-Hub-Signature-256`
+  HMAC-SHA256 verification using active App webhook secret(s) and constant-time
+  comparison. MD5/SHA1 signatures are rejected. Webhook secrets rotate at least
+  every 90 days or immediately on suspected compromise; the previous secret is
+  accepted for at most 24 hours for in-flight retries. Delivery ids are recorded
+  with a replay TTL before enqueueing.
+- **Abuse controls:** per-installation queue depth/concurrency, webhook token
+  bucket, dead-letter + alerting on repeated failures, and stale-head close-out so
+  a misbehaving repo cannot spin the queue or publish outdated reviews.
 
-## Migration path & compatibility
+**Rationale:** operational state is necessary for reliability, but the same
+privacy line that exists today still holds: durable systems do not become a code,
+prompt, or review-content warehouse.
 
-- The App posts through the **same core presentation** (single cohesive review,
-  branded check run, update-don't-duplicate), so a repo can switch Action ⇄ App
-  and prior reviews keep updating correctly (markers/review ids are delivery-
-  agnostic).
-- `.prowl-review.yml` remains the single config surface, still loaded from the
-  trusted base branch. No new config format.
-- Repos with both the App installed and the Action workflow present: the App
-  detects the workflow file and defers (or vice versa via config flag) — exact
-  precedence rule to be settled during implementation; default proposal: **explicit
-  config wins, App defers to a present workflow otherwise** (no double reviews).
-- The `@prowl-review` command surface moves to webhooks (`issue_comment`) with the
-  same verbs; command parity is a launch requirement, not a follow-up.
+**Rejected alternatives:** storing full prompts/provider payloads for debugging,
+mutable audit logs, shared runner credentials across installations, and relying on
+webhook retries without local replay/idempotency state.
+
+**Consequences:** debugging must rely on redacted traces, structured outcomes, and
+short-lived runtime inspection rather than durable raw content.
+
+## Decision 5 — Migration path, identity, and command authorization
+
+**Tension:** the hosted App should feel like the existing Action, but bot identity,
+check runs, command webhooks, and dual delivery can create duplicate reviews if the
+ownership model is ambiguous.
+
+**Selected option:** reuse the existing `prowl-review` GitHub App identity for the
+managed hosted App. Existing summary markers continue to be recognized only when
+they were authored by the authenticated `prowl-review[bot]` login; a one-time
+migration job may read prior `github-actions[bot]` marked summaries and copy only
+their redacted state marker into the hosted review state, but it does not edit old
+comments. Check runs remain tied to their original GitHub run ids and are not
+migrated; the App creates or completes only its own `Prowl Review` check for the
+current head.
+
+Uninstalling the `prowl-review` App immediately disables hosted reviews and token
+minting for Action workflows that depend on that App. Existing Action workflows
+fall back to `GITHUB_TOKEN` only when they are written with the current tolerant
+token-minting path; otherwise they fail visibly until the App is reinstalled or the
+workflow is reconfigured.
+
+**Delivery ownership:** each repository has one persisted delivery owner:
+`action` or `app`. The installation UI seeds this value during setup, and
+`.prowl-review.yml` may declare the same owner from the trusted base branch, but
+runtime decisions read the persisted owner record. Workflow-file detection is
+advisory only; it can recommend `action` during setup but cannot start or stop
+reviews at runtime. Owner changes apply to the next PR head SHA: active jobs for
+the previous owner are marked superseded, the idempotency table records the owner
+with `{installation, repository, pull_request, head_sha}`, and both the Action and
+App must check the same owner before provider calls. This is a launch blocker for
+dual-delivery support.
+
+**Command authorization:** the `@prowl-review` command surface moves to
+`issue_comment`/`pull_request_review_comment` webhooks with the same verbs, but
+commands are honored only when all checks pass:
+
+1. The comment belongs to a pull request in a repository covered by the active App
+   installation.
+2. The sender has repository `write`, `maintain`, or `admin` permission, verified
+   through GitHub APIs; `configure key` additionally requires installation admin
+   authorization in the settings UI.
+3. The webhook signature, delivery id, comment id, edited timestamp/body digest,
+   installation id, repository id, PR number, and current head SHA match the
+   idempotency record for the command.
+4. The command is in the explicit allowlist: `review`, `full review`, `pause`,
+   `resume`, `help`, chat replies, and `configure key` link creation. No command
+   executes repository code or arbitrary shell, and fork PRs still follow Decision
+   0's managed skip policy.
+
+**Rationale:** reusing the bot identity preserves update-in-place behavior for
+current `prowl-review[bot]` summaries, while persisted delivery ownership prevents
+both the Action and App from starting reviews for the same PR head.
+
+**Rejected alternatives:** registering a sibling cloud App with a different bot
+login, treating hidden markers as delivery-agnostic regardless of author, deciding
+delivery precedence from live workflow-file detection, and accepting commands from
+any commenter with a syntactically valid mention.
+
+**Consequences:** hosted launch requires a delivery-owner store, owner checks in
+both delivery paths, command replay records, and an installation-admin settings
+flow before command parity is considered complete.
 
 ## Build plan (when approved)
 
-1. Receiver + queue + installation store, managed App registration (reuse the #59
-   App or a sibling "Prowl Review Cloud" App — settle during implementation).
-2. API-retrieval adapter for the core's repo-tools interface (the seam already
-   exists — the CLI injects local grep/read; the App injects API-backed ones).
-3. Runner + posting path (core unchanged) + settings/key flow + deletion lifecycle.
-4. Self-host packaging (Workers deploy button + Dockerfile) and docs.
-5. Beta on our own repos → publish policy docs → announce.
+1. Receiver + queue + installation store + persistent idempotency, using the
+   existing `prowl-review` App identity for the managed instance.
+2. Delivery-owner store and Action/App owner checks so dual delivery cannot start
+   duplicate reviews.
+3. Managed key settings UI, envelope encryption, KMS access controls, audit log,
+   and deletion lifecycle.
+4. API-retrieval adapter for the core's repo-tools interface with the Decision 2
+   bounds and incomplete-review states.
+5. Runner + posting path (core unchanged) + command authorization/replay handling.
+6. Self-host packaging (Workers deploy button + Dockerfile) and SECURITY.md/docs.
+7. Beta on our own repos → publish policy docs/limit defaults → announce.
 
 Each step lands as its own backlog item once #47 is un-parked; this doc's approval
 is the gate.
-
-## Open questions for the maintainer
-
-1. Managed App identity: reuse the existing `prowl-review` App (one identity
-   everywhere) or register a separate cloud App so Action-only users' trust surface
-   is unchanged?
-2. Is the v1 grounding gap (reported, not silent) acceptable for the managed
-   instance at launch?
-3. Any hard requirement for a non-Cloudflare reference stack (e.g. plain
-   Node/Docker first, Workers as an optimization)?
