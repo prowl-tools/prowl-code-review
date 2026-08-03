@@ -36,23 +36,31 @@ pull-request content without leaking secrets or executing attacker-controlled co
 
 ### Keys & secrets
 #### Managed Hosted App Uses A Different Custody Model
+The managed hosted GitHub App described in this section is a planned future
+service, not a capability available today. Current CLI, GitHub Action, and
+self-hosted use follows the environment-only BYOK model described immediately
+below. This section is included so the future managed service's different trust
+boundary is visible before that service exists.
+
 If you use the CLI or GitHub Action, your provider key lives only on your machine or
-chosen runner and is sent directly to your provider. If you use the proposed managed
-Hosted App, plaintext keys are briefly handled in Prowl-managed infrastructure during
-key save and provider calls, and encrypted key material is stored for later reviews.
-That is an explicit trust-model change; the managed Hosted App is not a
+chosen runner and is sent directly to your provider. If you use the planned managed
+Hosted App (not yet available), plaintext keys are briefly handled in Prowl-managed
+infrastructure during key save and provider calls, and encrypted key material is
+stored for later reviews. That is an explicit trust-model change; the managed Hosted
+App is not a
 security-equivalent replacement for CLI/Action live-key custody.
 
 - **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
-  the proposed managed Hosted App is a pre-launch exception that would store
-  per-installation encrypted key material and transiently process plaintext keys in
-  Prowl-managed services. Treat migration from CLI/Action to the managed Hosted App as
-  an explicit trust-model change, not a transparent security-equivalent upgrade.
+  the planned managed Hosted App (not yet available) is a pre-launch exception that
+  would store per-installation encrypted key material and transiently process plaintext
+  keys in Prowl-managed services. Treat migration from CLI/Action to the managed
+  Hosted App as an explicit trust-model change, not a transparent security-equivalent
+  upgrade.
 - For the current CLI and GitHub Action, provider API keys are read from the
   **environment only** (`PROWL_AI_KEY` / `PROWL_AI_KEY_<PROVIDER>`) — never from
   `.prowl-review.yml`, never committed, never stored or proxied by us. Your key
   pays your provider directly.
-- The proposed hosted GitHub App in
+- The planned managed hosted GitHub App (not yet available) in
   [`docs/design/hosted-app.md`](docs/design/hosted-app.md) is the only planned
   exception to the environment-only rule. It may store provider keys only as
   per-installation envelope-encrypted ciphertext, with the wrapping key outside
@@ -129,10 +137,15 @@ security-equivalent replacement for CLI/Action live-key custody.
   suspect, not when revocation processing later succeeds. Suspected scoped
   compromise must block new job claims and alert operators within 5 minutes; broad
   or critical wrapping-key compromise must freeze all affected managed decrypts
-  within 15 minutes. In either case, active runners for affected installations are
+  within 15 minutes. The compromised envelope root is disabled/revoked before any
+  restoration work starts. Data keys may be re-wrapped only under a newly generated
+  replacement root key, never under the suspected root; data keys that cannot be
+  re-wrapped under the replacement root are destroyed before affected hosted reviews
+  can resume. In either case, active runners for affected installations are
   terminated immediately with a 30-second hard deadline, queued work is cancelled,
-  and affected installations stay suspended until data keys are re-wrapped or
-  destroyed. Those incident timers are post-detection containment for future
+  and affected installations stay suspended until data keys are re-wrapped under the
+  replacement root or destroyed. Those incident timers are post-detection containment
+  for future
   decrypts and stored ciphertext; they cannot undo plaintext exposure before
   detection, from a live compromised runner, or from a provider request that was
   already sent. The hosted App is not approved to launch until those controls exist
@@ -178,11 +191,11 @@ security-equivalent replacement for CLI/Action live-key custody.
   trusted base is honored. To review fork PRs deliberately, use a
   `pull_request_target` workflow (trusted base config; PR head used only as
   untrusted context). See the README's "Fork pull requests" section.
-- The proposed managed hosted App keeps the same conservative default: v1 skips all
-  fork-originated PRs before retrieval or provider calls, regardless of
-  `.prowl-review.yml`, `delivery.owner`, comments, or fork-authored configuration.
-  Forks receive a neutral security skip. Any future hosted fork-review opt-in requires
-  a separate design update before config can enable it.
+- The planned managed hosted App (not yet available) keeps the same conservative
+  default: v1 skips all fork-originated PRs before retrieval or provider calls,
+  regardless of `.prowl-review.yml`, `delivery.owner`, comments, or fork-authored
+  configuration. Forks receive a neutral security skip. Any future hosted fork-review
+  opt-in requires a separate design update before config can enable it.
 
 ### Configuration trust
 - In the GitHub Action, `.prowl-review.yml` is only loaded from a trusted
@@ -202,15 +215,17 @@ storage, audit, and runner services.
 - In the CLI, GitHub Action, and self-hosted modes, **prowl-review collects no
   telemetry and no analytics.** There is no usage reporting, no phone-home, no
   third-party tracking.
-- In the CLI and GitHub Action, the tool makes network calls only to **your
-  configured LLM provider** (to perform the review) and the **GitHub API** (to
-  fetch the diff and publish the review). Your code and review content go only to
-  the provider *you* chose with the key *you* supplied.
+- In the CLI and GitHub Action, the default network path calls **your configured
+  LLM provider** (to perform the review) and the **GitHub API** (to fetch the diff
+  and publish the review). Optional configured grounding can also fetch an
+  HTTP(S) org-guidelines URL, Semgrep registry rules, or OSV.dev dependency data as
+  described in [`docs/privacy.md`](docs/privacy.md). Your provider-bound code and
+  review content go only to the provider *you* chose with the key *you* supplied.
 - In CLI, GitHub Action, and self-hosted modes, cost/usage figures are computed
   locally or in the operator-controlled deployment and written only to run logs /
   the Action job summary / local or operator-controlled usage logs — never
   transmitted to Prowl.
-- The proposed managed hosted GitHub App has different operational boundaries:
+- The planned managed hosted GitHub App (not yet available) has different operational boundaries:
   it necessarily uses the hosted queue, installation database, audit log, KMS/HSM
   service, GitHub API, and the user's configured LLM provider. Its durable systems
   may store only the operational metadata described in
