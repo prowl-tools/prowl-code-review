@@ -49,18 +49,24 @@ pull-request content without leaking secrets or executing attacker-controlled co
   and runner decrypt identities. This protects stored ciphertext, queues, and
   backups; it does **not** protect a plaintext provider key from a runner that is
   compromised while decrypting or sending the active provider request. Users who
-  need that threat model should self-host on infrastructure they control.
+  need that threat model should self-host on infrastructure they control. It also
+  cannot protect against compromise, logging, or policy choices inside the user's
+  selected LLM provider after the key/content is sent to that provider; provider
+  key scoping, spend limits, monitoring, and rotation remain the user's provider
+  controls.
 - Hosted App revocation is an ordered, fenced sequence. The application database
   transaction marks the installation revoked, bumps the revocation generation,
   invalidates outstanding leases/fencing tokens, and prevents new job claims. After
   that commit, the control plane disables active KMS decrypt grants, cancels queued
-  jobs, evicts caches, and cancels or kills active runners. Runners must re-check
-  revocation and fencing immediately before every provider or GitHub call and
-  before publication, then discard any provider response if revocation happened
-  while the request was in flight. A provider request already sent cannot be
-  recalled; it may consume provider quota and may already have reached the
-  provider, but no further calls or GitHub publication may occur after the runner
-  observes revocation. Hosted stores purge key rows, queued jobs, caches, review
+  jobs, evicts caches, cancels active provider HTTP streams, and terminates active
+  runners with graceful-then-hard deadlines. Runners must re-check revocation and
+  fencing immediately before every provider or GitHub call and before publication.
+  A provider request already sent cannot be recalled; it may consume provider quota,
+  reach the provider, continue server-side after the local stream is aborted, and
+  expose content to provider-side systems. If revocation happens in flight, the
+  runner must re-check before parsing the provider response or publishing, then
+  discard response bytes without extraction, summary generation, persistence, or
+  GitHub publication. Hosted stores purge key rows, queued jobs, caches, review
   state, and backup key material on the published 30-day schedule. Suspected
   wrapping-key compromise must alert operators within 5 minutes, freeze affected
   managed decrypts within 15 minutes, and keep affected installations suspended
