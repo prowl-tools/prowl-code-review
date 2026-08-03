@@ -47,11 +47,14 @@ pull-request content without leaking secrets or executing attacker-controlled co
   tests, provider-side KMS audit logs, and drift alerts enforce separation between
   KMS administration, database administration, backup/restore, deletion workers,
   and runner decrypt identities. This protects stored ciphertext, queues, and
-  backups. This is a material change from the CLI/Action model: in CLI/Action use,
-  the plaintext key is exposed to the user's local machine or chosen GitHub runner
-  and then to the selected provider, but not to a Prowl-hosted settings or runner
-  process. In the managed Hosted App, Prowl-managed infrastructure receives the key
-  during settings save/rotation, stores encrypted key material, and later decrypts it
+  backups. Decrypt permission scoped to an active runner job means that runner can
+  decrypt only its current installation key while the job is active; a compromised
+  active runner can still exfiltrate that plaintext key during the provider call.
+  This is a material change from the CLI/Action model: in CLI/Action use, the
+  plaintext key is exposed to the user's local machine or chosen GitHub runner and
+  then to the selected provider, but not to a Prowl-hosted settings or runner process.
+  In the managed Hosted App, Prowl-managed infrastructure receives the key during
+  settings save/rotation, stores encrypted key material, and later decrypts it
   transiently for reviews. The at-rest controls
   limit database-only, queue-only, backup-only, and KMS-unauthorized operator access;
   they do **not** protect a plaintext provider key from active service/runtime
@@ -78,11 +81,11 @@ pull-request content without leaking secrets or executing attacker-controlled co
   runners with graceful-then-hard deadlines. Runners must re-check revocation and
   fencing immediately before every provider or GitHub call and before publication;
   stale fencing tokens are rejected, never accepted as authority. Guarded provider
-  sends decrypt, construct, and hand the request to the HTTP client in the same
-  synchronous operation immediately after the final check, with staging telemetry
-  required to keep the check-to-send handoff under a published millisecond-scale
-  budget. A revocation that lands after that final check but before the provider
-  receives the request is still an unavoidable cross-system race. A provider request
+  sends decrypt, constructs credential-bearing headers, and hands the request to the
+  HTTP client in the same guarded call stack without unrelated awaits, with staging
+  telemetry required to keep the check-to-send handoff under a published
+  millisecond-scale budget. A revocation that lands after that final check but before
+  the provider receives the request is still an unavoidable cross-system race. A provider request
   already sent cannot be recalled; it may consume provider quota, reach the provider,
   continue server-side after the local stream is aborted, and expose the provider key
   in the request authorization material plus PR content to provider-side systems.
@@ -93,7 +96,12 @@ pull-request content without leaking secrets or executing attacker-controlled co
   If revocation happens in flight, the runner must re-check
   before parsing the provider response and again immediately before each GitHub
   publication call, then discard response bytes without extraction, summary
-  generation, persistence, or GitHub publication if revocation is observed. There is
+  generation, persistence, or GitHub publication if revocation is observed. Discard
+  means the application does not parse, summarize, persist, or publish the response;
+  bytes already received may still have existed in kernel, TLS, or HTTP-library
+  buffers and, in runner memory, are bounded by the hosted HTTP wrapper's 64 KiB
+  reader limit before process recycle. That live-buffer exposure is accepted residual
+  risk, not a revocation guarantee. There is
   no true atomicity across the database and an already-started external GitHub API
   call. On uninstall or key deletion, hosted stores revoke the installation and delete
   live key rows, queued jobs, caches, and review state through the control-plane
