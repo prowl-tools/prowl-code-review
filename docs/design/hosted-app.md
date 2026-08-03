@@ -416,7 +416,15 @@ recorded as GitHub review approvals on the launch-record PR plus their names and
 commit SHAs in the launch record. Deployment and runner startup load the launch
 record from the exact deployed commit and fail closed if the named wrapper path,
 fixture corpus, dependency lockfile, signed reviewers, or drift thresholds do not
-match. The
+match. Startup also resolves the actual provider HTTP module through the production
+module loader, verifies its path, package integrity, build artifact hash, dependency
+tree hash, and exported wrapper identity against the launch record, and refuses to
+decrypt provider keys if any provider call path can import an unrecorded HTTP client,
+SDK, proxy agent, middleware, or instrumentation package. This runtime check does not
+make a JavaScript HTTP client safe against live compromise; it only proves the deployed
+client is the reviewed one, and managed launch materials must disclose that users who
+cannot tolerate compromise of that reviewed client path must use CLI, Action, or
+self-hosting. The
 launch maximum buffered provider response chunk is 64 KiB before the runner performs
 a revocation check and either processes that chunk or discards it;
 larger read-ahead or full-body buffering blocks launch. The 64 KiB limit is per
@@ -689,19 +697,26 @@ Staging timing tests must issue repeated
 `invalid`, `unauthorized`, `rate_limited`, `unknown`, validation-unsupported, expired
 nonce, session-race, absent-key, valid-prefix, invalid-prefix, minimum-length,
 maximum-length, overlong, and invalid-character requests and block launch if p95/p99
-distributions diverge beyond the published bound. The managed v1 launch bound is p95
-delta <= 25 ms and p99 delta <= 50 ms between any two failure classes over at least
-10,000 staging samples per class, after warmup, measured from ingress accept at the
-load balancer to the last response byte written, including framework parsing,
-nonce/session/CSRF/OAuth checks, database/KMS calls used by that path, and any local
-validation work. The launch record must also publish absolute p50/p95/p99/max timing
-for each prefix, character-class, and length fixture, not only pairwise deltas; any
-valid-prefix, invalid-prefix, no-prefix, invalid-character, or overlong class whose
-absolute distribution falls outside the fixed response-floor envelope blocks launch.
+distributions diverge beyond the published bound. The suite must run on
+production-like hardware under idle load, at least 75% CPU contention, forced GC
+pressure, large-buffer allocation, and scheduler noise; each condition uses at least
+10,000 warmed samples per class. The managed v1 launch bound is p95 delta <= 25 ms and
+p99 delta <= 50 ms between any two failure classes under every condition, measured
+from ingress accept at the load balancer to the last response byte written, including
+framework parsing, nonce/session/CSRF/OAuth checks, database/KMS calls used by that
+path, and any local validation work. The launch record must also publish absolute
+p50/p95/p99/max timing and confidence intervals for each prefix, character-class, and
+length fixture, not only pairwise deltas; any valid-prefix, invalid-prefix, no-prefix,
+invalid-character, or overlong class whose absolute distribution falls outside the
+fixed response-floor envelope blocks launch.
 Because
 managed v1 never performs a synchronous provider auth probe, the endpoint always
 returns the same generic pending envelope after the local constant-shape checks and
-enqueues or refreshes only a pending-validation candidate. That candidate has
+persists or refreshes only an inactive pending-validation candidate through the same
+database/write-outbox shape for submitted and dummy paths. The background provider
+validation job is not made runnable until after the generic response commit; the
+response path never waits for provider validation, provider queue execution, provider
+success, provider failure, or provider timeout. That candidate has
 per-installation, per-sender, and per-source creation and
 retry limits stricter than the command-ingress buckets; repeated pending candidates
 coalesce by installation/provider and cannot make an existing verified key unusable.
@@ -732,11 +747,10 @@ prefix/length/class, or authorization reason.
 Production records p50/p95/p99/max latency histograms by internal outcome class only
 after the response is committed, never in user-visible output. If any class pair
 exceeds the published p95/p99 delta for three consecutive five-minute windows, the
-settings service disables synchronous live validation, accepts only inactive
-pending-validation candidates behind the generic pending envelope, pages on-call, and
-allows runners to use only the last successfully verified key. Installations with no
-verified key receive no reviews until validation drift is repaired or launch is rolled
-back.
+settings service disables new managed key-save traffic for affected runner/settings
+classes, pages on-call, keeps already verified keys unchanged, and allows runners to
+use only the last successfully verified key. Installations with no verified key receive
+no reviews until validation drift is repaired or launch is rolled back.
 The response never re-renders or logs the submitted key, its prefix/suffix, length,
 character classes, or partial provider error details. The input field is cleared
 after every submit attempt.

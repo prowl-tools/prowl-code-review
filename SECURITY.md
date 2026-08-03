@@ -50,6 +50,18 @@ stored for later reviews. That is an explicit trust-model change; the managed Ho
 App is not a
 security-equivalent replacement for CLI/Action live-key custody.
 
+> [!WARNING]
+> The planned managed hosted App is not suitable for threat models that assume zero
+> trust of Prowl-managed infrastructure, protection against live-process compromise,
+> or protection against a malicious/backdoored dependency in the managed settings,
+> runner, or HTTP-client path. The CLI, GitHub Action, and self-hosted Docker
+> deployment keep provider keys only on your machine or chosen runner and do not send
+> them to Prowl services. Managed users cannot prevent or independently detect a
+> plaintext key captured during a live decrypt-to-send window through RBAC, KMS
+> grants, or audit logs; incident response and revocation can stop future decrypts but
+> cannot undo a key already exfiltrated from process memory. Use CLI, Action, or
+> self-hosting if you require the stronger live-key custody boundary.
+
 - **Deployment-path boundary:** the CLI and GitHub Action never store provider keys;
   the planned managed Hosted App (not yet available) is a pre-launch exception that
   would store per-installation encrypted key material and transiently process plaintext
@@ -170,6 +182,15 @@ security-equivalent replacement for CLI/Action live-key custody.
   disabled until that file names the deployed implementation, launch records, canary
   leak-test results, platform controls, re-verification schedule, and two security-owner
   signatures.
+- **Verification:** before managed launch, plaintext provider keys must be proved
+  through canary-injection tests not to reach logs, errors, exception stacks, traces,
+  queues, caches, persisted state, process environment, crash-dump locations, or
+  process-inspection interfaces. Startup self-tests must verify that swap, core dumps,
+  heap snapshots, debugger access, and process inspection are disabled before any key
+  material is accepted or decrypted. The attestation file above must publish that
+  evidence, match the deployed commit, carry two security-reviewer signatures, and be
+  re-verified at least annually and after relevant platform, runtime, dependency,
+  key-ingestion, provider-wrapper, observability, or KMS/HSM policy changes.
 - The GitHub Action uses the auto-provisioned, least-privilege `GITHUB_TOKEN`
   (typically `pull-requests: write`, `issues: write`, optional `checks: write`).
 - **Secret redaction (#15):** diffs, context, titles, issue text, and linter
