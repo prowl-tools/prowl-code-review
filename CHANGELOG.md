@@ -21,9 +21,20 @@ All notable changes to Prowl Review will be documented in this file.
     `maxFiles`/token bounds are honored with truncation reported (no silent truncation).
   - **Machine-wide serialization lock** at `$CODEX_HOME/.prowl-review.lock` (on by default for
     `codex`, opt-out via `codex.lock` / `PROWL_CODEX_LOCK`) serializes `codex` spawns across
-    processes so one `auth.json` serves one stream at a time; stale locks from dead PIDs are
-    reclaimed. Reasoning effort is configurable via `codex.effort` / `PROWL_CODEX_EFFORT`
-    (default `low`).
+    processes so one `auth.json` serves one stream at a time. The lock is created atomically
+    (temp-file + `link(2)`) and reclaimed via `rename(2)`, so concurrent acquirers can't corrupt
+    or double-delete it; stale locks from dead PIDs are reclaimed, with a max-age backstop for pid
+    reuse kept above the child timeout. Wait timeout is `codex.lockTimeoutMs` /
+    `PROWL_CODEX_LOCK_TIMEOUT_MS` (default 10 min).
+  - **Reasoning effort** via `codex.effort` / `PROWL_CODEX_EFFORT` — `low | medium | high | xhigh`
+    (default `low`). **Per-exec timeout** `codex.timeoutMs` / `PROWL_CODEX_TIMEOUT_MS` (default
+    10 min) kills a hung `codex` child (SIGTERM → SIGKILL). **Binary override** `PROWL_CODEX_BIN`
+    for runners without the user's PATH.
+  - **Hardening.** A failed Codex turn is treated as a failure even when a premature
+    `agent_message` was emitted (exit code + `turn.completed` are checked); the child stdin is
+    guarded against EPIPE; and the `codex` child receives an **allowlisted environment only** —
+    provider keys, `GITHUB_TOKEN`, and any `*_TOKEN`/`*_SECRET`/`*_KEY` are never passed to the
+    process that runs model-generated shell commands.
   - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
   - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
     only** — never GitHub-hosted runners on public repos (OpenAI: "Do not use this workflow for
