@@ -80,7 +80,10 @@ Also tracked in the backlog: multi-language (tree-sitter), a quality eval harnes
 
 ## Existing Workflows
 This repo dogfoods its own tool: `.github/workflows/prowl-review.yml` (auto review on PRs) and
-`prowl-review-command.yml` (`@prowl-review` chat/commands) run a Claude + Gemini ensemble (#53)
-against every PR. The placeholder `anthropics/claude-code-action` workflows were retired once
-prowl-review reached parity (#44) — the ensemble replaces the baseline reviewer and
-`@prowl-review` replaces the `@claude` assistant, so the repo is prowl-review-only.
+`prowl-review-command.yml` (`@prowl-review` chat/commands) run against every PR on the self-hosted
+Mac mini runner (`runs-on: [self-hosted, macOS, prowl-review]`) using the keyless Codex
+subscription provider (`provider: codex`, #45/#64) — subscription-backed, $0.00/review, with no
+provider secret in GitHub. The Claude + Gemini ensemble (#53) it replaced is kept as a commented,
+key-gated fallback in `.prowl-review.yml`. The placeholder `anthropics/claude-code-action`
+workflows were retired once prowl-review reached parity (#44) — prowl-review replaces the baseline
+reviewer and `@prowl-review` replaces the `@claude` assistant, so the repo is prowl-review-only.
