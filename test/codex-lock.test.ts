@@ -83,6 +83,68 @@ describe("acquireFileLock", () => {
     expect(error).toBeInstanceOf(Error);
     expect((error as Error).message).toMatch(/Timed out .* waiting for the Codex lock/);
   });
+
+  it("does NOT reclaim an empty/unreadable record younger than the grace", async () => {
+    const lockPath = join(dir, "lock");
+    writeFileSync(lockPath, ""); // empty record — a competitor could be mid-write
+    let clock = 1000;
+    const error = await acquireFileLock(lockPath, {
+      pollIntervalMs: 1,
+      timeoutMs: 50,
+      graceMs: 5000,
+      fileAgeMs: () => 0, // younger than the grace → treated as held, not stale
+      now: () => clock,
+      sleep: async () => {
+        clock += 100;
+      }
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Timed out/);
+    // The empty record was never deleted (not reclaimed).
+    expect(existsSync(lockPath)).toBe(true);
+  });
+
+  it("reclaims an empty record older than the grace", async () => {
+    const lockPath = join(dir, "lock");
+    writeFileSync(lockPath, "");
+    const release = await acquireFileLock(lockPath, {
+      pollIntervalMs: 1,
+      graceMs: 5000,
+      fileAgeMs: () => 10_000 // older than the grace → reclaimable
+    });
+    const record = JSON.parse(readFileSync(lockPath, "utf8"));
+    expect(record.pid).toBe(process.pid);
+    release();
+  });
+
+  it("two concurrent reclaimers of a stale lock end with exactly one holder", async () => {
+    const lockPath = join(dir, "lock");
+    writeFileSync(lockPath, JSON.stringify({ pid: 999999, ts: Date.now() }));
+    // 999999 is dead; our freshly-written record (process.pid) is alive.
+    const alive = (pid: number): boolean => pid === process.pid;
+    const opts = { pollIntervalMs: 1, isProcessAlive: alive };
+
+    let count = 0;
+    const p1 = acquireFileLock(lockPath, opts).then((r) => {
+      count += 1;
+      return { r, who: 1 };
+    });
+    const p2 = acquireFileLock(lockPath, opts).then((r) => {
+      count += 1;
+      return { r, who: 2 };
+    });
+
+    const first = await Promise.race([p1, p2]);
+    await tick();
+    // Exactly one reclaimed + acquired; the other is still waiting on it.
+    expect(count).toBe(1);
+
+    first.r();
+    const rest = await (first.who === 1 ? p2 : p1);
+    expect(count).toBe(2);
+    rest.r();
+    expect(existsSync(lockPath)).toBe(false);
+  });
 });
 
 describe("withCodexLock", () => {

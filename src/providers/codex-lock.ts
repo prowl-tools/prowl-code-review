@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { linkSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -10,12 +10,21 @@ import { dirname, join } from "node:path";
  * file lock at `$CODEX_HOME/.prowl-review.lock` serializes `codex` spawns across
  * every process on the host so two runs never share the one login concurrently.
  *
+ * The lock is created **atomically** to avoid two races: the record is written to
+ * a per-pid temp file and `link(2)`ed into place (so the lock file is never
+ * observed empty mid-write), and a stale lock is reclaimed by `rename(2)` (so only
+ * one of several concurrent reclaimers wins and no one deletes a freshly re-created
+ * lock). An unreadable/empty record is treated as *held* unless the file is older
+ * than a short grace.
+ *
  * Within a single prowl-review process, an in-process queue serializes codex
  * operations too (so the specialist fan-out shares one lock holder rather than
  * self-contending on the file lock — the documented tradeoff is that codex passes
- * run sequentially, not in parallel). Stale locks left by a dead process are
- * reclaimed by checking the recorded pid. prowl-review never reads, copies, or
- * logs `auth.json` — only the `codex` binary does.
+ * run sequentially, not in parallel). A lock whose recorded pid is dead is
+ * reclaimed immediately; the max-age reclaim is a backstop for pid reuse and is
+ * kept `>=` the child exec timeout so a live holder is never reclaimed before its
+ * own timeout fires. prowl-review never reads, copies, or logs `auth.json` — only
+ * the `codex` binary does.
  */
 
 export const CODEX_LOCK_FILENAME = ".prowl-review.lock";
@@ -39,15 +48,23 @@ interface LockRecord {
 export interface AcquireLockOptions {
   /** Poll interval while waiting for a held lock, ms. Default 50. */
   pollIntervalMs?: number;
-  /** Max time to wait before giving up, ms. Default 120_000 (2 min). */
+  /** Max time to wait before giving up, ms. Default 600_000 (10 min). */
   timeoutMs?: number;
   /**
-   * A held lock older than this is treated as stale even when the pid check is
-   * inconclusive (e.g. pid reused), ms. Default 15 min — well past any real run.
+   * Backstop for pid reuse: a lock held by a *live* pid older than this is treated
+   * as stale, ms. Default 15 min. Keep it `>=` the child exec timeout so a live
+   * holder mid-`codex exec` is never reclaimed before its own timeout fires.
    */
   maxAgeMs?: number;
+  /**
+   * Grace for an unreadable/empty lock record before it may be reclaimed, ms.
+   * Default 5000 — a competitor mid-write is treated as held, not stale.
+   */
+  graceMs?: number;
   /** Injectable "is this pid alive?" check (default: `process.kill(pid, 0)`). */
   isProcessAlive?: (pid: number) => boolean;
+  /** Injectable lock-file age (ms since its mtime); default reads `statSync`. */
+  fileAgeMs?: (path: string) => number | null;
   /** Injectable clock (ms since epoch). */
   now?: () => number;
   /** Injectable sleep. */
@@ -83,6 +100,37 @@ function readLockRecord(lockPath: string): LockRecord | null {
 
 const defaultSleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+/** Default lock-file age: `now - mtime`, or null when the file is gone. */
+function defaultFileAgeMs(lockPath: string): number | null {
+  try {
+    return Math.max(0, Date.now() - statSync(lockPath).mtimeMs);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Atomically reclaim a stale lock via rename: only one of several concurrent
+ * reclaimers renames the file away (the losers get ENOENT), so no one deletes a
+ * lock another has since freshly re-created. Returns true when this caller won.
+ */
+function reclaimStaleLock(lockPath: string, pid: number, stamp: number): boolean {
+  const staleName = `${lockPath}.stale-${pid}-${stamp}`;
+  try {
+    renameSync(lockPath, staleName);
+  } catch {
+    // ENOENT (or a transient error): another reclaimer already moved it — the
+    // caller loops and re-evaluates cleanly.
+    return false;
+  }
+  try {
+    rmSync(staleName, { force: true });
+  } catch {
+    // Best-effort cleanup; the rename already freed the lock path.
+  }
+  return true;
+}
+
 /**
  * Acquire the advisory file lock, waiting (with stale-lock reclaim) until it is
  * free or the timeout elapses. Returns an idempotent release function.
@@ -92,23 +140,28 @@ export async function acquireFileLock(
   options: AcquireLockOptions = {}
 ): Promise<() => void> {
   const pollIntervalMs = options.pollIntervalMs ?? 50;
-  const timeoutMs = options.timeoutMs ?? 120_000;
+  const timeoutMs = options.timeoutMs ?? 600_000;
   const maxAgeMs = options.maxAgeMs ?? 15 * 60_000;
+  const graceMs = options.graceMs ?? 5000;
   const isProcessAlive = options.isProcessAlive ?? defaultIsProcessAlive;
+  const fileAgeMs = options.fileAgeMs ?? defaultFileAgeMs;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
   const start = now();
 
   mkdirSync(dirname(lockPath), { recursive: true });
+  const tmpPath = `${lockPath}.${process.pid}.tmp`;
 
   for (;;) {
+    // Atomic create: write the record to a per-pid temp file, then hard-link it
+    // into place. link() fails EEXIST when the lock is held, and the lock file is
+    // never observed empty because it appears fully-formed via the link.
     try {
-      // O_EXCL create: succeeds only when the file does not already exist.
-      const fd = openSync(lockPath, "wx");
+      writeFileSync(tmpPath, JSON.stringify({ pid: process.pid, ts: now() }));
       try {
-        writeSync(fd, JSON.stringify({ pid: process.pid, ts: now() }));
+        linkSync(tmpPath, lockPath);
       } finally {
-        closeSync(fd);
+        rmSync(tmpPath, { force: true });
       }
       let released = false;
       return () => {
@@ -126,30 +179,34 @@ export async function acquireFileLock(
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
         throw error;
       }
-      // The lock is held. Reclaim it when the holder is dead or the record is
-      // unreadable/too old; otherwise wait and retry until the timeout.
-      const record = readLockRecord(lockPath);
-      const stale =
-        record === null ||
-        !isProcessAlive(record.pid) ||
-        (record.ts > 0 && now() - record.ts > maxAgeMs);
-      if (stale) {
-        try {
-          rmSync(lockPath, { force: true });
-        } catch {
-          // Another process may have reclaimed it first; loop and retry.
-        }
-        continue;
-      }
-      if (now() - start >= timeoutMs) {
-        throw new Error(
-          `Timed out after ${timeoutMs}ms waiting for the Codex lock at ${lockPath} ` +
-            `(held by pid ${record.pid}). Another prowl-review Codex run may be in progress on this machine.`,
-          { cause: error }
-        );
-      }
-      await sleep(pollIntervalMs);
     }
+
+    // The lock is held. Decide whether it is stale (reclaimable) or live (wait).
+    const record = readLockRecord(lockPath);
+    let stale: boolean;
+    if (record === null) {
+      // Unreadable/empty (possibly a competitor mid-write): treat as held unless
+      // the file itself is older than the grace.
+      const age = fileAgeMs(lockPath);
+      stale = age !== null && age > graceMs;
+    } else {
+      // Dead pid → reclaim now. Live pid → only reclaim past maxAge (pid reuse).
+      stale = !isProcessAlive(record.pid) || (record.ts > 0 && now() - record.ts > maxAgeMs);
+    }
+
+    if (stale) {
+      reclaimStaleLock(lockPath, process.pid, now());
+      continue;
+    }
+
+    if (now() - start >= timeoutMs) {
+      const heldBy = record ? `pid ${record.pid}` : "an in-progress writer";
+      throw new Error(
+        `Timed out after ${timeoutMs}ms waiting for the Codex lock at ${lockPath} ` +
+          `(held by ${heldBy}). Another prowl-review Codex run may be in progress on this machine.`
+      );
+    }
+    await sleep(pollIntervalMs);
   }
 }
 

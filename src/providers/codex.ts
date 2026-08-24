@@ -453,10 +453,18 @@ export function composeCodexPrompt(request: CompletionRequest): string {
 /** Resolve the lock config for a codex run from its {@link CodexOptions}. */
 export function codexLockConfig(codex: CodexOptions, acquireOptions?: AcquireLockOptions) {
   const codexHome = codex.codexHome ?? resolveCodexHome();
+  const childTimeout = codex.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS;
+  // Keep the live-holder max-age backstop safely above one child exec timeout so a
+  // holder mid-`codex exec` is never reclaimed before its own timeout can fire.
+  const resolvedAcquireOptions: AcquireLockOptions = {
+    timeoutMs: codex.lockTimeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS,
+    maxAgeMs: childTimeout + 60_000,
+    ...acquireOptions
+  };
   return {
     enabled: codex.lock !== false,
     lockPath: codexLockPath(codexHome),
-    ...(acquireOptions ? { acquireOptions } : {})
+    acquireOptions: resolvedAcquireOptions
   };
 }
 
