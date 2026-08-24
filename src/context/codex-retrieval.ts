@@ -76,7 +76,9 @@ export function buildCodexRetrievalPrompt(changedPaths: string[], system?: strin
       "patterns — the definitions and call sites of the changed code plus closely related files.",
       "Return ONLY repo-relative paths of files that already exist, each with a short reason.",
       "Do not include the changed files themselves unless a reviewer must re-read them for context.",
-      "Prefer a focused set over an exhaustive one."
+      "Prefer a focused set over an exhaustive one.",
+      "Do NOT open, read, or return secret-bearing files — .env files, private keys, certificates,",
+      "credential or secrets files. They are irrelevant to the review and must be left untouched."
     ].join("\n")
   );
   return parts.join("\n\n");

@@ -96,6 +96,9 @@ describe("buildCodexRetrievalPrompt", () => {
     expect(prompt).toMatch(/- src\/a\.ts/);
     expect(prompt).toMatch(/- src\/b\.ts/);
     expect(prompt).toMatch(/repo-relative paths/);
+    // Soft guard: instruct Codex not to open secret-bearing files.
+    expect(prompt).toMatch(/\.env/);
+    expect(prompt).toMatch(/private keys|credential|secrets/i);
   });
 });
 

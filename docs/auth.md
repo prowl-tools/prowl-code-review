@@ -150,6 +150,14 @@ instead of a metered key. It is deliberately narrow:
 - **No Claude/Gemini equivalent, ever.** This exists only because OpenAI offers a
   sanctioned first-party CLI + plan-allowance path; Anthropic and Google do not,
   and their consumer terms forbid it.
+- **Retrieval read boundary.** For cross-file context, `codex` runs
+  `--sandbox read-only` **against your real repo root**, so its own shell can
+  **read any file in the checkout** while exploring. prowl-review's sensitive-file
+  refusal + secret redaction apply to the **bundle Codex returns** (what enters
+  the review), not to what Codex may open on disk; the retrieval prompt asks it to
+  skip `.env`/keys/credentials, but that is guidance, not a sandbox guarantee. If a
+  repo holds secrets a Codex process must never read at all, don't use
+  `provider: codex` for it. See [`privacy.md`](privacy.md).
 
 Enable it in `.prowl-review.yml`:
 

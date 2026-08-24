@@ -115,6 +115,12 @@ describe("data-privacy doc (#40)", () => {
     // Data goes to OpenAI through the local codex CLI, still nothing to prowl-review.
     expect(doc).toMatch(/codex.*CLI|CLI.*codex/i);
     expect(doc).toMatch(/auth\.json/);
+    // Trust boundary: Codex's own shell can READ any file during retrieval; the
+    // refusal/redaction protects the returned bundle, not what Codex opens.
+    expect(doc).toMatch(/read any file/i);
+    expect(doc).toMatch(/real repo root/i);
+    expect(doc).toMatch(/bundle Codex returns|what enters the review/i);
+    expect(doc).toMatch(/soft instruction|not a sandbox guarantee/i);
   });
 
   it("documents secret redaction + sensitive-file skipping before sending", () => {
