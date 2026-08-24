@@ -959,6 +959,9 @@ esac
     expect(text).toContain("grep -q 'pr-number' \"${action_file}\"");
     expect(text).toContain("grep -q 'pr-draft' \"${action_file}\"");
     expect(text).toContain("grep -q 'ai-provider' \"${action_file}\"");
+    // Also require the base action to actually mention `codex`, so the guard proves
+    // `provider: codex` support and not merely the presence of an ai-provider input.
+    expect(text).toContain("grep -q 'codex' \"${action_file}\"");
     expect(text).not.toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
   });
 });

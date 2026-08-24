@@ -855,10 +855,14 @@ describe("command workflow metadata", () => {
     expect(workflow).toMatch(/action_file="prowl-base\/action\.yml"/);
     expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
     expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
-    // Command mode gates on the keyless Codex provider (#45/#64) so it self-bootstraps.
+    // Command mode gates on the keyless Codex provider (#45/#64) so it self-bootstraps;
+    // both guards require the base action to actually mention `codex`, not just an
+    // ai-provider input (which every recent base action already has).
     expect(workflow).toContain("grep -q 'ai-provider' \"${action_file}\"");
+    expect(workflow).toContain("grep -q 'codex' \"${action_file}\"");
     expect(workflow).not.toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
     expect(reviewWorkflow).toContain("grep -q 'ai-provider' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'codex' \"${action_file}\"");
     expect(reviewWorkflow).not.toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
     expect(reviewWorkflow).toContain("grep -q 'pr-draft' \"${action_file}\"");
     expect(workflow).toContain("Trusted base does not support the prowl-review command-mode Codex provider yet");

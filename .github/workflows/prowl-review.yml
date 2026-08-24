@@ -299,6 +299,7 @@ jobs:
 
           if [ -n "${action_file}" ] &&
             grep -q 'ai-provider' "${action_file}" &&
+            grep -q 'codex' "${action_file}" &&
             grep -q 'pr-number' "${action_file}" &&
             grep -q 'pr-draft' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
