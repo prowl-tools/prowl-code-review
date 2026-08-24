@@ -3,8 +3,19 @@
 # PROWL_AI_KEY_<PROVIDER>). Run `prowl-review init` for the fully-annotated template.
 
 # --- Provider (single-provider reviews) --------------------------------------
-provider: anthropic            # anthropic | openai | gemini (default: anthropic)
+provider: anthropic            # anthropic | openai | gemini | codex (default: anthropic)
 # model: claude-opus-4-8       # optional; provider default otherwise
+
+# --- Codex subscription provider (#45) ---------------------------------------
+# Keyless: runs reviews through your ChatGPT subscription via the first-party
+# `codex` CLI (run `codex login` first). $0.00 marginal cost. Off by default,
+# opt-in, and SELF-HOSTED / LOCAL INFRASTRUCTURE ONLY — never on GitHub-hosted
+# runners for public repos ("Do not use this workflow for public or open-source
+# repositories"). No Claude/Gemini equivalent.
+# provider: codex              # no PROWL_AI_KEY* needed
+# codex:
+#   effort: low                # minimal | low | medium | high (default: low)
+#   lock: true                 # serialize codex runs across the host (default: on)
 
 # --- Multi-provider ensemble (#53) -------------------------------------------
 # Review with several models at once; findings are consolidated + a 🤝 badge

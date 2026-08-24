@@ -17,8 +17,17 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # In GitHub Actions, use a trusted config-path input if you want Action config;
 # the Action ignores repo config by default for untrusted PR checkouts.
 # Set provider whenever you set model, because model names are provider-specific.
-# provider: anthropic        # anthropic | openai | gemini
+# provider: anthropic        # anthropic | openai | gemini | codex
 # model: <provider default>  # e.g. claude-... / gpt-... / gemini-...
+#
+# Codex (#45): keyless — runs reviews through your ChatGPT subscription via the
+# first-party codex CLI (run 'codex login' first). Zero marginal cost. Off by
+# default, opt-in, SELF-HOSTED / LOCAL INFRASTRUCTURE ONLY (never GitHub-hosted
+# runners on public repos). No Claude/Gemini equivalent.
+# provider: codex            # no PROWL_AI_KEY* needed
+# codex:
+#   effort: low              # minimal | low | medium | high (default: low)
+#   lock: true               # serialize codex runs across the host (default: on)
 
 # --- Presentation -------------------------------------------------------------
 # agentPrompt: true          # append a copy-paste "Resolve with an AI agent" prompt to each finding

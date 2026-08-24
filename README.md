@@ -73,7 +73,7 @@ jobs:
         with:
           ai-key: ${{ secrets.PROWL_AI_KEY }}
           # config-path: prowl-review-config/.prowl-review.yml
-          # ai-provider: anthropic   # optional anthropic | openai | gemini override
+          # ai-provider: anthropic   # optional anthropic | openai | gemini | codex override
           # ai-model: claude-...     # optional per-provider model override
 ```
 
@@ -505,6 +505,32 @@ provider, not across). The per-PR budget cap (#18) is **split evenly** across
 providers, and risk-tiering (#31) still applies. A provider with no key is
 skipped with a note; with fewer than two usable keys it runs as a normal
 single-provider review.
+
+## Codex subscription provider (#45)
+
+`provider: codex` runs reviews through your **ChatGPT subscription** instead of a
+metered API key, so per-review marginal cost is **$0.00**. It is **keyless** — no
+`PROWL_AI_KEY*` — and spawns the first-party **`codex` CLI** (signed in with
+`codex login`); prowl-review never calls an OpenAI endpoint directly and never
+reads or copies `auth.json`.
+
+It is **off by default and opt-in**, and — per OpenAI's own guidance
+("Do not use this workflow for public or open-source repositories") — supported
+**only on self-hosted / local infrastructure you control**, never on
+GitHub-hosted runners for public repos. There is **no Claude/Gemini equivalent**.
+
+```yaml
+# .prowl-review.yml
+provider: codex            # keyless; default model gpt-5.5 (failback gpt-5.6-terra -> gpt-5.5)
+# codex:
+#   effort: low            # minimal | low | medium | high
+#   lock: true             # serialize codex runs across the host (default on)
+```
+
+Cross-file context uses Codex's own read-only agentic exploration; the returned
+files are re-read through prowl-review's sandbox + secret redaction before they
+reach the review. See [`docs/auth.md`](docs/auth.md) and the self-hosted runner
+rollout (#64) for the full policy.
 
 ## Auto-generated PR descriptions (#33)
 

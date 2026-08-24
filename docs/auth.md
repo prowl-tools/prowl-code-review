@@ -11,14 +11,18 @@ and to GitHub — and which auth methods are supported vs. deliberately not.
 
 - **Provider keys come from the environment only** — never from `.prowl-review.yml`,
   never committed to the repo.
-- **Bring an API key for every provider** (Claude, OpenAI, Gemini). That is the
-  only supported auth method today.
+- **Bring an API key for the metered providers** (Claude, OpenAI, Gemini). That is
+  the supported default auth method.
 - **We never store or proxy your key.** It goes from your runner straight to your
   chosen provider (see [`privacy.md`](privacy.md)).
 - **Subscription / OAuth routing is _not_ supported** for Claude or Gemini — doing
-  so violates their consumer terms and gets accounts banned. OpenAI/Codex is the
-  only provider where a subscription backend could ever be offered, and only as a
-  documented, off-by-default, legally-reviewed opt-in (backlog #45, not yet built).
+  so violates their consumer terms and gets accounts banned, with **no Claude/Gemini
+  equivalent, ever**.
+- **`provider: codex` is the one exception** (backlog #45): a keyless provider that
+  spawns the first-party `codex` CLI under your ChatGPT sign-in. It is **off by
+  default, opt-in, and supported only on self-hosted / local infrastructure you
+  control** — never on GitHub-hosted runners for public/open-source repos. See
+  [Codex subscription provider](#codex-subscription-provider-45) below.
 
 ## Provider keys (BYOK)
 
@@ -27,9 +31,9 @@ order:
 
 | Variable | Purpose |
 |---|---|
-| `PROWL_AI_PROVIDER` | Which provider to use: `anthropic` (default), `openai`, or `gemini`. |
-| `PROWL_AI_KEY_<PROVIDER>` | Provider-scoped key, e.g. `PROWL_AI_KEY_ANTHROPIC`. **Preferred** — wins when set. |
-| `PROWL_AI_KEY` | Generic fallback key, used when no provider-scoped key is set. |
+| `PROWL_AI_PROVIDER` | Which provider to use: `anthropic` (default), `openai`, `gemini`, or `codex` (keyless — see below). |
+| `PROWL_AI_KEY_<PROVIDER>` | Provider-scoped key, e.g. `PROWL_AI_KEY_ANTHROPIC`. **Preferred** — wins when set. Not used by `codex`. |
+| `PROWL_AI_KEY` | Generic fallback key, used when no provider-scoped key is set. Not used by `codex`. |
 | `PROWL_AI_MODEL` | Optional model override (otherwise the provider's default model). |
 
 Resolution (`resolveProviderConfig`, `src/providers/index.ts`): the provider-scoped
@@ -39,8 +43,8 @@ multi-provider **ensemble** (#53) reads each `PROWL_AI_KEY_<PROVIDER>` so severa
 providers can review at once.
 
 Default models per provider: Anthropic `claude-haiku-4-5`, OpenAI `gpt-5.4-mini`,
-Gemini `gemini-2.5-pro` — each overridable with `PROWL_AI_MODEL` (or a per-provider
-`model` in config).
+Gemini `gemini-2.5-pro`, Codex `gpt-5.5` — each overridable with `PROWL_AI_MODEL`
+(or a per-provider `model` in config).
 
 ### Keys never live in the repo
 
@@ -92,7 +96,8 @@ section and [`SECURITY.md`](../SECURITY.md).
 ## Why API keys only — the subscription question
 
 A common ask is "can I reuse my Claude Pro / ChatGPT / Gemini *subscription*
-instead of buying API credits?" The answer is policy, not laziness:
+instead of buying API credits?" For Claude and Gemini the answer is policy, not
+laziness — and there is **no equivalent for them, ever**:
 
 - **Claude (Anthropic) — not supported.** The current
   [Anthropic Consumer Terms](https://www.anthropic.com/legal/consumer-terms)
@@ -104,20 +109,60 @@ instead of buying API credits?" The answer is policy, not laziness:
 - **Gemini (Google) — not supported.** Google began enforcing against
   subscription-OAuth reuse in third-party tools (Feb 2026). Use a Gemini **API**
   key.
-- **OpenAI/Codex — the only possible exception, and not yet built.** A Codex
-  subscription backend is tracked as an explicitly opt-in, off-by-default,
-  legally-reviewed feature (backlog #45). It is **blocked until documented
-  Legal/Compliance sign-off**, would rely on subscription auth that is
-  tolerated-but-not-sanctioned (against OpenAI's reverse-engineering clause), is
-  liable to break or trigger enforcement, and is **not recommended for automated
-  org-wide CI**. It would be isolated behind the provider abstraction so it can be
-  removed cleanly, would never be the default, and has **no equivalent for
-  Claude/Gemini**.
 
 The precedent for the strict stance: third-party tools that wrapped consumer
-subscription auth (e.g. the OpenClaw episode) drew account enforcement. BYOK with
-real API keys is the supported, durable path — and because you pay the provider
-directly, there are no prowl-review-imposed usage caps.
+subscription auth (e.g. the OpenClaw episode) drew account enforcement. For Claude
+and Gemini, BYOK with real API keys is the supported, durable path — and because
+you pay the provider directly, there are no prowl-review-imposed usage caps.
+
+**Codex is the one exception**, on a materially different footing (below).
+
+## Codex subscription provider (#45)
+
+OpenAI ships a **first-party** non-interactive surface — the official `codex` CLI
+(`codex exec`) signed in with ChatGPT — and OpenAI's pricing states that CLI usage
+under ChatGPT sign-in draws from your plan allowance. That makes `provider: codex`
+a legitimately supported way to run reviews against your ChatGPT subscription
+instead of a metered key. It is deliberately narrow:
+
+- **Keyless.** `codex` uses **no** `PROWL_AI_KEY*`. Authentication lives in
+  `$CODEX_HOME` (default `~/.codex`) and is resolved by the `codex` binary from
+  its own `codex login` session. prowl-review **spawns the official `codex`
+  binary only** — it never calls an OpenAI/ChatGPT backend endpoint directly, and
+  it **never reads, copies, or logs `auth.json`**.
+- **Off by default, opt-in.** Nothing changes unless you set `provider: codex`
+  (or `PROWL_AI_PROVIDER=codex`). Run `codex login` on the machine first; a missing
+  or logged-out `codex` binary produces a clear "run `codex login` on this
+  machine" error rather than a crash.
+- **Self-hosted / local infrastructure only.** OpenAI's own CI/CD authentication
+  guidance says, verbatim:
+  **"Do not use this workflow for public or open-source repositories."**
+  So `codex` is supported **only on infrastructure you control**
+  — a self-hosted runner or your laptop — and **never on GitHub-hosted runners for
+  public/open-source repos**, and the subscription login must live on that machine,
+  never in GitHub Actions secrets. Private repos on a self-hosted runner are fine.
+- **Never copy `auth.json` between machines or instances.** Refresh tokens are
+  single-use; a copied file logs out whichever side refreshes second. Keep one
+  `CODEX_HOME` per machine. When several runner instances share it, prowl-review's
+  machine-wide advisory lock (`$CODEX_HOME/.prowl-review.lock`, on by default for
+  `codex`) serializes `codex` runs so one `auth.json` only ever serves one stream
+  at a time. See backlog #64 for the self-hosted runner rollout.
+- **No Claude/Gemini equivalent, ever.** This exists only because OpenAI offers a
+  sanctioned first-party CLI + plan-allowance path; Anthropic and Google do not,
+  and their consumer terms forbid it.
+
+Enable it in `.prowl-review.yml`:
+
+```yaml
+provider: codex            # keyless: no PROWL_AI_KEY* needed
+# model: gpt-5.5           # default; failback ladder: gpt-5.6-terra -> gpt-5.5
+# codex:
+#   effort: low            # minimal | low | medium | high (default low)
+#   lock: true             # machine-wide serialization lock (default on)
+```
+
+Cost transparency reports **`$0.00 (ChatGPT subscription)`** while still showing
+the token counts (usage-limit resilience is tracked in #65).
 
 ## Local CLI
 
@@ -126,6 +171,13 @@ run:
 
 ```bash
 PROWL_AI_KEY=sk-… prowl-review review --base main
+```
+
+With the keyless Codex provider, no key is needed — just be logged in
+(`codex login`) on the machine:
+
+```bash
+PROWL_AI_PROVIDER=codex prowl-review review --base main
 ```
 
 ## See also

@@ -33,6 +33,17 @@ HTTPS, via a plain `fetch` — no intermediary, no prowl-review-hosted proxy:
 | OpenAI | `https://api.openai.com/v1/chat/completions` |
 | Gemini | `https://generativelanguage.googleapis.com/v1beta/models/<model>:generateContent` |
 
+**Codex (`provider: codex`, #45) is different:** prowl-review does **not** call any
+OpenAI endpoint itself. It spawns the local first-party **`codex` CLI**, which
+sends the review prompt to OpenAI under your **ChatGPT** sign-in and returns the
+result. So the same prompt content still reaches OpenAI — just through the official
+CLI rather than a direct API call — and, exactly as with the API providers,
+**nothing goes to a prowl-review server**. Your Codex login lives only in
+`$CODEX_HOME` on your machine; prowl-review **never reads, copies, or logs
+`auth.json`** — only the `codex` binary touches it. Because `codex` runs
+`--sandbox read-only` in a scratch working directory, it cannot modify your repo
+while gathering context.
+
 Other outbound calls prowl-review can make:
 
 - **GitHub API** — fetches the diff and posts the review.

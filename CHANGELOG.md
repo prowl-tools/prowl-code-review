@@ -4,6 +4,32 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Codex (ChatGPT subscription) provider — `provider: codex` (backlog #45).** A new
+  keyless provider that runs reviews through your ChatGPT subscription instead of a metered API
+  key, for **$0.00 marginal cost**. It spawns the first-party **`codex` CLI** (`codex exec`,
+  signed in via `codex login`) — never calling an OpenAI backend directly and never reading,
+  copying, or logging `auth.json`. The prompt is delivered on stdin (then closed); JSONL events
+  are parsed for the last `agent_message` and `turn.completed.usage`. Registered in
+  `PROVIDER_NAMES`/`DEFAULT_MODELS` (default `gpt-5.5`) with a failback ladder
+  `gpt-5.6-terra → gpt-5.5` (the retired `gpt-5.4`/`gpt-5.4-mini` are never defaults here).
+  - **Keyless config + ensemble.** `resolveProviderConfig` and the multi-provider ensemble accept
+    `codex` with no `PROWL_AI_KEY*`; it can review alongside API-key providers.
+  - **Agentic cross-file retrieval** for `codex` runs one `codex exec --sandbox read-only` that
+    returns a strict-schema file bundle; every returned path is re-read through prowl-review's
+    sandboxed toolkit + secret redaction, so Codex's raw shell output is never trusted, and
+    `maxFiles`/token bounds are honored with truncation reported (no silent truncation).
+  - **Machine-wide serialization lock** at `$CODEX_HOME/.prowl-review.lock` (on by default for
+    `codex`, opt-out via `codex.lock` / `PROWL_CODEX_LOCK`) serializes `codex` spawns across
+    processes so one `auth.json` serves one stream at a time; stale locks from dead PIDs are
+    reclaimed. Reasoning effort is configurable via `codex.effort` / `PROWL_CODEX_EFFORT`
+    (default `low`).
+  - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
+  - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
+    only** — never GitHub-hosted runners on public repos (OpenAI: "Do not use this workflow for
+    public or open-source repositories"); **no Claude/Gemini equivalent, ever**. Documented in
+    `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

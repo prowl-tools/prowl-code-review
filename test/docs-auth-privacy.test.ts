@@ -34,7 +34,7 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toMatch(/\.prowl-review\.yml[\s\S]*no config field that accepts a key/i);
   });
 
-  it("documents why subscription routing is unsupported for Claude/Gemini and why Codex is the only exception", () => {
+  it("documents why subscription routing stays unsupported for Claude/Gemini", () => {
     const doc = authDoc();
 
     expect(doc).toContain("Anthropic Consumer Terms");
@@ -43,8 +43,24 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toMatch(/bot, script, or otherwise/i);
     expect(doc).toMatch(/account-ban risk/i);
     expect(doc).toMatch(/OpenClaw/i);
-    expect(doc).toMatch(/OpenAI\/Codex[\s\S]*only possible exception[\s\S]*off-by-default/i);
-    expect(doc).toMatch(/OpenAI\/Codex[\s\S]*Legal\/Compliance sign-off/i);
+    // No Claude/Gemini equivalent, ever — Codex is the sole exception.
+    expect(doc).toMatch(/no Claude\/Gemini equivalent|never.*Claude.*Gemini|no equivalent.*Claude/i);
+  });
+
+  it("documents the Codex subscription provider as a supported, opt-in, self-hosted-only exception (#45)", () => {
+    const doc = authDoc();
+
+    // Codex via the first-party CLI is supported and keyless, but off by default.
+    expect(doc).toMatch(/provider: codex/);
+    expect(doc).toMatch(/off by default/i);
+    expect(doc).toMatch(/opt[- ]in/i);
+    expect(doc).toMatch(/codex login/);
+    // Self-hosted / local infrastructure only — never GitHub-hosted runners on public repos.
+    expect(doc).toMatch(/self-hosted|local infrastructure/i);
+    expect(doc).toContain("Do not use this workflow for public or open-source repositories");
+    // Never copy auth.json between machines.
+    expect(doc).toMatch(/auth\.json/);
+    expect(doc).toMatch(/never (?:copy|copied|move)|do not copy/i);
   });
 
   it("explains Action secret handling and GITHUB_TOKEN posting", () => {
@@ -89,6 +105,16 @@ describe("data-privacy doc (#40)", () => {
     expect(doc).toMatch(/p\/default/);
     expect(doc).toMatch(/metrics.*disabled|metrics and version checks disabled/i);
     expect(doc).toMatch(/OSV\.dev/i);
+  });
+
+  it("documents Codex subscription egress via the local first-party CLI (#45)", () => {
+    const doc = privacyDoc();
+
+    expect(doc).toMatch(/codex/i);
+    expect(doc).toMatch(/ChatGPT/);
+    // Data goes to OpenAI through the local codex CLI, still nothing to prowl-review.
+    expect(doc).toMatch(/codex.*CLI|CLI.*codex/i);
+    expect(doc).toMatch(/auth\.json/);
   });
 
   it("documents secret redaction + sensitive-file skipping before sending", () => {
