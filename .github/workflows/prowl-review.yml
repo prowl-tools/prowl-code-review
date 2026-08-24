@@ -207,15 +207,29 @@ jobs:
 
   review:
     needs: resolve
-    if: needs.resolve.outputs.resolved == 'true'
-    runs-on: ubuntu-latest
-    # Serialize auto reviews with @prowl-review commands for the same PR so pushes
-    # do not cancel command side effects; the action's stale-head checks prevent
-    # outdated publishes. The resolve job runs first so fallback-resolved PRs use
-    # the same PR-number key as the command workflow.
+    # Job-level same-repo gate (#64): the self-hosted Codex runner must NEVER be
+    # scheduled for a fork PR. `resolved` is already same-repo-only (the resolve
+    # job posts the neutral fork-skip check on ubuntu and never sets resolved=true
+    # for a fork), but the explicit head_repo == github.repository check is
+    # belt-and-suspenders so no future resolve change can silently route fork code
+    # onto the runner. head_repo is re-derived server-side from PR metadata in
+    # `resolve`, never from the PR-controlled event payload.
+    if: >
+      needs.resolve.outputs.resolved == 'true' &&
+      needs.resolve.outputs.head_repo == github.repository
+    # Subscription-backed reviews run on the always-on Mac mini (#64): keyless
+    # `provider: codex` via the ChatGPT login that lives only on that host. The
+    # ubuntu resolve/report jobs above stay hosted so fork PRs still get a status
+    # row without touching the self-hosted runner.
+    runs-on: [self-hosted, macOS, prowl-review]
+    timeout-minutes: 30
+    # Per-PR serialization; a newer push supersedes an in-flight review. Machine-
+    # wide serialization ACROSS repos/runner instances is enforced by the
+    # provider's Codex lock ($CODEX_HOME/.prowl-review.lock, on by default for
+    # `provider: codex`), NOT by GitHub concurrency.
     concurrency:
-      group: prowl-review-${{ needs.resolve.outputs.pr_number }}
-      cancel-in-progress: false
+      group: prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}
+      cancel-in-progress: true
     env:
       PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
     steps:
@@ -269,11 +283,12 @@ jobs:
         id: trusted-action
         shell: bash
         run: |
-          # Require the base action to support the per-provider ensemble keys (#53)
-          # AND the workflow_run PR handoff (#61, the pr-number + pr-draft inputs)
-          # before running, so the new trigger never drives an old base action that
-          # would ignore the explicit PR or draft state.
-          # Self-bootstraps once this PR merges (the new action.yml + config land
+          # Require the base action to support the keyless Codex provider (#45/#64,
+          # the ai-provider input) AND the workflow_run PR handoff (#61, the
+          # pr-number + pr-draft inputs) before running, so the new self-hosted
+          # trigger never drives an old base action that lacks `provider: codex` or
+          # would ignore the explicit PR/draft state.
+          # Self-bootstraps once this PR merges (the action.yml + codex config land
           # together on the base branch).
           action_file=""
           if [ -f prowl-base/action.yml ]; then
@@ -283,8 +298,7 @@ jobs:
           fi
 
           if [ -n "${action_file}" ] &&
-            grep -q 'ai-key-anthropic' "${action_file}" &&
-            grep -q 'ai-key-gemini' "${action_file}" &&
+            grep -q 'ai-provider' "${action_file}" &&
             grep -q 'pr-number' "${action_file}" &&
             grep -q 'pr-draft' "${action_file}"; then
             echo "available=true" >> "$GITHUB_OUTPUT"
@@ -315,11 +329,11 @@ jobs:
           # number and draft state to the action explicitly (#61).
           pr-number: ${{ needs.resolve.outputs.pr_number }}
           pr-draft: ${{ needs.resolve.outputs.is_draft }}
-          # Claude + Gemini ensemble (#53); per-provider keys, models pinned in
-          # the trusted base-branch config. Provider/model come from config-path,
-          # not inputs, so the primary stays Claude.
-          ai-key-anthropic: ${{ secrets.PROWL_AI_KEY_ANTHROPIC }}
-          ai-key-gemini: ${{ secrets.PROWL_AI_KEY_GEMINI }}
+          # Keyless Codex subscription provider (#45/#64): no PROWL_AI_KEY_* secret
+          # reaches this self-hosted job. Model + effort are pinned in the trusted
+          # base-branch config; ai-provider is passed explicitly so the run can
+          # never silently fall back to an API-key provider.
+          ai-provider: codex
           config-path: ${{ github.workspace }}/prowl-base/.prowl-review.yml
           workspace-path: ${{ github.workspace }}/pr-head
           guidelines-path: ${{ github.workspace }}/prowl-base

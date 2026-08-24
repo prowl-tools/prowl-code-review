@@ -1,20 +1,26 @@
-# prowl-review dogfoods itself with a multi-provider ensemble (#53): every PR is
-# reviewed by Claude and Gemini at once, with findings consolidated and a 🤝
-# consensus badge on issues both models flag. Loaded by the workflows via a
-# trusted base-branch `config-path` (never the PR checkout).
-#
-# Cheap, priced models on both sides so the CI cost line shows real dollars
-# (mirrors the prior gemini-2.5-flash dogfood choice); bump per-provider `model`
-# for a higher-fidelity review.
-provider: anthropic            # primary — also runs the shared cross-file context pass (#4)
-model: claude-haiku-4-5        # pin the primary/context pass to the cheap dogfood model
-ensemble:
-  enabled: true
-  providers:
-    - provider: anthropic
-      model: claude-haiku-4-5
-    - provider: gemini
-      model: gemini-2.5-flash
+# prowl-review dogfoods itself with the keyless Codex subscription provider (#45)
+# on a self-hosted runner (#64): every PR is reviewed through the ChatGPT login
+# that lives only on the Mac mini runner, so per-review marginal cost is $0.00 and
+# no provider secret ever enters GitHub. Loaded by the workflows via a trusted
+# base-branch `config-path` (never the PR checkout).
+provider: codex                # keyless — auth is the runner's own `codex login`
+model: gpt-5.5                 # ChatGPT-plan model; failback ladder gpt-5.6-terra -> gpt-5.5
+codex:
+  effort: low                  # low | medium | high | xhigh — cheap/fast dogfood setting
+  # lock: true                 # default on: serialize codex runs machine-wide via
+                               # $CODEX_HOME/.prowl-review.lock (one auth.json = one stream)
+
+# Claude + Gemini ensemble (#53) is retired on the dogfood now that reviews run on
+# the subscription-backed Codex runner (#64). Re-enable it (and restore the
+# PROWL_AI_KEY_ANTHROPIC / PROWL_AI_KEY_GEMINI secrets + workflow inputs) to go
+# back to API-key reviews, e.g. for a public-runner fallback:
+# ensemble:
+#   enabled: true
+#   providers:
+#     - provider: anthropic
+#       model: claude-haiku-4-5
+#     - provider: gemini
+#       model: gemini-2.5-flash
 
 # Fill an empty PR description from the diff (#33); never overwrites a body you wrote.
 prDescription:

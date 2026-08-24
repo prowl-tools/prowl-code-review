@@ -1,0 +1,7 @@
+# actionlint config. Registers the custom self-hosted runner labels used by the
+# subscription-backed Codex reviews (#64) so actionlint's runner-label check still
+# catches typos while accepting the Mac mini runner's label set
+# ([self-hosted, macOS, prowl-review]). `self-hosted` and `macos` are built in.
+self-hosted-runner:
+  labels:
+    - prowl-review
