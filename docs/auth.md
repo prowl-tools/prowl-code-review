@@ -172,6 +172,28 @@ provider: codex            # keyless: no PROWL_AI_KEY* needed
 Cost transparency reports **`$0.00 (ChatGPT subscription)`** while still showing
 the token counts (usage-limit resilience is tracked in #65).
 
+### Self-hosted runner setup (shape only)
+
+To run `provider: codex` from CI, the subscription login lives on a **self-hosted
+runner**, never in a GitHub secret. In shape (full detail in
+[`self-hosted-runner.md`](./self-hosted-runner.md); secrets-bearing operational
+steps in a private runbook):
+
+- **Dedicated `CODEX_HOME` per host** with its own **`codex login --device-auth`**,
+  **one login per host** — the machine-wide lock serializes multiple runner
+  instances so a single login serves them all. **Never copy `auth.json`** between
+  hosts or instances (single-use refresh tokens).
+- **Runner service config:** the runner's **`.env`** sets `CODEX_HOME=…`, and its
+  **`.path`** must include the `codex` binary directory (e.g. `/opt/homebrew/bin`)
+  so `codex` is on `PATH` for the service. Node is provisioned by the Action's own
+  `actions/setup-node` step; nothing else is assumed on the host.
+- **Labels:** `[self-hosted, macOS, prowl-review]`, which the review/command jobs
+  target; the fork-gating jobs stay on GitHub-hosted `ubuntu-latest`.
+- **Registration scope:** organizations register **one org-level runner** in a
+  restricted runner group; **personal accounts allow repository-level runners
+  only**, so register **one runner per opted-in repo**. Private repos need no
+  fork gate and adopt first.
+
 ## Local CLI
 
 The same key resolution applies to local pre-push review — export the env var and
