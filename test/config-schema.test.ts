@@ -19,6 +19,17 @@ describe("configSchema (#29)", () => {
     expect(configSchema.parse(input)).toEqual(input);
   });
 
+  it("accepts the codex provider + codex knobs and rejects bad values (#45)", () => {
+    const input = { provider: "codex", codex: { effort: "medium", lock: false } };
+    expect(configSchema.parse(input)).toEqual(input);
+    expect(configSchema.parse({ codex: { effort: "low" } })).toEqual({ codex: { effort: "low" } });
+    expect(configSchema.parse({ codex: { effort: "xhigh" } })).toEqual({ codex: { effort: "xhigh" } });
+    expect(() => configSchema.parse({ codex: { effort: "minimal" } })).toThrow(); // not offered for these models
+    expect(() => configSchema.parse({ codex: { effort: "turbo" } })).toThrow(); // not an enum member
+    expect(() => configSchema.parse({ codex: { lock: "yes" } })).toThrow(); // boolean only
+    expect(() => configSchema.parse({ codex: { nope: 1 } })).toThrow(); // strict
+  });
+
   it("accepts the agentPrompt toggle and rejects a non-boolean (#57)", () => {
     expect(configSchema.parse({ agentPrompt: true })).toEqual({ agentPrompt: true });
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();

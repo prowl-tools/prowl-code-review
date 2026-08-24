@@ -1621,6 +1621,29 @@ describe("resolveProviderConfig defaults (#29 — env > config > built-in)", () 
     expect(defaults).toEqual({ provider: "gemini", model: "gemini-x" });
   });
 
+  it("forwards codex defaults when ensemble bootstrap selects codex", () => {
+    const defaults = resolveProviderDefaults(
+      {
+        codex: { effort: "medium", lock: false },
+        ensemble: {
+          enabled: true,
+          providers: [{ provider: "codex" }]
+        }
+      },
+      {} as NodeJS.ProcessEnv
+    );
+
+    expect(defaults).toEqual({
+      provider: "codex",
+      model: undefined,
+      codex: { effort: "medium", lock: false }
+    });
+    expect(resolveProviderConfig({} as NodeJS.ProcessEnv, defaults).codex).toMatchObject({
+      effort: "medium",
+      lock: false
+    });
+  });
+
   it("does not treat the generic key as evidence that every ensemble provider is keyed", () => {
     const env = { PROWL_AI_KEY: "legacy-anthropic-key" } as NodeJS.ProcessEnv;
     const defaults = resolveProviderDefaults(

@@ -578,10 +578,10 @@ export function resolveProviderDefaults(
   env: NodeJS.ProcessEnv = process.env
 ): ProviderDefaults {
   if (config.provider) {
-    return { provider: config.provider, model: config.model };
+    return { provider: config.provider, model: config.model, ...(config.codex ? { codex: config.codex } : {}) };
   }
   if (env.PROWL_AI_PROVIDER?.trim()) {
-    return {};
+    return config.codex ? { codex: config.codex } : {};
   }
 
   const providers = config.ensemble?.enabled ? (config.ensemble.providers ?? []) : [];
@@ -591,7 +591,11 @@ export function resolveProviderDefaults(
   if (!selected) {
     return {};
   }
-  return { provider: selected.provider, model: selected.model };
+  return {
+    provider: selected.provider,
+    model: selected.model,
+    ...(config.codex ? { codex: config.codex } : {})
+  };
 }
 
 const gitHubEventRepoSchema = z

@@ -4,6 +4,46 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **Codex (ChatGPT subscription) provider — `provider: codex` (backlog #45).** A new
+  keyless provider that runs reviews through your ChatGPT subscription instead of a metered API
+  key, for **$0.00 marginal cost**. It spawns the first-party **`codex` CLI** (`codex exec`,
+  signed in via `codex login`) — never calling an OpenAI backend directly and never reading,
+  copying, or logging `auth.json`. The prompt is delivered on stdin (then closed); JSONL events
+  are parsed for the last `agent_message` and `turn.completed.usage`. Registered in
+  `PROVIDER_NAMES`/`DEFAULT_MODELS` (default `gpt-5.5`) with a failback ladder
+  `gpt-5.6-terra → gpt-5.5` (the retired `gpt-5.4`/`gpt-5.4-mini` are never defaults here).
+  - **Keyless config + ensemble.** `resolveProviderConfig` and the multi-provider ensemble accept
+    `codex` with no `PROWL_AI_KEY*`; it can review alongside API-key providers.
+  - **Agentic cross-file retrieval** for `codex` runs one `codex exec --sandbox read-only` that
+    returns a strict-schema file bundle; every returned path is re-read through prowl-review's
+    sandboxed toolkit + secret redaction, so Codex's raw shell output is never trusted, and
+    `maxFiles`/token bounds are honored with truncation reported (no silent truncation).
+  - **Machine-wide serialization lock** at `$CODEX_HOME/.prowl-review.lock` (on by default for
+    `codex`, opt-out via `codex.lock` / `PROWL_CODEX_LOCK`) serializes `codex` spawns across
+    processes so one `auth.json` serves one stream at a time. The lock is created atomically
+    (temp-file + `link(2)`) and reclaimed via `rename(2)`, so concurrent acquirers can't corrupt
+    or double-delete it; stale locks from dead PIDs are reclaimed, with a max-age backstop for pid
+    reuse kept above the child timeout. Wait timeout is `codex.lockTimeoutMs` /
+    `PROWL_CODEX_LOCK_TIMEOUT_MS` (default 10 min).
+  - **Reasoning effort** via `codex.effort` / `PROWL_CODEX_EFFORT` — `low | medium | high | xhigh`
+    (default `low`). **Per-exec timeout** `codex.timeoutMs` / `PROWL_CODEX_TIMEOUT_MS` (default
+    10 min) kills a hung `codex` child (SIGTERM → SIGKILL). **Binary override** `PROWL_CODEX_BIN`
+    for runners without the user's PATH.
+  - **Hardening.** GitHub Action runs fail before spawning the local Codex CLI unless
+    they are on a self-hosted runner for a non-public repository. A failed Codex turn
+    is treated as a failure even when a premature
+    `agent_message` was emitted (exit code + `turn.completed` are checked); the child stdin is
+    guarded against EPIPE; and the `codex` child receives an **allowlisted environment only** —
+    provider keys, `GITHUB_TOKEN`, and any `*_TOKEN`/`*_SECRET`/`*_KEY` are never passed to the
+    process that runs model-generated shell commands.
+  - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
+  - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
+    only** — for the GitHub Action it is restricted to self-hosted runners on non-public
+    repositories (OpenAI: "Do not use this workflow for public or open-source repositories");
+    **no Claude/Gemini equivalent, ever**. Documented in
+    `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
+
 ## [0.3.0] - 2026-08-03
 
 ### Added

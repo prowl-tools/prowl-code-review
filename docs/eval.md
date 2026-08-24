@@ -30,10 +30,13 @@ always attributable to the exact prompts that produced it.
 
 ## Running it
 
-The harness calls the real reviewer, so it needs your provider key:
+The harness calls the real reviewer, so it needs your provider key — except for
+the keyless Codex provider (#45), which uses your local `codex login` instead:
 
 ```bash
 export PROWL_AI_KEY=sk-...           # and optionally PROWL_AI_PROVIDER / PROWL_AI_MODEL
+# or, keyless, via your ChatGPT subscription (self-hosted/local only):
+# export PROWL_AI_PROVIDER=codex
 node dist/cli.js eval                # scores ./bench, prints a markdown summary
 ```
 

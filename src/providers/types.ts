@@ -6,9 +6,22 @@
  * with prompt caching and token/usage accounting.
  */
 
-export type ProviderName = "anthropic" | "openai" | "gemini";
+export type ProviderName = "anthropic" | "openai" | "gemini" | "codex";
 
-export const PROVIDER_NAMES: readonly ProviderName[] = ["anthropic", "openai", "gemini"];
+export const PROVIDER_NAMES: readonly ProviderName[] = ["anthropic", "openai", "gemini", "codex"];
+
+/**
+ * Providers that authenticate through a locally installed, first-party CLI/login
+ * rather than a BYOK API key. `codex` spawns the official `codex` binary signed in
+ * with ChatGPT, so it carries **no** `apiKey` and `resolveProviderConfig` /
+ * ensemble resolution must not require one (backlog #45).
+ */
+export const KEYLESS_PROVIDERS: readonly ProviderName[] = ["codex"];
+
+/** True when a provider authenticates via a local CLI login instead of a BYOK key (#45). */
+export function isKeylessProvider(provider: ProviderName): boolean {
+  return (KEYLESS_PROVIDERS as readonly string[]).includes(provider);
+}
 
 /**
  * Default model per provider. Overridable via `PROWL_AI_MODEL`. These track the
@@ -21,8 +34,53 @@ export const DEFAULT_MODELS: Record<ProviderName, string> = {
   // claude-sonnet-4-6) for maximum-fidelity, large-PR, or eval-gated deployments.
   anthropic: "claude-haiku-4-5",
   openai: "gpt-5.4-mini",
-  gemini: "gemini-2.5-pro"
+  gemini: "gemini-2.5-pro",
+  // Codex draws from the ChatGPT plan allowance. `gpt-5.4`/`gpt-5.4-mini` leave
+  // ChatGPT sign-in 2026-08-31, so the default is `gpt-5.5` (failback ladder in
+  // `failback.ts`: gpt-5.6-terra → gpt-5.5).
+  codex: "gpt-5.5"
 };
+
+/**
+ * Codex-only knobs threaded onto {@link ProviderConfig} (backlog #45). Ignored by
+ * every other provider. `resolveProviderConfig` populates these from env/config
+ * for `codex`; direct callers/tests may set them explicitly.
+ */
+export interface CodexOptions {
+  /**
+   * Reasoning effort passed as `model_reasoning_effort` (`minimal` | `low` |
+   * `medium` | `high`). Default `low` — cost-first, matching the specialist
+   * fan-out that dominates a review. `complete()` carries no pass identity, so a
+   * single effort applies to every pass; a per-pass (judge/verification) bump is
+   * a follow-up.
+   */
+  effort?: string;
+  /**
+   * Serialize `codex` spawns machine-wide via an advisory file lock at
+   * `$CODEX_HOME/.prowl-review.lock`. Default true — OpenAI requires one
+   * `auth.json` per serialized stream, and #64 runs several runner instances
+   * against one `CODEX_HOME`. Opt out only when a single instance owns the host.
+   */
+  lock?: boolean;
+  /**
+   * Override `CODEX_HOME` (where the `codex` binary reads `auth.json` and where
+   * the lock lives). Defaults to `$CODEX_HOME` or `~/.codex`. prowl-review never
+   * reads, copies, or logs `auth.json` — only the `codex` binary does.
+   */
+  codexHome?: string;
+  /**
+   * Kill a single `codex exec` child after this many ms (SIGTERM, then SIGKILL
+   * after a grace) and fail with a timeout error. Default 600_000 (10 min).
+   */
+  timeoutMs?: number;
+  /**
+   * Max time to wait to acquire the machine-wide Codex lock before giving up, ms.
+   * Default 600_000 — long enough to queue behind a full review on a busy host.
+   * The alive-pid stale reclaim is kept `>=` the child timeout so a live holder
+   * is never reclaimed before its own timeout fires.
+   */
+  lockTimeoutMs?: number;
+}
 
 export interface ProviderConfig {
   provider: ProviderName;
@@ -30,9 +88,12 @@ export interface ProviderConfig {
   /**
    * Secret provider credential. Do not log or serialize. Configs returned by the
    * built-in resolvers install JSON/inspect redaction hooks, while still exposing
-   * the raw string for provider request headers.
+   * the raw string for provider request headers. Empty for keyless providers
+   * (e.g. `codex`, which authenticates via the local `codex login`).
    */
   apiKey: string;
+  /** Codex-only options (effort, lock, CODEX_HOME); ignored by other providers (#45). */
+  codex?: CodexOptions;
 }
 
 export interface RedactedProviderConfig {

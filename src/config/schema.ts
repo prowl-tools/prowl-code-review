@@ -347,12 +347,32 @@ const debugSchema = z
   })
   .strict();
 
+/**
+ * Codex (ChatGPT subscription) provider knobs (#45). Only meaningful when
+ * `provider: codex`; keyless — auth lives in the local `codex login`, never here.
+ * Env overrides win: `PROWL_CODEX_EFFORT`, `PROWL_CODEX_LOCK`.
+ */
+const codexSchema = z
+  .object({
+    /** Reasoning effort for `model_reasoning_effort`. Default `low`. */
+    effort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
+    /**
+     * Serialize `codex` spawns machine-wide via `$CODEX_HOME/.prowl-review.lock`.
+     * Default true — one `auth.json` per serialized stream. Opt out only when a
+     * single instance owns the host.
+     */
+    lock: z.boolean().optional()
+  })
+  .strict();
+
 export const configSchema = z
   .object({
     /** Provider selection (API keys always come from environment variables). */
     provider: z.enum(PROVIDER_NAMES as [string, ...string[]]).optional(),
     /** Model override for the configured provider; the provider's default model is used when omitted. */
     model: z.string().min(1).optional(),
+    /** Codex (ChatGPT subscription) provider knobs (#45); only used when `provider: codex`. */
+    codex: codexSchema.optional(),
     /** Append a copy-paste "Resolve with an AI agent" prompt to each finding. Default true (#57). */
     agentPrompt: z.boolean().optional(),
     /**

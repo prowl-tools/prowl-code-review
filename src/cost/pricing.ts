@@ -108,6 +108,19 @@ export const DEFAULT_PRICES: Record<ProviderName, Record<string, ModelPrice>> = 
     // Gemini 2.5 Pro has <=200K and >200K prompt-length tiers. Pipeline usage
     // is aggregated across calls, so built-in pricing returns n/a; configure an
     // exact override when the prompt tier is known.
+  },
+  // Codex runs under a flat ChatGPT subscription, so per-token marginal cost is
+  // $0.00 — every listed model prices at zero and the tokens are still reported
+  // (label "(ChatGPT subscription)" in `formatCostLine`). Full usage-limit /
+  // zero-cost-reporting polish is #65. USD per 1M tokens (all zero).
+  codex: {
+    "gpt-5.6-terra": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.6-sol": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.6-luna": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.5": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.4": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.4-mini": { input: 0, output: 0, cachedInput: 0 },
+    "gpt-5.3-codex-spark": { input: 0, output: 0, cachedInput: 0 }
   }
 };
 
@@ -291,7 +304,14 @@ export function formatUsd(usd: number | null): string {
 
 /** Compact one-line cost summary, e.g. `~$0.0123 · anthropic/claude-… · in 12,345 / out 2,345 / cached 1,000 tok [estimated]`. */
 export function formatCostLine(estimate: CostEstimate): string {
-  const cost = estimate.usd === null ? "n/a (set pricing in config)" : `~${formatUsd(estimate.usd)}`;
+  // Codex runs under a flat ChatGPT subscription: show $0.00 with the plan label
+  // instead of a metered estimate, while still reporting the token counts (#45/#65).
+  const cost =
+    estimate.provider === "codex"
+      ? "$0.00 (ChatGPT subscription)"
+      : estimate.usd === null
+        ? "n/a (set pricing in config)"
+        : `~${formatUsd(estimate.usd)}`;
   const cacheWrite =
     estimate.cacheWriteInputTokens > 0 ? ` / cache write ${estimate.cacheWriteInputTokens.toLocaleString()}` : "";
   const tokens =
