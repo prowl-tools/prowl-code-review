@@ -83,10 +83,17 @@ to other secrets on the machine.
 
 - **Per PR** — GitHub `concurrency` keyed by repo + PR number
   (`prowl-review-codex-<repo>-<pr>`); a newer push supersedes an in-flight
-  auto-review.
+  auto-review. Because the auto-review job uses `cancel-in-progress: true` in a
+  group shared with the command workflow, a new push to a PR can cancel an
+  in-flight `@prowl-review` command for that PR — re-run the command after the
+  push if it was interrupted.
 - **Machine-wide (across repos and instances)** — the **Codex lock**, not GitHub
   concurrency. GitHub cannot serialize across independent runner instances, so
   the lock is what guarantees one `codex` run at a time against one `CODEX_HOME`.
+
+The review/command jobs set `timeout-minutes: 30`, sized for the dogfood's
+`effort: low`; raise it when you raise `codex.effort` on large PRs, since higher
+effort takes materially longer per run.
 
 ## Re-login runbook (shape)
 
