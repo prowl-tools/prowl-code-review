@@ -31,6 +31,10 @@ interface FakeCodexOptions {
   code?: number | null;
   /** Emit `child.on("error")` with this (e.g. ENOENT) instead of closing. */
   spawnError?: NodeJS.ErrnoException;
+  /** Emit an async `stdin` error (e.g. EPIPE) after the prompt is written. */
+  stdinError?: Error;
+  /** Never emit `close` — used to exercise the exec timeout. */
+  neverClose?: boolean;
 }
 
 interface FakeCodexCall {
@@ -39,26 +43,34 @@ interface FakeCodexCall {
   env: NodeJS.ProcessEnv;
   stdin: string;
   stdinClosed: boolean;
+  killed: Array<NodeJS.Signals | number | undefined>;
 }
 
-/** A spawn stub that records argv/stdin and replays canned stdout/stderr. */
+/** A spawn stub that records argv/stdin/kill and replays canned stdout/stderr. */
 function makeFakeCodex(opts: FakeCodexOptions): { spawner: CodexSpawner; calls: FakeCodexCall[] } {
   const calls: FakeCodexCall[] = [];
   const spawner: CodexSpawner = (command, args, options) => {
     const stdout = new EventEmitter();
     const stderr = new EventEmitter();
+    const stdin = new EventEmitter();
     const child = new EventEmitter();
-    const call: FakeCodexCall = { command, args, env: options.env, stdin: "", stdinClosed: false };
+    const call: FakeCodexCall = { command, args, env: options.env, stdin: "", stdinClosed: false, killed: [] };
     calls.push(call);
 
     const fake: CodexProcess = {
       stdin: {
         write: (chunk: string) => {
           call.stdin += chunk;
+          if (opts.stdinError) {
+            setImmediate(() => stdin.emit("error", opts.stdinError));
+          }
           return true;
         },
         end: () => {
           call.stdinClosed = true;
+          if (opts.neverClose) {
+            return;
+          }
           setImmediate(() => {
             if (opts.spawnError) {
               child.emit("error", opts.spawnError);
@@ -72,12 +84,23 @@ function makeFakeCodex(opts: FakeCodexOptions): { spawner: CodexSpawner; calls: 
             }
             child.emit("close", opts.code ?? 0);
           });
-        }
+        },
+        on: (event: string, cb: (arg: unknown) => void) => stdin.on(event, cb)
       } as CodexProcess["stdin"],
       stdout: { on: (event: string, cb: (chunk: Buffer) => void) => stdout.on(event, cb) } as CodexProcess["stdout"],
       stderr: { on: (event: string, cb: (chunk: Buffer) => void) => stderr.on(event, cb) } as CodexProcess["stderr"],
       on: (event: "error" | "close", cb: (arg: never) => void) => {
         child.on(event, cb as (arg: unknown) => void);
+      },
+      kill: (signal?: NodeJS.Signals | number) => {
+        call.killed.push(signal);
+        if (!opts.neverClose) {
+          return;
+        }
+        // A real SIGKILL makes the process exit; reflect that so graceTimer clears.
+        if (signal === "SIGKILL") {
+          setImmediate(() => child.emit("close", null));
+        }
       }
     };
     return fake;
@@ -231,6 +254,50 @@ describe("runCodexExec", () => {
     const result = await runCodexExec({ prompt: "x", model: "gpt-5.5", effort: "low", cwd: "/s", codexHome: "/h", spawn: spawner });
     expect(result.text).toBe("final");
   });
+
+  it("swallows an async stdin EPIPE instead of crashing; the close path reports the failure", async () => {
+    const { spawner } = makeFakeCodex({
+      stdinError: Object.assign(new Error("write EPIPE"), { code: "EPIPE" }),
+      stderr: "codex exited early",
+      code: 1
+    });
+    const error = await runCodexExec({
+      prompt: "x".repeat(100000),
+      model: "gpt-5.5",
+      effort: "low",
+      cwd: "/s",
+      codexHome: "/h",
+      spawn: spawner
+    }).catch((e) => e);
+    // No uncaught exception; a classified error is returned instead.
+    expect(error).toBeInstanceOf(CodexError);
+    expect((error as CodexError).message).toMatch(/exited early/);
+  });
+
+  it("kills the child (SIGTERM then SIGKILL) and fails on the exec timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      const { spawner, calls } = makeFakeCodex({ neverClose: true });
+      const promise = runCodexExec({
+        prompt: "x",
+        model: "gpt-5.5",
+        effort: "low",
+        cwd: "/s",
+        codexHome: "/h",
+        spawn: spawner,
+        timeoutMs: 1000,
+        killGraceMs: 500
+      });
+      const assertion = expect(promise).rejects.toThrow(/timed out after 1000ms/);
+      await vi.advanceTimersByTimeAsync(1000);
+      await assertion;
+      expect(calls[0].killed).toContain("SIGTERM");
+      await vi.advanceTimersByTimeAsync(500);
+      expect(calls[0].killed).toContain("SIGKILL");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
 });
 
 describe("classifyCodexError", () => {
@@ -266,12 +333,22 @@ describe("codex provider registration", () => {
 });
 
 describe("resolveCodexOptions", () => {
-  it("defaults effort to low and the lock on", () => {
+  it("defaults effort to low, the lock on, and 10-min child/lock timeouts", () => {
     const opts = resolveCodexOptions({});
     expect(opts.effort).toBe(DEFAULT_CODEX_EFFORT);
     expect(opts.effort).toBe("low");
     expect(opts.lock).toBe(true);
+    expect(opts.timeoutMs).toBe(600_000);
+    expect(opts.lockTimeoutMs).toBe(600_000);
     expect(opts.codexHome).toMatch(/\.codex$/);
+  });
+
+  it("honors numeric timeout env overrides", () => {
+    expect(resolveCodexOptions({ PROWL_CODEX_TIMEOUT_MS: "120000" }).timeoutMs).toBe(120_000);
+    expect(resolveCodexOptions({ PROWL_CODEX_LOCK_TIMEOUT_MS: "90000" }).lockTimeoutMs).toBe(90_000);
+    // Invalid values fall back to the default.
+    expect(resolveCodexOptions({ PROWL_CODEX_TIMEOUT_MS: "-5" }).timeoutMs).toBe(600_000);
+    expect(resolveCodexOptions({ PROWL_CODEX_TIMEOUT_MS: "abc" }).timeoutMs).toBe(600_000);
   });
 
   it("honors env overrides and config defaults (env wins)", () => {

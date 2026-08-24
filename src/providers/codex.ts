@@ -49,6 +49,19 @@ const VALID_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
 /** Cost-first default: matches the specialist fan-out that dominates a review. */
 export const DEFAULT_CODEX_EFFORT = "low";
 
+/** Default single-`codex exec` wall-clock timeout (ms). */
+export const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
+
+/** Parse a positive-integer env value; undefined when unset/blank/invalid. */
+function parsePositiveIntEnv(value: string | undefined): number | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed) {
+    return undefined;
+  }
+  const parsed = Number(trimmed);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : undefined;
+}
+
 /** Parse a boolean-ish env value (`true/1/yes/on` vs `false/0/no/off`); undefined otherwise. */
 function parseBoolEnv(value: string | undefined): boolean | undefined {
   const normalized = value?.trim().toLowerCase();
@@ -76,7 +89,11 @@ export function resolveCodexOptions(
   const rawEffort = env.PROWL_CODEX_EFFORT?.trim() || defaults?.effort?.trim() || DEFAULT_CODEX_EFFORT;
   const effort = VALID_EFFORTS.has(rawEffort) ? rawEffort : DEFAULT_CODEX_EFFORT;
   const lock = parseBoolEnv(env.PROWL_CODEX_LOCK) ?? defaults?.lock ?? true;
-  return { effort, lock, codexHome: resolveCodexHome(env, defaults?.codexHome) };
+  const timeoutMs =
+    parsePositiveIntEnv(env.PROWL_CODEX_TIMEOUT_MS) ?? defaults?.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS;
+  const lockTimeoutMs =
+    parsePositiveIntEnv(env.PROWL_CODEX_LOCK_TIMEOUT_MS) ?? defaults?.lockTimeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS;
+  return { effort, lock, timeoutMs, lockTimeoutMs, codexHome: resolveCodexHome(env, defaults?.codexHome) };
 }
 
 /** Build the `codex exec` argv (prompt is delivered on stdin via the trailing `-`). */
@@ -231,11 +248,15 @@ export function classifyCodexError(text: string): CodexError {
 
 /** Minimal child-process surface `runCodexExec` needs; the real `spawn` satisfies it. */
 export interface CodexProcess {
-  stdin: Pick<Writable, "write" | "end">;
+  // `on` is included so we can swallow async stdin EPIPE (codex exiting before it
+  // reads a large prompt) instead of letting it crash the process.
+  stdin: Pick<Writable, "write" | "end" | "on">;
   stdout: Pick<Readable, "on">;
   stderr: Pick<Readable, "on">;
   on(event: "error", listener: (error: Error) => void): void;
   on(event: "close", listener: (code: number | null) => void): void;
+  /** Terminate the child (for the exec timeout). */
+  kill(signal?: NodeJS.Signals | number): void;
 }
 
 export type CodexSpawner = (
@@ -259,6 +280,10 @@ export interface RunCodexExecParams {
   /** Optional strict JSON-Schema file for `--output-schema`. */
   schemaPath?: string;
   sandbox?: string;
+  /** Kill the child after this many ms (SIGTERM, then SIGKILL after the grace). */
+  timeoutMs?: number;
+  /** Grace between SIGTERM and SIGKILL on timeout, ms. Default 5000. */
+  killGraceMs?: number;
   /** Injectable spawn (tests). */
   spawn?: CodexSpawner;
   /** Environment forwarded to the child (defaults to `process.env`). */
@@ -295,26 +320,75 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
       let out = "";
       let err = "";
       let settled = false;
+      let killTimer: ReturnType<typeof setTimeout> | undefined;
+      let graceTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearTimers = () => {
+        if (killTimer) {
+          clearTimeout(killTimer);
+        }
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+        }
+      };
       child.stdout.on("data", (chunk: Buffer | string) => {
         out += chunk.toString();
       });
       child.stderr.on("data", (chunk: Buffer | string) => {
         err += chunk.toString();
       });
+      // If codex exits before consuming a large prompt, the stdin write raises an
+      // async EPIPE. Swallow it here — the close/timeout path reports the real
+      // failure — so it can't become an uncaught exception that crashes the review.
+      child.stdin.on("error", () => {});
       child.on("error", (error: Error) => {
         if (settled) {
           return;
         }
         settled = true;
+        clearTimers();
         reject(spawnFailure(error));
       });
       child.on("close", (exitCode: number | null) => {
+        // The process is gone; cancel any pending SIGKILL even if a timeout already
+        // rejected this promise.
+        if (graceTimer) {
+          clearTimeout(graceTimer);
+        }
         if (settled) {
           return;
         }
         settled = true;
+        clearTimers();
         resolve({ stdout: out, stderr: err, code: exitCode });
       });
+      if (params.timeoutMs && params.timeoutMs > 0) {
+        killTimer = setTimeout(() => {
+          if (settled) {
+            return;
+          }
+          settled = true;
+          try {
+            child.kill("SIGTERM");
+          } catch {
+            // Child may already be gone.
+          }
+          // Escalate to SIGKILL if SIGTERM doesn't land within the grace window.
+          graceTimer = setTimeout(() => {
+            try {
+              child.kill("SIGKILL");
+            } catch {
+              // Already exited.
+            }
+          }, params.killGraceMs ?? 5000);
+          reject(
+            new CodexError(
+              `Codex exec timed out after ${params.timeoutMs}ms and was killed. ` +
+                `Raise codex.timeoutMs / PROWL_CODEX_TIMEOUT_MS if reviews legitimately run this long.`,
+              "failed"
+            )
+          );
+        }, params.timeoutMs);
+      }
       // Deliver the prompt, then CLOSE stdin so `codex exec` stops reading input.
       try {
         child.stdin.write(params.prompt);
@@ -322,6 +396,7 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
       } catch (error) {
         if (!settled) {
           settled = true;
+          clearTimers();
           reject(spawnFailure(error));
         }
       }
@@ -398,7 +473,8 @@ async function completeCodex(request: CompletionRequest, config: ProviderConfig)
         model: config.model,
         effort: codex.effort ?? DEFAULT_CODEX_EFFORT,
         cwd,
-        codexHome
+        codexHome,
+        ...(codex.timeoutMs ? { timeoutMs: codex.timeoutMs } : {})
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });
