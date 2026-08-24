@@ -2,7 +2,7 @@ import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   buildCodexRetrievalPrompt,
@@ -43,6 +43,30 @@ function fakeCodex(bundleJson: string, usage: Record<string, number> = { input_t
         child.on(event, cb as (arg: unknown) => void);
       },
       kill: () => undefined
+    };
+    return fake;
+  };
+}
+
+function neverClosingCodex(): CodexSpawner {
+  return () => {
+    const child = new EventEmitter();
+    const fake: CodexProcess = {
+      stdin: {
+        write: () => true,
+        end: () => undefined,
+        on: () => undefined
+      } as CodexProcess["stdin"],
+      stdout: { on: () => undefined } as CodexProcess["stdout"],
+      stderr: { on: () => undefined } as CodexProcess["stderr"],
+      on: (event: "error" | "close", cb: (arg: never) => void) => {
+        child.on(event, cb as (arg: unknown) => void);
+      },
+      kill: (signal?: NodeJS.Signals | number) => {
+        if (signal === "SIGKILL") {
+          setImmediate(() => child.emit("close", null));
+        }
+      }
     };
     return fake;
   };
@@ -152,11 +176,47 @@ describe("gatherCodexContext", () => {
       changedPaths: ["src/x.ts"],
       config: CODEX_CONFIG,
       limits: { maxFiles: 1 },
-      spawn: fakeCodex(bundle)
+      spawn: fakeCodex(bundle),
+      env: { CODEX_HOME: "/tmp/x" }
     });
     expect(gathered.files).toHaveLength(1);
     expect(gathered.reachedLimit).toBe(true);
     expect(gathered.notes.some((n) => /File budget reached \(1\)/.test(n))).toBe(true);
+  });
+
+  it("reports the context token budget when usage meets it", async () => {
+    const bundle = JSON.stringify({ files: [{ path: "src/b.ts", reason: "one" }] });
+    const gathered = await gatherCodexContext({
+      toolkit: { root: repo },
+      changedPaths: ["src/x.ts"],
+      config: CODEX_CONFIG,
+      limits: { maxTokens: 10 },
+      spawn: fakeCodex(bundle, { input_tokens: 50, output_tokens: 10 }),
+      env: { CODEX_HOME: "/tmp/x" }
+    });
+    expect(gathered.reachedLimit).toBe(true);
+    expect(gathered.notes.some((n) => /Reached context token budget \(10\)/.test(n))).toBe(true);
+  });
+
+  it("passes resolved Codex timeouts to the retrieval exec", async () => {
+    vi.useFakeTimers();
+    try {
+      const promise = gatherCodexContext({
+        toolkit: { root: repo },
+        changedPaths: ["src/x.ts"],
+        config: {
+          ...CODEX_CONFIG,
+          codex: { ...CODEX_CONFIG.codex, timeoutMs: 100 }
+        },
+        spawn: neverClosingCodex(),
+        env: { CODEX_HOME: "/tmp/x" }
+      });
+      const assertion = expect(promise).rejects.toThrow(/timed out after 100ms/);
+      await vi.advanceTimersByTimeAsync(100);
+      await assertion;
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("notes an empty bundle instead of failing", async () => {
@@ -164,7 +224,8 @@ describe("gatherCodexContext", () => {
       toolkit: { root: repo },
       changedPaths: ["src/x.ts"],
       config: CODEX_CONFIG,
-      spawn: fakeCodex('{"files":[]}')
+      spawn: fakeCodex('{"files":[]}'),
+      env: { CODEX_HOME: "/tmp/x" }
     });
     expect(gathered.files).toHaveLength(0);
     expect(gathered.notes.some((n) => /no usable retrieval bundle/i.test(n))).toBe(true);

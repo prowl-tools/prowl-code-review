@@ -84,6 +84,27 @@ describe("acquireFileLock", () => {
     expect((error as Error).message).toMatch(/Timed out .* waiting for the Codex lock/);
   });
 
+  it("times out and yields when stale-lock reclaim fails", async () => {
+    const lockPath = join(dir, "lock");
+    writeFileSync(lockPath, JSON.stringify({ pid: 999999, ts: Date.now() }));
+    let clock = 1000;
+    let sleeps = 0;
+    const error = await acquireFileLock(lockPath, {
+      pollIntervalMs: 1,
+      timeoutMs: 50,
+      isProcessAlive: () => false,
+      reclaimStaleLock: () => false,
+      now: () => clock,
+      sleep: async () => {
+        sleeps += 1;
+        clock += 100;
+      }
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/Timed out/);
+    expect(sleeps).toBeGreaterThan(0);
+  });
+
   it("does NOT reclaim an empty/unreadable record younger than the grace", async () => {
     const lockPath = join(dir, "lock");
     writeFileSync(lockPath, ""); // empty record — a competitor could be mid-write

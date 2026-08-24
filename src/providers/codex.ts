@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Readable, Writable } from "node:stream";
@@ -121,6 +121,84 @@ function parseBoolEnv(value: string | undefined): boolean | undefined {
     return false;
   }
   return undefined;
+}
+
+interface GitHubActionRepositoryContext {
+  visibility?: string;
+  private?: boolean;
+}
+
+function normalizeEnvString(value: string | undefined): string | undefined {
+  return value?.trim().toLowerCase() || undefined;
+}
+
+function readGitHubActionRepositoryContext(env: NodeJS.ProcessEnv): GitHubActionRepositoryContext {
+  const eventPath = env.GITHUB_EVENT_PATH?.trim();
+  if (!eventPath) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(eventPath, "utf8")) as {
+      repository?: { visibility?: unknown; private?: unknown };
+    };
+    const repository = parsed.repository;
+    return {
+      ...(typeof repository?.visibility === "string" ? { visibility: repository.visibility } : {}),
+      ...(typeof repository?.private === "boolean" ? { private: repository.private } : {})
+    };
+  } catch {
+    return {};
+  }
+}
+
+function resolveGitHubActionRepositoryContext(env: NodeJS.ProcessEnv): GitHubActionRepositoryContext {
+  const fromEvent = readGitHubActionRepositoryContext(env);
+  return {
+    visibility:
+      normalizeEnvString(env.PROWL_REPOSITORY_VISIBILITY) ??
+      normalizeEnvString(env.GITHUB_REPOSITORY_VISIBILITY) ??
+      normalizeEnvString(fromEvent.visibility),
+    private: parseBoolEnv(env.PROWL_REPOSITORY_PRIVATE) ?? parseBoolEnv(env.GITHUB_REPOSITORY_PRIVATE) ?? fromEvent.private
+  };
+}
+
+function isPublicRepository(context: GitHubActionRepositoryContext): boolean | undefined {
+  if (context.visibility) {
+    return context.visibility === "public";
+  }
+  if (context.private !== undefined) {
+    return !context.private;
+  }
+  return undefined;
+}
+
+/**
+ * Refuse unsupported Codex usage in GitHub Actions before spawning the local CLI.
+ * Local runs are unaffected; Actions runs must be self-hosted and non-public.
+ */
+export function assertCodexActionSupported(env: NodeJS.ProcessEnv = process.env): void {
+  if (env.GITHUB_ACTIONS !== "true") {
+    return;
+  }
+
+  const runnerEnvironment = normalizeEnvString(env.PROWL_RUNNER_ENVIRONMENT) ?? normalizeEnvString(env.RUNNER_ENVIRONMENT);
+  if (runnerEnvironment !== "self-hosted") {
+    throw new CodexError(
+      "Codex provider is unsupported for this GitHub Actions run: `provider: codex` requires a " +
+        "self-hosted runner before invoking the local `codex` CLI.",
+      "unavailable"
+    );
+  }
+
+  const repository = resolveGitHubActionRepositoryContext(env);
+  const isPublic = isPublicRepository(repository);
+  if (isPublic !== false) {
+    throw new CodexError(
+      "Codex provider is unsupported for this GitHub Actions run: `provider: codex` requires a " +
+        "non-public repository before invoking the local `codex` CLI.",
+      "unavailable"
+    );
+  }
 }
 
 /**
@@ -346,6 +424,7 @@ export interface CodexExecResult {
 export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExecResult> {
   const spawner = params.spawn ?? realSpawn;
   const baseEnv = params.env ?? process.env;
+  assertCodexActionSupported(baseEnv);
   const binary = resolveCodexBinary(baseEnv);
   const env = buildCodexChildEnv(baseEnv, params.codexHome);
   const args = buildCodexArgs({
@@ -530,7 +609,7 @@ async function completeCodex(request: CompletionRequest, config: ProviderConfig)
         effort: codex.effort ?? DEFAULT_CODEX_EFFORT,
         cwd,
         codexHome,
-        ...(codex.timeoutMs ? { timeoutMs: codex.timeoutMs } : {})
+        timeoutMs: codex.timeoutMs ?? DEFAULT_CODEX_TIMEOUT_MS
       });
     } finally {
       rmSync(cwd, { recursive: true, force: true });

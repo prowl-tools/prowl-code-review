@@ -1,7 +1,11 @@
 import { EventEmitter } from "node:events";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
+  assertCodexActionSupported,
   buildCodexArgs,
   classifyCodexError,
   codexProvider,
@@ -19,6 +23,9 @@ import { resolveProviderConfig } from "../src/providers/index.js";
 import { resolveEnsembleConfigs } from "../src/providers/ensemble.js";
 import { modelFailbackChain } from "../src/providers/failback.js";
 import { estimateCost, formatCostLine } from "../src/cost/pricing.js";
+
+const ORIGINAL_ENV = process.env;
+let tempDirs: string[] = [];
 
 /** JSONL string from a list of codex events. */
 function jsonl(...events: unknown[]): string {
@@ -111,9 +118,32 @@ function makeFakeCodex(opts: FakeCodexOptions): { spawner: CodexSpawner; calls: 
 const AGENT_MSG = (text: string) => ({ type: "item.completed", item: { id: "i", type: "agent_message", text } });
 const USAGE = (usage: Record<string, number>) => ({ type: "turn.completed", usage });
 
+beforeEach(() => {
+  process.env = { ...ORIGINAL_ENV };
+  delete process.env.GITHUB_ACTIONS;
+  delete process.env.PROWL_RUNNER_ENVIRONMENT;
+  delete process.env.RUNNER_ENVIRONMENT;
+  delete process.env.PROWL_REPOSITORY_VISIBILITY;
+  delete process.env.GITHUB_REPOSITORY_VISIBILITY;
+  delete process.env.PROWL_REPOSITORY_PRIVATE;
+  delete process.env.GITHUB_REPOSITORY_PRIVATE;
+  delete process.env.GITHUB_EVENT_PATH;
+});
+
 afterEach(() => {
   vi.restoreAllMocks();
+  process.env = ORIGINAL_ENV;
+  for (const dir of tempDirs) {
+    rmSync(dir, { recursive: true, force: true });
+  }
+  tempDirs = [];
 });
+
+function tempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "prowl-codex-provider-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 describe("buildCodexArgs", () => {
   it("emits the read-only, ephemeral, keyless spawn argv with stdin sentinel", () => {
@@ -344,6 +374,56 @@ describe("runCodexExec", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("assertCodexActionSupported", () => {
+  it("allows local Codex runs", () => {
+    expect(() => assertCodexActionSupported({} as NodeJS.ProcessEnv)).not.toThrow();
+  });
+
+  it("rejects GitHub-hosted Actions before spawning Codex", async () => {
+    const { spawner, calls } = makeFakeCodex({ stdout: jsonl(AGENT_MSG("unused"), USAGE({ input_tokens: 1 })) });
+    const error = await runCodexExec({
+      prompt: "x",
+      model: "gpt-5.5",
+      effort: "low",
+      cwd: "/s",
+      codexHome: "/h",
+      spawn: spawner,
+      env: {
+        GITHUB_ACTIONS: "true",
+        PROWL_RUNNER_ENVIRONMENT: "github-hosted",
+        PROWL_REPOSITORY_VISIBILITY: "private"
+      }
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(CodexError);
+    expect((error as CodexError).kind).toBe("unavailable");
+    expect((error as Error).message).toMatch(/self-hosted runner/);
+    expect(calls).toHaveLength(0);
+  });
+
+  it("rejects public repositories even on self-hosted Actions", () => {
+    expect(() =>
+      assertCodexActionSupported({
+        GITHUB_ACTIONS: "true",
+        PROWL_RUNNER_ENVIRONMENT: "self-hosted",
+        PROWL_REPOSITORY_VISIBILITY: "public"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/non-public repository/);
+  });
+
+  it("allows self-hosted non-public Actions using event payload visibility", () => {
+    const dir = tempDir();
+    const eventPath = join(dir, "event.json");
+    writeFileSync(eventPath, JSON.stringify({ repository: { visibility: "internal", private: false } }));
+    expect(() =>
+      assertCodexActionSupported({
+        GITHUB_ACTIONS: "true",
+        RUNNER_ENVIRONMENT: "self-hosted",
+        GITHUB_EVENT_PATH: eventPath
+      } as NodeJS.ProcessEnv)
+    ).not.toThrow();
   });
 });
 

@@ -1,6 +1,7 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { z } from "zod";
 
 import { readRepoFile } from "./tools.js";
 import { isSensitiveFile, redactSecrets } from "../review/redact.js";
@@ -15,6 +16,7 @@ import { resolveCodexHome, withCodexLock } from "../providers/codex-lock.js";
 import type { GatherContextParams, GatheredContext, RetrievedFile } from "./retrieval.js";
 import { ContextRetrievalError } from "./retrieval.js";
 import { emptyUsage, type TokenUsage } from "../providers/index.js";
+import { DEFAULT_MODELS } from "../providers/types.js";
 import { totalTokens } from "../cost/pricing.js";
 
 /**
@@ -37,26 +39,21 @@ interface CodexBundleEntry {
   reason: string;
 }
 
+const CodexBundleEntrySchema = z
+  .object({
+    path: z.string().trim().min(1),
+    reason: z.string()
+  })
+  .strict();
+
+const CodexRetrievalBundleSchema = z
+  .object({
+    files: z.array(CodexBundleEntrySchema)
+  })
+  .strict();
+
 /** Strict JSON schema (OpenAI json_schema mode) for the retrieval bundle. */
-export const CODEX_RETRIEVAL_SCHEMA = {
-  type: "object",
-  additionalProperties: false,
-  required: ["files"],
-  properties: {
-    files: {
-      type: "array",
-      items: {
-        type: "object",
-        additionalProperties: false,
-        required: ["path", "reason"],
-        properties: {
-          path: { type: "string" },
-          reason: { type: "string" }
-        }
-      }
-    }
-  }
-} as const;
+export const CODEX_RETRIEVAL_SCHEMA = z.toJSONSchema(CodexRetrievalBundleSchema);
 
 /** Build the retrieval instruction prompt for Codex. */
 export function buildCodexRetrievalPrompt(changedPaths: string[], system?: string): string {
@@ -92,19 +89,11 @@ export function parseCodexRetrievalBundle(text: string): CodexBundleEntry[] {
   } catch {
     return [];
   }
-  const files = (parsed as { files?: unknown })?.files;
-  if (!Array.isArray(files)) {
+  const result = CodexRetrievalBundleSchema.safeParse(parsed);
+  if (!result.success) {
     return [];
   }
-  const entries: CodexBundleEntry[] = [];
-  for (const raw of files) {
-    const path = (raw as { path?: unknown })?.path;
-    const reason = (raw as { reason?: unknown })?.reason;
-    if (typeof path === "string" && path.trim().length > 0) {
-      entries.push({ path: path.trim(), reason: typeof reason === "string" ? reason : "" });
-    }
-  }
-  return entries;
+  return result.data.files;
 }
 
 /**
@@ -117,7 +106,7 @@ export async function gatherCodexContext(
   const env = params.env ?? process.env;
   const codex = params.config?.codex ?? resolveCodexOptions(env);
   const codexHome = codex.codexHome ?? resolveCodexHome(env);
-  const model = params.config?.model ?? "gpt-5.5";
+  const model = params.config?.model ?? DEFAULT_MODELS.codex;
   const maxFiles = params.limits?.maxFiles ?? 20;
   const maxTokens = params.limits?.maxTokens;
   const notes: string[] = [];
@@ -140,6 +129,7 @@ export async function gatherCodexContext(
           cwd: params.toolkit.root,
           codexHome,
           schemaPath,
+          timeoutMs: codex.timeoutMs,
           ...(params.spawn ? { spawn: params.spawn } : {}),
           env
         });

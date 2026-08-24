@@ -69,6 +69,8 @@ export interface AcquireLockOptions {
   now?: () => number;
   /** Injectable sleep. */
   sleep?: (ms: number) => Promise<void>;
+  /** Injectable stale-lock reclaim (tests). */
+  reclaimStaleLock?: (lockPath: string, pid: number, stamp: number) => boolean;
 }
 
 /** Default liveness probe: signal 0 succeeds for a live pid, EPERM means it exists. */
@@ -147,6 +149,7 @@ export async function acquireFileLock(
   const fileAgeMs = options.fileAgeMs ?? defaultFileAgeMs;
   const now = options.now ?? Date.now;
   const sleep = options.sleep ?? defaultSleep;
+  const reclaim = options.reclaimStaleLock ?? reclaimStaleLock;
   const start = now();
 
   mkdirSync(dirname(lockPath), { recursive: true });
@@ -194,8 +197,7 @@ export async function acquireFileLock(
       stale = !isProcessAlive(record.pid) || (record.ts > 0 && now() - record.ts > maxAgeMs);
     }
 
-    if (stale) {
-      reclaimStaleLock(lockPath, process.pid, now());
+    if (stale && reclaim(lockPath, process.pid, now())) {
       continue;
     }
 

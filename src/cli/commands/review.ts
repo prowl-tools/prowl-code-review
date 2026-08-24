@@ -591,7 +591,11 @@ export function resolveProviderDefaults(
   if (!selected) {
     return {};
   }
-  return { provider: selected.provider, model: selected.model };
+  return {
+    provider: selected.provider,
+    model: selected.model,
+    ...(config.codex ? { codex: config.codex } : {})
+  };
 }
 
 const gitHubEventRepoSchema = z

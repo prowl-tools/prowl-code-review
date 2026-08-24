@@ -30,15 +30,18 @@ All notable changes to Prowl Review will be documented in this file.
     (default `low`). **Per-exec timeout** `codex.timeoutMs` / `PROWL_CODEX_TIMEOUT_MS` (default
     10 min) kills a hung `codex` child (SIGTERM → SIGKILL). **Binary override** `PROWL_CODEX_BIN`
     for runners without the user's PATH.
-  - **Hardening.** A failed Codex turn is treated as a failure even when a premature
+  - **Hardening.** GitHub Action runs fail before spawning the local Codex CLI unless
+    they are on a self-hosted runner for a non-public repository. A failed Codex turn
+    is treated as a failure even when a premature
     `agent_message` was emitted (exit code + `turn.completed` are checked); the child stdin is
     guarded against EPIPE; and the `codex` child receives an **allowlisted environment only** —
     provider keys, `GITHUB_TOKEN`, and any `*_TOKEN`/`*_SECRET`/`*_KEY` are never passed to the
     process that runs model-generated shell commands.
   - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
   - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
-    only** — never GitHub-hosted runners on public repos (OpenAI: "Do not use this workflow for
-    public or open-source repositories"); **no Claude/Gemini equivalent, ever**. Documented in
+    only** — for the GitHub Action it is restricted to self-hosted runners on non-public
+    repositories (OpenAI: "Do not use this workflow for public or open-source repositories");
+    **no Claude/Gemini equivalent, ever**. Documented in
     `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
 
 ## [0.3.0] - 2026-08-03

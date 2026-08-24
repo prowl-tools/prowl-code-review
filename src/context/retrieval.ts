@@ -398,7 +398,21 @@ export async function gatherContext(params: GatherContextParams): Promise<Gather
   // Codex runs its own tool loop and has no `completeWithTools`, so it retrieves
   // via a single `codex exec` bundle re-read through the sandboxed toolkit (#45).
   if (params.config?.provider === "codex") {
-    const { gatherCodexContext } = await import("./codex-retrieval.js");
+    let gatherCodexContext: typeof import("./codex-retrieval.js").gatherCodexContext;
+    try {
+      const codexRetrieval = await import("./codex-retrieval.js");
+      if (typeof codexRetrieval.gatherCodexContext !== "function") {
+        throw new Error("gatherCodexContext export is unavailable");
+      }
+      gatherCodexContext = codexRetrieval.gatherCodexContext;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      throw new ContextRetrievalError(`Failed to load Codex retrieval module: ${message}`, {
+        usage: emptyUsage(),
+        rounds: 0,
+        notes: ["Codex context retrieval unavailable."]
+      });
+    }
     return gatherCodexContext(params);
   }
 
