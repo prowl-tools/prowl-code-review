@@ -11,6 +11,20 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
 ## High Priority
 
 64. **Self-hosted runner rollout — prowl-review on Lucius' Mac mini (subscription-backed reviews for all Prowl repos *and* the owner's personal `michaeltookes` repos)**
+    _Status: **repo side shipped** (branch `runner-rollout`, 2026-08-24). The dogfood
+    auto-review + `@prowl-review` command workflows now run keyless `provider: codex`
+    on `runs-on: [self-hosted, macOS, prowl-review]` behind a job-level same-repo fork
+    gate (fork-gating + neutral-check jobs stay on hosted `ubuntu-latest`), with a
+    per-PR Codex concurrency group and a 30-min timeout; `.prowl-review.yml` switched
+    to `provider: codex` / `gpt-5.5` / `effort: low` (ensemble kept as a commented
+    key-gated fallback). Added repo-agnostic self-hosted example workflows
+    (`examples/workflows/prowl-review-self-hosted-codex.yml` + command variant), the
+    `docs/self-hosted-runner.md` shape-only setup guide, README/`docs/auth.md`
+    subsections, and a registered `prowl-review` actionlint label. **Pending (not this
+    branch):** actually registering the runner instances on the Mac mini (org-level
+    group for `prowl-tools` + one repo-level runner per opted-in `michaeltookes` repo,
+    each `codex login` on the host) and rolling the workflow/config/docs pattern out to
+    the other Prowl repos + selected personal repos. Item stays open until those land._
     As the owner, I want every repo I maintain — the `prowl-tools` org repos and the ones under my personal `michaeltookes` account — to get automatic + `@prowl-review` reviews from the always-on Mac mini I already use for runners, using the Codex subscription login that lives only on that machine, so that reviews are hands-off, zero-marginal-cost, and no subscription credential ever enters GitHub.
     - **Runner topology (two scopes, one machine):** (a) `prowl-tools` org — one **org-level** runner instance in a runner group restricted to the prowl-review workflows; (b) `michaeltookes` personal account — GitHub only allows **repository-level** runners for personal accounts (no org groups), so one runner instance **per personal repo** that opts in. All instances live on the Mac mini as separate runner services with a shared label set, e.g. `[self-hosted, macOS, prowl-review]`. Registration under each scope happens as that scope's account (`prowltools` for the org, `michaeltookes` for personal repos) — the workspace account policy governs only the Prowl repos.
     - **Codex auth on a multi-instance host:** a single runner instance runs one job at a time, so the org runner is naturally serialized; multiple instances are not. Because one `auth.json` must serve one serialized stream, choose one of: **(preferred)** one shared `CODEX_HOME` for the machine plus the **machine-wide Codex lock** from #45 so only one `codex` run executes at a time across all instances (one login to maintain); or one `CODEX_HOME` + separate `codex login` per runner instance (independent sessions, more logins to keep alive). **Never** copy `auth.json` between machines or instances (refresh tokens are single-use; a copied file logs out whichever side refreshes second). Pinned `codex` CLI version + `prowl-review` version on the host; a documented "re-login" runbook for when a session is revoked.
