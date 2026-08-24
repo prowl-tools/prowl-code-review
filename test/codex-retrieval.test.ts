@@ -34,13 +34,15 @@ function fakeCodex(bundleJson: string, usage: Record<string, number> = { input_t
             out.emit("data", Buffer.from(stdout));
             child.emit("close", 0);
           });
-        }
+        },
+        on: () => undefined
       } as CodexProcess["stdin"],
       stdout: { on: (event: string, cb: (chunk: Buffer) => void) => out.on(event, cb) } as CodexProcess["stdout"],
       stderr: { on: () => undefined } as CodexProcess["stderr"],
       on: (event: "error" | "close", cb: (arg: never) => void) => {
         child.on(event, cb as (arg: unknown) => void);
-      }
+      },
+      kill: () => undefined
     };
     return fake;
   };

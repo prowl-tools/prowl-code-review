@@ -45,6 +45,50 @@ import { codexLockPath, resolveCodexHome, withCodexLock, type AcquireLockOptions
 
 export const CODEX_BINARY = "codex";
 
+/**
+ * Resolve the `codex` binary to spawn. `PROWL_CODEX_BIN` overrides the PATH lookup
+ * for launchd/systemd-run runners that don't inherit the user's PATH. Still spawned
+ * without a shell (argv array), so the override is a path, not a command string.
+ */
+export function resolveCodexBinary(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PROWL_CODEX_BIN?.trim() || CODEX_BINARY;
+}
+
+/**
+ * Env keys forwarded to the `codex` child. Codex runs model-generated shell
+ * commands, so the child env is an **allowlist** — provider keys, GitHub tokens,
+ * and any `*_TOKEN`/`*_SECRET`/`*_KEY` in the parent env are dropped, never handed
+ * to a process that can run arbitrary commands.
+ */
+const ALLOWED_CHILD_ENV_KEYS = new Set([
+  "PATH",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "TERM",
+  "LANG",
+  "SHELL",
+  "USER",
+  "LOGNAME",
+  "CODEX_HOME"
+]);
+
+/** Build the allowlisted child environment (+ `CODEX_HOME`) for a `codex` spawn. */
+export function buildCodexChildEnv(baseEnv: NodeJS.ProcessEnv, codexHome: string): NodeJS.ProcessEnv {
+  const out: NodeJS.ProcessEnv = {};
+  for (const [key, value] of Object.entries(baseEnv)) {
+    if (value === undefined) {
+      continue;
+    }
+    if (ALLOWED_CHILD_ENV_KEYS.has(key) || key.startsWith("LC_")) {
+      out[key] = value;
+    }
+  }
+  out.CODEX_HOME = codexHome;
+  return out;
+}
+
 const VALID_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
 /** Cost-first default: matches the specialist fan-out that dominates a review. */
 export const DEFAULT_CODEX_EFFORT = "low";
@@ -299,7 +343,9 @@ export interface CodexExecResult {
 /** Spawn `codex exec`, feed the prompt on stdin, and return the last agent message + usage. */
 export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExecResult> {
   const spawner = params.spawn ?? realSpawn;
-  const env = { ...(params.env ?? process.env), CODEX_HOME: params.codexHome };
+  const baseEnv = params.env ?? process.env;
+  const binary = resolveCodexBinary(baseEnv);
+  const env = buildCodexChildEnv(baseEnv, params.codexHome);
   const args = buildCodexArgs({
     model: params.model,
     effort: params.effort,
@@ -312,7 +358,7 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
     (resolve, reject) => {
       let child: CodexProcess;
       try {
-        child = spawner(CODEX_BINARY, args, { env });
+        child = spawner(binary, args, { env });
       } catch (error) {
         reject(spawnFailure(error));
         return;

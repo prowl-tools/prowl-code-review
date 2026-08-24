@@ -195,6 +195,53 @@ describe("runCodexExec", () => {
     expect(calls[0].env.CODEX_HOME).toBe("/home/.codex");
   });
 
+  it("forwards only an allowlisted child env — never provider keys or tokens", async () => {
+    const { spawner, calls } = makeFakeCodex({ stdout: jsonl(AGENT_MSG("ok"), USAGE({ input_tokens: 1, output_tokens: 1 })) });
+    await runCodexExec({
+      prompt: "x",
+      model: "gpt-5.5",
+      effort: "low",
+      cwd: "/s",
+      codexHome: "/home/.codex",
+      spawn: spawner,
+      env: {
+        PATH: "/usr/bin",
+        HOME: "/home/me",
+        LC_ALL: "en_US.UTF-8",
+        PROWL_AI_KEY_ANTHROPIC: "sk-secret",
+        GITHUB_TOKEN: "ghp_secret",
+        SOME_SECRET: "nope",
+        SOME_TOKEN: "nope",
+        SOME_KEY: "nope"
+      }
+    });
+    const childEnv = calls[0].env;
+    expect(childEnv.PATH).toBe("/usr/bin");
+    expect(childEnv.HOME).toBe("/home/me");
+    expect(childEnv.LC_ALL).toBe("en_US.UTF-8");
+    expect(childEnv.CODEX_HOME).toBe("/home/.codex");
+    expect(childEnv.PROWL_AI_KEY_ANTHROPIC).toBeUndefined();
+    expect(childEnv.GITHUB_TOKEN).toBeUndefined();
+    expect(childEnv.SOME_SECRET).toBeUndefined();
+    expect(childEnv.SOME_TOKEN).toBeUndefined();
+    expect(childEnv.SOME_KEY).toBeUndefined();
+  });
+
+  it("honors PROWL_CODEX_BIN for the binary path without forwarding it to the child", async () => {
+    const { spawner, calls } = makeFakeCodex({ stdout: jsonl(AGENT_MSG("ok"), USAGE({ input_tokens: 1, output_tokens: 1 })) });
+    await runCodexExec({
+      prompt: "x",
+      model: "gpt-5.5",
+      effort: "low",
+      cwd: "/s",
+      codexHome: "/h",
+      spawn: spawner,
+      env: { PATH: "/usr/bin", PROWL_CODEX_BIN: "/opt/codex/bin/codex" }
+    });
+    expect(calls[0].command).toBe("/opt/codex/bin/codex");
+    expect(calls[0].env.PROWL_CODEX_BIN).toBeUndefined();
+  });
+
   it("throws an unavailable CodexError when the binary is missing (ENOENT)", async () => {
     const enoent: NodeJS.ErrnoException = Object.assign(new Error("spawn codex ENOENT"), { code: "ENOENT" });
     const { spawner } = makeFakeCodex({ spawnError: enoent });
