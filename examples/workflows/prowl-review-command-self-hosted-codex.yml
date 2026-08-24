@@ -1,0 +1,106 @@
+# Example: drive prowl-review from PR comments (@prowl-review <command>) on a
+# SELF-HOSTED runner using the keyless Codex (ChatGPT subscription) provider
+# (#45/#64). Copy to .github/workflows/prowl-review-command.yml and pin `uses:`.
+#
+# PUBLIC-REPO CAVEATS — read before using this on a public/open-source repo:
+#   - OpenAI's CI/CD authentication guidance says, verbatim:
+#       "Do not use this workflow for public or open-source repositories."
+#   - GitHub advises against self-hosted runners on public repositories: any PR
+#     can execute code on the runner. The ubuntu `resolve` job (no secrets)
+#     computes the fork/trust verdict; the self-hosted `command` job's job-level
+#     same-repo `if:` gate is REQUIRED on a public repo so a fork PR is never
+#     scheduled onto the runner. Codex itself also runs `--sandbox read-only`.
+#   - PRIVATE repos may drop the fork gate (no fork-PR code-execution risk).
+#
+# The subscription login lives ONLY on the runner (via `codex login` into a
+# dedicated CODEX_HOME); it is never a GitHub secret, and no PROWL_AI_KEY* is set.
+name: prowl-review command
+
+on:
+  issue_comment:
+    types: [created]
+
+# Adding pull_request_review_comment enables inline questions/ignore replies, but
+# every inline review comment then creates a workflow run.
+
+# Shared per-PR Codex group serializes commands with auto reviews of the same PR.
+concurrency:
+  group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+permissions:
+  pull-requests: write
+  issues: write
+  checks: write
+  contents: read
+
+jobs:
+  resolve:
+    # Only honor mentions from a trusted commenter (owner/member/collaborator).
+    # This ubuntu job (no provider secrets) resolves the fork/trust verdict so the
+    # self-hosted job below is only ever scheduled for a same-repo request.
+    if: |
+      github.event.issue.pull_request &&
+      github.event.comment.user.type != 'Bot' &&
+      (
+        github.event.comment.author_association == 'OWNER' ||
+        github.event.comment.author_association == 'MEMBER' ||
+        github.event.comment.author_association == 'COLLABORATOR'
+      ) &&
+      contains(github.event.comment.body, '@prowl-review')
+    runs-on: ubuntu-latest
+    outputs:
+      base_sha: ${{ steps.pr.outputs.base_sha }}
+      head_sha: ${{ steps.pr.outputs.head_sha }}
+      head_repo: ${{ steps.pr.outputs.head_repo }}
+      trusted_head: ${{ steps.pr.outputs.trusted_head }}
+    steps:
+      - id: pr
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          pr_number="${{ github.event.issue.number }}"
+          IFS=$'\t' read -r base_sha head_sha head_repo < <(
+            gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name] | @tsv'
+          )
+          {
+            echo "base_sha=${base_sha}"
+            echo "head_sha=${head_sha}"
+            echo "head_repo=${head_repo}"
+          } >> "$GITHUB_OUTPUT"
+          if [ "${head_repo}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+          fi
+
+  command:
+    needs: resolve
+    # Same-repo gate: keeps fork PRs off the self-hosted runner. REQUIRED on a
+    # public repo; a private repo may drop this line (no fork code-execution risk).
+    if: needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository
+    runs-on: [self-hosted, macOS, prowl-review]
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.base_sha }}
+          path: prowl-base
+          persist-credentials: false
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.resolve.outputs.head_sha }}
+          path: pr-head
+          persist-credentials: false
+
+      - uses: prowl-tools/prowl-code-review@v1
+        with:
+          mode: command
+          # Keyless: no PROWL_AI_KEY* — auth is the runner's own `codex login`.
+          ai-provider: codex
+          workspace-path: ${{ github.workspace }}/pr-head
+          # config-path: ${{ github.workspace }}/prowl-base/.prowl-review.yml
+          # guidelines-path: ${{ github.workspace }}/prowl-base

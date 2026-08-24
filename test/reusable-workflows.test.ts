@@ -1036,4 +1036,55 @@ describe("self-hosted Codex dogfood (#64)", () => {
     // Maintainer commands are not cancelled by a newer command in the group.
     expect(commandDoc.concurrency["cancel-in-progress"]).toBe(false);
   });
+
+  const OPENAI_PUBLIC_CAVEAT = "Do not use this workflow for public or open-source repositories.";
+  const SELF_HOSTED_EXAMPLES = [
+    "examples/workflows/prowl-review-self-hosted-codex.yml",
+    "examples/workflows/prowl-review-command-self-hosted-codex.yml"
+  ] as const;
+
+  it.each(SELF_HOSTED_EXAMPLES)("%s is repo-agnostic, keyless, and states the public-repo caveats", (path) => {
+    const text = readRepo(path);
+    expect(() => parseYaml(text)).not.toThrow();
+    // Repo-agnostic: pins the published action, bakes in nothing prowl-tools-specific.
+    expect(text).toContain("uses: prowl-tools/prowl-code-review@v1");
+    expect(text).not.toContain("prowl-tools/prowl-code-review.git");
+    expect(text).not.toContain("uses: ./");
+    // Keyless codex; no provider secret referenced (the prose may name PROWL_AI_KEY*).
+    expect(text).toContain("ai-provider: codex");
+    expect(text).not.toContain("secrets.PROWL_AI_KEY");
+    // Public-repo caveats stated verbatim + the private-repo fork-gate note.
+    expect(text).toContain(OPENAI_PUBLIC_CAVEAT);
+    expect(text).toMatch(/PRIVATE repos may drop the fork gate/i);
+  });
+
+  it("the self-hosted auto-review example gates forks at the job and serializes per PR", () => {
+    const doc = parseYaml(readRepo("examples/workflows/prowl-review-self-hosted-codex.yml")) as {
+      concurrency: { group: string; "cancel-in-progress"?: unknown };
+      jobs: { review: { if: string; "runs-on"?: unknown; "timeout-minutes"?: unknown } };
+    };
+    expect(doc.jobs.review.if).toBe("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(doc.jobs.review["runs-on"]).toEqual(["self-hosted", "macOS", "prowl-review"]);
+    expect(doc.jobs.review["timeout-minutes"]).toBe(30);
+    expect(doc.concurrency).toMatchObject({
+      group: "prowl-review-codex-${{ github.repository }}-${{ github.event.pull_request.number }}",
+      "cancel-in-progress": true
+    });
+  });
+
+  it("the self-hosted command example resolves trust on ubuntu and runs codex on the runner", () => {
+    const doc = parseYaml(readRepo("examples/workflows/prowl-review-command-self-hosted-codex.yml")) as {
+      jobs: {
+        resolve: { "runs-on"?: unknown; if: string };
+        command: { "runs-on"?: unknown; if: string; needs: string; "timeout-minutes"?: unknown };
+      };
+    };
+    expect(doc.jobs.resolve["runs-on"]).toBe("ubuntu-latest");
+    expect(doc.jobs.command.needs).toBe("resolve");
+    expect(doc.jobs.command["runs-on"]).toEqual(["self-hosted", "macOS", "prowl-review"]);
+    expect(doc.jobs.command["timeout-minutes"]).toBe(30);
+    expect(normalizeExpression(doc.jobs.command.if)).toBe(
+      "needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository"
+    );
+  });
 });
