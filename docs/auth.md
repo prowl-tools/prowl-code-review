@@ -157,7 +157,7 @@ Enable it in `.prowl-review.yml`:
 provider: codex            # keyless: no PROWL_AI_KEY* needed
 # model: gpt-5.5           # default; failback ladder: gpt-5.6-terra -> gpt-5.5
 # codex:
-#   effort: low            # minimal | low | medium | high (default low)
+#   effort: low            # low | medium | high | xhigh (default low)
 #   lock: true             # machine-wide serialization lock (default on)
 ```
 

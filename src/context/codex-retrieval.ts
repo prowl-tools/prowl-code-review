@@ -158,9 +158,12 @@ export async function gatherCodexContext(
   const files = new Map<string, RetrievedFile>();
   let reachedLimit = false;
 
-  for (const entry of bundle) {
+  for (let index = 0; index < bundle.length; index += 1) {
+    const entry = bundle[index];
     if (files.size >= maxFiles) {
-      notes.push(`File budget reached (${maxFiles}); skipped ${bundle.length - files.size} more Codex-suggested file(s).`);
+      // Count exactly the remaining (unprocessed) entries, not by file-map size —
+      // refused/deduped entries would otherwise skew the tally.
+      notes.push(`File budget reached (${maxFiles}); skipped ${bundle.length - index} more Codex-suggested file(s).`);
       reachedLimit = true;
       break;
     }

@@ -89,7 +89,9 @@ export function buildCodexChildEnv(baseEnv: NodeJS.ProcessEnv, codexHome: string
   return out;
 }
 
-const VALID_EFFORTS = new Set(["minimal", "low", "medium", "high"]);
+// gpt-5.5 / gpt-5.6 offer low | medium | high | xhigh under ChatGPT sign-in
+// (~/.codex/models_cache.json) — `minimal` is not offered for these models.
+const VALID_EFFORTS = new Set(["low", "medium", "high", "xhigh"]);
 /** Cost-first default: matches the specialist fan-out that dominates a review. */
 export const DEFAULT_CODEX_EFFORT = "low";
 

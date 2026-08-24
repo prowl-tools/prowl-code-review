@@ -523,7 +523,7 @@ GitHub-hosted runners for public repos. There is **no Claude/Gemini equivalent**
 # .prowl-review.yml
 provider: codex            # keyless; default model gpt-5.5 (failback gpt-5.6-terra -> gpt-5.5)
 # codex:
-#   effort: low            # minimal | low | medium | high
+#   effort: low            # low | medium | high | xhigh
 #   lock: true             # serialize codex runs across the host (default on)
 ```
 

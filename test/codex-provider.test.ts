@@ -404,6 +404,9 @@ describe("resolveCodexOptions", () => {
     expect(resolveCodexOptions({ PROWL_CODEX_EFFORT: "high" }, { effort: "medium" }).effort).toBe("high");
     expect(resolveCodexOptions({ PROWL_CODEX_LOCK: "false" }).lock).toBe(false);
     expect(resolveCodexOptions({}, { lock: false }).lock).toBe(false);
+    // xhigh is valid; minimal is no longer offered for these models → falls back.
+    expect(resolveCodexOptions({ PROWL_CODEX_EFFORT: "xhigh" }).effort).toBe("xhigh");
+    expect(resolveCodexOptions({ PROWL_CODEX_EFFORT: "minimal" }).effort).toBe("low");
     // Unknown effort falls back to the default.
     expect(resolveCodexOptions({ PROWL_CODEX_EFFORT: "bogus" }).effort).toBe("low");
     // CODEX_HOME override is respected.

@@ -23,6 +23,8 @@ describe("configSchema (#29)", () => {
     const input = { provider: "codex", codex: { effort: "medium", lock: false } };
     expect(configSchema.parse(input)).toEqual(input);
     expect(configSchema.parse({ codex: { effort: "low" } })).toEqual({ codex: { effort: "low" } });
+    expect(configSchema.parse({ codex: { effort: "xhigh" } })).toEqual({ codex: { effort: "xhigh" } });
+    expect(() => configSchema.parse({ codex: { effort: "minimal" } })).toThrow(); // not offered for these models
     expect(() => configSchema.parse({ codex: { effort: "turbo" } })).toThrow(); // not an enum member
     expect(() => configSchema.parse({ codex: { lock: "yes" } })).toThrow(); // boolean only
     expect(() => configSchema.parse({ codex: { nope: 1 } })).toThrow(); // strict

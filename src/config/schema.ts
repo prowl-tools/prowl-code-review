@@ -355,7 +355,7 @@ const debugSchema = z
 const codexSchema = z
   .object({
     /** Reasoning effort for `model_reasoning_effort`. Default `low`. */
-    effort: z.enum(["minimal", "low", "medium", "high"]).optional(),
+    effort: z.enum(["low", "medium", "high", "xhigh"]).optional(),
     /**
      * Serialize `codex` spawns machine-wide via `$CODEX_HOME/.prowl-review.lock`.
      * Default true — one `auth.json` per serialized stream. Opt out only when a

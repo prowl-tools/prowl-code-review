@@ -26,7 +26,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # runners on public repos). No Claude/Gemini equivalent.
 # provider: codex            # no PROWL_AI_KEY* needed
 # codex:
-#   effort: low              # minimal | low | medium | high (default: low)
+#   effort: low              # low | medium | high | xhigh (default: low)
 #   lock: true               # serialize codex runs across the host (default: on)
 
 # --- Presentation -------------------------------------------------------------
