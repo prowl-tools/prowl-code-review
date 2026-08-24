@@ -68,6 +68,18 @@ export interface CodexOptions {
    * reads, copies, or logs `auth.json` — only the `codex` binary does.
    */
   codexHome?: string;
+  /**
+   * Kill a single `codex exec` child after this many ms (SIGTERM, then SIGKILL
+   * after a grace) and fail with a timeout error. Default 600_000 (10 min).
+   */
+  timeoutMs?: number;
+  /**
+   * Max time to wait to acquire the machine-wide Codex lock before giving up, ms.
+   * Default 600_000 — long enough to queue behind a full review on a busy host.
+   * The alive-pid stale reclaim is kept `>=` the child timeout so a live holder
+   * is never reclaimed before its own timeout fires.
+   */
+  lockTimeoutMs?: number;
 }
 
 export interface ProviderConfig {

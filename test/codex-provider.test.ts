@@ -199,13 +199,48 @@ describe("runCodexExec", () => {
     expect((error as CodexError).message).toMatch(/resets 3h 12m/);
     expect((error as CodexError).message).toMatch(/@prowl-review review/);
   });
+
+  it("throws when a premature agent_message is followed by turn.failed", async () => {
+    const { spawner } = makeFakeCodex({
+      stdout: jsonl(
+        AGENT_MSG("premature happy answer"),
+        { type: "turn.failed", error: { message: "the model crashed mid-turn" } }
+      )
+    });
+    const error = await runCodexExec({ prompt: "x", model: "gpt-5.5", effort: "low", cwd: "/s", codexHome: "/h", spawn: spawner }).catch((e) => e);
+    expect(error).toBeInstanceOf(CodexError);
+    expect((error as CodexError).message).toMatch(/crashed mid-turn/);
+  });
+
+  it("throws when an agent_message is present but the exit code is non-zero", async () => {
+    const { spawner } = makeFakeCodex({
+      stdout: jsonl(AGENT_MSG("answer"), USAGE({ input_tokens: 1, output_tokens: 1 })),
+      stderr: "codex: fatal error",
+      code: 1
+    });
+    const error = await runCodexExec({ prompt: "x", model: "gpt-5.5", effort: "low", cwd: "/s", codexHome: "/h", spawn: spawner }).catch((e) => e);
+    expect(error).toBeInstanceOf(CodexError);
+    expect((error as CodexError).message).toMatch(/fatal error/);
+  });
+
+  it("succeeds on agent_message + turn.completed + exit 0", async () => {
+    const { spawner } = makeFakeCodex({
+      stdout: jsonl(AGENT_MSG("final"), USAGE({ input_tokens: 3, output_tokens: 2 })),
+      code: 0
+    });
+    const result = await runCodexExec({ prompt: "x", model: "gpt-5.5", effort: "low", cwd: "/s", codexHome: "/h", spawn: spawner });
+    expect(result.text).toBe("final");
+  });
 });
 
 describe("classifyCodexError", () => {
   it("distinguishes limit, auth, and generic failures", () => {
     expect(classifyCodexError("429 too many requests").kind).toBe("usage-limit");
     expect(classifyCodexError("401 unauthorized").kind).toBe("unauthenticated");
+    expect(classifyCodexError("not logged in — run codex login").kind).toBe("unauthenticated");
     expect(classifyCodexError("some other crash").kind).toBe("failed");
+    // A generic failure whose text merely contains a path with "login" is NOT auth.
+    expect(classifyCodexError("ENOENT: /home/runner/login/cache missing").kind).toBe("failed");
   });
 });
 

@@ -138,6 +138,8 @@ export interface ParsedCodexEvents {
   agentMessages: string[];
   /** Mapped usage from `turn.completed`, or empty when absent. */
   usage: TokenUsage;
+  /** True when a `turn.completed` event was seen (the turn actually finished). */
+  completed: boolean;
   /** Error text from `error` / `turn.failed` events, when present. */
   errorMessage?: string;
 }
@@ -147,6 +149,7 @@ export function parseCodexEvents(stdout: string): ParsedCodexEvents {
   const agentMessages: string[] = [];
   let usage: TokenUsage = { inputTokens: 0, outputTokens: 0, cachedInputTokens: 0 };
   let errorMessage: string | undefined;
+  let completed = false;
 
   for (const line of stdout.split("\n")) {
     const trimmed = line.trim();
@@ -167,6 +170,7 @@ export function parseCodexEvents(stdout: string): ParsedCodexEvents {
       }
     } else if (type === "turn.completed") {
       usage = mapCodexUsage(event.usage as CodexUsageRaw | undefined);
+      completed = true;
     } else if (type === "error") {
       if (typeof event.message === "string") {
         errorMessage = event.message;
@@ -179,7 +183,7 @@ export function parseCodexEvents(stdout: string): ParsedCodexEvents {
     }
   }
 
-  return { agentMessages, usage, ...(errorMessage ? { errorMessage } : {}) };
+  return { agentMessages, usage, completed, ...(errorMessage ? { errorMessage } : {}) };
 }
 
 /** Base class for Codex spawn/auth/limit errors so callers can branch on `kind`. */
@@ -214,7 +218,9 @@ export function classifyCodexError(text: string): CodexError {
       "usage-limit"
     );
   }
-  if (/not logged in|log ?in|unauthenticated|unauthorized|\b401\b|no credentials|sign in|authenticate/.test(lower)) {
+  // Anchor to concrete Codex/OpenAI auth phrasings so a path or message that
+  // merely contains "login" can't misclassify a generic failure as auth.
+  if (/not logged in|not authenticated|codex login|unauthorized|\b401\b|no credentials|invalid api key/.test(lower)) {
     return unauthenticatedError();
   }
   return new CodexError(
@@ -277,53 +283,66 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
     ...(params.sandbox ? { sandbox: params.sandbox } : {})
   });
 
-  const { stdout, stderr } = await new Promise<{ stdout: string; stderr: string }>((resolve, reject) => {
-    let child: CodexProcess;
-    try {
-      child = spawner(CODEX_BINARY, args, { env });
-    } catch (error) {
-      reject(spawnFailure(error));
-      return;
-    }
-    let out = "";
-    let err = "";
-    let settled = false;
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      out += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      err += chunk.toString();
-    });
-    child.on("error", (error: Error) => {
-      if (settled) {
+  const { stdout, stderr, code } = await new Promise<{ stdout: string; stderr: string; code: number | null }>(
+    (resolve, reject) => {
+      let child: CodexProcess;
+      try {
+        child = spawner(CODEX_BINARY, args, { env });
+      } catch (error) {
+        reject(spawnFailure(error));
         return;
       }
-      settled = true;
-      reject(spawnFailure(error));
-    });
-    child.on("close", () => {
-      if (settled) {
-        return;
-      }
-      settled = true;
-      resolve({ stdout: out, stderr: err });
-    });
-    // Deliver the prompt, then CLOSE stdin so `codex exec` stops reading input.
-    try {
-      child.stdin.write(params.prompt);
-      child.stdin.end();
-    } catch (error) {
-      if (!settled) {
+      let out = "";
+      let err = "";
+      let settled = false;
+      child.stdout.on("data", (chunk: Buffer | string) => {
+        out += chunk.toString();
+      });
+      child.stderr.on("data", (chunk: Buffer | string) => {
+        err += chunk.toString();
+      });
+      child.on("error", (error: Error) => {
+        if (settled) {
+          return;
+        }
         settled = true;
         reject(spawnFailure(error));
+      });
+      child.on("close", (exitCode: number | null) => {
+        if (settled) {
+          return;
+        }
+        settled = true;
+        resolve({ stdout: out, stderr: err, code: exitCode });
+      });
+      // Deliver the prompt, then CLOSE stdin so `codex exec` stops reading input.
+      try {
+        child.stdin.write(params.prompt);
+        child.stdin.end();
+      } catch (error) {
+        if (!settled) {
+          settled = true;
+          reject(spawnFailure(error));
+        }
       }
     }
-  });
+  );
 
   const parsed = parseCodexEvents(stdout);
+  const errText = parsed.errorMessage ?? stderr;
+  // A premature `agent_message` before a failed turn must NOT read as success:
+  // fail on any error event, a non-zero exit, or a turn that never completed but
+  // left an error/stderr signal — regardless of whether agent messages exist.
+  const failed =
+    parsed.errorMessage !== undefined ||
+    (code ?? 0) !== 0 ||
+    (!parsed.completed && errText.trim() !== "");
+  if (failed) {
+    throw classifyCodexError(errText);
+  }
   const last = parsed.agentMessages.at(-1);
   if (last === undefined) {
-    throw classifyCodexError(parsed.errorMessage ?? stderr);
+    throw classifyCodexError(errText);
   }
   return { text: last, usage: parsed.usage };
 }
