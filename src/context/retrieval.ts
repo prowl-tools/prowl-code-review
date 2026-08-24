@@ -395,6 +395,13 @@ function executeTool(
 
 /** Run the agentic retrieval loop and return the gathered cross-file context. */
 export async function gatherContext(params: GatherContextParams): Promise<GatheredContext> {
+  // Codex runs its own tool loop and has no `completeWithTools`, so it retrieves
+  // via a single `codex exec` bundle re-read through the sandboxed toolkit (#45).
+  if (params.config?.provider === "codex") {
+    const { gatherCodexContext } = await import("./codex-retrieval.js");
+    return gatherCodexContext(params);
+  }
+
   const run = params.runCompletion ?? retrying(defaultCompleteWithTools, params.retry);
   const config = params.config ?? resolveProviderConfig();
   const maxRounds = params.limits?.maxRounds ?? 6;

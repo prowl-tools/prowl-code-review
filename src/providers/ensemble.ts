@@ -1,4 +1,12 @@
-import { DEFAULT_MODELS, PROVIDER_NAMES, protectProviderConfig, type ProviderConfig, type ProviderName } from "./types.js";
+import {
+  DEFAULT_MODELS,
+  PROVIDER_NAMES,
+  isKeylessProvider,
+  protectProviderConfig,
+  type ProviderConfig,
+  type ProviderName
+} from "./types.js";
+import { resolveCodexOptions } from "./codex.js";
 
 /**
  * Per-provider key resolution for the multi-provider ensemble (#53).
@@ -58,15 +66,30 @@ export function resolveEnsembleConfigs(params: ResolveEnsembleParams): ResolveEn
     }
     seen.add(spec.provider);
 
-    const envVar = providerKeyEnvVar(spec.provider);
     const isPrimary = spec.provider === params.primary.provider;
+    const model = spec.model?.trim() || (isPrimary ? params.primary.model : DEFAULT_MODELS[spec.provider]);
+
+    // Keyless providers (e.g. `codex`) authenticate via a local CLI login, so they
+    // join the ensemble with no `PROWL_AI_KEY_*` and are never skipped for it (#45).
+    if (isKeylessProvider(spec.provider)) {
+      configs.push(
+        protectProviderConfig({
+          provider: spec.provider,
+          model,
+          apiKey: "",
+          codex: resolveCodexOptions(env, params.primary.codex)
+        })
+      );
+      continue;
+    }
+
+    const envVar = providerKeyEnvVar(spec.provider);
     const apiKey = env[envVar]?.trim() || (isPrimary ? params.primary.apiKey : undefined);
     if (!apiKey) {
       notes.push(`Ensemble: skipped "${spec.provider}" — no ${envVar} set.`);
       continue;
     }
 
-    const model = spec.model?.trim() || (isPrimary ? params.primary.model : DEFAULT_MODELS[spec.provider]);
     configs.push(protectProviderConfig({ provider: spec.provider, model, apiKey }));
   }
 

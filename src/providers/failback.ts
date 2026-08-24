@@ -26,7 +26,10 @@ const FAILBACK_LADDERS: Record<ProviderName, string[][]> = {
     ["gpt-5.5", "gpt-5.4", "gpt-5.2"],
     ["gpt-5.4-mini", "gpt-5-mini"]
   ],
-  gemini: [["gemini-2.5-pro", "gemini-2.5-flash"]]
+  gemini: [["gemini-2.5-pro", "gemini-2.5-flash"]],
+  // Codex draws from the ChatGPT plan; `gpt-5.4`/`gpt-5.4-mini` leave ChatGPT
+  // sign-in 2026-08-31, so they are not on this ladder (#45).
+  codex: [["gpt-5.6-terra", "gpt-5.5"]]
 };
 
 /**

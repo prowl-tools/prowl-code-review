@@ -550,7 +550,11 @@ export async function runLocalReview(
       (resolved.contextLimits?.maxFiles === undefined && tierPlan.contextLimits?.maxFiles !== undefined));
   notes.push(...riskTierNotes(tierSelection, { specialistKeys: tierSpecialistKeys, contextLimited: tierLimitedContext }));
 
-  const providerConfig = resolveProviderConfig(env, { provider: config.provider, model: config.model });
+  const providerConfig = resolveProviderConfig(env, {
+    provider: config.provider,
+    model: config.model,
+    ...(config.codex ? { codex: config.codex } : {})
+  });
 
   // Debug/verbose tracing (#49): local mode has its own orchestration path, so
   // it creates and feeds the sink directly while keeping stdout clean for --json.

@@ -1,6 +1,7 @@
 import { anthropicProvider } from "./anthropic.js";
 import { openaiProvider } from "./openai.js";
 import { geminiProvider } from "./gemini.js";
+import { codexProvider, resolveCodexOptions } from "./codex.js";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -11,6 +12,7 @@ import {
   type ToolCompletionResult,
   DEFAULT_MODELS,
   PROVIDER_NAMES,
+  isKeylessProvider,
   protectProviderConfig
 } from "./types.js";
 
@@ -44,7 +46,8 @@ export {
 const PROVIDERS: Record<ProviderName, Provider> = {
   anthropic: anthropicProvider,
   openai: openaiProvider,
-  gemini: geminiProvider
+  gemini: geminiProvider,
+  codex: codexProvider
 };
 
 /** Return whether a string is one of the supported provider names. */
@@ -61,6 +64,8 @@ export function getProvider(name: ProviderName): Provider {
 export interface ProviderDefaults {
   provider?: string;
   model?: string;
+  /** Codex-only knobs (effort, lock) from `.prowl-review.yml`'s `codex:` block (#45). */
+  codex?: { effort?: string; lock?: boolean };
 }
 
 /**
@@ -92,9 +97,12 @@ export function resolveProviderConfig(
     );
   }
 
+  // Keyless providers (e.g. `codex`) authenticate via a local first-party CLI
+  // login, not a BYOK key — so they never require `PROWL_AI_KEY*` (#45).
+  const keyless = isKeylessProvider(raw);
   const providerKeyEnvVar = `PROWL_AI_KEY_${raw.toUpperCase()}`;
   const apiKey = env[providerKeyEnvVar]?.trim() || env.PROWL_AI_KEY?.trim();
-  if (!apiKey) {
+  if (!apiKey && !keyless) {
     throw new Error(
       `PROWL_AI_KEY or ${providerKeyEnvVar} environment variable is required. Set it to your provider API key.`
     );
@@ -104,7 +112,16 @@ export function resolveProviderConfig(
   const configModel = configModelApplies ? defaults.model?.trim() : undefined;
   const model = env.PROWL_AI_MODEL?.trim() || configModel || DEFAULT_MODELS[raw];
 
-  return protectProviderConfig({ provider: raw, model, apiKey });
+  if (raw === "codex") {
+    return protectProviderConfig({
+      provider: raw,
+      model,
+      apiKey: "",
+      codex: resolveCodexOptions(env, defaults.codex)
+    });
+  }
+
+  return protectProviderConfig({ provider: raw, model, apiKey: apiKey ?? "" });
 }
 
 /**
