@@ -63,8 +63,9 @@ All notable changes to Prowl Review will be documented in this file.
     + command variant) and docs (`docs/self-hosted-runner.md`, plus Codex sections of
     `docs/auth.md` and `README.md`) covering the shape of runner setup — dedicated `CODEX_HOME`
     with its own `codex login`, runner `.env`/`.path`, labels, org- vs. repo-level registration,
-    never copying `auth.json` — with the public-repo caveats stated verbatim. Runner registration
-    and rollout to the other Prowl/personal repos are still pending.
+    never copying `auth.json`, and the `--sandbox read-only` file-read boundary — with the
+    public-repo caveats stated verbatim. Runner registration and rollout to the other
+    Prowl/personal repos are still pending.
   - Registered the custom `prowl-review` runner label in `.github/actionlint.yaml`.
 
 ## [0.3.0] - 2026-08-03

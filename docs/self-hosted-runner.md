@@ -39,6 +39,14 @@ still catches typos. Fork-gating and neutral-check jobs stay on GitHub-hosted
 
 ## Codex auth on the host
 
+> [!WARNING]
+> Codex runs `--sandbox read-only`, which prevents writes but still allows
+> reading any file in the repo checkout during cross-file context retrieval. If
+> a repo holds unignored secrets that Codex must never read, such as `.env`
+> files or cloud credentials, do not use `provider: codex` for that repo. See
+> [`docs/auth.md`](./auth.md#codex-subscription-provider-45) for the full
+> boundary.
+
 - **One dedicated `CODEX_HOME` per host.** Give the runner its own `CODEX_HOME`
   (e.g. a path the runner user owns) and run **`codex login --device-auth`**
   there **once per host**. The device-auth flow keeps the login on the machine.
