@@ -1003,10 +1003,16 @@ describe("self-hosted Codex dogfood (#64)", () => {
 
   it("the dogfood command job runs codex on the self-hosted runner behind a same-repo gate", () => {
     const doc = parseYaml(readRepo(".github/workflows/prowl-review-command.yml")) as {
-      concurrency: Record<string, unknown>;
       jobs: {
-        resolve: { "runs-on"?: unknown; if: string; outputs: Record<string, unknown> };
-        command: { "runs-on"?: unknown; if: string; needs: string; "timeout-minutes"?: unknown; steps: Array<Record<string, unknown>> };
+        resolve: { "runs-on"?: unknown; if: string; concurrency: Record<string, unknown>; outputs: Record<string, unknown> };
+        command: {
+          "runs-on"?: unknown;
+          if: string;
+          needs: string;
+          "timeout-minutes"?: unknown;
+          concurrency: Record<string, unknown>;
+          steps: Array<Record<string, unknown>>;
+        };
       };
     };
     // The author-authorization gate lives on the ubuntu resolve job; the
@@ -1016,6 +1022,14 @@ describe("self-hosted Codex dogfood (#64)", () => {
     expect(doc.jobs.command.needs).toBe("resolve");
     expect(doc.jobs.command["runs-on"]).toEqual(SELF_HOSTED_LABELS);
     expect(doc.jobs.command["timeout-minutes"]).toBe(30);
+    expect(doc.jobs.resolve.concurrency).toMatchObject({
+      group: "prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}",
+      "cancel-in-progress": false
+    });
+    expect(doc.jobs.command.concurrency).toMatchObject({
+      group: "prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}",
+      "cancel-in-progress": false
+    });
     expect(normalizeExpression(doc.jobs.command.if)).toBe(
       "needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository"
     );
@@ -1032,18 +1046,27 @@ describe("self-hosted Codex dogfood (#64)", () => {
       jobs: { review: { concurrency: { "cancel-in-progress"?: unknown } } };
     };
     const commandDoc = parseYaml(readRepo(".github/workflows/prowl-review-command.yml")) as {
-      concurrency: { group: string; "cancel-in-progress"?: unknown };
+      concurrency?: unknown;
+      jobs: {
+        resolve: { concurrency: { group: string; "cancel-in-progress"?: unknown } };
+        command: { concurrency: { group: string; "cancel-in-progress"?: unknown } };
+      };
     };
     // Same group prefix keyed by repo + PR number, so an @prowl-review command and
     // an auto review of the same PR never publish concurrently.
     expect(autoText).toContain("group: prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}");
-    expect(commandDoc.concurrency.group).toBe(
+    expect(commandDoc.concurrency).toBeUndefined();
+    expect(commandDoc.jobs.resolve.concurrency.group).toBe(
       "prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
+    );
+    expect(commandDoc.jobs.command.concurrency.group).toBe(
+      "prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}"
     );
     // Maintainer commands are not cancelled by newer commands or auto reviews in
     // the shared group.
     expect(autoDoc.jobs.review.concurrency["cancel-in-progress"]).toBe(false);
-    expect(commandDoc.concurrency["cancel-in-progress"]).toBe(false);
+    expect(commandDoc.jobs.resolve.concurrency["cancel-in-progress"]).toBe(false);
+    expect(commandDoc.jobs.command.concurrency["cancel-in-progress"]).toBe(false);
   });
 
   const OPENAI_PUBLIC_CAVEAT = "Do not use this workflow for public or open-source repositories.";
@@ -1083,15 +1106,25 @@ describe("self-hosted Codex dogfood (#64)", () => {
 
   it("the self-hosted command example resolves trust on ubuntu and runs codex on the runner", () => {
     const doc = parseYaml(readRepo("examples/workflows/prowl-review-command-self-hosted-codex.yml")) as {
+      concurrency?: unknown;
       jobs: {
-        resolve: { "runs-on"?: unknown; if: string };
-        command: { "runs-on"?: unknown; if: string; needs: string; "timeout-minutes"?: unknown };
+        resolve: { "runs-on"?: unknown; if: string; concurrency: Record<string, unknown> };
+        command: { "runs-on"?: unknown; if: string; needs: string; "timeout-minutes"?: unknown; concurrency: Record<string, unknown> };
       };
     };
+    expect(doc.concurrency).toBeUndefined();
     expect(doc.jobs.resolve["runs-on"]).toBe("ubuntu-latest");
     expect(doc.jobs.command.needs).toBe("resolve");
     expect(doc.jobs.command["runs-on"]).toEqual(["self-hosted", "macOS", "prowl-review"]);
     expect(doc.jobs.command["timeout-minutes"]).toBe(30);
+    expect(doc.jobs.resolve.concurrency).toMatchObject({
+      group: "prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}",
+      "cancel-in-progress": false
+    });
+    expect(doc.jobs.command.concurrency).toMatchObject({
+      group: "prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}",
+      "cancel-in-progress": false
+    });
     expect(normalizeExpression(doc.jobs.command.if)).toBe(
       "needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository"
     );

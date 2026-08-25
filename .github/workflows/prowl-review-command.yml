@@ -7,18 +7,6 @@ on:
   pull_request_review_comment:
     types: [created]
 
-# Serialize commands with auto reviews for the same PR so review publishing and
-# inline finding dedupe cannot race. Shares the per-PR Codex group name with the
-# auto-review workflow (#64) so the two serialize together; machine-wide
-# serialization across repos/runner instances is the provider's Codex lock, not
-# GitHub concurrency. cancel-in-progress stays false in both workflows so an
-# in-flight maintainer request is never cancelled by a newer auto-review push.
-# The PR number comes from `issue` (issue_comment) or `pull_request`
-# (pull_request_review_comment).
-concurrency:
-  group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
-  cancel-in-progress: false
-
 permissions:
   pull-requests: write
   issues: write
@@ -43,6 +31,13 @@ jobs:
       !contains(github.event.comment.body, '<!-- prowl-review:summary -->') &&
       !contains(github.event.comment.body, '<!-- prowl-review:finding ')
     runs-on: ubuntu-latest
+    # Serialize command resolution by PR too, so a burst of top-level/inline
+    # comments cannot race ahead of the self-hosted command job for the same PR.
+    # The PR number comes from `issue` (issue_comment) or `pull_request`
+    # (pull_request_review_comment).
+    concurrency:
+      group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}
+      cancel-in-progress: false
     outputs:
       pr_number: ${{ steps.pr.outputs.pr_number }}
       base_sha: ${{ steps.pr.outputs.base_sha }}
@@ -90,6 +85,14 @@ jobs:
     # Keyless `provider: codex` runs on the always-on Mac mini (#64).
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
+    # Shares the per-PR Codex group with auto reviews (#64) so review publishing
+    # and inline finding dedupe cannot race. Machine-wide serialization across
+    # repos/runner instances is the provider's Codex lock, not GitHub
+    # concurrency. Keep this non-cancelling so an in-flight maintainer request is
+    # never cancelled by a newer auto-review push.
+    concurrency:
+      group: prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}
+      cancel-in-progress: false
     env:
       PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
     steps:

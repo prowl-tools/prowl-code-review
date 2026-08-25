@@ -23,12 +23,6 @@ on:
 # Adding pull_request_review_comment enables inline questions/ignore replies, but
 # every inline review comment then creates a workflow run.
 
-# Shared per-PR Codex group serializes commands with auto reviews of the same PR.
-# Keep this non-cancelling so auto-review pushes do not interrupt commands.
-concurrency:
-  group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}
-  cancel-in-progress: false
-
 permissions:
   pull-requests: write
   issues: write
@@ -50,6 +44,11 @@ jobs:
       ) &&
       contains(github.event.comment.body, '@prowl-review')
     runs-on: ubuntu-latest
+    # Serialize command resolution by PR too, so a burst of comments cannot race
+    # ahead of the self-hosted command job for the same PR.
+    concurrency:
+      group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     outputs:
       base_sha: ${{ steps.pr.outputs.base_sha }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
@@ -84,6 +83,11 @@ jobs:
     if: needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
+    # Shared per-PR Codex group serializes commands with auto reviews of the same
+    # PR. Keep this non-cancelling so auto-review pushes do not interrupt commands.
+    concurrency:
+      group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}
+      cancel-in-progress: false
     steps:
       - uses: actions/checkout@v4
         with:
