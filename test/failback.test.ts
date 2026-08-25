@@ -1,11 +1,22 @@
 import { describe, expect, it, vi } from "vitest";
-import { withFailback, modelFailbackChain, type FailbackEvent } from "../src/providers/failback.js";
+import {
+  withFailback,
+  modelFailbackChain,
+  retiredModelFallbacks,
+  type FailbackEvent
+} from "../src/providers/failback.js";
+import { CodexError } from "../src/providers/codex.js";
 import type { ProviderConfig } from "../src/providers/types.js";
 
 const config: ProviderConfig = { provider: "anthropic", model: "claude-opus-4-8", apiKey: "k" };
 
 function retryable(status: number): Error {
   return Object.assign(new Error(`Anthropic API error (${status}): overloaded`), { status });
+}
+
+const codexConfig: ProviderConfig = { provider: "codex", model: "gpt-5.4", apiKey: "" };
+function retiredModel(): CodexError {
+  return new CodexError("model gpt-5.4 is no longer available under ChatGPT sign-in", "model-retired");
 }
 
 describe("modelFailbackChain", () => {
@@ -126,5 +137,66 @@ describe("withFailback", () => {
     const run = withFailback(complete);
     await expect(run({}, { ...config, model: "claude-opus-4-1" })).rejects.toThrow(/429/);
     expect(complete).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not fall back on a Codex usage-limit (non-retryable, no retry storm)", async () => {
+    const complete = vi.fn().mockRejectedValue(new CodexError("usage limit reached", "usage-limit"));
+    const onFailback = vi.fn();
+    const run = withFailback(complete, { onFailback });
+    await expect(run({}, { ...codexConfig, model: "gpt-5.5" })).rejects.toBeInstanceOf(CodexError);
+    expect(complete).toHaveBeenCalledTimes(1);
+    expect(onFailback).not.toHaveBeenCalled();
+  });
+
+  it("falls back a retired Codex model to the live ladder even when it's on no rung", async () => {
+    // gpt-5.4 is not on the codex ladder; a retired-model error should still fall
+    // through to gpt-5.6-terra → gpt-5.5.
+    const complete = vi.fn(async (_req: unknown, cfg: ProviderConfig) => {
+      if (cfg.model !== "gpt-5.5") {
+        throw retiredModel();
+      }
+      return `ok:${cfg.model}`;
+    });
+    const events: FailbackEvent[] = [];
+    const run = withFailback(complete, { onFailback: (e) => events.push(e) });
+    expect(await run({}, codexConfig)).toBe("ok:gpt-5.5");
+    expect(complete.mock.calls.map((c) => (c[1] as ProviderConfig).model)).toEqual([
+      "gpt-5.4",
+      "gpt-5.6-terra",
+      "gpt-5.5"
+    ]);
+    expect(events).toHaveLength(1);
+    expect(events[0]).toMatchObject({ provider: "codex", from: "gpt-5.4", to: "gpt-5.5", reason: "model-retired" });
+  });
+
+  it("throws when the retired-model ladder is exhausted", async () => {
+    const complete = vi.fn().mockRejectedValue(retiredModel());
+    const onFailback = vi.fn();
+    const run = withFailback(complete, { onFailback });
+    await expect(run({}, codexConfig)).rejects.toBeInstanceOf(CodexError);
+    // gpt-5.4 → gpt-5.6-terra → gpt-5.5 → throw: three attempts.
+    expect(complete).toHaveBeenCalledTimes(3);
+    expect(onFailback).not.toHaveBeenCalled();
+  });
+
+  it("tags an overload failback with reason 'overload'", async () => {
+    const complete = vi
+      .fn()
+      .mockRejectedValueOnce(retryable(429))
+      .mockResolvedValueOnce("ok:claude-opus-4-7");
+    const events: FailbackEvent[] = [];
+    const run = withFailback(complete, { onFailback: (e) => events.push(e) });
+    await run({}, config);
+    expect(events[0]).toMatchObject({ reason: "overload" });
+  });
+});
+
+describe("retiredModelFallbacks", () => {
+  it("returns the codex ladder's live targets", () => {
+    expect(retiredModelFallbacks("codex")).toEqual(["gpt-5.6-terra", "gpt-5.5"]);
+  });
+
+  it("returns the flattened ladder for other providers", () => {
+    expect(retiredModelFallbacks("gemini")).toEqual(["gemini-2.5-pro", "gemini-2.5-flash"]);
   });
 });

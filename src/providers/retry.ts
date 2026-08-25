@@ -9,6 +9,8 @@
  * without real timers.
  */
 
+import { codexErrorKind } from "./codex.js";
+
 /** HTTP statuses worth retrying: rate-limit, request timeout/too-early, and 5xx. */
 const RETRYABLE_STATUS = new Set([408, 425, 429]);
 
@@ -53,6 +55,14 @@ function normalizedMaxAttempts(value: number | undefined): number {
 
 /** True when an error looks transient and a retry might succeed. */
 export function isRetryableError(error: unknown): boolean {
+  // Codex subscription outcomes are not transient: a usage-limit is a plan-window
+  // allowance (retrying just hammers it), and auth/unavailable/retired-model are
+  // runner-config or model problems a retry can't fix (#65). Only a generic Codex
+  // "failed" falls through to the transient heuristics below.
+  const codexKind = codexErrorKind(error);
+  if (codexKind === "usage-limit" || codexKind === "unauthenticated" || codexKind === "unavailable" || codexKind === "model-retired") {
+    return false;
+  }
   if (error && typeof error === "object") {
     const status = (error as { status?: unknown }).status;
     if (typeof status === "number") {

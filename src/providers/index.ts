@@ -41,8 +41,10 @@ export {
 export {
   withFailback,
   modelFailbackChain,
+  retiredModelFallbacks,
   type FailbackEvent,
-  type FailbackOptions
+  type FailbackOptions,
+  type FailbackReason
 } from "./failback.js";
 
 const PROVIDERS: Record<ProviderName, Provider> = {

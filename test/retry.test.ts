@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { withRetry, retrying, isRetryableError, backoffDelay } from "../src/providers/retry.js";
+import { CodexError } from "../src/providers/codex.js";
 
 /** A sleep that records delays without waiting. */
 function fakeSleep() {
@@ -29,6 +30,23 @@ describe("isRetryableError", () => {
     expect(isRetryableError(new Error("Anthropic API error (529): overloaded_error"))).toBe(true);
     expect(isRetryableError(new Error("OpenAI API error (500): oops"))).toBe(true);
     expect(isRetryableError(new Error("Gemini API error (403): forbidden"))).toBe(false);
+  });
+
+  it("never retries non-transient Codex outcomes (usage-limit / auth / unavailable / retired model)", () => {
+    expect(isRetryableError(new CodexError("usage limit reached", "usage-limit"))).toBe(false);
+    expect(isRetryableError(new CodexError("not logged in", "unauthenticated"))).toBe(false);
+    expect(isRetryableError(new CodexError("codex CLI not found", "unavailable"))).toBe(false);
+    expect(isRetryableError(new CodexError("model gpt-5.4 unavailable", "model-retired"))).toBe(false);
+  });
+
+  it("does not hammer a Codex usage-limit error under withRetry", async () => {
+    const fn = vi.fn(async () => {
+      throw new CodexError("usage limit reached", "usage-limit");
+    });
+    const { sleep, delays } = fakeSleep();
+    await expect(withRetry(fn, { sleep })).rejects.toBeInstanceOf(CodexError);
+    expect(fn).toHaveBeenCalledTimes(1); // non-retryable: one attempt, no backoff storm
+    expect(delays).toHaveLength(0);
   });
 
   it("retries network/transport errors", () => {

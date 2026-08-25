@@ -673,13 +673,15 @@ function failbackNotes(events: FailbackEvent[]): string[] {
   const seen = new Set<string>();
   const notes: string[] = [];
   for (const event of events) {
-    const key = `${event.provider}:${event.from}->${event.to}`;
+    const key = `${event.provider}:${event.from}->${event.to}:${event.reason}`;
     if (seen.has(key)) {
       continue;
     }
     seen.add(key);
     notes.push(
-      `Provider overload (#17): ${event.provider} fell back from \`${event.from}\` to \`${event.to}\` after retries — review ran on the older model.`
+      event.reason === "model-retired"
+        ? `Model retired (#65): ${event.provider} model \`${event.from}\` is no longer available under ChatGPT sign-in — review ran on \`${event.to}\` instead. Update \`model\` in .prowl-review.yml.`
+        : `Provider overload (#17): ${event.provider} fell back from \`${event.from}\` to \`${event.to}\` after retries — review ran on the older model.`
     );
   }
   return notes;
