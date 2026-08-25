@@ -174,7 +174,14 @@ function isPublicRepository(context: GitHubActionRepositoryContext): boolean | u
 
 /**
  * Refuse unsupported Codex usage in GitHub Actions before spawning the local CLI.
- * Local runs are unaffected; Actions runs must be self-hosted and non-public.
+ * Local runs are unaffected. Under Actions, `provider: codex` is allowed **iff the
+ * runner is self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`, or the
+ * `PROWL_RUNNER_ENVIRONMENT` test override) — **regardless of repository
+ * visibility**. All Prowl repos are public and run on the self-hosted Mac mini
+ * behind a job-level same-repo fork gate (#45/#64); OpenAI's "not for public
+ * repos" line is about putting `auth.json` in CI secrets on GitHub-hosted/shared
+ * runners, which we never do. A GitHub-hosted runner is refused; a missing
+ * `RUNNER_ENVIRONMENT` fails closed.
  */
 export function assertCodexActionSupported(env: NodeJS.ProcessEnv = process.env): void {
   if (env.GITHUB_ACTIONS !== "true") {
@@ -182,23 +189,47 @@ export function assertCodexActionSupported(env: NodeJS.ProcessEnv = process.env)
   }
 
   const runnerEnvironment = normalizeEnvString(env.PROWL_RUNNER_ENVIRONMENT) ?? normalizeEnvString(env.RUNNER_ENVIRONMENT);
-  if (runnerEnvironment !== "self-hosted") {
+  if (runnerEnvironment === "self-hosted") {
+    return;
+  }
+  if (runnerEnvironment === "github-hosted") {
     throw new CodexError(
-      "Codex provider is unsupported for this GitHub Actions run: `provider: codex` requires a " +
-        "self-hosted runner before invoking the local `codex` CLI.",
+      "Codex provider is unsupported on GitHub-hosted Actions runners: `provider: codex` needs the " +
+        "ChatGPT subscription login (`codex login`) on the runner. Use a self-hosted runner; never put " +
+        "`auth.json` in GitHub Actions secrets.",
       "unavailable"
     );
   }
+  throw new CodexError(
+    "Codex provider could not confirm a self-hosted runner: `RUNNER_ENVIRONMENT` was not set for this " +
+      "GitHub Actions run. `provider: codex` runs only on a self-hosted runner (RUNNER_ENVIRONMENT=self-hosted); " +
+      "refusing to spawn the local `codex` CLI (fail closed).",
+    "unavailable"
+  );
+}
 
-  const repository = resolveGitHubActionRepositoryContext(env);
-  const isPublic = isPublicRepository(repository);
-  if (isPublic !== false) {
-    throw new CodexError(
-      "Codex provider is unsupported for this GitHub Actions run: `provider: codex` requires a " +
-        "non-public repository before invoking the local `codex` CLI.",
-      "unavailable"
-    );
+/**
+ * One-line review reminder (not an error) for a public repo running `codex` on a
+ * self-hosted Actions runner: the workflow MUST keep its job-level same-repo fork
+ * gate so a fork PR is never scheduled onto the runner. Returns undefined when it
+ * doesn't apply (local run, github-hosted, private/unknown visibility). Reuses the
+ * repository-visibility detection helpers.
+ */
+export function codexPublicRepoForkGateNote(env: NodeJS.ProcessEnv = process.env): string | undefined {
+  if (env.GITHUB_ACTIONS !== "true") {
+    return undefined;
   }
+  const runnerEnvironment = normalizeEnvString(env.PROWL_RUNNER_ENVIRONMENT) ?? normalizeEnvString(env.RUNNER_ENVIRONMENT);
+  if (runnerEnvironment !== "self-hosted") {
+    return undefined;
+  }
+  if (isPublicRepository(resolveGitHubActionRepositoryContext(env)) !== true) {
+    return undefined;
+  }
+  return (
+    "Codex on a self-hosted runner for a public repo: keep the workflow's job-level same-repo fork gate " +
+    "so a fork PR is never scheduled onto the runner (see docs/self-hosted-runner.md)."
+  );
 }
 
 /**
@@ -329,12 +360,33 @@ export function parseCodexEvents(stdout: string): ParsedCodexEvents {
 
 /** Base class for Codex spawn/auth/limit errors so callers can branch on `kind`. */
 export class CodexError extends Error {
-  readonly kind: "unavailable" | "unauthenticated" | "usage-limit" | "failed";
-  constructor(message: string, kind: CodexError["kind"]) {
+  readonly kind: "unavailable" | "unauthenticated" | "usage-limit" | "model-retired" | "failed";
+  /** For `usage-limit`: the parsed reset hint (e.g. "in 2h", "at 15:00"), when present. */
+  readonly resetHint?: string;
+  constructor(message: string, kind: CodexError["kind"], options?: { resetHint?: string }) {
     super(message);
     this.name = "CodexError";
     this.kind = kind;
+    if (options?.resetHint) {
+      this.resetHint = options.resetHint;
+    }
   }
+}
+
+/** True when `error` is a {@link CodexError} (across module/duck-typed boundaries). */
+export function isCodexError(error: unknown): error is CodexError {
+  return (
+    error instanceof CodexError ||
+    (typeof error === "object" &&
+      error !== null &&
+      (error as { name?: unknown }).name === "CodexError" &&
+      typeof (error as { kind?: unknown }).kind === "string")
+  );
+}
+
+/** The {@link CodexError} kind for `error`, or undefined when it isn't a CodexError. */
+export function codexErrorKind(error: unknown): CodexError["kind"] | undefined {
+  return isCodexError(error) ? error.kind : undefined;
 }
 
 const RUN_LOGIN = "run `codex login` on this machine (the runner) to sign in with ChatGPT";
@@ -356,7 +408,23 @@ export function classifyCodexError(text: string): CodexError {
       `Codex subscription usage limit reached${reset ? ` — resets ${reset}` : ""}. ` +
         `Retry with \`@prowl-review review\` after the window resets. prowl-review does not ` +
         `meter usage; this is your ChatGPT plan allowance (see #65).`,
-      "usage-limit"
+      "usage-limit",
+      reset ? { resetHint: reset } : undefined
+    );
+  }
+  // A configured model that ChatGPT sign-in no longer offers (e.g. `gpt-5.4` after
+  // 2026-08-31). Distinct from a transient failure so the failback ladder can pick
+  // an available model instead of retrying a permanently-gone one (#65).
+  if (
+    /model[^\n]*\b(?:not available|unavailable|not found|no longer|unsupported|not supported|does not exist|is retired|deprecated|decommissioned)\b/.test(
+      lower
+    ) ||
+    /\b(?:unknown|invalid|unsupported)\s+model\b/.test(lower)
+  ) {
+    return new CodexError(
+      `Codex model is unavailable under ChatGPT sign-in: ${text.trim()}. ` +
+        `Falling back to an available model; update \`model\` in .prowl-review.yml (see #65).`,
+      "model-retired"
     );
   }
   // Anchor to concrete Codex/OpenAI auth phrasings so a path or message that

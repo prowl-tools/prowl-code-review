@@ -9,8 +9,11 @@ import {
   buildCodexArgs,
   classifyCodexError,
   codexProvider,
+  codexPublicRepoForkGateNote,
   composeCodexPrompt,
   CodexError,
+  isCodexError,
+  codexErrorKind,
   mapCodexUsage,
   parseCodexEvents,
   resolveCodexOptions,
@@ -393,30 +396,30 @@ describe("assertCodexActionSupported", () => {
       spawn: spawner,
       env: {
         GITHUB_ACTIONS: "true",
-        PROWL_RUNNER_ENVIRONMENT: "github-hosted",
-        PROWL_REPOSITORY_VISIBILITY: "private"
+        PROWL_RUNNER_ENVIRONMENT: "github-hosted"
       }
     }).catch((e) => e);
     expect(error).toBeInstanceOf(CodexError);
     expect((error as CodexError).kind).toBe("unavailable");
-    expect((error as Error).message).toMatch(/self-hosted runner/);
+    expect((error as Error).message).toMatch(/GitHub-hosted/);
+    expect((error as Error).message).toMatch(/never put/i);
     expect(calls).toHaveLength(0);
   });
 
-  it("rejects public repositories even on self-hosted Actions", () => {
+  it("allows public repositories on a self-hosted runner (regardless of visibility)", () => {
     expect(() =>
       assertCodexActionSupported({
         GITHUB_ACTIONS: "true",
         PROWL_RUNNER_ENVIRONMENT: "self-hosted",
         PROWL_REPOSITORY_VISIBILITY: "public"
       } as NodeJS.ProcessEnv)
-    ).toThrow(/non-public repository/);
+    ).not.toThrow();
   });
 
-  it("allows self-hosted non-public Actions using event payload visibility", () => {
+  it("allows self-hosted Actions via RUNNER_ENVIRONMENT even for a public repo event payload", () => {
     const dir = tempDir();
     const eventPath = join(dir, "event.json");
-    writeFileSync(eventPath, JSON.stringify({ repository: { visibility: "internal", private: false } }));
+    writeFileSync(eventPath, JSON.stringify({ repository: { visibility: "public", private: false } }));
     expect(() =>
       assertCodexActionSupported({
         GITHUB_ACTIONS: "true",
@@ -425,16 +428,81 @@ describe("assertCodexActionSupported", () => {
       } as NodeJS.ProcessEnv)
     ).not.toThrow();
   });
+
+  it("fails closed when RUNNER_ENVIRONMENT is missing under Actions", () => {
+    expect(() =>
+      assertCodexActionSupported({ GITHUB_ACTIONS: "true" } as NodeJS.ProcessEnv)
+    ).toThrow(/RUNNER_ENVIRONMENT/);
+  });
+});
+
+describe("codexPublicRepoForkGateNote", () => {
+  it("returns undefined for a local run", () => {
+    expect(codexPublicRepoForkGateNote({} as NodeJS.ProcessEnv)).toBeUndefined();
+  });
+
+  it("returns undefined on a github-hosted runner", () => {
+    expect(
+      codexPublicRepoForkGateNote({
+        GITHUB_ACTIONS: "true",
+        RUNNER_ENVIRONMENT: "github-hosted",
+        PROWL_REPOSITORY_VISIBILITY: "public"
+      } as NodeJS.ProcessEnv)
+    ).toBeUndefined();
+  });
+
+  it("returns undefined for a private repo on a self-hosted runner", () => {
+    expect(
+      codexPublicRepoForkGateNote({
+        GITHUB_ACTIONS: "true",
+        RUNNER_ENVIRONMENT: "self-hosted",
+        PROWL_REPOSITORY_VISIBILITY: "private"
+      } as NodeJS.ProcessEnv)
+    ).toBeUndefined();
+  });
+
+  it("reminds to keep the fork gate for a public repo on a self-hosted runner", () => {
+    const note = codexPublicRepoForkGateNote({
+      GITHUB_ACTIONS: "true",
+      RUNNER_ENVIRONMENT: "self-hosted",
+      PROWL_REPOSITORY_VISIBILITY: "public"
+    } as NodeJS.ProcessEnv);
+    expect(note).toMatch(/fork gate/i);
+    expect(note).toMatch(/self-hosted-runner\.md/);
+  });
 });
 
 describe("classifyCodexError", () => {
-  it("distinguishes limit, auth, and generic failures", () => {
+  it("distinguishes limit, auth, retired-model, and generic failures", () => {
     expect(classifyCodexError("429 too many requests").kind).toBe("usage-limit");
     expect(classifyCodexError("401 unauthorized").kind).toBe("unauthenticated");
     expect(classifyCodexError("not logged in — run codex login").kind).toBe("unauthenticated");
     expect(classifyCodexError("some other crash").kind).toBe("failed");
     // A generic failure whose text merely contains a path with "login" is NOT auth.
     expect(classifyCodexError("ENOENT: /home/runner/login/cache missing").kind).toBe("failed");
+  });
+
+  it("classifies a retired/unavailable model distinctly from a transient failure", () => {
+    expect(classifyCodexError("model gpt-5.4 is no longer available under ChatGPT sign-in").kind).toBe(
+      "model-retired"
+    );
+    expect(classifyCodexError("The requested model is not supported").kind).toBe("model-retired");
+    expect(classifyCodexError("unknown model: gpt-5.4").kind).toBe("model-retired");
+  });
+
+  it("parses the reset hint onto a usage-limit error", () => {
+    const err = classifyCodexError('You have hit your usage limit. Resets in 2h30m.');
+    expect(err.kind).toBe("usage-limit");
+    expect(err.resetHint).toBe("2h30m");
+    expect(err.message).toMatch(/resets 2h30m/);
+  });
+
+  it("exposes isCodexError / codexErrorKind guards", () => {
+    const err = classifyCodexError("429 too many requests");
+    expect(isCodexError(err)).toBe(true);
+    expect(isCodexError(new Error("nope"))).toBe(false);
+    expect(codexErrorKind(err)).toBe("usage-limit");
+    expect(codexErrorKind(new Error("nope"))).toBeUndefined();
   });
 });
 

@@ -134,13 +134,20 @@ instead of a metered key. It is deliberately narrow:
   (or `PROWL_AI_PROVIDER=codex`). Run `codex login` on the machine first; a missing
   or logged-out `codex` binary produces a clear "run `codex login` on this
   machine" error rather than a crash.
-- **Self-hosted / local infrastructure only.** OpenAI's own CI/CD authentication
-  guidance says, verbatim:
-  **"Do not use this workflow for public or open-source repositories."**
-  So `codex` is supported **only on infrastructure you control**
-  — a self-hosted runner or your laptop — and **never on GitHub-hosted runners for
-  public/open-source repos**, and the subscription login must live on that machine,
-  never in GitHub Actions secrets. Private repos on a self-hosted runner are fine.
+- **Self-hosted / local infrastructure only.** `codex` is supported **only on
+  infrastructure you control** — a self-hosted runner or your laptop — and the
+  subscription login (`codex login`) must live on that machine, **never in GitHub
+  Actions secrets**. Under `GITHUB_ACTIONS=true`, prowl-review allows `codex` iff
+  the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of
+  repository visibility**; a GitHub-hosted runner is refused, and a missing
+  `RUNNER_ENVIRONMENT` fails closed. OpenAI's own CI/CD authentication guidance
+  says, verbatim, **"Do not use this workflow for public or open-source
+  repositories."** — that warning is about copying `auth.json` into **CI secrets on
+  GitHub-hosted / shared runners**, which we never do; it does **not** apply to a
+  self-hosted runner whose login lives on the host. All Prowl repos are public and
+  run `codex` on a self-hosted runner behind a **job-level same-repo fork gate**
+  (see [`self-hosted-runner.md`](self-hosted-runner.md)) so a fork PR is never
+  scheduled onto it. Private repos on a self-hosted runner are equally fine.
 - **Never copy `auth.json` between machines or instances.** Refresh tokens are
   single-use; a copied file logs out whichever side refreshes second. Keep one
   `CODEX_HOME` per machine. When several runner instances share it, prowl-review's

@@ -514,10 +514,15 @@ metered API key, so per-review marginal cost is **$0.00**. It is **keyless** —
 `codex login`); prowl-review never calls an OpenAI endpoint directly and never
 reads or copies `auth.json`.
 
-It is **off by default and opt-in**, and — per OpenAI's own guidance
-("Do not use this workflow for public or open-source repositories") — supported
-**only on self-hosted / local infrastructure you control**, never on
-GitHub-hosted runners for public repos. There is **no Claude/Gemini equivalent**.
+It is **off by default and opt-in**, and supported **only on self-hosted / local
+infrastructure you control** — under GitHub Actions it runs iff the runner is
+self-hosted (`RUNNER_ENVIRONMENT=self-hosted`), **regardless of repository
+visibility**; a GitHub-hosted runner is refused. OpenAI's guidance ("Do not use
+this workflow for public or open-source repositories") is about `auth.json` in
+CI secrets on hosted/shared runners, which we never do — not about a self-hosted
+runner whose login lives on the host. All Prowl repos are public and run `codex`
+on a self-hosted runner behind a job-level same-repo fork gate. There is **no
+Claude/Gemini equivalent**.
 
 ```yaml
 # .prowl-review.yml

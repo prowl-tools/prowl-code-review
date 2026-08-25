@@ -100,6 +100,7 @@ import { buildWalkthrough } from "./review/walkthrough.js";
 import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./review/inline.js";
 import { summarizeSuggestionGating, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./review/suggestions.js";
 import {
+  codexPublicRepoForkGateNote,
   emptyUsage,
   resolveProviderConfig,
   type FailbackEvent,
@@ -449,6 +450,19 @@ function addUsage(a: TokenUsage, b: TokenUsage): TokenUsage {
     cachedInputTokens: a.cachedInputTokens + b.cachedInputTokens,
     ...(cacheWriteInputTokens > 0 ? { cacheWriteInputTokens } : {})
   };
+}
+
+/**
+ * Reminder note when `codex` runs on a self-hosted Actions runner for a public
+ * repo: keep the job-level same-repo fork gate (#64). Empty unless codex is in
+ * play and the run is a public-repo self-hosted Actions run.
+ */
+function codexForkGateNotes(configs: ProviderConfig[]): string[] {
+  if (!configs.some((config) => config.provider === "codex")) {
+    return [];
+  }
+  const note = codexPublicRepoForkGateNote();
+  return note ? [note] : [];
 }
 
 /** Convert failed specialist passes into reviewer-visible coverage notes. */
@@ -2138,6 +2152,7 @@ async function reviewPullRequestImpl(
         ...ignoredSuppression.notes,
         ...tidied.notes,
         ...failbackNotes(failbackEvents),
+        ...codexForkGateNotes([config, ...(options.ensemble?.configs ?? [])]),
         ...redactionNotes,
         ...groundingNotes,
         ...(runRequirementsOnlyReview
@@ -2489,6 +2504,7 @@ async function reviewPullRequestImpl(
       ...ignoredSuppression.notes,
       ...tidied.notes,
       ...tierNotes,
+      ...codexForkGateNotes([config, ...(options.ensemble?.configs ?? [])]),
       ...injectionNotes(reviewFiles).map((note) => truncateNote(note)),
       ...redactionNotes,
       ...contextNotes,

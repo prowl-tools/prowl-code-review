@@ -31,7 +31,9 @@ All notable changes to Prowl Review will be documented in this file.
     10 min) kills a hung `codex` child (SIGTERM → SIGKILL). **Binary override** `PROWL_CODEX_BIN`
     for runners without the user's PATH.
   - **Hardening.** GitHub Action runs fail before spawning the local Codex CLI unless
-    they are on a self-hosted runner for a non-public repository. A failed Codex turn
+    they are on a **self-hosted runner** (`RUNNER_ENVIRONMENT=self-hosted`), **regardless
+    of repository visibility**; a GitHub-hosted runner is refused and a missing
+    `RUNNER_ENVIRONMENT` fails closed. A failed Codex turn
     is treated as a failure even when a premature
     `agent_message` was emitted (exit code + `turn.completed` are checked); the child stdin is
     guarded against EPIPE; and the `codex` child receives an **allowlisted environment only** —
@@ -39,8 +41,10 @@ All notable changes to Prowl Review will be documented in this file.
     process that runs model-generated shell commands.
   - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
   - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
-    only** — for the GitHub Action it is restricted to self-hosted runners on non-public
-    repositories (OpenAI: "Do not use this workflow for public or open-source repositories");
+    only** — for the GitHub Action it is restricted to self-hosted runners (any repository
+    visibility), behind a job-level same-repo fork gate. OpenAI's "Do not use this workflow for
+    public or open-source repositories" line is about `auth.json` in CI secrets on hosted/shared
+    runners, which we never do — not about a self-hosted runner whose login lives on the host;
     **no Claude/Gemini equivalent, ever**. Documented in
     `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
 - **Self-hosted Codex runner rollout — repo side (backlog #64).** The dogfood auto-review and
@@ -67,6 +71,18 @@ All notable changes to Prowl Review will be documented in this file.
     public-repo caveats stated verbatim. Runner registration and rollout to the other
     Prowl/personal repos are still pending.
   - Registered the custom `prowl-review` runner label in `.github/actionlint.yaml`.
+
+### Fixed
+- **Codex Actions guard no longer refuses public repos (blocker for #64/#65).** Under
+  `GITHUB_ACTIONS=true`, `provider: codex` is allowed **iff the runner is self-hosted**
+  (`RUNNER_ENVIRONMENT=self-hosted`, `PROWL_RUNNER_ENVIRONMENT` override kept for tests) —
+  **regardless of repository visibility**. A GitHub-hosted runner is refused with an actionable
+  message ("use a self-hosted runner; never put `auth.json` in Actions secrets"), and a missing
+  `RUNNER_ENVIRONMENT` under Actions fails closed. The previous public/private-repository check —
+  which made every dogfood specialist pass on the public repo fail with "requires a non-public
+  repository" (seen on PR #92) — is removed; the visibility detection is now reused only to add a
+  one-line **review note** reminding public-repo self-hosted runs to keep the job-level same-repo
+  fork gate.
 
 ## [0.3.0] - 2026-08-03
 
