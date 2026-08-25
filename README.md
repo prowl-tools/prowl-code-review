@@ -532,6 +532,32 @@ files are re-read through prowl-review's sandbox + secret redaction before they
 reach the review. See [`docs/auth.md`](docs/auth.md) and the self-hosted runner
 rollout (#64) for the full policy.
 
+### Self-hosted runner setup (shape only)
+
+To run `provider: codex` from CI, the subscription login lives on a **self-hosted
+runner**, never in a GitHub secret. The short version (full detail in
+[`docs/self-hosted-runner.md`](docs/self-hosted-runner.md); secrets-bearing steps
+in a private runbook):
+
+- **Dedicated `CODEX_HOME` per host**, its own **`codex login --device-auth`**,
+  **one login per host** — the machine-wide Codex lock serializes multiple runner
+  instances. **Never copy `auth.json`** between hosts/instances.
+- **Runner service:** `.env` sets `CODEX_HOME=…`; `.path` must include the `codex`
+  binary dir (e.g. `/opt/homebrew/bin`). Node comes from the Action's own
+  `actions/setup-node` step.
+- **Labels** `[self-hosted, macOS, prowl-review]`; the review job targets them
+  while fork-gating jobs stay on hosted `ubuntu-latest`.
+- **Registration:** orgs use one org-level runner in a restricted group; personal
+  accounts allow repo-level runners only (one per opted-in repo). Private repos
+  need no fork gate.
+- Copy-paste workflows:
+  [`examples/workflows/prowl-review-self-hosted-codex.yml`](examples/workflows/prowl-review-self-hosted-codex.yml)
+  (+ the command variant).
+
+**Public repos:** the same-repo fork gate is **required** (OpenAI's *"Do not use
+this workflow for public or open-source repositories."* + GitHub's runner
+warning). **Private repos may drop it.**
+
 ## Auto-generated PR descriptions (#33)
 
 When a pull request is opened with an **empty description**, prowl-review can

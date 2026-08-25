@@ -813,8 +813,10 @@ describe("command workflow metadata", () => {
     const workflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review-command.yml"), "utf8");
     const reviewWorkflow = readFileSync(join(process.cwd(), ".github/workflows/prowl-review.yml"), "utf8");
 
+    // Self-hosted Codex dogfood (#64): both workflows key the same per-PR + per-repo
+    // Codex concurrency group so a command and an auto review of one PR serialize.
     expect(workflow).toContain(
-      "group: prowl-review-${{ github.event.issue.number || github.event.pull_request.number }}"
+      "group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
     );
     expect(workflow).not.toContain("queue: max");
     expect(workflow).toContain("cancel-in-progress: false");
@@ -824,8 +826,11 @@ describe("command workflow metadata", () => {
     // Auto-review chains off CI via workflow_run (#61): resolve first, then key by
     // the same PR number as this command workflow so publish/dedupe serializes.
     expect(reviewWorkflow).toContain("needs: resolve");
-    expect(reviewWorkflow).toContain("group: prowl-review-${{ needs.resolve.outputs.pr_number }}");
+    expect(reviewWorkflow).toContain(
+      "group: prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}"
+    );
     expect(reviewWorkflow).not.toContain("queue: max");
+    // report-unreviewable stays on hosted ubuntu with cancel-in-progress: false.
     expect(reviewWorkflow).toContain("cancel-in-progress: false");
     expect(workflow).toContain("github.event.comment.user.type != 'Bot'");
     expect(workflow).toContain("github.event.comment.author_association == 'OWNER'");
@@ -844,18 +849,23 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("Failed to resolve complete PR metadata");
     expect(workflow).toContain("echo \"base_sha=${base_sha}\"");
     expect(workflow).toContain("echo \"head_repo=${head_repo}\"");
-    expect(workflow).toContain("ref: ${{ steps.pr.outputs.base_sha }}");
+    // base_sha is now a resolve-job output consumed by the self-hosted command job.
+    expect(workflow).toContain("ref: ${{ needs.resolve.outputs.base_sha }}");
     expect(workflow).toContain("path: prowl-base");
     expect(workflow).toMatch(/action_file="prowl-base\/action\.yml"/);
     expect(workflow).toContain("grep -Eq '^[[:space:]]{2}mode:' \"${action_file}\"");
     expect(workflow).toContain("grep -q 'inputs.mode' \"${action_file}\"");
-    // Command mode also gates on ensemble-key support so it self-bootstraps (#53).
-    expect(workflow).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
-    expect(workflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
-    expect(reviewWorkflow).toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
-    expect(reviewWorkflow).toContain("grep -q 'ai-key-gemini' \"${action_file}\"");
+    // Command mode gates on the keyless Codex provider (#45/#64) so it self-bootstraps;
+    // both guards require the base action to actually mention `codex`, not just an
+    // ai-provider input (which every recent base action already has).
+    expect(workflow).toContain("grep -q 'ai-provider' \"${action_file}\"");
+    expect(workflow).toContain("grep -q 'codex' \"${action_file}\"");
+    expect(workflow).not.toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'ai-provider' \"${action_file}\"");
+    expect(reviewWorkflow).toContain("grep -q 'codex' \"${action_file}\"");
+    expect(reviewWorkflow).not.toContain("grep -q 'ai-key-anthropic' \"${action_file}\"");
     expect(reviewWorkflow).toContain("grep -q 'pr-draft' \"${action_file}\"");
-    expect(workflow).toContain("Trusted base does not support the prowl-review command-mode ensemble yet");
+    expect(workflow).toContain("Trusted base does not support the prowl-review command-mode Codex provider yet");
     expect(workflow).toContain("Checkout PR head for context");
     expect(workflow).toContain("uses: ./prowl-base");
     expect(workflow).toContain("config-path: ${{ github.workspace }}/prowl-base/.prowl-review.yml");
@@ -863,8 +873,11 @@ describe("command workflow metadata", () => {
     expect(workflow).toContain("guidelines-path: ${{ github.workspace }}/prowl-base");
     expect(workflow).not.toContain("config-path: ${{ github.workspace }}/pr-head");
     expect(workflow).not.toContain("guidelines-path: ${{ github.workspace }}/pr-head");
-    expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ steps.pr.outputs.head_sha }}");
-    expect(workflow).toContain("PROWL_REVIEWED_HEAD_REPOSITORY: ${{ steps.pr.outputs.head_repo }}");
+    // Keyless Codex on the self-hosted job; no provider key input.
+    expect(workflow).toContain("ai-provider: codex");
+    expect(workflow).not.toContain("ai-key-anthropic:");
+    expect(workflow).toContain("PROWL_REVIEWED_HEAD_SHA: ${{ needs.resolve.outputs.head_sha }}");
+    expect(workflow).toContain("PROWL_REVIEWED_HEAD_REPOSITORY: ${{ needs.resolve.outputs.head_repo }}");
   });
 });
 

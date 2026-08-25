@@ -34,6 +34,28 @@ into each one, define it **once** in your org's `.github` repo and have every re
 opt in with a few lines. See [`reusable/`](reusable/) for the `workflow_call`
 templates + the tiny per-repo callers.
 
+## Self-hosted runner + Codex subscription (keyless, $0.00/review, #45/#64)
+
+Have an always-on machine? Run reviews through your **ChatGPT subscription** via
+the first-party `codex` CLI — keyless, no `PROWL_AI_KEY*`, no provider secret in
+GitHub. Copy
+[`workflows/prowl-review-self-hosted-codex.yml`](workflows/prowl-review-self-hosted-codex.yml)
+(auto review) and, for `@prowl-review` commands,
+[`workflows/prowl-review-command-self-hosted-codex.yml`](workflows/prowl-review-command-self-hosted-codex.yml).
+Both are repo-agnostic (`uses: prowl-tools/prowl-code-review@v1`) and carry a
+job-level same-repo gate so fork PRs never land on the runner.
+
+> **Public/open-source repos:** read the header caveats in each file first —
+> OpenAI's guidance is *"Do not use this workflow for public or open-source
+> repositories."*, and GitHub advises against self-hosted runners on public repos.
+> The fork gate is **required** there. **Private repos may drop the fork gate.**
+
+Set up the runner (`codex login` into a dedicated `CODEX_HOME`, runner labels,
+one login per host) as described in
+[`docs/self-hosted-runner.md`](../docs/self-hosted-runner.md) and the
+[Codex section of `docs/auth.md`](../docs/auth.md). The subscription login lives
+**only on the runner**, never in GitHub secrets.
+
 ## Local pre-push review (no GitHub)
 
 Run the same engine against a local diff before you push:

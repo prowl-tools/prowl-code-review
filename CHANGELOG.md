@@ -43,6 +43,30 @@ All notable changes to Prowl Review will be documented in this file.
     repositories (OpenAI: "Do not use this workflow for public or open-source repositories");
     **no Claude/Gemini equivalent, ever**. Documented in
     `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
+- **Self-hosted Codex runner rollout — repo side (backlog #64).** The dogfood auto-review and
+  `@prowl-review` command workflows now run on a self-hosted runner
+  (`runs-on: [self-hosted, macOS, prowl-review]`) using keyless `provider: codex`, so reviews are
+  subscription-backed ($0.00/review) with **no provider secret in GitHub**.
+  - **Job-level same-repo gate** on the self-hosted jobs (`head_repo == github.repository`) so a
+    fork PR is never scheduled onto the runner; the fork-gating resolve job and the neutral
+    fork-skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split into an
+    ubuntu trust-resolve job and a self-hosted command job.
+  - **Per-PR Codex concurrency** (`prowl-review-codex-<repo>-<pr>`) with a 30-minute timeout;
+    the shared auto-review/command group is non-cancelling so maintainer commands are not
+    interrupted, and machine-wide serialization across repos/instances is the provider's Codex
+    lock, not GitHub.
+  - Dogfood `.prowl-review.yml` switched to `provider: codex` / `model: gpt-5.5` /
+    `codex.effort: low` (the Claude+Gemini ensemble is retained as a commented, key-gated
+    fallback). The workflows drop the `ai-key-anthropic`/`ai-key-gemini` inputs and pass
+    `ai-provider: codex`.
+  - **Repo-agnostic example workflows** (`examples/workflows/prowl-review-self-hosted-codex.yml`
+    + command variant) and docs (`docs/self-hosted-runner.md`, plus Codex sections of
+    `docs/auth.md` and `README.md`) covering the shape of runner setup — dedicated `CODEX_HOME`
+    with its own `codex login`, runner `.env`/`.path`, labels, org- vs. repo-level registration,
+    never copying `auth.json`, and the `--sandbox read-only` file-read boundary — with the
+    public-repo caveats stated verbatim. Runner registration and rollout to the other
+    Prowl/personal repos are still pending.
+  - Registered the custom `prowl-review` runner label in `.github/actionlint.yaml`.
 
 ## [0.3.0] - 2026-08-03
 
