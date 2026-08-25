@@ -762,6 +762,87 @@ ${DELTA_DIFF}`;
     expect(result.checkRunConclusion).toBe("failure");
   });
 
+  it("posts a NEUTRAL 'Review skipped/incomplete' check when all passes fail — never green (#65 / #92)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "boom" },
+          { specialist: "security", findings: 0, ok: false, error: "boom" }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" } // gated: without the skip this would be green
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(input.plan.title).toBe("Review skipped/incomplete");
+    expect(result.checkRunConclusion).toBe("neutral");
+    expect(result.payload.body).toContain("Review incomplete");
+  });
+
+  it("surfaces a Codex usage-limit as a neutral check + retry note, not a red check (#65)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          {
+            specialist: "correctness",
+            findings: 0,
+            ok: false,
+            error: "usage limit",
+            errorKind: "usage-limit",
+            resetHint: "2h30m"
+          }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" }
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(input.plan.summary).toContain("usage limit");
+    expect(result.payload.body).toContain("Codex subscription usage limit");
+    expect(result.payload.body).toContain("after 2h30m");
+  });
+
+  it("surfaces an unauthenticated Codex runner as a neutral check with an actionable note (#65)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "not logged in", errorKind: "unauthenticated" }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" }
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(result.payload.body).toContain("codex login");
+  });
+
   it("does not publish a check run when disabled or on a dry run (#24)", async () => {
     const submitCheckRun = vi.fn(async () => {});
     const offDeps = { ...makeDeps(), submitCheckRun };

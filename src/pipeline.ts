@@ -101,6 +101,8 @@ import { buildReviewPayload, type ReviewEvent, type ReviewPayload } from "./revi
 import { summarizeSuggestionGating, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./review/suggestions.js";
 import {
   codexPublicRepoForkGateNote,
+  codexErrorKind,
+  isCodexError,
   emptyUsage,
   resolveProviderConfig,
   type FailbackEvent,
@@ -463,6 +465,102 @@ function codexForkGateNotes(configs: ProviderConfig[]): string[] {
   }
   const note = codexPublicRepoForkGateNote();
   return note ? [note] : [];
+}
+
+/**
+ * A hard review skip (#65): the review produced **no coverage** — every specialist
+ * pass failed (or there were passes and all failed), typically because of a Codex
+ * subscription usage limit, an unauthenticated/unavailable runner, or all
+ * configured models being retired. Distinct from partial degradation (some passes
+ * ran), which stays a normal — if caveated — review.
+ */
+interface ReviewSkip {
+  /** Summary line for the neutral check run. */
+  reason: string;
+  /** Reviewer-visible walkthrough note. */
+  note: string;
+}
+
+/** Precedence for the dominant failure cause when several passes failed for different reasons. */
+const SKIP_KIND_PRECEDENCE = ["usage-limit", "model-retired", "unauthenticated", "unavailable"] as const;
+
+/**
+ * Classify a coverage-absent review into a neutral-check reason + a review note,
+ * or undefined when coverage is present (a normal or partially-degraded review).
+ * `contextError` is the context-retrieval error (if any), whose underlying Codex
+ * kind is considered alongside the failed passes.
+ */
+function classifyReviewSkip(reviewResult: ReviewResult, contextError?: unknown): ReviewSkip | undefined {
+  const total = reviewResult.passes.length;
+  if (total === 0) {
+    return undefined; // no passes were scheduled (e.g. no reviewable files) — not a skip
+  }
+  const passed = reviewResult.passes.filter((pass) => pass.ok).length;
+  if (passed > 0) {
+    return undefined; // partial coverage — handled as a normal (caveated) review
+  }
+
+  // Gather the classified Codex kinds from the failed passes + context error.
+  const kinds = new Set<string>();
+  let resetHint: string | undefined;
+  for (const pass of reviewResult.passes) {
+    if (pass.errorKind) {
+      kinds.add(pass.errorKind);
+    }
+    if (pass.resetHint && !resetHint) {
+      resetHint = pass.resetHint;
+    }
+  }
+  const contextCause =
+    contextError instanceof ContextRetrievalError ? contextError.cause : contextError;
+  const contextKind = codexErrorKind(contextCause);
+  if (contextKind) {
+    kinds.add(contextKind);
+  }
+  if (!resetHint && isCodexError(contextCause) && contextCause.resetHint) {
+    resetHint = contextCause.resetHint;
+  }
+
+  const dominant = SKIP_KIND_PRECEDENCE.find((kind) => kinds.has(kind));
+  switch (dominant) {
+    case "usage-limit":
+      return {
+        reason:
+          "Review skipped: Codex subscription usage limit reached before any specialist pass completed. " +
+          "prowl-review does not meter usage — this is your ChatGPT plan allowance (#65).",
+        note:
+          `skipped: Codex subscription usage limit; retry with \`@prowl-review review\`` +
+          `${resetHint ? ` after ${resetHint}` : " after the window resets"}.`
+      };
+    case "model-retired":
+      return {
+        reason:
+          "Review skipped: every configured Codex model is unavailable under ChatGPT sign-in (retired); " +
+          "the failback ladder was exhausted (#65).",
+        note:
+          "skipped: all configured Codex models are unavailable under ChatGPT sign-in (retired) and the " +
+          "failback ladder was exhausted; update `model` in .prowl-review.yml."
+      };
+    case "unauthenticated":
+      return {
+        reason:
+          "Review skipped: Codex is not authenticated on the runner — a runner-config problem, not a PR problem (#65).",
+        note: "skipped: Codex is not authenticated on the runner; run `codex login` on the runner, then re-run."
+      };
+    case "unavailable":
+      return {
+        reason:
+          "Review skipped: the Codex CLI is unavailable on this runner — a runner-config problem, not a PR problem (#65).",
+        note:
+          "skipped: the Codex CLI is unavailable on this runner (not installed, or not a self-hosted runner); " +
+          "fix the runner config, then re-run."
+      };
+    default:
+      return {
+        reason: "Review skipped: all review specialist passes failed, so there is no coverage to gate on (#65).",
+        note: "skipped: all review specialist passes failed; coverage is absent — see the pass errors above."
+      };
+  }
 }
 
 /** Convert failed specialist passes into reviewer-visible coverage notes. */
@@ -1340,6 +1438,10 @@ async function maybeSubmitCheckRun(
     incremental: boolean;
     /** Approval rubric decision (#52); when engaged it drives the conclusion. */
     approval?: ApprovalDecision;
+    /** Specialist-pass coverage, so a zero-finding partial run isn't a clean pass (#65). */
+    coverage?: { passed: number; total: number };
+    /** Coverage absent → neutral "Review skipped/incomplete" with this reason (#65). */
+    incomplete?: { reason: string };
     /** Live in-progress run to complete in place, if one was opened at review start. */
     checkRunId?: number;
   }
@@ -1352,7 +1454,9 @@ async function maybeSubmitCheckRun(
       findings: input.findings,
       failOn: input.checkRun.failOn,
       incremental: input.incremental,
-      approval: input.approval
+      approval: input.approval,
+      ...(input.coverage ? { coverage: input.coverage } : {}),
+      ...(input.incomplete ? { incomplete: input.incomplete } : {})
     });
     await submit(octokit, ref, { headSha: input.headSha, plan, checkRunId: input.checkRunId });
     return plan.conclusion;
@@ -2292,6 +2396,7 @@ async function reviewPullRequestImpl(
   let contextUsage = emptyUsage();
   let contextNotes: string[] = [];
   let contextDegraded = false;
+  let contextError: unknown;
   if (!options.skipContext && options.toolkitRoot && reviewFiles.length > 0) {
     try {
       const contextMaxTokens =
@@ -2331,6 +2436,7 @@ async function reviewPullRequestImpl(
         contextUsage = error.usage;
       }
       contextDegraded = true;
+      contextError = error;
       contextNotes = [truncateNote(`Context retrieval failed; continuing without extra context: ${message}`)];
     }
   }
@@ -2435,6 +2541,10 @@ async function reviewPullRequestImpl(
   const degraded =
     passesPassed < reviewResult.passes.length || !reviewResult.verification.ok || contextDegraded;
   const approvalCoverageIncomplete = degraded || fullSkipped.length > 0;
+  // Coverage-absent skip (#65): every pass failed (usage-limit / auth / retired
+  // model / generic). Drives a neutral "Review skipped/incomplete" check + a note,
+  // never a red ✗ or a green "No issues found".
+  const reviewSkip = classifyReviewSkip(reviewResult, contextError);
 
   const usageBeforeTidy = addUsage(usageBeforePrDescription, prDescriptionUsage);
 
@@ -2518,6 +2628,7 @@ async function reviewPullRequestImpl(
       ...judgeNotes(reviewResult),
       ...configOverrideNotes,
       ...suggestionGatingNotes(reviewResult.findings, options.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE),
+      ...(reviewSkip ? [reviewSkip.note] : []),
       ...reviewPassNotes(reviewResult),
       ...budgetNotes(totalUsage, options.budgetTokens).map((note) => truncateNote(note))
     ]
@@ -2601,6 +2712,8 @@ async function reviewPullRequestImpl(
     findings: reviewResult.findings,
     incremental: incrementalBaseSha !== undefined,
     approval,
+    coverage,
+    ...(reviewSkip ? { incomplete: { reason: reviewSkip.reason } } : {}),
     checkRunId: state.checkRunId
   });
   // A defined conclusion means the run completed; the wrapper won't touch it.

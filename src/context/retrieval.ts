@@ -194,13 +194,21 @@ export class ContextRetrievalError extends Error {
   readonly usage: TokenUsage;
   readonly rounds: number;
   readonly notes: string[];
+  /** The underlying error (e.g. a CodexError), so callers can inspect its kind (#65). */
+  readonly cause?: unknown;
 
-  constructor(message: string, options: { usage: TokenUsage; rounds: number; notes: string[] }) {
+  constructor(
+    message: string,
+    options: { usage: TokenUsage; rounds: number; notes: string[]; cause?: unknown }
+  ) {
     super(message);
     this.name = "ContextRetrievalError";
     this.usage = options.usage;
     this.rounds = options.rounds;
     this.notes = [...options.notes];
+    if (options.cause !== undefined) {
+      this.cause = options.cause;
+    }
   }
 }
 
