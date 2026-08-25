@@ -1459,6 +1459,63 @@ describe("review command action env helpers", () => {
     expect(records.map((record) => record.inputTokens)).toEqual([50, 100, 200]);
   });
 
+  it("prices a mixed codex + API-key ensemble per member — codex $0.00, the key provider metered (#65)", () => {
+    const root = tempDir();
+    const summaryPath = join(root, "summary.md");
+    const logSpy = vi.spyOn(console, "log").mockImplementation(() => {});
+
+    reportReviewCommandResult(
+      reviewCommandResult({
+        review: {
+          findings: [],
+          raw: [],
+          passes: [],
+          verification: { verified: 0, droppedFalsePositive: 0, demoted: 0, unverified: 0, ok: true },
+          judge: { duplicatesRemoved: 0, belowThreshold: 0, belowConfidence: 0, capped: 0 },
+          usage: { inputTokens: 300, outputTokens: 0, cachedInputTokens: 0 }
+        },
+        usage: { inputTokens: 300, outputTokens: 0, cachedInputTokens: 0 },
+        ensemble: {
+          providers: [
+            {
+              provider: "codex",
+              model: "gpt-5.5",
+              ok: true,
+              findings: 0,
+              usage: { inputTokens: 200, outputTokens: 0, cachedInputTokens: 0 }
+            },
+            {
+              provider: "anthropic",
+              model: "claude-x",
+              ok: true,
+              findings: 0,
+              usage: { inputTokens: 100, outputTokens: 0, cachedInputTokens: 0 }
+            }
+          ]
+        }
+      }),
+      {
+        owner: "o",
+        repo: "r",
+        pullNumber: 7,
+        root,
+        providerConfig: { provider: "codex", model: "gpt-5.5", apiKey: "" },
+        pricing: { "claude-x": { input: 10, output: 0 } },
+        env: {
+          GITHUB_STEP_SUMMARY: summaryPath,
+          PROWL_USAGE_LOG: "usage.jsonl"
+        } as NodeJS.ProcessEnv,
+        now: () => new Date("2026-06-14T00:00:00.000Z")
+      }
+    );
+
+    const summary = readFileSync(summaryPath, "utf8");
+    // codex member reports the subscription label at $0.00; the key provider is metered.
+    expect(summary).toContain("$0.00 (ChatGPT subscription) · codex/gpt-5.5");
+    expect(summary).toContain("~$0.0010 · anthropic/claude-x"); // 100 input tok * $10/1M
+    logSpy.mockRestore();
+  });
+
   it("includes the risk tier in cost output only when present", () => {
     const root = tempDir();
     const summaryPath = join(root, "summary.md");
