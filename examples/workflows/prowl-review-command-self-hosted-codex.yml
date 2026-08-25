@@ -24,6 +24,7 @@ on:
 # every inline review comment then creates a workflow run.
 
 # Shared per-PR Codex group serializes commands with auto reviews of the same PR.
+# Keep this non-cancelling so auto-review pushes do not interrupt commands.
 concurrency:
   group: prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number }}
   cancel-in-progress: false

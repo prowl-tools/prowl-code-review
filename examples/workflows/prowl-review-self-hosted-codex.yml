@@ -24,13 +24,15 @@ on:
   pull_request:
     types: [opened, synchronize, ready_for_review, reopened]
 
-# Per-PR serialization; a newer push supersedes an in-flight review. Machine-wide
-# serialization ACROSS repos/runner instances is the provider's Codex lock
-# ($CODEX_HOME/.prowl-review.lock, on by default for `provider: codex`), NOT
-# GitHub concurrency.
+# Per-PR serialization shared with the command workflow. Keep this
+# non-cancelling so a new auto-review cannot interrupt an in-flight maintainer
+# command; stale auto reviews skip publishing when the reviewed head has
+# advanced. Machine-wide serialization ACROSS repos/runner instances is the
+# provider's Codex lock ($CODEX_HOME/.prowl-review.lock, on by default for
+# `provider: codex`), NOT GitHub concurrency.
 concurrency:
   group: prowl-review-codex-${{ github.repository }}-${{ github.event.pull_request.number }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   pull-requests: write   # post the review + inline comments

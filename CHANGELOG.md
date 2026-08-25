@@ -52,7 +52,9 @@ All notable changes to Prowl Review will be documented in this file.
     fork-skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split into an
     ubuntu trust-resolve job and a self-hosted command job.
   - **Per-PR Codex concurrency** (`prowl-review-codex-<repo>-<pr>`) with a 30-minute timeout;
-    machine-wide serialization across repos/instances is the provider's Codex lock, not GitHub.
+    the shared auto-review/command group is non-cancelling so maintainer commands are not
+    interrupted, and machine-wide serialization across repos/instances is the provider's Codex
+    lock, not GitHub.
   - Dogfood `.prowl-review.yml` switched to `provider: codex` / `model: gpt-5.5` /
     `codex.effort: low` (the Claude+Gemini ensemble is retained as a commented, key-gated
     fallback). The workflows drop the `ai-key-anthropic`/`ai-key-gemini` inputs and pass

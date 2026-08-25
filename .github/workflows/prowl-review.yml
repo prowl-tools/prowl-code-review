@@ -106,14 +106,14 @@ jobs:
             fi
           done
 
-          set -- ${matches}
-          count=$#
+          IFS=" " read -r -a match_array <<< "${matches}"
+          count=${#match_array[@]}
           if [ "${count}" -ne 1 ]; then
             echo "resolved=false" >> "$GITHUB_OUTPUT"
             echo "Skipping: expected exactly one open PR at CI head ${HEAD_SHA}, found ${count} (${matches:-none})."
             exit 0
           fi
-          pr_number="$1"
+          pr_number="${match_array[0]}"
 
           # Re-derive trusted base/head from the resolved PR (never from the CI
           # payload) so the config/guidelines checkout stays anchored to base code.
@@ -223,13 +223,16 @@ jobs:
     # row without touching the self-hosted runner.
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
-    # Per-PR serialization; a newer push supersedes an in-flight review. Machine-
-    # wide serialization ACROSS repos/runner instances is enforced by the
-    # provider's Codex lock ($CODEX_HOME/.prowl-review.lock, on by default for
-    # `provider: codex`), NOT by GitHub concurrency.
+    # Per-PR serialization shared with the command workflow. Keep this
+    # non-cancelling so a new auto-review cannot interrupt an in-flight
+    # maintainer command; stale auto reviews skip publishing when the reviewed
+    # head has advanced. Machine-wide serialization ACROSS repos/runner
+    # instances is enforced by the provider's Codex lock
+    # ($CODEX_HOME/.prowl-review.lock, on by default for `provider: codex`), NOT
+    # by GitHub concurrency.
     concurrency:
       group: prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}
-      cancel-in-progress: true
+      cancel-in-progress: false
     env:
       PROWL_APP_CONFIGURED: ${{ secrets.PROWL_APP_ID != '' && secrets.PROWL_APP_PRIVATE_KEY != '' }}
     steps:

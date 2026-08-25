@@ -920,11 +920,12 @@ esac
     };
     expect(doc.jobs.review.needs).toBe("resolve");
     if (label === "dogfood") {
-      // Self-hosted Codex dogfood (#64): per-PR + per-repo group, and a newer push
-      // supersedes an in-flight review. Machine-wide serialization is the Codex lock.
+      // Self-hosted Codex dogfood (#64): per-PR + per-repo group shared
+      // with commands, but non-cancelling so maintainer requests are not
+      // interrupted. Machine-wide serialization is the Codex lock.
       expect(doc.jobs.review.concurrency).toMatchObject({
         group: "prowl-review-codex-${{ github.repository }}-${{ needs.resolve.outputs.pr_number }}",
-        "cancel-in-progress": true
+        "cancel-in-progress": false
       });
     } else {
       expect(doc.jobs.review.concurrency).toMatchObject({
@@ -1027,6 +1028,9 @@ describe("self-hosted Codex dogfood (#64)", () => {
 
   it("both dogfood workflows serialize on the shared per-PR Codex concurrency group", () => {
     const autoText = readRepo(".github/workflows/prowl-review.yml");
+    const autoDoc = parseYaml(autoText) as {
+      jobs: { review: { concurrency: { "cancel-in-progress"?: unknown } } };
+    };
     const commandDoc = parseYaml(readRepo(".github/workflows/prowl-review-command.yml")) as {
       concurrency: { group: string; "cancel-in-progress"?: unknown };
     };
@@ -1036,7 +1040,9 @@ describe("self-hosted Codex dogfood (#64)", () => {
     expect(commandDoc.concurrency.group).toBe(
       "prowl-review-codex-${{ github.repository }}-${{ github.event.issue.number || github.event.pull_request.number }}"
     );
-    // Maintainer commands are not cancelled by a newer command in the group.
+    // Maintainer commands are not cancelled by newer commands or auto reviews in
+    // the shared group.
+    expect(autoDoc.jobs.review.concurrency["cancel-in-progress"]).toBe(false);
     expect(commandDoc.concurrency["cancel-in-progress"]).toBe(false);
   });
 
@@ -1071,7 +1077,7 @@ describe("self-hosted Codex dogfood (#64)", () => {
     expect(doc.jobs.review["timeout-minutes"]).toBe(30);
     expect(doc.concurrency).toMatchObject({
       group: "prowl-review-codex-${{ github.repository }}-${{ github.event.pull_request.number }}",
-      "cancel-in-progress": true
+      "cancel-in-progress": false
     });
   });
 

@@ -15,8 +15,8 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     auto-review + `@prowl-review` command workflows now run keyless `provider: codex`
     on `runs-on: [self-hosted, macOS, prowl-review]` behind a job-level same-repo fork
     gate (fork-gating + neutral-check jobs stay on hosted `ubuntu-latest`), with a
-    per-PR Codex concurrency group and a 30-min timeout; `.prowl-review.yml` switched
-    to `provider: codex` / `gpt-5.5` / `effort: low` (ensemble kept as a commented
+    non-cancelling per-PR Codex concurrency group and a 30-min timeout; `.prowl-review.yml`
+    switched to `provider: codex` / `gpt-5.5` / `effort: low` (ensemble kept as a commented
     key-gated fallback). Added repo-agnostic self-hosted example workflows
     (`examples/workflows/prowl-review-self-hosted-codex.yml` + command variant), the
     `docs/self-hosted-runner.md` shape-only setup guide, README/`docs/auth.md`

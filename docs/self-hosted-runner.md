@@ -82,11 +82,11 @@ to other secrets on the machine.
 ## Serialization
 
 - **Per PR** — GitHub `concurrency` keyed by repo + PR number
-  (`prowl-review-codex-<repo>-<pr>`); a newer push supersedes an in-flight
-  auto-review. Because the auto-review job uses `cancel-in-progress: true` in a
-  group shared with the command workflow, a new push to a PR can cancel an
-  in-flight `@prowl-review` command for that PR — re-run the command after the
-  push if it was interrupted.
+  (`prowl-review-codex-<repo>-<pr>`) serializes auto reviews with
+  `@prowl-review` commands for that PR. Keep `cancel-in-progress: false` so a
+  newer auto-review push cannot cancel an in-flight maintainer command; if an
+  older auto-review finishes after the PR head moves, the existing stale-head
+  guard skips publishing outdated review content.
 - **Machine-wide (across repos and instances)** — the **Codex lock**, not GitHub
   concurrency. GitHub cannot serialize across independent runner instances, so
   the lock is what guarantees one `codex` run at a time against one `CODEX_HOME`.
