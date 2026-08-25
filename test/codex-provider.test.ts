@@ -396,7 +396,7 @@ describe("assertCodexActionSupported", () => {
       spawn: spawner,
       env: {
         GITHUB_ACTIONS: "true",
-        PROWL_RUNNER_ENVIRONMENT: "github-hosted"
+        RUNNER_ENVIRONMENT: "github-hosted"
       }
     }).catch((e) => e);
     expect(error).toBeInstanceOf(CodexError);
@@ -410,10 +410,19 @@ describe("assertCodexActionSupported", () => {
     expect(() =>
       assertCodexActionSupported({
         GITHUB_ACTIONS: "true",
-        PROWL_RUNNER_ENVIRONMENT: "self-hosted",
+        RUNNER_ENVIRONMENT: "self-hosted",
         PROWL_REPOSITORY_VISIBILITY: "public"
       } as NodeJS.ProcessEnv)
     ).not.toThrow();
+  });
+
+  it("ignores PROWL_RUNNER_ENVIRONMENT under Actions", () => {
+    expect(() =>
+      assertCodexActionSupported({
+        GITHUB_ACTIONS: "true",
+        PROWL_RUNNER_ENVIRONMENT: "self-hosted"
+      } as NodeJS.ProcessEnv)
+    ).toThrow(/RUNNER_ENVIRONMENT/);
   });
 
   it("allows self-hosted Actions via RUNNER_ENVIRONMENT even for a public repo event payload", () => {
@@ -470,11 +479,24 @@ describe("codexPublicRepoForkGateNote", () => {
     expect(note).toMatch(/fork gate/i);
     expect(note).toMatch(/self-hosted-runner\.md/);
   });
+
+  it("does not use PROWL_RUNNER_ENVIRONMENT to emit the public-repo fork note", () => {
+    expect(
+      codexPublicRepoForkGateNote({
+        GITHUB_ACTIONS: "true",
+        PROWL_RUNNER_ENVIRONMENT: "self-hosted",
+        RUNNER_ENVIRONMENT: "github-hosted",
+        PROWL_REPOSITORY_VISIBILITY: "public"
+      } as NodeJS.ProcessEnv)
+    ).toBeUndefined();
+  });
 });
 
 describe("classifyCodexError", () => {
   it("distinguishes limit, auth, retired-model, and generic failures", () => {
-    expect(classifyCodexError("429 too many requests").kind).toBe("usage-limit");
+    expect(classifyCodexError("429 too many requests").kind).toBe("failed");
+    expect(classifyCodexError("rate limit exceeded").kind).toBe("failed");
+    expect(classifyCodexError("quota exceeded").kind).toBe("usage-limit");
     expect(classifyCodexError("401 unauthorized").kind).toBe("unauthenticated");
     expect(classifyCodexError("not logged in — run codex login").kind).toBe("unauthenticated");
     expect(classifyCodexError("some other crash").kind).toBe("failed");
@@ -498,7 +520,7 @@ describe("classifyCodexError", () => {
   });
 
   it("exposes isCodexError / codexErrorKind guards", () => {
-    const err = classifyCodexError("429 too many requests");
+    const err = classifyCodexError("usage limit reached");
     expect(isCodexError(err)).toBe(true);
     expect(isCodexError(new Error("nope"))).toBe(false);
     expect(codexErrorKind(err)).toBe("usage-limit");

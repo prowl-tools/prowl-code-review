@@ -2198,6 +2198,7 @@ async function reviewPullRequestImpl(
     const requirementsDegraded =
       requirementsCoverage !== undefined &&
       (requirementsCoverage.passed < requirementsCoverage.total || !reviewResult.verification.ok);
+    const reviewSkip = classifyReviewSkip(reviewResult);
     const approvalCoverageIncomplete = requirementsDegraded || fullSkipped.length > 0;
     const noReviewFilesRejustificationDiff = runRequirementsOnlyReview ? (requirementsDiff ?? diffText) : diffText;
     const headAdvancedBeforeTidy = await hasHeadAdvanced();
@@ -2259,6 +2260,7 @@ async function reviewPullRequestImpl(
         ...tidied.notes,
         ...failbackNotes(failbackEvents),
         ...codexForkGateNotes([config, ...(options.ensemble?.configs ?? [])]),
+        ...(reviewSkip ? [reviewSkip.note] : []),
         ...redactionNotes,
         ...groundingNotes,
         ...(runRequirementsOnlyReview
@@ -2356,6 +2358,7 @@ async function reviewPullRequestImpl(
       findings: reviewResult.findings,
       incremental: incrementalBaseSha !== undefined,
       approval,
+      ...(reviewSkip ? { incomplete: { reason: reviewSkip.reason } } : {}),
       checkRunId: state.checkRunId
     });
     // A defined conclusion means the run completed; the wrapper won't touch it.

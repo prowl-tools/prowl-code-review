@@ -82,6 +82,9 @@ export function isRetryableError(error: unknown): boolean {
   if (statusMatch && isRetryableStatus(Number(statusMatch[1]))) {
     return true;
   }
+  if (/\b429\b|too many requests|rate[- ]?limit(?:ed|ing)?|throttl(?:ed|ing)/i.test(message)) {
+    return true;
+  }
   return /\b(?:ETIMEDOUT|ECONNRESET|ECONNREFUSED|EAI_AGAIN|ENOTFOUND)\b|fetch failed|network error|socket hang up|connect timeout/i.test(
     message
   );

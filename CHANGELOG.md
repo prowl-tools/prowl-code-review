@@ -84,8 +84,9 @@ All notable changes to Prowl Review will be documented in this file.
     `classifyCodexError`) surfaces as a neutral check plus a note — *"skipped: Codex subscription
     usage limit; retry with `@prowl-review review` after &lt;reset&gt;"* (reset hint parsed when
     present) — and is treated as **non-retryable** so `withRetry` never hammers a plan-window
-    allowance. `unauthenticated`/`unavailable` (runner-config problems) are likewise neutral with
-    an actionable fix note.
+    allowance. Bare 429 / "too many requests" / rate-limit failures stay retryable unless the
+    error text includes allowance- or quota-specific evidence. `unauthenticated`/`unavailable`
+    (runner-config problems) are likewise neutral with an actionable fix note.
   - **Retired-model failover.** When a configured Codex model is rejected as unavailable under
     ChatGPT sign-in (e.g. `gpt-5.4` after 2026-08-31), the review fails over down the ladder
     (`gpt-5.6-terra → gpt-5.5`) — even when the retired model was on no rung — and names the
@@ -97,14 +98,18 @@ All notable changes to Prowl Review will be documented in this file.
 ### Fixed
 - **Codex Actions guard no longer refuses public repos (blocker for #64/#65).** Under
   `GITHUB_ACTIONS=true`, `provider: codex` is allowed **iff the runner is self-hosted**
-  (`RUNNER_ENVIRONMENT=self-hosted`, `PROWL_RUNNER_ENVIRONMENT` override kept for tests) —
-  **regardless of repository visibility**. A GitHub-hosted runner is refused with an actionable
-  message ("use a self-hosted runner; never put `auth.json` in Actions secrets"), and a missing
+  (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of repository visibility**. The production
+  guard ignores `PROWL_RUNNER_ENVIRONMENT`, so workflow-provided overrides cannot bypass the
+  GitHub runner classification. A GitHub-hosted runner is refused with an actionable message
+  ("use a self-hosted runner; never put `auth.json` in Actions secrets"), and a missing
   `RUNNER_ENVIRONMENT` under Actions fails closed. The previous public/private-repository check —
   which made every dogfood specialist pass on the public repo fail with "requires a non-public
   repository" (seen on PR #92) — is removed; the visibility detection is now reused only to add a
   one-line **review note** reminding public-repo self-hosted runs to keep the job-level same-repo
   fork gate.
+- Requirements-only linked-issue validation now sends all-failed / no-coverage review results
+  through the same neutral **"Review skipped/incomplete"** check path as normal reviews, instead
+  of letting a gated check report a misleading green "No issues found" result.
 
 ## [0.3.0] - 2026-08-03
 

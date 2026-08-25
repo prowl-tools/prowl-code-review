@@ -39,6 +39,11 @@ describe("isRetryableError", () => {
     expect(isRetryableError(new CodexError("model gpt-5.4 unavailable", "model-retired"))).toBe(false);
   });
 
+  it("retries generic Codex throttle failures", () => {
+    expect(isRetryableError(new CodexError("Codex exec failed: 429 too many requests", "failed"))).toBe(true);
+    expect(isRetryableError(new CodexError("Codex exec failed: rate limit exceeded", "failed"))).toBe(true);
+  });
+
   it("does not hammer a Codex usage-limit error under withRetry", async () => {
     const fn = vi.fn(async () => {
       throw new CodexError("usage limit reached", "usage-limit");

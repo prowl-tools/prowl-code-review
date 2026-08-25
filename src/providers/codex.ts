@@ -175,9 +175,8 @@ function isPublicRepository(context: GitHubActionRepositoryContext): boolean | u
 /**
  * Refuse unsupported Codex usage in GitHub Actions before spawning the local CLI.
  * Local runs are unaffected. Under Actions, `provider: codex` is allowed **iff the
- * runner is self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`, or the
- * `PROWL_RUNNER_ENVIRONMENT` test override) — **regardless of repository
- * visibility**. All Prowl repos are public and run on the self-hosted Mac mini
+ * runner is self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of
+ * repository visibility**. All Prowl repos are public and run on the self-hosted Mac mini
  * behind a job-level same-repo fork gate (#45/#64); OpenAI's "not for public
  * repos" line is about putting `auth.json` in CI secrets on GitHub-hosted/shared
  * runners, which we never do. A GitHub-hosted runner is refused; a missing
@@ -188,7 +187,7 @@ export function assertCodexActionSupported(env: NodeJS.ProcessEnv = process.env)
     return;
   }
 
-  const runnerEnvironment = normalizeEnvString(env.PROWL_RUNNER_ENVIRONMENT) ?? normalizeEnvString(env.RUNNER_ENVIRONMENT);
+  const runnerEnvironment = normalizeEnvString(env.RUNNER_ENVIRONMENT);
   if (runnerEnvironment === "self-hosted") {
     return;
   }
@@ -219,7 +218,7 @@ export function codexPublicRepoForkGateNote(env: NodeJS.ProcessEnv = process.env
   if (env.GITHUB_ACTIONS !== "true") {
     return undefined;
   }
-  const runnerEnvironment = normalizeEnvString(env.PROWL_RUNNER_ENVIRONMENT) ?? normalizeEnvString(env.RUNNER_ENVIRONMENT);
+  const runnerEnvironment = normalizeEnvString(env.RUNNER_ENVIRONMENT);
   if (runnerEnvironment !== "self-hosted") {
     return undefined;
   }
@@ -402,8 +401,8 @@ function unauthenticatedError(): CodexError {
 /** Classify Codex error output into an actionable {@link CodexError}. */
 export function classifyCodexError(text: string): CodexError {
   const lower = text.toLowerCase();
-  if (/usage limit|rate limit|quota|\b429\b|too many requests|resets? (?:at|in)/.test(lower)) {
-    const reset = /resets?\s+(?:at|in)\s+([^.\n"]+)/i.exec(text)?.[1]?.trim();
+  const reset = /resets?\s+(?:at|in)\s+([^.\n"]+)/i.exec(text)?.[1]?.trim();
+  if (/\busage limits?\b|\bplan allowance\b|\ballowance\b|\bquota\b/.test(lower)) {
     return new CodexError(
       `Codex subscription usage limit reached${reset ? ` — resets ${reset}` : ""}. ` +
         `Retry with \`@prowl-review review\` after the window resets. prowl-review does not ` +
