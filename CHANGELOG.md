@@ -71,6 +71,28 @@ All notable changes to Prowl Review will be documented in this file.
     public-repo caveats stated verbatim. Runner registration and rollout to the other
     Prowl/personal repos are still pending.
   - Registered the custom `prowl-review` runner label in `.github/actionlint.yaml`.
+- **Subscription usage-limit resilience & zero-cost reporting for `provider: codex` (backlog #65).**
+  A review that can't fully run degrades gracefully instead of posting a red check or a
+  half-review presented as complete:
+  - **Neutral "Review skipped/incomplete" gate when coverage is absent.** When every specialist
+    pass fails (or context retrieval + passes both fail), the merge-gate check run is **neutral**
+    with the reason in its summary, and the walkthrough keeps its "Review incomplete" banner —
+    fixing the case where an all-failed review posted a green `success` "No issues found" (seen on
+    PR #92). A zero-finding **partial** run now reads "No issues found in N/M passes" rather than a
+    blanket "No issues found".
+  - **Usage-limit → neutral + retry note, never retried.** A Codex `usage-limit` (from
+    `classifyCodexError`) surfaces as a neutral check plus a note — *"skipped: Codex subscription
+    usage limit; retry with `@prowl-review review` after &lt;reset&gt;"* (reset hint parsed when
+    present) — and is treated as **non-retryable** so `withRetry` never hammers a plan-window
+    allowance. `unauthenticated`/`unavailable` (runner-config problems) are likewise neutral with
+    an actionable fix note.
+  - **Retired-model failover.** When a configured Codex model is rejected as unavailable under
+    ChatGPT sign-in (e.g. `gpt-5.4` after 2026-08-31), the review fails over down the ladder
+    (`gpt-5.6-terra → gpt-5.5`) — even when the retired model was on no rung — and names the
+    substitution in a note; an exhausted ladder becomes a neutral skip.
+  - **Zero-cost reporting** keeps `$0.00 (ChatGPT subscription)` with token counts; the per-PR
+    budget cap still bounds tokens at zero price (a `maxUsd` is ignored for `codex`), and a mixed
+    `codex` + API-key ensemble prices each member with its own model.
 
 ### Fixed
 - **Codex Actions guard no longer refuses public repos (blocker for #64/#65).** Under

@@ -21,7 +21,8 @@ and to GitHub — and which auth methods are supported vs. deliberately not.
 - **`provider: codex` is the one exception** (backlog #45): a keyless provider that
   spawns the first-party `codex` CLI under your ChatGPT sign-in. It is **off by
   default, opt-in, and supported only on self-hosted / local infrastructure you
-  control** — never on GitHub-hosted runners for public/open-source repos. See
+  control** — under GitHub Actions it runs only on a self-hosted runner (any
+  repository visibility), never on a GitHub-hosted runner. See
   [Codex subscription provider](#codex-subscription-provider-45) below.
 
 ## Provider keys (BYOK)
@@ -141,9 +142,10 @@ instead of a metered key. It is deliberately narrow:
   the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of
   repository visibility**; a GitHub-hosted runner is refused, and a missing
   `RUNNER_ENVIRONMENT` fails closed. OpenAI's own CI/CD authentication guidance
-  says, verbatim, **"Do not use this workflow for public or open-source
-  repositories."** — that warning is about copying `auth.json` into **CI secrets on
-  GitHub-hosted / shared runners**, which we never do; it does **not** apply to a
+  says, verbatim,
+  **"Do not use this workflow for public or open-source repositories."** — that
+  warning is about copying `auth.json` into **CI secrets on GitHub-hosted / shared
+  runners**, which we never do; it does **not** apply to a
   self-hosted runner whose login lives on the host. All Prowl repos are public and
   run `codex` on a self-hosted runner behind a **job-level same-repo fork gate**
   (see [`self-hosted-runner.md`](self-hosted-runner.md)) so a fork PR is never
@@ -177,7 +179,34 @@ provider: codex            # keyless: no PROWL_AI_KEY* needed
 ```
 
 Cost transparency reports **`$0.00 (ChatGPT subscription)`** while still showing
-the token counts (usage-limit resilience is tracked in #65).
+the token counts. The per-PR budget cap (`budget.maxTokens`) still bounds tokens
+even though the price is zero; a `budget.maxUsd` is ignored for `codex` (a USD
+ceiling is meaningless at $0.00) with a note.
+
+### When the allowance runs out (#65)
+
+A ChatGPT subscription is metered by a rolling window (5-hour / weekly), so a
+burst of agent-generated PRs can exhaust it. prowl-review degrades **gracefully**
+rather than posting red checks or half-reviews:
+
+- **Usage limit reached** → the merge-gate check run is **neutral**
+  ("Review skipped/incomplete"), and the review notes say
+  *"skipped: Codex subscription usage limit; retry with `@prowl-review review`
+  after &lt;reset&gt;"* (the reset hint is parsed from Codex's output when
+  present). A usage-limit is **never retried** (no retry storm) and never shown as
+  a completed review.
+- **Not authenticated / CLI unavailable** → also a **neutral** check with an
+  actionable note (run `codex login` on the runner, or fix the runner config).
+  These are runner-config problems, not PR problems.
+- **Configured model retired** (e.g. `gpt-5.4` after 2026-08-31) → prowl-review
+  fails over down the ladder (`gpt-5.6-terra → gpt-5.5`) and adds a note naming
+  the substitution; if every model is gone, the check is neutral with a note to
+  update `model`.
+- **Transient errors** (a dropped socket, a 5xx) still take the normal
+  retry/backoff path and, under `failback`, an older same-family model.
+
+Re-run a skipped review after the window resets by commenting
+`@prowl-review review` on the PR.
 
 ### Self-hosted runner setup (shape only)
 
