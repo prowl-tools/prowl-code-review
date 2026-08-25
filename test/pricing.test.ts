@@ -216,6 +216,14 @@ describe("resolveTokenBudget (#18)", () => {
     expect(result.notes[0]).toMatch(/maxUsd ignored/);
   });
 
+  it("still bounds codex (zero-priced) runs by maxTokens, ignoring maxUsd (#65)", () => {
+    // Codex prices at $0, so a USD ceiling is meaningless — but the token cap must
+    // still bound the run.
+    const result = resolveTokenBudget({ maxTokens: 25_000, maxUsd: 5 }, "codex", "gpt-5.5");
+    expect(result.tokens).toBe(25_000);
+    expect(result.notes[0]).toMatch(/maxUsd ignored/);
+  });
+
   it("uses the tightest maxUsd ceiling across ensemble provider targets", () => {
     const result = resolveTokenBudgetForTargets(
       { maxUsd: 1 },

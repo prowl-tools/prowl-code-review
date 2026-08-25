@@ -99,6 +99,48 @@ describe("planCheckRun (#24)", () => {
   });
 });
 
+describe("planCheckRun skipped/incomplete + partial coverage (#65)", () => {
+  it("is neutral 'Review skipped/incomplete' when the review had no coverage, overriding the gate", () => {
+    const plan = planCheckRun({
+      findings: [],
+      failOn: "critical", // gated: without the skip this would be a green success
+      coverage: { passed: 0, total: 4 },
+      incomplete: { reason: "Codex subscription usage limit reached." }
+    });
+    expect(plan.conclusion).toBe("neutral");
+    expect(plan.title).toBe("Review skipped/incomplete");
+    expect(plan.summary).toContain("usage limit");
+    expect(plan.annotations).toEqual([]);
+  });
+
+  it("never reports a green 'No issues found' when all passes failed (regression for #92)", () => {
+    const plan = planCheckRun({
+      findings: [],
+      failOn: "major",
+      coverage: { passed: 0, total: 4 },
+      incomplete: { reason: "all review specialist passes failed" }
+    });
+    expect(plan.conclusion).not.toBe("success");
+    expect(plan.title).not.toContain("No issues found");
+  });
+
+  it("says 'No issues found in N/M passes' for a zero-finding partially-degraded run", () => {
+    const plan = planCheckRun({
+      findings: [],
+      failOn: "critical",
+      coverage: { passed: 3, total: 4 }
+    });
+    expect(plan.conclusion).toBe("success");
+    expect(plan.title).toBe("No issues found in 3/4 passes");
+    expect(plan.summary).toContain("coverage partial");
+  });
+
+  it("keeps a plain 'No issues found' when coverage is complete", () => {
+    const plan = planCheckRun({ findings: [], failOn: "critical", coverage: { passed: 4, total: 4 } });
+    expect(plan.title).toBe("No issues found");
+  });
+});
+
 describe("planCheckRun with the approval rubric (#52)", () => {
   function decision(over: Partial<ApprovalDecision> = {}): ApprovalDecision {
     return {

@@ -17,11 +17,19 @@ exact re-login steps) lives in a **private runbook**, never here.
 in with a **ChatGPT subscription**, so per-review marginal cost is `$0.00` and
 **no provider credential ever enters GitHub**. That subscription login can only
 live on infrastructure you control, so the reviews run on a self-hosted runner.
-Per OpenAI's guidance (*"Do not use this workflow for public or open-source
-repositories."*) and GitHub's advice against self-hosted runners on public
-repos, the workflows keep a **job-level same-repo gate** so fork PRs are never
-scheduled onto the runner; Codex itself also runs `--sandbox read-only`. Private
-repos carry neither caveat and may drop the fork gate.
+Under `GITHUB_ACTIONS=true`, prowl-review allows `codex` **iff the runner is
+self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of repository
+visibility**; a GitHub-hosted runner is refused and a missing `RUNNER_ENVIRONMENT`
+fails closed. OpenAI's guidance (*"Do not use this workflow for public or
+open-source repositories."*) is about putting `auth.json` in **CI secrets on
+GitHub-hosted / shared runners**, which we never do — it does not apply to a
+self-hosted runner whose login lives on the host. GitHub still advises caution
+with self-hosted runners on public repos (any PR can run code on them), so the
+workflows keep a **job-level same-repo gate** — a fork PR is never scheduled onto
+the runner — and Codex itself runs `--sandbox read-only`. All Prowl repos are
+public and run this way; private repos carry no public-repo caveat and may drop
+the fork gate. For a public repo, prowl-review adds a review note reminding you to
+keep that fork gate in place.
 
 ## Runner labels
 

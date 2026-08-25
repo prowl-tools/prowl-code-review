@@ -33,13 +33,6 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - **Rollout:** `prowl-code-review` first (dogfood, prove #45 + #65 end-to-end), then `prowl`, `prowl-hub`, `prowl-infra-hub`, `prowl-web`, `prowl-docs`, `prowl-code-review-docs`, then the `michaeltookes` repos the owner selects (one repo-level runner registration each; private ones first since they need no fork gate). Decide per repo whether the GitHub-hosted Claude+Gemini ensemble stays (as a public-safe fallback) or is retired to stop the API spend. CodeRabbit is removed from each repo once its prowl-review run is green.
     - Acceptance: a same-repo PR on each listed Prowl repo and on at least one public + one private `michaeltookes` repo gets a review posted from the Mac mini runner with no provider secret in that repo; two runner instances triggered at once never run `codex` concurrently against one `CODEX_HOME` (lock verified); a fork PR never schedules on a public repo's runner (verified with a throwaway fork); a runner restart/re-login runbook exists (secrets-bearing details in the private runbook, public docs hold the shape only); the example workflows/docs show the self-hosted + `codex` pattern with the public-repo caveat stated verbatim.
 
-65. **Subscription usage-limit resilience & zero-cost reporting (for `provider: codex`)**
-    As a maintainer on a metered-by-window subscription, I want prowl-review to degrade gracefully when the 5-hour / weekly Codex allowance is exhausted, so that a burst of agent-generated PRs never produces red checks or half-reviews.
-    - Detect Codex usage-limit / 429 outcomes distinctly from transient errors: transient → existing retry/backoff; limit reached → **neutral** check run + a review note ("skipped: Codex subscription usage limit; retry with `@prowl-review review` after <reset>"), never a failure, never a partial review presented as complete. Parse the reset hint from Codex output when available.
-    - Cost line reports **`$0.00 (ChatGPT subscription)`** while still showing input/cached/output tokens; per-PR budget cap (#18-style `maxTokens`) keeps working as a token cap even though price is zero; ensemble runs mixing `codex` with API-key providers price each member correctly.
-    - Model-retirement safety: when a configured model is no longer offered under ChatGPT sign-in (as with `gpt-5.4` on 2026-08-31), fail over via the failback ladder and say so in the review notes.
-    - Acceptance: tests for limit-vs-transient classification, neutral-check + note rendering, zero-cost pricing with token counts, mixed-ensemble pricing, and retired-model failover; the `@prowl-review review` re-run path works after a limit skip.
-
 ## Medium Priority
 
 41. **Repo hygiene & demo** *(core docs done — see resolved.md)*
@@ -61,5 +54,6 @@ Completed items live in [`docs/resolved.md`](./resolved.md). Consciously
 deferred / blocked items (#46 GitLab/Bitbucket, #47 hosted App, #48 delegated-API
 OAuth) are parked there with dates — see the "Deferred / parked" section. #45 (Codex
 subscription provider) was un-parked on 2026-08-24 and **shipped** (completed
-2026-08-24 — see resolved.md); its self-hosted rollout (#64) and usage-limit
-resilience (#65) remain in High Priority above.
+2026-08-24 — see resolved.md), as was its usage-limit resilience & zero-cost
+reporting (#65, completed 2026-08-25 — see resolved.md). Its self-hosted rollout
+(#64) remains in High Priority above.

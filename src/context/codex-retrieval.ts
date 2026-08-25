@@ -144,7 +144,7 @@ export async function gatherCodexContext(
     }
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    throw new ContextRetrievalError(message, { usage, rounds: 1, notes });
+    throw new ContextRetrievalError(message, { usage, rounds: 1, notes, cause: error });
   }
 
   const files = new Map<string, RetrievedFile>();

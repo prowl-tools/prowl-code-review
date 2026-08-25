@@ -2,6 +2,8 @@ import { anthropicProvider } from "./anthropic.js";
 import { openaiProvider } from "./openai.js";
 import { geminiProvider } from "./gemini.js";
 import { codexProvider, resolveCodexOptions } from "./codex.js";
+
+export { codexPublicRepoForkGateNote, CodexError, codexErrorKind, isCodexError } from "./codex.js";
 import {
   type CompletionRequest,
   type CompletionResult,
@@ -39,8 +41,10 @@ export {
 export {
   withFailback,
   modelFailbackChain,
+  retiredModelFallbacks,
   type FailbackEvent,
-  type FailbackOptions
+  type FailbackOptions,
+  type FailbackReason
 } from "./failback.js";
 
 const PROVIDERS: Record<ProviderName, Provider> = {

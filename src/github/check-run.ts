@@ -144,8 +144,34 @@ export function planCheckRun(input: {
   incremental?: boolean;
   /** Approval rubric decision (#52); when engaged it drives the conclusion. */
   approval?: ApprovalDecision;
+  /** Specialist-pass coverage, so a zero-finding partial run isn't reported as a clean pass (#65). */
+  coverage?: { passed: number; total: number };
+  /**
+   * The whole review couldn't run — no coverage (every pass failed, a
+   * usage-limit/auth/config error, or context+passes both failed). Forces a
+   * **neutral** "Review skipped/incomplete" check with `reason` in the summary,
+   * overriding the approval/failOn gate so a degraded run is never a red ✗ nor a
+   * green ✓ "No issues found" (#65).
+   */
+  incomplete?: { reason: string };
 }): CheckRunPlan {
   const { findings, failOn } = input;
+
+  // Coverage absent → neutral "Review skipped/incomplete" regardless of gate (#65).
+  if (input.incomplete) {
+    return {
+      conclusion: "neutral",
+      title: "Review skipped/incomplete",
+      summary: [
+        input.incremental ? "Incremental review of the latest changes (#23)." : "",
+        input.incomplete.reason
+      ]
+        .filter(Boolean)
+        .join("\n\n"),
+      annotations: []
+    };
+  }
+
   const approval = input.approval?.enabled ? input.approval : undefined;
 
   const gated = approval !== undefined || failOn !== undefined;
@@ -180,15 +206,25 @@ export function planCheckRun(input: {
     }));
 
   const total = findings.length;
+  // A zero-finding run where some specialist passes failed is partial coverage,
+  // not a blanket clean pass — say so instead of "No issues found" (#65).
+  const partialCoverage =
+    input.coverage !== undefined && input.coverage.passed > 0 && input.coverage.passed < input.coverage.total;
+  const cleanTitle = partialCoverage
+    ? `No issues found in ${input.coverage!.passed}/${input.coverage!.total} passes`
+    : "No issues found";
+  const cleanSummary = partialCoverage
+    ? `prowl-review found no issues in the ${input.coverage!.passed}/${input.coverage!.total} specialist passes that completed (coverage partial).`
+    : "prowl-review found no issues in the reviewed changes.";
   const title =
     total === 0
-      ? "No issues found"
+      ? cleanTitle
       : `${total} finding${total === 1 ? "" : "s"} (${severityBreakdown(findings)})`;
 
   const summaryLines = [
     input.incremental ? "Incremental review of the latest changes (#23)." : "",
     total === 0
-      ? "prowl-review found no issues in the reviewed changes."
+      ? cleanSummary
       : `prowl-review found ${total} finding${total === 1 ? "" : "s"}: ${severityBreakdown(findings)}.`,
     gateSummaryLine({ approval, failOn, conclusion, blocking: blocking.length }),
     annotations.length < total

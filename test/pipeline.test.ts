@@ -152,7 +152,8 @@ describe("reviewPullRequest", () => {
           provider: "anthropic",
           from: "claude-sonnet-4-6",
           to: "claude-sonnet-4-5",
-          error: new Error("429")
+          error: new Error("429"),
+          reason: "overload" as const
         });
         return reviewResult([]);
       })
@@ -759,6 +760,87 @@ ${DELTA_DIFF}`;
     expect(input.headSha).toBe("head");
     expect(input.plan.conclusion).toBe("failure");
     expect(result.checkRunConclusion).toBe("failure");
+  });
+
+  it("posts a NEUTRAL 'Review skipped/incomplete' check when all passes fail — never green (#65 / #92)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "boom" },
+          { specialist: "security", findings: 0, ok: false, error: "boom" }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" } // gated: without the skip this would be green
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(input.plan.title).toBe("Review skipped/incomplete");
+    expect(result.checkRunConclusion).toBe("neutral");
+    expect(result.payload.body).toContain("Review incomplete");
+  });
+
+  it("surfaces a Codex usage-limit as a neutral check + retry note, not a red check (#65)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          {
+            specialist: "correctness",
+            findings: 0,
+            ok: false,
+            error: "usage limit",
+            errorKind: "usage-limit",
+            resetHint: "2h30m"
+          }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" }
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(input.plan.summary).toContain("usage limit");
+    expect(result.payload.body).toContain("Codex subscription usage limit");
+    expect(result.payload.body).toContain("after 2h30m");
+  });
+
+  it("surfaces an unauthenticated Codex runner as a neutral check with an actionable note (#65)", async () => {
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = { ...makeDeps(), submitCheckRun };
+    deps.runReview.mockResolvedValue(
+      reviewResult([], {
+        passes: [
+          { specialist: "correctness", findings: 0, ok: false, error: "not logged in", errorKind: "unauthenticated" }
+        ]
+      })
+    );
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      deps,
+      checkRun: { enabled: true, failOn: "major" }
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(result.payload.body).toContain("codex login");
   });
 
   it("does not publish a check run when disabled or on a dry run (#24)", async () => {
@@ -4057,7 +4139,8 @@ describe("reviewPullRequest issue validation (#32)", () => {
             provider: "anthropic",
             from: "claude-sonnet-4-6",
             to: "claude-sonnet-4-5",
-            error: new Error("429")
+            error: new Error("429"),
+            reason: "overload" as const
           });
           return reviewResult([]);
         }
@@ -4090,6 +4173,52 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(result.payload.body).toContain("claude-sonnet-4-6");
     expect(result.payload.body).toContain("claude-sonnet-4-5");
     expect(result.payload.body).toContain("ran linked-issue requirements validation against the full PR diff");
+  });
+
+  it("posts a neutral incomplete check when a requirements-only review has no coverage", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const ignoredDelta = `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`;
+    const submitCheckRun = vi.fn(async () => {});
+    const deps = {
+      ...makeDeps(),
+      submitCheckRun,
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ignoredDelta),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: `${DIFF}\n${ignoredDelta}` })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      })),
+      runReview: vi.fn(async () =>
+        reviewResult([], {
+          passes: [{ specialist: "requirements", findings: 0, ok: false, error: "provider rejected requirements" }]
+        })
+      )
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      checkRun: { enabled: true, failOn: "major" },
+      deps
+    });
+
+    const [, , input] = submitCheckRun.mock.calls[0];
+    expect(input.plan.conclusion).toBe("neutral");
+    expect(input.plan.title).toBe("Review skipped/incomplete");
+    expect(input.plan.summary).toContain("all review specialist passes failed");
+    expect(result.checkRunConclusion).toBe("neutral");
+    expect(result.payload.body).toContain("Review incomplete");
+    expect(result.payload.body).toContain("skipped: all review specialist passes failed");
+    expect(result.payload.body).toContain("provider rejected requirements");
   });
 
   it("passes the requirements diff into requirements-only re-justification", async () => {

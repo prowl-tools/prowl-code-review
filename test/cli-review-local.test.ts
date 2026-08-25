@@ -660,7 +660,8 @@ index 1111111..2222222 100644
         provider: "anthropic",
         from: "claude-sonnet-4-6",
         to: "claude-sonnet-4-5",
-        error: new Error("429")
+        error: new Error("429"),
+        reason: "overload" as const
       });
       return reviewResult({ findings: [finding()] });
     });

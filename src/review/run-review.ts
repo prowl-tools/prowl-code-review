@@ -3,6 +3,8 @@ import {
   retrying,
   withFailback,
   emptyUsage,
+  codexErrorKind,
+  isCodexError,
   resolveProviderConfig,
   type CompletionRequest,
   type CompletionResult,
@@ -110,6 +112,15 @@ export interface SpecialistPassReport {
   retried?: boolean;
   /** Set when the pass failed. */
   error?: string;
+  /**
+   * The provider error kind when the pass failed on a classified Codex error (#65):
+   * `usage-limit` | `unauthenticated` | `unavailable` | `model-retired` | `failed`.
+   * Lets the pipeline render a neutral "review skipped" gate + an actionable note
+   * instead of a red check when the whole review couldn't run.
+   */
+  errorKind?: string;
+  /** For a `usage-limit` failure: the parsed reset hint, when Codex reported one (#65). */
+  resetHint?: string;
 }
 
 export interface ReviewResult {
@@ -276,12 +287,16 @@ export async function runReview(
           retried: false,
           findings: []
         });
+        const kind = codexErrorKind(error);
+        const resetHint = isCodexError(error) ? error.resetHint : undefined;
         return {
           report: {
             specialist: specialist.key,
             findings: 0,
             ok: false,
-            error: error instanceof Error ? error.message : String(error)
+            error: error instanceof Error ? error.message : String(error),
+            ...(kind ? { errorKind: kind } : {}),
+            ...(resetHint ? { resetHint } : {})
           },
           findings: [],
           usage: emptyUsage()
