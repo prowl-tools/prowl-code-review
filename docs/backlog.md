@@ -41,6 +41,47 @@ When an item is completed, move it to [`docs/resolved.md`](./resolved.md) with `
     - Also covered: webhook receiver architecture (raw-header-preserving intake with Cloudflare Workers + Queues only as post-verification orchestration), abuse controls, state/persistence, key rotation/revocation/deletion, least-privilege access, tenant isolation, audit retention, migration identity, deterministic Action/App delivery ownership, command authorization, and the migration path from the Action (same core, second delivery wrapper).
     - Acceptance: a `docs/design/hosted-app.md` with a decision log covering the above; for every listed decision — Phase-2 key custody, retrieval, and free/paid boundary; webhook architecture; abuse controls; state/persistence; secret lifecycle; least-privilege access; tenant isolation; and migration from the Action — the log records the selected option, rationale, rejected alternatives, and consequences; #47 stays parked until all required decisions meet that bar and the doc is reviewed/approved — this item is the doc, not the build.
 
+## Sunset Work Items
+
+Decision (2026-08-26): **prowl-review moves to maintenance mode as an internal/personal tool.**
+It works, it is dogfooded on every repo the owner maintains, and its backlog is essentially
+complete — but PR review is the most crowded category in dev tools (model vendors bundle their
+own reviewers; open-source BYOK has existed since 2023) and is not winnable as a solo product.
+All build time goes to the Prowl CLI. The package stays published and the repo stays public;
+the *product* framing (docs site, marketing placement) is retired. Items 41 (demo GIF / example
+repo) and 62/#47 (hosted App) are **parked indefinitely** by this decision; #64 continues as
+personal infrastructure, not product work.
+
+67. **Record the maintenance-mode decision and set expectations in-repo**
+    As the owner, I want the repo to say what it now is, so that neither I nor a passer-by treats it as a product with a roadmap.
+    - README: replace the "code-review pillar of the Prowl QA suite" positioning and the "early development" status line with a short, honest status: maintained for the maintainer's own repos; issues welcome; no roadmap, no support promise; BYOK/Codex still the design. Remove the legacy "Prowl QA" brand strings (README, this backlog's header, `package.json` description).
+    - Define "maintenance" concretely in `CONTRIBUTING.md`: dependency/security updates, breakages that affect the owner's repos, provider API changes. No new features unless the owner needs them personally.
+    - Move items 41 and 62 to a "Parked" note (keep numbers) so the priority tiers read empty.
+    - Acceptance: README status block present; no "Prowl QA" strings in the repo; backlog tiers reflect the decision.
+
+68. **Sunset the `prowl-code-review-docs` site (review.prowl.tools)**
+    As the owner, I want zero deploys to maintain for a personal tool, so that the only docs are the ones that live next to the code.
+    - Port anything on the Docusaurus site that is not already in this repo's `docs/` (`getting-started`, `configuration`, `github-action`, `cli`, `bot-commands`, `ensemble`, `grounding`, `cross-file-context`, plus the self-hosted/Codex pages from #66) into `docs/` here as plain Markdown; `auth.md`, `privacy.md`, `example-review.md` already exist. Point the README "Documentation" section at `docs/`.
+    - Remove the Vercel project and the `review` DNS record (a redirect to this repo's README for a grace period is fine). Deregister the `lucius-mac-mini-prowl-code-review-docs` runner, abandon its `prowl-review-codex` branch, then archive the `prowl-code-review-docs` repo with a retirement banner. This closes the docs-site half of #66 as won't-do; the `prowl-web` half is superseded by 69.
+    - Update the `review.prowl.tools` badge/link in the README and the `docs` reference in the workspace `CLAUDE.md` subdomain list.
+    - Acceptance: every page on the site has an equivalent in `docs/`; review.prowl.tools no longer serves the site; docs repo archived.
+
+69. **Demote prowl-review on the marketing site**
+    As a visitor to prowl.tools, I should see one product (the CLI), so that the site's promises match what is actually being built.
+    - Counterpart item on the web side: `prowl-web` PQW-026. Either remove "Prowl Code Review" from the product lineup entirely or reduce it to a one-line "we also open-sourced the reviewer we run on our own PRs" footnote with a link to the repo. Owner decides which; the footnote is the recommended option (credibility signal at zero cost) provided the wording stays honest about maintenance mode.
+    - Acceptance: no `/code-review` product page or equal-billing nav entry on prowl.tools; whatever mention remains links to the repo, not to a docs site.
+
+70. **Homebrew formula and release process — decide keep-or-drop**
+    As the owner, I want release overhead proportional to a personal tool, so that cutting a version costs minutes.
+    - `homebrew-tap/Formula/prowl-review.rb` exists (the tap README does not list it). Either keep it and add it to the tap README truthfully, or delete the formula and its update step from `docs/releasing.md` and the publish workflow. Recommended: drop it — npm + the GitHub Action are the only channels the owner uses.
+    - Trim `docs/releasing.md` to the steps still performed.
+    - Acceptance: tap and releasing doc agree; no dead release steps.
+
+71. **Finish #64 only for repos that survive the sunset**
+    As the owner, I want the self-hosted rollout scoped to live repos, so that no runner is registered to an archived one.
+    - Drop `prowl-hub`, `prowl-infra-hub`, and `prowl-code-review-docs` from #64's rollout list (their runner removal is tracked in each repo's own sunset section: HUB-018, INFRA-073, and item 68 above). Remaining scope: `prowl`, `prowl-web`, `prowl-docs`, this repo, and the owner's personal repos.
+    - Acceptance: #64's status paragraph and the runner inventory on the Mac mini list only live repos.
+
 ---
 
 Completed items live in [`docs/resolved.md`](./resolved.md). Consciously
