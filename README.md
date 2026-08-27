@@ -507,9 +507,9 @@ inline findings ride on that one verdict review.
 
 **Cost:** roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap (#18) is **split evenly** across
-providers, and risk-tiering (#31) still applies. A provider with no key is
-skipped with a note; with fewer than two usable keys it runs as a normal
-single-provider review.
+providers, and risk-tiering (#31) still applies. A provider missing required
+credentials is skipped with a note; keyless `codex` is usable without an API key.
+With fewer than two usable providers, it runs as a normal single-provider review.
 
 ## Codex subscription provider (#45)
 
@@ -526,8 +526,8 @@ visibility**; a GitHub-hosted runner is refused. OpenAI's guidance ("Do not use
 this workflow for public or open-source repositories") is about `auth.json` in
 CI secrets on hosted/shared runners, which we never do — not about a self-hosted
 runner whose login lives on the host. All Prowl repos are public and run `codex`
-on a self-hosted runner behind a job-level same-repo fork gate. There is **no
-Claude/Gemini equivalent**.
+on a self-hosted runner behind a job-level same-repo + approved-actor gate. There
+is **no Claude/Gemini equivalent**.
 
 ```yaml
 # .prowl-review.yml
@@ -557,16 +557,16 @@ in a private runbook):
   `actions/setup-node` step.
 - **Labels** `[self-hosted, macOS, prowl-review]`; the review job targets them
   while fork-gating jobs stay on hosted `ubuntu-latest`.
-- **Registration:** orgs use one org-level runner in a restricted group; personal
-  accounts allow repo-level runners only (one per opted-in repo). Private repos
-  need no fork gate.
+- **Registration:** use one repository-level runner per opted-in repo; this is
+  the selected Prowl topology and the only runner scope available to
+  personal-account repos. Private repos need no fork gate.
 - Copy-paste workflows:
   [`examples/workflows/prowl-review-self-hosted-codex.yml`](examples/workflows/prowl-review-self-hosted-codex.yml)
   (+ the command variant).
 
-**Public repos:** the same-repo fork gate is **required** (OpenAI's *"Do not use
-this workflow for public or open-source repositories."* + GitHub's runner
-warning). **Private repos may drop it.**
+**Public repos:** the same-repo + approved-actor gate is **required** (OpenAI's
+*"Do not use this workflow for public or open-source repositories."* + GitHub's
+runner warning). **Private repos may drop the fork half.**
 
 ## Auto-generated PR descriptions (#33)
 

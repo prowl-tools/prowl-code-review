@@ -43,12 +43,14 @@ GitHub. Copy
 (auto review) and, for `@prowl-review` commands,
 [`workflows/prowl-review-command-self-hosted-codex.yml`](workflows/prowl-review-command-self-hosted-codex.yml).
 Both are repo-agnostic (`uses: prowl-tools/prowl-code-review@v1`) and carry a
-job-level same-repo gate so fork PRs never land on the runner.
+hosted resolve job plus a job-level same-repo/approved-actor gate so fork PRs and
+unauthorized same-repo PRs never land on the runner.
 
 > **Public/open-source repos:** read the header caveats in each file first —
 > OpenAI's guidance is *"Do not use this workflow for public or open-source
 > repositories."*, and GitHub advises against self-hosted runners on public repos.
-> The fork gate is **required** there. **Private repos may drop the fork gate.**
+> The same-repo + approved-actor gate is **required** there. **Private repos may
+> drop the fork half.**
 
 Set up the runner (`codex login` into a dedicated `CODEX_HOME`, runner labels,
 one login per host) as described in

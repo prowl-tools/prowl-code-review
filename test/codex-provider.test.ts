@@ -19,6 +19,7 @@ import {
   resolveCodexOptions,
   runCodexExec,
   DEFAULT_CODEX_EFFORT,
+  MAX_CODEX_TIMEOUT_MS,
   type CodexProcess,
   type CodexSpawner
 } from "../src/providers/codex.js";
@@ -377,6 +378,24 @@ describe("runCodexExec", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("rejects timeoutMs above Node's timer limit before spawning", async () => {
+    const { spawner, calls } = makeFakeCodex({
+      stdout: jsonl(AGENT_MSG("unused"), USAGE({ input_tokens: 1, output_tokens: 1 }))
+    });
+    const error = await runCodexExec({
+      prompt: "x",
+      model: "gpt-5.5",
+      effort: "low",
+      cwd: "/s",
+      codexHome: "/h",
+      spawn: spawner,
+      timeoutMs: MAX_CODEX_TIMEOUT_MS + 1
+    }).catch((e) => e);
+    expect(error).toBeInstanceOf(CodexError);
+    expect((error as Error).message).toMatch(`${MAX_CODEX_TIMEOUT_MS}ms`);
+    expect(calls).toHaveLength(0);
   });
 });
 

@@ -171,13 +171,15 @@ It is restricted by design:
   `RUNNER_ENVIRONMENT` fails closed.
 - **The login never enters GitHub.** `auth.json` lives in `$CODEX_HOME` on the
   host and is never read, copied, logged, or placed in Actions secrets.
-- **Job-level same-repo fork gate**, so a fork PR is never scheduled onto the
-  runner. Required on a public repo; a private repo may drop it.
+- **Job-level same-repo and approved-actor gate**, so a fork PR or unauthorized
+  same-repo PR is never scheduled onto the runner. Required on a public repo; a
+  private repo may drop the fork gate.
 
 ```yaml
 jobs:
   review:
-    # Same-repo gate: keeps fork PRs off the self-hosted runner.
+    # Same-repo + approved-actor gate: see the self-hosted example for the full
+    # hosted resolve job that checks PROWL_REVIEW_ALLOWED_ACTORS before scheduling.
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
@@ -318,11 +320,13 @@ Drafts are skipped by default (set `review.reviewDrafts: true`, or comment
 prowl-review posts a neutral check so a Required "Prowl Review" check isn't left
 pending.
 
-Fork PRs don't receive secrets, so a keyless fork run is skipped safely, and the
-fork checkout is never trusted: repo-local linters don't execute and
-`.prowl-review.yml` isn't auto-discovered from it. The recommended `if:` guard
-also restricts to same-repo heads. To review fork PRs anyway, use a
-`pull_request_target` workflow that checks out the trusted base for config and
-passes the PR head as `workspace-path` — see
+In `pull_request` workflows, fork PRs don't receive secrets, so a missing-key
+fork run is skipped safely, and the fork checkout is never trusted: repo-local
+linters don't execute and `.prowl-review.yml` isn't auto-discovered from it. The
+recommended `pull_request` guard also restricts to same-repo heads before any
+self-hosted runner is scheduled. To review fork PRs anyway, use a
+`pull_request_target` workflow: it runs in the trusted base-repository context
+and can receive secrets, but must check out the trusted base for config and pass
+the PR head as an untrusted `workspace-path` — see
 [Fork pull requests](../README.md#fork-pull-requests-20) and
 [Auth](auth.md#fork-pull-requests).

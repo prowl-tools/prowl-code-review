@@ -16,13 +16,6 @@ All notable changes to Prowl Review will be documented in this file.
   throughout). The Homebrew formula is dropped (#70): npm + the `v1` Action tag are the only
   channels, `packaging/homebrew/` and the tap steps in `docs/releasing.md` are removed.
 
-### Fixed
-- **`codex.timeoutMs` / `codex.lockTimeoutMs` were rejected by the config schema.** The changelog
-  and error messages advertised them and the resolver read them, but the strict `codex:` schema
-  only accepted `effort` and `lock`, so setting either in `.prowl-review.yml` failed validation.
-  Both are now accepted (positive integer ms); the matching `PROWL_CODEX_*_MS` env vars still
-  take precedence.
-
 ### Added
 - **Codex (ChatGPT subscription) provider — `provider: codex` (backlog #45).** A new
   keyless provider that runs reviews through your ChatGPT subscription instead of a metered API
@@ -61,7 +54,7 @@ All notable changes to Prowl Review will be documented in this file.
   - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
   - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
     only** — for the GitHub Action it is restricted to self-hosted runners (any repository
-    visibility), behind a job-level same-repo fork gate. OpenAI's "Do not use this workflow for
+    visibility), behind a job-level same-repo + approved-actor gate. OpenAI's "Do not use this workflow for
     public or open-source repositories" line is about `auth.json` in CI secrets on hosted/shared
     runners, which we never do — not about a self-hosted runner whose login lives on the host;
     **no Claude/Gemini equivalent, ever**. Documented in
@@ -70,10 +63,10 @@ All notable changes to Prowl Review will be documented in this file.
   `@prowl-review` command workflows now run on a self-hosted runner
   (`runs-on: [self-hosted, macOS, prowl-review]`) using keyless `provider: codex`, so reviews are
   subscription-backed ($0.00/review) with **no provider secret in GitHub**.
-  - **Job-level same-repo gate** on the self-hosted jobs (`head_repo == github.repository`) so a
-    fork PR is never scheduled onto the runner; the fork-gating resolve job and the neutral
-    fork-skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split into an
-    ubuntu trust-resolve job and a self-hosted command job.
+  - **Job-level same-repo + approved-actor gate** on the self-hosted auto-review job so fork PRs
+    and unauthorized same-repo PRs are never scheduled onto the runner; the fork/auth resolve job
+    and neutral skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split
+    into an ubuntu trust-resolve job and a self-hosted command job.
   - **Per-PR Codex concurrency** (`prowl-review-codex-<repo>-<pr>`) with a 30-minute timeout;
     the shared auto-review/command group is non-cancelling so maintainer commands are not
     interrupted, and machine-wide serialization across repos/instances is the provider's Codex
@@ -115,6 +108,13 @@ All notable changes to Prowl Review will be documented in this file.
     `codex` + API-key ensemble prices each member with its own model.
 
 ### Fixed
+- **`codex.timeoutMs` / `codex.lockTimeoutMs` were rejected by the config schema.** The changelog
+  and error messages advertised them and the resolver read them, but the strict `codex:` schema
+  only accepted `effort` and `lock`, so setting either in `.prowl-review.yml` failed validation.
+  Both are now accepted (positive integer ms); the matching `PROWL_CODEX_*_MS` env vars still
+  take precedence. `codex.timeoutMs` is capped at 2,147,483,647 ms (Node's maximum timer delay)
+  in the schema and before `runCodexExec` schedules its timeout; `lockTimeoutMs` remains an
+  elapsed-time limit and is not timer-capped.
 - **Codex Actions guard no longer refuses public repos (blocker for #64/#65).** Under
   `GITHUB_ACTIONS=true`, `provider: codex` is allowed **iff the runner is self-hosted**
   (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of repository visibility**. The production

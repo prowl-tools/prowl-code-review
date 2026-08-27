@@ -36,6 +36,7 @@ jobs:
       base_sha: ${{ steps.pr.outputs.base_sha }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
       head_repo: ${{ steps.pr.outputs.head_repo }}
+      approved_actor: ${{ steps.pr.outputs.approved_actor }}
       is_draft: ${{ steps.pr.outputs.is_draft }}
       check_head_sha: ${{ steps.pr.outputs.check_head_sha }}
       check_conclusion: ${{ steps.pr.outputs.check_conclusion }}
@@ -52,9 +53,26 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           CHECK_RUN: "true"
+          APPROVED_ACTORS: ${{ vars.PROWL_REVIEW_ALLOWED_ACTORS || 'prowltools' }}
         shell: bash
         run: |
           set -euo pipefail
+
+          is_approved_actor() {
+            local login="$1"
+            local association="$2"
+            if [ "${association}" = "OWNER" ]; then
+              return 0
+            fi
+            local normalized
+            normalized="$(printf '%s' "${APPROVED_ACTORS:-}" | tr ',;' '  ' | tr '\n\r\t' '    ')"
+            for actor in ${normalized}; do
+              if [ "${login}" = "${actor}" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
 
           report_check() {
             local conclusion="$1"
@@ -117,7 +135,7 @@ jobs:
 
           # Re-derive trusted base/head from the resolved PR (never from the CI
           # payload) so the config/guidelines checkout stays anchored to base code.
-          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv' 2>/dev/null)"; then
+          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft, .user.login, .author_association] | @tsv' 2>/dev/null)"; then
             report_check "failure" "Review setup failed" "prowl-review could not load pull request #${pr_number} metadata after resolving the completed CI run. Inspect this workflow run for API, rate-limit, or permissions errors."
             echo "Skipping: failed to load complete PR metadata for #${pr_number}."
             exit 0
@@ -126,6 +144,8 @@ jobs:
           head_sha="$(printf '%s' "${meta}" | cut -f2)"
           head_repo="$(printf '%s' "${meta}" | cut -f3)"
           is_draft="$(printf '%s' "${meta}" | cut -f4)"
+          author_login="$(printf '%s' "${meta}" | cut -f5)"
+          author_association="$(printf '%s' "${meta}" | cut -f6)"
           if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] ||
             [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] ||
             [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
@@ -147,6 +167,11 @@ jobs:
             echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
             exit 0
           fi
+          if ! is_approved_actor "${author_login}" "${author_association}"; then
+            report_check "neutral" "Review skipped - unauthorized actor" "prowl-review skipped this same-repository pull request because @${author_login} is not an owner or approved actor for the self-hosted review runner."
+            echo "Skipping PR #${pr_number}: author @${author_login} (${author_association:-none}) is not approved for the self-hosted runner."
+            exit 0
+          fi
 
           {
             echo "resolved=true"
@@ -154,6 +179,7 @@ jobs:
             echo "base_sha=${base_sha}"
             echo "head_sha=${head_sha}"
             echo "head_repo=${head_repo}"
+            echo "approved_actor=true"
             echo "is_draft=${is_draft}"
           } >> "$GITHUB_OUTPUT"
 
@@ -207,16 +233,14 @@ jobs:
 
   review:
     needs: resolve
-    # Job-level same-repo gate (#64): the self-hosted Codex runner must NEVER be
-    # scheduled for a fork PR. `resolved` is already same-repo-only (the resolve
-    # job posts the neutral fork-skip check on ubuntu and never sets resolved=true
-    # for a fork), but the explicit head_repo == github.repository check is
-    # belt-and-suspenders so no future resolve change can silently route fork code
-    # onto the runner. head_repo is re-derived server-side from PR metadata in
-    # `resolve`, never from the PR-controlled event payload.
+    # Job-level trust gate (#64): the self-hosted Codex runner must NEVER be
+    # scheduled for a fork PR or unauthorized same-repo author. `resolve` derives
+    # head_repo and author trust server-side from PR metadata, then posts a neutral
+    # check from ubuntu when either gate fails.
     if: >
       needs.resolve.outputs.resolved == 'true' &&
-      needs.resolve.outputs.head_repo == github.repository
+      needs.resolve.outputs.head_repo == github.repository &&
+      needs.resolve.outputs.approved_actor == 'true'
     # Subscription-backed reviews run on the always-on Mac mini (#64): keyless
     # `provider: codex` via the ChatGPT login that lives only on that host. The
     # ubuntu resolve/report jobs above stay hosted so fork PRs still get a status

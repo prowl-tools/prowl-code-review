@@ -156,12 +156,15 @@ device.
 
 ### Fork pull requests
 
-GitHub does not expose repository secrets to workflows triggered by fork PRs, so a
-fork PR has no provider key. prowl-review handles this safely — a keyless run is
-skipped rather than failing — and the recommended workflows additionally guard on
-`head.repo.full_name == github.repository`. See
-[Fork pull requests](../README.md#fork-pull-requests-20) in the README and
-[`SECURITY.md`](../SECURITY.md).
+In `pull_request` workflows, GitHub does not expose repository secrets to fork
+PRs, so an API-key fork run has no provider key. prowl-review handles this safely
+by skipping the missing-key run instead of failing, and the recommended
+`pull_request` workflows additionally guard on
+`head.repo.full_name == github.repository`. `pull_request_target` runs in the
+trusted base-repository context and can receive secrets; use it only with trusted
+base config, pass the PR head as an untrusted `workspace-path`, and do not add
+steps that execute fork code. See [Fork pull requests](../README.md#fork-pull-requests-20)
+in the README and [`SECURITY.md`](../SECURITY.md).
 
 ## Why API keys only — the subscription question
 
@@ -216,9 +219,10 @@ instead of a metered key. It is deliberately narrow:
   warning is about copying `auth.json` into **CI secrets on GitHub-hosted / shared
   runners**, which we never do; it does **not** apply to a
   self-hosted runner whose login lives on the host. All Prowl repos are public and
-  run `codex` on a self-hosted runner behind a **job-level same-repo fork gate**
-  (see [`self-hosted-runner.md`](self-hosted-runner.md)) so a fork PR is never
-  scheduled onto it. Private repos on a self-hosted runner are equally fine.
+  run `codex` on a self-hosted runner behind a **job-level same-repo +
+  approved-actor gate** (see [`self-hosted-runner.md`](self-hosted-runner.md)) so
+  forks and unauthorized same-repo PRs are never scheduled onto it. Private repos
+  on a self-hosted runner are equally fine.
 - **Never copy `auth.json` between machines or instances.** Refresh tokens are
   single-use; a copied file logs out whichever side refreshes second. Keep one
   `CODEX_HOME` per machine. When several runner instances share it, prowl-review's
@@ -294,10 +298,10 @@ steps in a private runbook):
   `actions/setup-node` step; nothing else is assumed on the host.
 - **Labels:** `[self-hosted, macOS, prowl-review]`, which the review/command jobs
   target; the fork-gating jobs stay on GitHub-hosted `ubuntu-latest`.
-- **Registration scope:** organizations register **one org-level runner** in a
-  restricted runner group; **personal accounts allow repository-level runners
-  only**, so register **one runner per opted-in repo**. Private repos need no
-  fork gate and adopt first.
+- **Registration scope:** register **one repository-level runner per opted-in
+  repo**. This is the selected Prowl topology for the live org repos and is also
+  the only runner scope available to personal-account repos. Private repos need
+  no fork gate and adopt first.
 
 ## Local CLI
 

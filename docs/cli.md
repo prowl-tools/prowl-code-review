@@ -13,8 +13,9 @@ npm/npx need Node.js 22.13.0 or newer within Node 22, or Node 24+.
 
 All commands resolve the provider from `PROWL_AI_PROVIDER` (`anthropic` by
 default), then read `PROWL_AI_KEY_<PROVIDER>` first and fall back to
-`PROWL_AI_KEY` only when the provider-scoped key is absent. If neither key is set,
-the run fails fast with a message naming both variables — see [Auth](auth.md).
+`PROWL_AI_KEY` when the provider-scoped key is missing or blank (including
+whitespace-only values). If neither key has a value, the run fails fast with a
+message naming both variables — see [Auth](auth.md).
 The keyless `codex` provider needs no key at all; it uses the local `codex login`
 session instead.
 

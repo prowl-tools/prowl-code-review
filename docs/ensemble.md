@@ -72,6 +72,7 @@ Cost is roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap is **split evenly** across providers,
 and risk tiering still applies.
 
-A provider with no key is skipped with a note. If fewer than two providers have
-usable keys, prowl-review falls back to a normal single-provider review and says
-so in the review notes.
+A provider missing its required credentials is skipped with a note. The keyless
+`codex` provider is usable without an API key under the self-hosted/local
+restriction described above. If fewer than two providers are usable, prowl-review
+falls back to a normal single-provider review and says so in the review notes.

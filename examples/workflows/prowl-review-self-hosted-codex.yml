@@ -11,6 +11,9 @@
 #     is REQUIRED on a public repo — it keeps fork PRs from ever being scheduled
 #     onto the runner, so only your own repo's code runs there. Codex itself
 #     also runs `--sandbox read-only`.
+#   - Same-repo PRs are still gated by author: the resolve job below allows an
+#     OWNER association or an exact login in the PROWL_REVIEW_ALLOWED_ACTORS
+#     repo/org variable before the self-hosted job can be scheduled.
 #   - PRIVATE repos may drop the fork gate: a private repo carries neither
 #     GitHub's runner warning nor OpenAI's public-repo line, so fork-PR code
 #     execution is not a concern. Keep the gate if you are unsure.
@@ -41,10 +44,60 @@ permissions:
   contents: read
 
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      trusted_head: ${{ steps.pr.outputs.trusted_head }}
+      approved_actor: ${{ steps.pr.outputs.approved_actor }}
+    steps:
+      - id: pr
+        env:
+          HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          AUTHOR_LOGIN: ${{ github.event.pull_request.user.login }}
+          AUTHOR_ASSOCIATION: ${{ github.event.pull_request.author_association }}
+          APPROVED_ACTORS: ${{ vars.PROWL_REVIEW_ALLOWED_ACTORS || github.repository_owner }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          is_approved_actor() {
+            local login="$1"
+            local association="$2"
+            if [ "${association}" = "OWNER" ]; then
+              return 0
+            fi
+            local normalized
+            normalized="$(printf '%s' "${APPROVED_ACTORS:-}" | tr ',;' '  ' | tr '\n\r\t' '    ')"
+            for actor in ${normalized}; do
+              if [ "${login}" = "${actor}" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
+
+          if [ "${HEAD_REPO}" = "${GITHUB_REPOSITORY}" ]; then
+            echo "trusted_head=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted_head=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping fork PR head ${HEAD_REPO}; forks are never scheduled on the self-hosted runner."
+          fi
+
+          if is_approved_actor "${AUTHOR_LOGIN}" "${AUTHOR_ASSOCIATION}"; then
+            echo "approved_actor=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "approved_actor=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping PR by @${AUTHOR_LOGIN} (${AUTHOR_ASSOCIATION:-none}); not approved for the self-hosted runner."
+          fi
+
   review:
-    # Same-repo gate: keeps fork PRs off the self-hosted runner. REQUIRED on a
-    # public repo; a private repo may drop this line (no fork code-execution risk).
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: resolve
+    # Same-repo + approved-actor gate: keeps forks and unauthorized same-repo PRs
+    # off the self-hosted runner. REQUIRED on a public repo; a private repo may
+    # drop the fork half only when that risk does not apply.
+    if: >
+      needs.resolve.outputs.trusted_head == 'true' &&
+      needs.resolve.outputs.approved_actor == 'true'
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
     steps:

@@ -100,7 +100,7 @@ codex:
 |---|---|---|
 | `codex.effort` | `low` | Reasoning effort (`model_reasoning_effort`): `low` \| `medium` \| `high` \| `xhigh`. |
 | `codex.lock` | `true` | Serialize `codex` spawns machine-wide via `$CODEX_HOME/.prowl-review.lock`, so one `auth.json` serves one stream at a time. Opt out only when a single instance owns the host. |
-| `codex.timeoutMs` | `600000` (10 min) | Per-`codex exec` timeout in ms; a hung child is killed (SIGTERM → SIGKILL). Positive integer. |
+| `codex.timeoutMs` | `600000` (10 min) | Per-`codex exec` timeout in ms; a hung child is killed (SIGTERM → SIGKILL). Positive integer up to 2,147,483,647 ms, Node's maximum timer delay. |
 | `codex.lockTimeoutMs` | `600000` (10 min) | How long to wait for the machine-wide lock before failing, in ms. Positive integer. |
 
 Related environment variables (each overrides the config key of the same name; the

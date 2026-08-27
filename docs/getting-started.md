@@ -84,7 +84,7 @@ The same engine runs locally against a git diff before you push — no GitHub
 token, no posting. Findings print to the terminal:
 
 ```bash
-npm install -g prowl-review          # or: brew install prowl-tools/tap/prowl-review
+npm install -g prowl-review
 PROWL_AI_KEY=sk-… prowl-review review --base main
 ```
 

@@ -36,6 +36,7 @@ jobs:
       # workflow_run hides this workflow's Actions row, so keep the branded
       # replacement check visible unless another required status owns the gate.
       check-run: true
+    #   allowed-actors: ${{ vars.PROWL_REVIEW_ALLOWED_ACTORS }}
     #   min-severity: major
     #   ai-provider: anthropic
     #   org-guidelines-path: https://example.com/review-guidelines.md

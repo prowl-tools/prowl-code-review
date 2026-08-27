@@ -25,11 +25,11 @@ open-source repositories."*) is about putting `auth.json` in **CI secrets on
 GitHub-hosted / shared runners**, which we never do — it does not apply to a
 self-hosted runner whose login lives on the host. GitHub still advises caution
 with self-hosted runners on public repos (any PR can run code on them), so the
-workflows keep a **job-level same-repo gate** — a fork PR is never scheduled onto
-the runner — and Codex itself runs `--sandbox read-only`. All Prowl repos are
-public and run this way; private repos carry no public-repo caveat and may drop
-the fork gate. For a public repo, prowl-review adds a review note reminding you to
-keep that fork gate in place.
+workflows keep a **job-level same-repo + approved-actor gate** — a fork PR and an
+unauthorized same-repo PR are never scheduled onto the runner — and Codex itself
+runs `--sandbox read-only`. All Prowl repos are public and run this way; private
+repos carry no public-repo caveat and may drop the fork gate. For a public repo,
+prowl-review adds a review note reminding you to keep that fork gate in place.
 
 ## Runner labels
 
@@ -81,15 +81,16 @@ Nothing else is assumed on the runner: the Action provisions Node via its own
 `actions/setup-node` step. Pin the `codex` CLI and `prowl-review` versions on the
 host so a background upgrade can't change review behavior mid-flight.
 
-## Registration scope: org vs. repo
+## Registration scope
 
-- **Organization repos** — register **one org-level runner** in a runner group
-  restricted to the prowl-review workflows. Registration happens **as the org's
-  account**.
-- **Personal-account repos** — GitHub allows **repository-level** runners only
-  for personal accounts (no org runner groups), so register **one runner
-  instance per repo** that opts in, **as the personal account**. Private repos
-  need no fork gate and are the easiest first adopters.
+- **Repository-level runner per opted-in repo** — this is the selected topology
+  for the live Prowl org repos and the only runner scope available to
+  personal-account repos. Registration happens as the account that owns that
+  repository.
+- **Approved auto-review actors** — public self-hosted auto reviews should run
+  only for the owner or exact logins listed in `PROWL_REVIEW_ALLOWED_ACTORS`
+  (repo/org variable). Keep command workflows' trusted-commenter association
+  check as a separate gate.
 
 All instances live on the same host with the shared `[self-hosted, macOS,
 prowl-review]` label set. The runner user should be unprivileged with no access

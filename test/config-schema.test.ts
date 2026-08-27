@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { configSchema } from "../src/config/schema.js";
+import { MAX_CODEX_TIMEOUT_MS } from "../src/providers/codex.js";
 
 describe("configSchema (#29)", () => {
   it("accepts an empty config (everything is optional)", () => {
@@ -33,10 +34,17 @@ describe("configSchema (#29)", () => {
   it("accepts codex.timeoutMs / codex.lockTimeoutMs as documented (#67 follow-up)", () => {
     const input = { codex: { timeoutMs: 900000, lockTimeoutMs: 1200000 } };
     expect(configSchema.parse(input)).toEqual(input);
+    expect(configSchema.parse({ codex: { timeoutMs: MAX_CODEX_TIMEOUT_MS } })).toEqual({
+      codex: { timeoutMs: MAX_CODEX_TIMEOUT_MS }
+    });
     expect(() => configSchema.parse({ codex: { timeoutMs: 0 } })).toThrow(); // positive only
     expect(() => configSchema.parse({ codex: { lockTimeoutMs: -1 } })).toThrow();
     expect(() => configSchema.parse({ codex: { timeoutMs: "10m" } })).toThrow(); // number only
     expect(() => configSchema.parse({ codex: { timeoutMs: 1.5 } })).toThrow(); // integer ms
+    expect(() => configSchema.parse({ codex: { timeoutMs: MAX_CODEX_TIMEOUT_MS + 1 } })).toThrow();
+    expect(configSchema.parse({ codex: { lockTimeoutMs: MAX_CODEX_TIMEOUT_MS + 1 } })).toEqual({
+      codex: { lockTimeoutMs: MAX_CODEX_TIMEOUT_MS + 1 }
+    });
   });
 
   it("accepts the agentPrompt toggle and rejects a non-boolean (#57)", () => {

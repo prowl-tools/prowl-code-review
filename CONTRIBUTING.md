@@ -15,9 +15,10 @@ participating you are expected to uphold it.
 
 ## Ways to contribute
 
-- **Report a bug** or **request a feature** — open an issue (templates provided).
-- **Fix a bug / build a feature** — pick an item from [`docs/backlog.md`](docs/backlog.md)
-  or an open issue, then send a PR.
+- **Report an in-scope maintenance bug** — dependency/security updates, breakages on the
+  maintainer's repos, and provider API changes are the categories actively reviewed.
+- **Send a focused maintenance fix** — pick an in-scope item from
+  [`docs/backlog.md`](docs/backlog.md) or an open issue, then send a PR.
 - **Improve docs** — README, `docs/`, code comments.
 - **Report a security issue** — please do **not** open a public issue; see
   [SECURITY.md](SECURITY.md).

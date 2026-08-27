@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SEVERITIES } from "../review/findings.js";
 import { BUILTIN_SPECIALIST_KEYS } from "../review/specialists.js";
 import { PROVIDER_NAMES } from "../providers/index.js";
+import { MAX_CODEX_TIMEOUT_MS } from "../providers/codex.js";
 
 /**
  * `.prowl-review.yml` schema (backlog #29).
@@ -363,7 +364,7 @@ const codexSchema = z
      */
     lock: z.boolean().optional(),
     /** Kill one `codex exec` child after this many ms. Default 600000 (10 min). */
-    timeoutMs: z.number().int().positive().optional(),
+    timeoutMs: z.number().int().positive().max(MAX_CODEX_TIMEOUT_MS).optional(),
     /** Max ms to wait for the machine-wide Codex lock. Default 600000. */
     lockTimeoutMs: z.number().int().positive().optional()
   })
