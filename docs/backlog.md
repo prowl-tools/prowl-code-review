@@ -61,6 +61,7 @@ personal infrastructure, not product work.
     - Acceptance: every page on the site has an equivalent in `docs/`; review.prowl.tools no longer serves the site; docs repo archived.
 
 69. **Demote prowl-review on the marketing site**
+    _Status (2026-08-26): **owner chose "remove entirely" (no footnote, no redirect) — branch `demote-code-review` pushed in `prowl-web` (PQW-026 resolved there), awaiting the owner's merge + deploy.** The `/code-review` route (page + OG image), `CodeReview` component, product card, nav/docs-hub/sitemap entries, meta copy, and the hunts asserting them are gone; lint/build/tests green; `grep -ri "code-review\|review.prowl" src content next.config.ts .prowl` is empty. Close this item once prowl.tools deploys without `/code-review`._
     As a visitor to prowl.tools, I should see one product (the CLI), so that the site's promises match what is actually being built.
     - Counterpart item on the web side: `prowl-web` PQW-026. Either remove "Prowl Code Review" from the product lineup entirely or reduce it to a one-line "we also open-sourced the reviewer we run on our own PRs" footnote with a link to the repo. Owner decides which; the footnote is the recommended option (credibility signal at zero cost) provided the wording stays honest about maintenance mode.
     - Acceptance: no `/code-review` product page or equal-billing nav entry on prowl.tools; whatever mention remains links to the repo, not to a docs site.
