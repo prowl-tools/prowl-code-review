@@ -55,9 +55,9 @@ describe("auth policy doc (#38)", () => {
     expect(doc).toMatch(/off by default/i);
     expect(doc).toMatch(/opt[- ]in/i);
     expect(doc).toMatch(/codex login/);
-    // Self-hosted / local infrastructure only — never GitHub-hosted runners on public repos.
+    // Trusted self-hosted / local infrastructure only; public/open-source CI is unsupported.
     expect(doc).toMatch(/self-hosted|local infrastructure/i);
-    expect(doc).toContain("Do not use this workflow for public or open-source repositories");
+    expect(doc).toMatch(/public\/open-source CI as unsupported/i);
     // Never copy auth.json between machines.
     expect(doc).toMatch(/auth\.json/);
     expect(doc).toMatch(/never (?:copy|copied|move)|do not copy/i);

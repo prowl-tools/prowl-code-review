@@ -519,15 +519,14 @@ metered API key, so per-review marginal cost is **$0.00**. It is **keyless** —
 `codex login`); prowl-review never calls an OpenAI endpoint directly and never
 reads or copies `auth.json`.
 
-It is **off by default and opt-in**, and supported **only on self-hosted / local
-infrastructure you control** — under GitHub Actions it runs iff the runner is
-self-hosted (`RUNNER_ENVIRONMENT=self-hosted`), **regardless of repository
-visibility**; a GitHub-hosted runner is refused. OpenAI's guidance ("Do not use
-this workflow for public or open-source repositories") is about `auth.json` in
-CI secrets on hosted/shared runners, which we never do — not about a self-hosted
-runner whose login lives on the host. All Prowl repos are public and run `codex`
-on a self-hosted runner behind a job-level same-repo + approved-actor gate. There
-is **no Claude/Gemini equivalent**.
+It is **off by default and opt-in**, and supported **only on trusted self-hosted /
+local infrastructure you control** — under GitHub Actions it runs iff the runner
+is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`); a GitHub-hosted runner is
+refused. OpenAI's CI/CD-auth guidance limits this ChatGPT-auth workflow to
+trusted private automation and says not to use it for public or open-source
+repositories. The same-repo + approved-actor gate limits runner scheduling, but
+it does not make public/open-source CI a supported use. There is **no
+Claude/Gemini equivalent**.
 
 ```yaml
 # .prowl-review.yml
@@ -549,9 +548,11 @@ runner**, never in a GitHub secret. The short version (full detail in
 [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md); secrets-bearing steps
 in a private runbook):
 
-- **Dedicated `CODEX_HOME` per host**, its own **`codex login --device-auth`**,
-  **one login per host** — the machine-wide Codex lock serializes multiple runner
-  instances. **Never copy `auth.json`** between hosts/instances.
+- **Dedicated `CODEX_HOME` per serialized session.** The normal setup is one
+  `CODEX_HOME` and one **`codex login --device-auth`** per host, with the
+  machine-wide Codex lock serializing multiple runner instances. If a runner
+  instance needs an independent Codex session, give it its own `CODEX_HOME` and
+  login. **Never copy `auth.json`** between hosts/instances.
 - **Runner service:** `.env` sets `CODEX_HOME=…`; `.path` must include the `codex`
   binary dir (e.g. `/opt/homebrew/bin`). Node comes from the Action's own
   `actions/setup-node` step.
@@ -559,14 +560,16 @@ in a private runbook):
   while fork-gating jobs stay on hosted `ubuntu-latest`.
 - **Registration:** use one repository-level runner per opted-in repo; this is
   the selected Prowl topology and the only runner scope available to
-  personal-account repos. Private repos need no fork gate.
+  personal-account repos. Keep the same-repo gate unless a trusted private
+  workflow enforces an explicit owner-only exception.
 - Copy-paste workflows:
   [`examples/workflows/prowl-review-self-hosted-codex.yml`](examples/workflows/prowl-review-self-hosted-codex.yml)
   (+ the command variant).
 
-**Public repos:** the same-repo + approved-actor gate is **required** (OpenAI's
-*"Do not use this workflow for public or open-source repositories."* + GitHub's
-runner warning). **Private repos may drop the fork half.**
+**Public/open-source repos:** this ChatGPT-auth CI/CD workflow is unsupported.
+Use an API-key provider on GitHub-hosted runners instead. For trusted private
+self-hosted workflows, keep the same-repo + approved-actor gate unless an
+explicit owner-only exception removes non-owner fork risk.
 
 ## Auto-generated PR descriptions (#33)
 

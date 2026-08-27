@@ -18,18 +18,15 @@ in with a **ChatGPT subscription**, so per-review marginal cost is `$0.00` and
 **no provider credential ever enters GitHub**. That subscription login can only
 live on infrastructure you control, so the reviews run on a self-hosted runner.
 Under `GITHUB_ACTIONS=true`, prowl-review allows `codex` **iff the runner is
-self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of repository
-visibility**; a GitHub-hosted runner is refused and a missing `RUNNER_ENVIRONMENT`
-fails closed. OpenAI's guidance (*"Do not use this workflow for public or
-open-source repositories."*) is about putting `auth.json` in **CI secrets on
-GitHub-hosted / shared runners**, which we never do — it does not apply to a
-self-hosted runner whose login lives on the host. GitHub still advises caution
-with self-hosted runners on public repos (any PR can run code on them), so the
-workflows keep a **job-level same-repo + approved-actor gate** — a fork PR and an
-unauthorized same-repo PR are never scheduled onto the runner — and Codex itself
-runs `--sandbox read-only`. All Prowl repos are public and run this way; private
-repos carry no public-repo caveat and may drop the fork gate. For a public repo,
-prowl-review adds a review note reminding you to keep that fork gate in place.
+self-hosted** (`RUNNER_ENVIRONMENT=self-hosted`); a GitHub-hosted runner is
+refused and a missing `RUNNER_ENVIRONMENT` fails closed. OpenAI's CI/CD-auth
+guidance says not to use this workflow for public or open-source repositories,
+so treat public/open-source CI as unsupported and use an API-key provider on
+GitHub-hosted runners instead. For trusted private self-hosted workflows, keep a
+**job-level same-repo + approved-actor gate** — a fork PR and an unauthorized
+same-repo PR are never scheduled onto the runner unless an explicit owner-only
+exception removes non-owner fork risk — and Codex itself runs
+`--sandbox read-only`.
 
 ## Runner labels
 
@@ -55,14 +52,17 @@ still catches typos. Fork-gating and neutral-check jobs stay on GitHub-hosted
 > [`docs/auth.md`](./auth.md#codex-subscription-provider-45) for the full
 > boundary.
 
-- **One dedicated `CODEX_HOME` per host.** Give the runner its own `CODEX_HOME`
-  (e.g. a path the runner user owns) and run **`codex login --device-auth`**
-  there **once per host**. The device-auth flow keeps the login on the machine.
-- **One login serves every instance on the host.** When several runner instances
-  share the host, prowl-review's machine-wide advisory lock
+- **One dedicated `CODEX_HOME` per serialized session.** The normal setup is one
+  `CODEX_HOME` per host (e.g. a path the runner user owns) with **`codex login
+  --device-auth`** run there once. The device-auth flow keeps the login on the
+  machine.
+- **One login can serve every instance on the host when serialized.** When several
+  runner instances share the host, prowl-review's machine-wide advisory lock
   (`$CODEX_HOME/.prowl-review.lock`, on by default for `provider: codex`)
   serializes `codex` runs so one `auth.json` only ever serves one stream at a
-  time. You maintain a single login, not one per instance.
+  time. If a runner instance needs an independent Codex session, give that
+  instance its own `CODEX_HOME` and its own `codex login`; do not run separate
+  logins against one shared `CODEX_HOME`.
 - **Never copy `auth.json`** between machines or instances. Refresh tokens are
   single-use; a copied file logs out whichever side refreshes second. Re-login on
   each host instead.
@@ -87,10 +87,11 @@ host so a background upgrade can't change review behavior mid-flight.
   for the live Prowl org repos and the only runner scope available to
   personal-account repos. Registration happens as the account that owns that
   repository.
-- **Approved auto-review actors** — public self-hosted auto reviews should run
-  only for the owner or exact logins listed in `PROWL_REVIEW_ALLOWED_ACTORS`
-  (repo/org variable). Keep command workflows' trusted-commenter association
-  check as a separate gate.
+- **Approved auto-review actors** — trusted private self-hosted auto reviews
+  should run only for the owner or exact logins listed in
+  `PROWL_REVIEW_ALLOWED_ACTORS` (repo/org variable). Keep the same-repo gate
+  unless the workflow enforces an explicit owner-only exception. Keep command
+  workflows' trusted-commenter association check as a separate gate.
 
 All instances live on the same host with the shared `[self-hosted, macOS,
 prowl-review]` label set. The runner user should be unprivileged with no access

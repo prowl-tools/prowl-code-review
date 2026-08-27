@@ -3,20 +3,14 @@
 # $0.00 and no provider key is stored in GitHub. Copy to
 # .github/workflows/prowl-review.yml and pin `uses:` to a release.
 #
-# PUBLIC-REPO CAVEATS — read before using this on a public/open-source repo:
-#   - OpenAI's CI/CD authentication guidance says, verbatim:
-#       "Do not use this workflow for public or open-source repositories."
-#   - GitHub advises against self-hosted runners on public repositories: any PR
-#     can execute code on the runner. The job-level same-repo `if:` gate below
-#     is REQUIRED on a public repo — it keeps fork PRs from ever being scheduled
-#     onto the runner, so only your own repo's code runs there. Codex itself
-#     also runs `--sandbox read-only`.
-#   - Same-repo PRs are still gated by author: the resolve job below allows an
-#     OWNER association or an exact login in the PROWL_REVIEW_ALLOWED_ACTORS
-#     repo/org variable before the self-hosted job can be scheduled.
-#   - PRIVATE repos may drop the fork gate: a private repo carries neither
-#     GitHub's runner warning nor OpenAI's public-repo line, so fork-PR code
-#     execution is not a concern. Keep the gate if you are unsure.
+# PUBLIC/OPEN-SOURCE REPOS: do not use this ChatGPT-auth CI/CD workflow there.
+# OpenAI's guidance says not to use it for public or open-source repositories;
+# use an API-key provider on GitHub-hosted runners instead.
+#
+# TRUSTED PRIVATE REPOS: keep the job-level same-repo + approved-actor gate below
+# unless the workflow enforces an explicit owner-only exception. The resolve job
+# allows an OWNER association or an exact login in PROWL_REVIEW_ALLOWED_ACTORS
+# before the self-hosted job can be scheduled.
 #
 # The subscription login lives ONLY on the runner: run `codex login` into a
 # dedicated CODEX_HOME on the host. It is never placed in GitHub Actions
@@ -93,8 +87,8 @@ jobs:
   review:
     needs: resolve
     # Same-repo + approved-actor gate: keeps forks and unauthorized same-repo PRs
-    # off the self-hosted runner. REQUIRED on a public repo; a private repo may
-    # drop the fork half only when that risk does not apply.
+    # off the self-hosted runner. Keep the same-repo gate unless a trusted
+    # private workflow enforces an explicit owner-only exception.
     if: >
       needs.resolve.outputs.trusted_head == 'true' &&
       needs.resolve.outputs.approved_actor == 'true'

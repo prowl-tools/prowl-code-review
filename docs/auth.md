@@ -207,28 +207,26 @@ instead of a metered key. It is deliberately narrow:
   (or `PROWL_AI_PROVIDER=codex`). Run `codex login` on the machine first; a missing
   or logged-out `codex` binary produces a clear "run `codex login` on this
   machine" error rather than a crash.
-- **Self-hosted / local infrastructure only.** `codex` is supported **only on
-  infrastructure you control** — a self-hosted runner or your laptop — and the
+- **Trusted self-hosted / local infrastructure only.** `codex` is supported **only
+  on infrastructure you control** — a self-hosted runner or your laptop — and the
   subscription login (`codex login`) must live on that machine, **never in GitHub
   Actions secrets**. Under `GITHUB_ACTIONS=true`, prowl-review allows `codex` iff
-  the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of
-  repository visibility**; a GitHub-hosted runner is refused, and a missing
-  `RUNNER_ENVIRONMENT` fails closed. OpenAI's own CI/CD authentication guidance
-  says, verbatim,
-  **"Do not use this workflow for public or open-source repositories."** — that
-  warning is about copying `auth.json` into **CI secrets on GitHub-hosted / shared
-  runners**, which we never do; it does **not** apply to a
-  self-hosted runner whose login lives on the host. All Prowl repos are public and
-  run `codex` on a self-hosted runner behind a **job-level same-repo +
+  the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`); a GitHub-hosted
+  runner is refused, and a missing `RUNNER_ENVIRONMENT` fails closed. OpenAI's own
+  CI/CD authentication guidance says not to use this workflow for public or
+  open-source repositories, so treat public/open-source CI as unsupported. For
+  trusted private self-hosted workflows, keep the **job-level same-repo +
   approved-actor gate** (see [`self-hosted-runner.md`](self-hosted-runner.md)) so
-  forks and unauthorized same-repo PRs are never scheduled onto it. Private repos
-  on a self-hosted runner are equally fine.
+  forks and unauthorized same-repo PRs are never scheduled onto it unless an
+  explicit owner-only exception removes non-owner fork risk.
 - **Never copy `auth.json` between machines or instances.** Refresh tokens are
   single-use; a copied file logs out whichever side refreshes second. Keep one
-  `CODEX_HOME` per machine. When several runner instances share it, prowl-review's
-  machine-wide advisory lock (`$CODEX_HOME/.prowl-review.lock`, on by default for
-  `codex`) serializes `codex` runs so one `auth.json` only ever serves one stream
-  at a time. See backlog #64 for the self-hosted runner rollout.
+  `CODEX_HOME` per serialized session. The normal setup is one shared
+  `CODEX_HOME` per machine plus prowl-review's machine-wide advisory lock
+  (`$CODEX_HOME/.prowl-review.lock`, on by default for `codex`), so one
+  `auth.json` only ever serves one stream at a time. If a runner instance needs an
+  independent Codex session, it needs its own `CODEX_HOME` and its own
+  `codex login`. See backlog #64 for the self-hosted runner rollout.
 - **No Claude/Gemini equivalent, ever.** This exists only because OpenAI offers a
   sanctioned first-party CLI + plan-allowance path; Anthropic and Google do not,
   and their consumer terms forbid it.
@@ -288,10 +286,12 @@ runner**, never in a GitHub secret. In shape (full detail in
 [`self-hosted-runner.md`](./self-hosted-runner.md); secrets-bearing operational
 steps in a private runbook):
 
-- **Dedicated `CODEX_HOME` per host** with its own **`codex login --device-auth`**,
-  **one login per host** — the machine-wide lock serializes multiple runner
-  instances so a single login serves them all. **Never copy `auth.json`** between
-  hosts or instances (single-use refresh tokens).
+- **Dedicated `CODEX_HOME` per serialized session.** The normal setup is one
+  `CODEX_HOME` and one **`codex login --device-auth`** per host, with the
+  machine-wide lock serializing multiple runner instances so a single login serves
+  them all. If a runner instance needs an independent session, give it its own
+  `CODEX_HOME` and login. **Never copy `auth.json`** between hosts or instances
+  (single-use refresh tokens).
 - **Runner service config:** the runner's **`.env`** sets `CODEX_HOME=…`, and its
   **`.path`** must include the `codex` binary directory (e.g. `/opt/homebrew/bin`)
   so `codex` is on `PATH` for the service. Node is provisioned by the Action's own
@@ -300,8 +300,8 @@ steps in a private runbook):
   target; the fork-gating jobs stay on GitHub-hosted `ubuntu-latest`.
 - **Registration scope:** register **one repository-level runner per opted-in
   repo**. This is the selected Prowl topology for the live org repos and is also
-  the only runner scope available to personal-account repos. Private repos need
-  no fork gate and adopt first.
+  the only runner scope available to personal-account repos. Keep the same-repo
+  gate unless a trusted private workflow enforces an explicit owner-only exception.
 
 ## Local CLI
 

@@ -165,22 +165,33 @@ runner's own `codex login` session. Per-review cost reports as
 
 It is restricted by design:
 
-- **Self-hosted runners only.** Under `GITHUB_ACTIONS=true`, prowl-review runs
-  `codex` iff `RUNNER_ENVIRONMENT=self-hosted` — **regardless of repository
-  visibility**. A GitHub-hosted runner is refused, and a missing
-  `RUNNER_ENVIRONMENT` fails closed.
+- **Trusted private self-hosted automation only.** Under `GITHUB_ACTIONS=true`,
+  prowl-review runs `codex` iff `RUNNER_ENVIRONMENT=self-hosted`; a
+  GitHub-hosted runner is refused, and a missing `RUNNER_ENVIRONMENT` fails
+  closed. OpenAI's CI/CD-auth guidance says not to use this workflow for public
+  or open-source repositories.
 - **The login never enters GitHub.** `auth.json` lives in `$CODEX_HOME` on the
   host and is never read, copied, logged, or placed in Actions secrets.
 - **Job-level same-repo and approved-actor gate**, so a fork PR or unauthorized
-  same-repo PR is never scheduled onto the runner. Required on a public repo; a
-  private repo may drop the fork gate.
+  same-repo PR is never scheduled onto the runner. Keep the same-repo gate for
+  private repositories unless the workflow enforces an explicit owner-only
+  exception.
 
 ```yaml
 jobs:
+  resolve:
+    runs-on: ubuntu-latest
+    outputs:
+      trusted_head: ${{ steps.pr.outputs.trusted_head }}
+      approved_actor: ${{ steps.pr.outputs.approved_actor }}
+    steps:
+      # See examples/workflows/prowl-review-self-hosted-codex.yml for the full
+      # hosted resolver that sets both outputs before the self-hosted job exists.
   review:
-    # Same-repo + approved-actor gate: see the self-hosted example for the full
-    # hosted resolve job that checks PROWL_REVIEW_ALLOWED_ACTORS before scheduling.
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    needs: resolve
+    if: >
+      needs.resolve.outputs.trusted_head == 'true' &&
+      needs.resolve.outputs.approved_actor == 'true'
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30
     steps:
@@ -322,9 +333,10 @@ pending.
 
 In `pull_request` workflows, fork PRs don't receive secrets, so a missing-key
 fork run is skipped safely, and the fork checkout is never trusted: repo-local
-linters don't execute and `.prowl-review.yml` isn't auto-discovered from it. The
-recommended `pull_request` guard also restricts to same-repo heads before any
-self-hosted runner is scheduled. To review fork PRs anyway, use a
+linters don't execute and `.prowl-review.yml` isn't auto-discovered from it. For
+self-hosted Codex jobs, use the maintained hosted resolver and require both
+`trusted_head` and `approved_actor` before scheduling the runner. To review fork
+PRs anyway, use a
 `pull_request_target` workflow: it runs in the trusted base-repository context
 and can receive secrets, but must check out the trusted base for config and pass
 the PR head as an untrusted `workspace-path` — see

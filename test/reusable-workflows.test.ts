@@ -1249,13 +1249,13 @@ describe("self-hosted Codex dogfood (#64)", () => {
     expect(commandDoc.jobs.command.concurrency["cancel-in-progress"]).toBe(false);
   });
 
-  const OPENAI_PUBLIC_CAVEAT = "Do not use this workflow for public or open-source repositories.";
+  const PUBLIC_REPO_UNSUPPORTED = "PUBLIC/OPEN-SOURCE REPOS: do not use this ChatGPT-auth CI/CD workflow there.";
   const SELF_HOSTED_EXAMPLES = [
     "examples/workflows/prowl-review-self-hosted-codex.yml",
     "examples/workflows/prowl-review-command-self-hosted-codex.yml"
   ] as const;
 
-  it.each(SELF_HOSTED_EXAMPLES)("%s is repo-agnostic, keyless, and states the public-repo caveats", (path) => {
+  it.each(SELF_HOSTED_EXAMPLES)("%s is repo-agnostic, keyless, and states public repos are unsupported", (path) => {
     const text = readRepo(path);
     expect(() => parseYaml(text)).not.toThrow();
     // Repo-agnostic: pins the published action, bakes in nothing prowl-tools-specific.
@@ -1265,9 +1265,20 @@ describe("self-hosted Codex dogfood (#64)", () => {
     // Keyless codex; no provider secret referenced (the prose may name PROWL_AI_KEY*).
     expect(text).toContain("ai-provider: codex");
     expect(text).not.toContain("secrets.PROWL_AI_KEY");
-    // Public-repo caveats stated verbatim + the private-repo fork-gate note.
-    expect(text).toContain(OPENAI_PUBLIC_CAVEAT);
-    expect(text).toMatch(/PRIVATE repos may drop the fork gate/i);
+    // Public/open-source use is unsupported, and private fork-gate removal needs
+    // an owner-only policy rather than blanket permission.
+    expect(text).toContain(PUBLIC_REPO_UNSUPPORTED);
+    expect(text).toContain("use an API-key provider on GitHub-hosted runners instead");
+    expect(text).toMatch(/explicit owner-only exception/i);
+    expect(text).not.toMatch(/PRIVATE repos may drop the fork gate/i);
+  });
+
+  it("the GitHub Action docs self-hosted snippet includes the approved-actor gate", () => {
+    const text = readRepo("docs/github-action.md");
+    expect(text).toContain("trusted_head: ${{ steps.pr.outputs.trusted_head }}");
+    expect(text).toContain("approved_actor: ${{ steps.pr.outputs.approved_actor }}");
+    expect(text).toContain("needs.resolve.outputs.trusted_head == 'true'");
+    expect(text).toContain("needs.resolve.outputs.approved_actor == 'true'");
   });
 
   it("the self-hosted auto-review example resolves trust on ubuntu and serializes per PR", () => {

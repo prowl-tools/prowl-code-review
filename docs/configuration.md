@@ -81,12 +81,14 @@ overridden with `PROWL_AI_MODEL` or a config `model`.
 `provider: codex` is **keyless** — it runs the review through your ChatGPT
 subscription by spawning the first-party `codex` CLI (`codex login`), so per-review
 marginal cost is **`$0.00 (ChatGPT subscription)`** and no `PROWL_AI_KEY*` is
-needed. It is off by default, opt-in, and supported **only on self-hosted /
-local infrastructure you control**: under GitHub Actions it runs iff
-`RUNNER_ENVIRONMENT=self-hosted`, regardless of repository visibility, and a
-GitHub-hosted runner is refused. The subscription login lives on the host and
-**never** in a GitHub secret — `auth.json` is never read, copied, or placed in
-CI. There is no Claude/Gemini equivalent.
+needed. It is off by default, opt-in, and supported **only on trusted
+self-hosted / local infrastructure you control**: under GitHub Actions it runs
+iff `RUNNER_ENVIRONMENT=self-hosted`, and a GitHub-hosted runner is refused.
+OpenAI's CI/CD-auth guidance says not to use this workflow for public or
+open-source repositories, so public/open-source CI should use an API-key provider
+instead. The subscription login lives on the host and **never** in a GitHub
+secret — `auth.json` is never read, copied, or placed in CI. There is no
+Claude/Gemini equivalent.
 
 ```yaml
 provider: codex             # keyless; no PROWL_AI_KEY* needed
