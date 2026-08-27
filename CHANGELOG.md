@@ -108,6 +108,8 @@ All notable changes to Prowl Review will be documented in this file.
     `codex` + API-key ensemble prices each member with its own model.
 
 ### Fixed
+- Clarified the generated `prowl-review init` ensemble template so keyless `codex`
+  is not described as skipped for missing API credentials.
 - Reusable self-hosted auto-review workflows now keep PR resolution and neutral
   skip reporting on `ubuntu-latest`, so fork and approved-actor checks run before
   any self-hosted review job is scheduled.

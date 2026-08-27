@@ -247,9 +247,10 @@ const ensembleProviderSchema = z
 /**
  * Multi-provider ensemble review (#53). Opt-in, default off. Each provider's key
  * is read from `PROWL_AI_KEY_<PROVIDER>` (the primary also falls back to
- * `PROWL_AI_KEY`; scoped keys win when both are set); a provider with no key is
- * skipped with a note. With fewer than two usable providers the review runs as a
- * normal single-provider review.
+ * `PROWL_AI_KEY`; scoped keys win when both are set); providers missing required
+ * credentials are skipped with a note, while keyless providers such as `codex`
+ * remain usable without an API key. With fewer than two usable providers the
+ * review runs as a normal single-provider review.
  */
 const ensembleSchema = z
   .object({

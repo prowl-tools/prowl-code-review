@@ -15,9 +15,10 @@ import { resolveCodexOptions } from "./codex.js";
  * repo config. Each ensemble provider reads `PROWL_AI_KEY_<PROVIDER>` (e.g.
  * `PROWL_AI_KEY_OPENAI`); the provider that matches the already-resolved primary
  * also falls back to the plain `PROWL_AI_KEY`, so a single-key setup keeps
- * working. Scoped keys win when both are set. A provider with no key is skipped
- * with a note (never silently dropped, #5). With fewer than two usable providers
- * the caller runs a normal single-provider review.
+ * working. Scoped keys win when both are set. A provider missing required
+ * credentials is skipped with a note (never silently dropped, #5); keyless
+ * providers such as `codex` are usable without an API key. With fewer than two
+ * usable providers the caller runs a normal single-provider review.
  */
 
 /** One provider entry from `.prowl-review.yml`'s `ensemble.providers`. */
