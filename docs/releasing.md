@@ -1,7 +1,8 @@
 # Releasing prowl-review
 
-prowl-review publishes to **npm** via a tag-triggered workflow, and is also
-available through **Homebrew**. This is the maintainer release checklist (#42).
+prowl-review publishes to **npm** via a tag-triggered workflow. This is the
+maintainer release checklist (#42). npm and the floating `v1` Action tag are the
+only distribution channels — the Homebrew formula was dropped on 2026-08-26 (#70).
 
 ## Prerequisites (one-time)
 
@@ -21,7 +22,6 @@ available through **Homebrew**. This is the maintainer release checklist (#42).
   fails the run; that is expected and safely re-runnable once the trusted publisher
   is configured. **The standard workflow has no token fallback** — removing token
   dependence is the point of #63.
-- Publish access to the [`prowl-tools/homebrew-tap`](https://github.com/prowl-tools/homebrew-tap) repo.
 
 ### Legacy token fallback is retired
 
@@ -129,28 +129,6 @@ private record contents in public docs.
    test -n "${remote_v1}" && test "${remote_v1}" = "${remote_release}"
    ```
 
-## Update the Homebrew tap
-
-After the npm tarball is live:
-
-```bash
-version=X.Y.Z
-url="https://registry.npmjs.org/prowl-review/-/prowl-review-${version}.tgz"
-curl -sL "$url" | shasum -a 256
-```
-
-Copy [`packaging/homebrew/prowl-review.rb`](../packaging/homebrew/prowl-review.rb)
-to `Formula/prowl-review.rb` in `prowl-tools/homebrew-tap` (tap name: `prowl-tools/tap`),
-set `TARBALL_VERSION` to the released version and `TARBALL_SHA256` to the hash above,
-and open a PR on the tap. The template raises during install if either placeholder is
-left in place.
-Verify with:
-
-```bash
-brew install --build-from-source ./Formula/prowl-review.rb
-brew test prowl-review
-```
-
 ## Verify
 
 ```bash
@@ -158,5 +136,4 @@ set -euo pipefail
 version=X.Y.Z
 npm view "prowl-review@${version}" version  # the new version is live
 npx "prowl-review@${version}" --version     # X.Y.Z
-brew install prowl-tools/tap/prowl-review && prowl-review --version
 ```

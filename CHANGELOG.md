@@ -4,6 +4,25 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Maintenance mode (owner decision, 2026-08-26; backlog #67–#71).** prowl-review is now maintained
+  as its author's internal code-review tool, not a product: the README carries a maintenance-mode
+  status block, `CONTRIBUTING.md` defines what "maintenance" covers (dependency/security updates,
+  breakages on the maintainer's repos, provider API changes), and the legacy "Prowl QA" brand
+  strings are gone. The `review.prowl.tools` docs site is retired (#68): its pages now live in
+  `docs/` (`getting-started`, `configuration`, `cli`, `bot-commands`, `github-action`, `ensemble`,
+  `grounding`, `cross-file-context`, `repo-wide-learnings`, index in `docs/README.md`), reconciled
+  against the shipped code (every config key / action input verified; the Codex provider documented
+  throughout). The Homebrew formula is dropped (#70): npm + the `v1` Action tag are the only
+  channels, `packaging/homebrew/` and the tap steps in `docs/releasing.md` are removed.
+
+### Fixed
+- **`codex.timeoutMs` / `codex.lockTimeoutMs` were rejected by the config schema.** The changelog
+  and error messages advertised them and the resolver read them, but the strict `codex:` schema
+  only accepted `effort` and `lock`, so setting either in `.prowl-review.yml` failed validation.
+  Both are now accepted (positive integer ms); the matching `PROWL_CODEX_*_MS` env vars still
+  take precedence.
+
 ### Added
 - **Codex (ChatGPT subscription) provider — `provider: codex` (backlog #45).** A new
   keyless provider that runs reviews through your ChatGPT subscription instead of a metered API

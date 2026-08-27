@@ -361,7 +361,11 @@ const codexSchema = z
      * Default true — one `auth.json` per serialized stream. Opt out only when a
      * single instance owns the host.
      */
-    lock: z.boolean().optional()
+    lock: z.boolean().optional(),
+    /** Kill one `codex exec` child after this many ms. Default 600000 (10 min). */
+    timeoutMs: z.number().int().positive().optional(),
+    /** Max ms to wait for the machine-wide Codex lock. Default 600000. */
+    lockTimeoutMs: z.number().int().positive().optional()
   })
   .strict();
 

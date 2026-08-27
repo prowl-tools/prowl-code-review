@@ -5,10 +5,16 @@
 > automatically. This file covers only what is specific to `prowl-code-review`.
 
 ## Project Context
-**Prowl Review** is a **BYOK (bring-your-own-key) AI code-review tool** — the code-review pillar
-of the Prowl family. It reviews pull requests (summary + inline comments + `@prowl-review` chat)
-using the developer's own LLM key, with no usage caps imposed by us. Package/command name:
+**Prowl Review** is a **BYOK (bring-your-own-key) AI code-review tool**. It reviews pull requests
+(summary + inline comments + `@prowl-review` chat) using the developer's own LLM key or ChatGPT
+subscription (`provider: codex`), with no usage caps imposed by us. Package/command name:
 `prowl-review`.
+
+**Maintenance mode (owner decision, 2026-08-26):** this is an internal tool the owner runs on every
+repo they maintain — not a product. In scope: dependency/security updates, breakages on the owner's
+repos, provider API changes, and features the owner personally needs. Out of scope: roadmap work,
+marketing, the docs site (`review.prowl.tools` is retired; docs live in `docs/`), and the Homebrew
+formula (dropped). Backlog items 41 and 62/#47 are parked; #64 continues as personal infrastructure.
 
 It exists because commercial reviewers (CodeRabbit, Greptile) resell LLM inference under a flat
 subscription and therefore **must** rate-limit to protect margins. Prowl Review flips the model:
@@ -71,12 +77,11 @@ Also tracked in the backlog: multi-language (tree-sitter), a quality eval harnes
   `PROWL_AI_KEY` secret for the provider.
 - **Config:** `.prowl-review.yml`, Zod-validated (style of `prowl/src/config/schema.ts`).
 
-## Distribution (when we ship — backlog items 42-43)
-- **npm**: publish `prowl-review` (mirror `prowl`'s CI tag-triggered publish workflow).
-- **Homebrew**: add `Formula/prowl-review.rb` to `prowl-tools/homebrew-tap` (pins the npm tarball
-  `url` + `sha256`; `depends_on node@20`).
-- **Docs/marketing**: add pages to `prowl-code-review-docs` (review.prowl.tools) and a section +
-  install snippet to `prowl-web`.
+## Distribution
+- **npm** (`prowl-review`) via the tag-triggered, OIDC Trusted-Publishing `publish.yml`, plus the
+  floating `v1` Action tag — see `docs/releasing.md`. These are the only channels; the Homebrew
+  formula and the docs site were dropped with the 2026-08-26 decision (#68/#70).
+- **Docs** are Markdown under `docs/` (index: `docs/README.md`); nothing is published elsewhere.
 
 ## Existing Workflows
 This repo dogfoods its own tool: `.github/workflows/prowl-review.yml` (auto review on PRs) and

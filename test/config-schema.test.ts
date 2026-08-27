@@ -30,6 +30,15 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ codex: { nope: 1 } })).toThrow(); // strict
   });
 
+  it("accepts codex.timeoutMs / codex.lockTimeoutMs as documented (#67 follow-up)", () => {
+    const input = { codex: { timeoutMs: 900000, lockTimeoutMs: 1200000 } };
+    expect(configSchema.parse(input)).toEqual(input);
+    expect(() => configSchema.parse({ codex: { timeoutMs: 0 } })).toThrow(); // positive only
+    expect(() => configSchema.parse({ codex: { lockTimeoutMs: -1 } })).toThrow();
+    expect(() => configSchema.parse({ codex: { timeoutMs: "10m" } })).toThrow(); // number only
+    expect(() => configSchema.parse({ codex: { timeoutMs: 1.5 } })).toThrow(); // integer ms
+  });
+
   it("accepts the agentPrompt toggle and rejects a non-boolean (#57)", () => {
     expect(configSchema.parse({ agentPrompt: true })).toEqual({ agentPrompt: true });
     expect(() => configSchema.parse({ agentPrompt: "yes" })).toThrow();

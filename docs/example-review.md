@@ -1,10 +1,10 @@
 # Example review
 
 This is an illustrative sample of what prowl-review posts on a pull request — a
-single walkthrough summary comment, plus inline comments on the diff (not shown
-here). It renders live when viewed on GitHub. This example is from a **Claude +
-Gemini ensemble** run, so it includes the 🤝 consensus badge and the per-model
-breakdown.
+single walkthrough summary comment (updated in place on each push), plus inline
+comments on the diff. It renders live when viewed on GitHub. This example is from
+a **Claude + Gemini ensemble** run, so it includes the 🤝 consensus badge and the
+per-model breakdown.
 
 > A short screen capture / GIF of a live review is tracked as a follow-up; this
 > rendered sample is the canonical "what it looks like" reference in the meantime.
@@ -72,5 +72,29 @@ instead of before, and a refill rounding bug lets bursts slightly exceed the cap
 
 ---
 
-*Inline comments (not shown above) carry a severity badge and a committable
-```suggestion``` block when a safe fix exists.*
+## Inline comment
+
+Major+ findings also post as inline comments on the diff. Each carries a severity
+badge, a committable ` ```suggestion ` block when a safe fix exists, and (unless
+`agentPrompt: false`) a copy-paste "Resolve with an AI agent" prompt. Minor
+nitpicks stay in the summary's collapsed section. Posted on
+`src/api/middleware.ts:42`:
+
+> 🔴 **[critical] Rate limit applied after authentication**
+>
+> The limiter runs after `requireAuth`, so unauthenticated requests never reach
+> it — the login route is left open to brute force. Move the limiter ahead of the
+> auth middleware.
+>
+> ````suggestion
+> app.use(rateLimit(publicApiBucket));
+> app.use(requireAuth);
+> ````
+>
+> <sub>🤖 Resolve with an AI agent: "In `src/api/middleware.ts`, move the
+> `rateLimit(publicApiBucket)` middleware above `requireAuth` so unauthenticated
+> requests are throttled, and add a test covering an unauthenticated burst."</sub>
+
+---
+
+To try it on your own repo, see [Getting started](getting-started.md).

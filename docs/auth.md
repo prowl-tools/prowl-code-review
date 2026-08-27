@@ -86,13 +86,82 @@ required for the Action path. To post under a custom GitHub-App identity, supply
 that app's token as `github-token` and set `bot-login` so update-not-duplicate can
 find prowl-review's own prior comments.
 
+### Bring your own bot identity
+
+The bot branding is **not baked into the tool** — nothing "Prowl" or raccoon ships
+inside the package. The Action posts as whatever identity you hand it via
+`github-token` / `bot-login`, so a team can make prowl-review look like their own
+in-house reviewer. It pairs naturally with BYOK: **your key, your bot.**
+
+| Tier | Posts as | Setup |
+| --- | --- | --- |
+| **Default** | `github-actions[bot]` | Nothing — works out of the box with just your AI key. |
+| **Your own brand** | `your-app[bot]` + **your** name & avatar | Register **your own** GitHub App (any name/avatar), add your `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets, mint an installation token in the workflow, and pass it as `github-token` with `bot-login`. The identity is entirely yours. |
+| **Local CLI** | *(no bot — prints to your terminal)* | Run `prowl-review` locally; no GitHub identity involved. |
+
+The App needs `contents: read`, `pull requests: write`, `issues: write`, and
+`checks: write`. Mint a short-lived installation token before prowl-review runs,
+then pass that token and the App bot login to the Action:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - id: app-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ secrets.PROWL_APP_ID }}
+      private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+      permission-contents: read
+      permission-issues: write
+      permission-pull-requests: write
+      permission-checks: write
+  - uses: prowl-tools/prowl-code-review@v1
+    with:
+      ai-key: ${{ secrets.PROWL_AI_KEY }}
+      github-token: ${{ steps.app-token.outputs.token }}
+      bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
+```
+
+`bot-login` must match the App's login (its slug + `[bot]`) so update-not-duplicate
+still finds prowl-review's prior comments and threads. A ready-to-copy workflow is
+in [`examples/workflows/prowl-review-branded.yml`](../examples/workflows/prowl-review-branded.yml),
+and the [reusable org templates](../examples/reusable/) pick this up automatically
+when `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` are set. An App's power lives in its
+private key (kept in your secrets, never shared), so each adopter registers their
+own — see [Branded bot identity](../README.md#branded-bot-identity-59) in the
+README.
+
+#### Reusing one App across repos and accounts
+
+A GitHub App is a **server-side identity, not a per-device install** — reuse it by
+installing it on more repos, never by copying anything to another machine. Where it
+can go depends on the App's **"Where can this GitHub App be installed?"** setting:
+
+- **More repos under the *same* owner** (the account/org that owns the App):
+  select each repository in the GitHub App installation so the App can access it.
+  `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` can be **org-level secrets** to expose
+  the credentials to authorized workflows, but secrets do not install the App or
+  grant repo access. Limit secret visibility to the repos that actually run it.
+- **Repos under a *different* owner** (e.g. your personal account when the App is
+  org-owned): the App must be set to **"Any account"** (public) to install it there
+  — flip it via **Make public** at the bottom of the App's settings. The private
+  key stays secret, so going public only exposes the App's profile and lets others
+  *install* it (inert without the key). The alternative is a **separate App** under
+  that owner; App names are globally unique, so its bot login won't be identical
+  (e.g. `prowl-review-personal[bot]`).
+
+Running the **CLI** on another machine is unrelated: install `prowl-review` there
+and set your AI key — the branded identity is a CI concept and doesn't live on the
+device.
+
 ### Fork pull requests
 
 GitHub does not expose repository secrets to workflows triggered by fork PRs, so a
 fork PR has no provider key. prowl-review handles this safely — a keyless run is
 skipped rather than failing — and the recommended workflows additionally guard on
-`head.repo.full_name == github.repository`. See the README "Fork pull requests"
-section and [`SECURITY.md`](../SECURITY.md).
+`head.repo.full_name == github.repository`. See
+[Fork pull requests](../README.md#fork-pull-requests-20) in the README and
+[`SECURITY.md`](../SECURITY.md).
 
 ## Why API keys only — the subscription question
 

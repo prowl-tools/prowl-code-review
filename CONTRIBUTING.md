@@ -1,8 +1,9 @@
 # Contributing to prowl-review
 
-Thanks for your interest in improving **prowl-review** — the BYOK (bring-your-own-key)
-AI code-review tool in the [Prowl QA](https://prowl.tools) suite. This guide covers
-how to set up, make a change, and get it merged.
+Thanks for your interest in improving **prowl-review** — a BYOK (bring-your-own-key)
+AI code-review tool. This guide covers how to set up, make a change, and get it merged.
+Please read the [maintenance-mode](#maintenance-mode) section first so your effort lands
+on something that will be merged.
 
 By contributing you agree that your contributions are licensed under the
 project's [Apache-2.0](LICENSE) license.
@@ -137,13 +138,30 @@ numbers stable so references stay valid.
 
 Found a vulnerability? Follow [SECURITY.md](SECURITY.md) — do not open a public issue.
 
+## Maintenance mode
+
+Since **2026-08-26** prowl-review is in **maintenance mode**: it is the maintainer's own
+code-review tool, run on every repository they maintain, and is not developed as a
+product. Concretely, "maintenance" means:
+
+- **Dependency and security updates** — Dependabot bumps, advisories, Node/toolchain floors.
+- **Breakages** — anything that stops a review from running or posting on the maintainer's
+  repos (GitHub API changes, Action runtime changes, self-hosted runner issues).
+- **Provider API changes** — model retirements, request/response format changes, and
+  `codex` CLI changes for Claude, OpenAI, Gemini, and the Codex subscription provider.
+
+What it does **not** mean: a roadmap, feature requests, or a support promise. New features
+are added only when the maintainer needs them personally. Bug reports and focused fixes for
+the categories above are welcome and will be reviewed; a feature PR may sit unreviewed or be
+closed — open an issue first if you want to check. `docs/backlog.md` records what is open
+and what was parked by this decision.
+
 ## Releasing (maintainers)
 
 Releases are tag-triggered: bump `package.json`, move the `[Unreleased]` notes
 under a `## [X.Y.Z]` heading, then push a `vX.Y.Z` tag — the `publish` workflow
 builds, tests, publishes to npm with provenance, and cuts a GitHub Release. See
-[`docs/releasing.md`](docs/releasing.md) for the full checklist (incl. the
-Homebrew tap update).
+[`docs/releasing.md`](docs/releasing.md) for the full checklist.
 
 ## Questions
 
