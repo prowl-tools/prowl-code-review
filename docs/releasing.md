@@ -4,6 +4,12 @@ prowl-review publishes to **npm** via a tag-triggered workflow. This is the
 maintainer release checklist (#42). npm and the floating `v1` Action tag are the
 only distribution channels — the Homebrew formula was dropped on 2026-08-26 (#70).
 
+**Release policy in maintenance mode (2026-08-27):** the GitHub Action builds from the
+checkout of whatever ref a workflow pins (`@main` on the owner's repos), so CI reviews never
+depend on an npm release. Keep `CHANGELOG.md` `[Unreleased]` current with every merge (it is the
+record of what changed), but cut a version only when something needs the npm package — a local
+`npx prowl-review` user on a fixed version, or a deliberate `v1` repin. There is no cadence.
+
 ## Prerequisites (one-time)
 
 - **npm Trusted Publishing (OIDC) — no stored token (#63).** `prowl-review` publishes
