@@ -1,18 +1,15 @@
 # CLI
 
 prowl-review ships as a CLI — the same core the GitHub Action wraps. Install it
-globally, run it with `npx`, or install from Homebrew:
+globally or run it with `npx`:
 
 ```bash
 npm install -g prowl-review
 # or
 npx prowl-review <command>
-# or
-brew install prowl-tools/tap/prowl-review
 ```
 
-npm/npx need Node.js 22.13.0 or newer within Node 22, or Node 24+; the Homebrew
-formula installs `node@22` itself.
+npm/npx need Node.js 22.13.0 or newer within Node 22, or Node 24+.
 
 All commands resolve the provider from `PROWL_AI_PROVIDER` (`anthropic` by
 default), then read `PROWL_AI_KEY_<PROVIDER>` first and fall back to
