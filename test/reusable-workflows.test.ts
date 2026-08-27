@@ -551,11 +551,19 @@ describe("single branded checks row (#61)", () => {
   });
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review job gates on the workflow_run event type and CI conclusion", ({ label, read: readFn }) => {
-    const doc = parseYaml(readFn()) as { jobs: { resolve: { if: string }; review: { if: string; needs: string } } };
+    const doc = parseYaml(readFn()) as {
+      jobs: {
+        resolve: { if: string; "runs-on"?: unknown };
+        "report-unreviewable": { "runs-on"?: unknown };
+        review: { if: string; needs: string };
+      };
+    };
     // Skip push-triggered CI completions; start only on a green pull_request CI run.
     expect(normalizeExpression(doc.jobs.resolve.if)).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
     );
+    expect(doc.jobs.resolve["runs-on"]).toBe("ubuntu-latest");
+    expect(doc.jobs["report-unreviewable"]["runs-on"]).toBe("ubuntu-latest");
     expect(doc.jobs.review.needs).toBe("resolve");
     if (label === "dogfood") {
       // Self-hosted Codex dogfood (#64): an explicit job-level trust gate keeps

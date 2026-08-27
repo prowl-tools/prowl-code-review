@@ -108,6 +108,9 @@ All notable changes to Prowl Review will be documented in this file.
     `codex` + API-key ensemble prices each member with its own model.
 
 ### Fixed
+- Reusable self-hosted auto-review workflows now keep PR resolution and neutral
+  skip reporting on `ubuntu-latest`, so fork and approved-actor checks run before
+  any self-hosted review job is scheduled.
 - **`codex.timeoutMs` / `codex.lockTimeoutMs` were rejected by the config schema.** The changelog
   and error messages advertised them and the resolver read them, but the strict `codex:` schema
   only accepted `effort` and `lock`, so setting either in `.prowl-review.yml` failed validation.
