@@ -1,7 +1,7 @@
 {
   "name": "prowl-review",
   "version": "0.3.0",
-  "description": "BYOK AI code review for pull requests — summary, inline comments, and chat, powered by your own LLM key (Claude/OpenAI/Gemini).",
+  "description": "BYOK AI code review for pull requests — summary, inline comments, and chat, powered by your own LLM key (Claude/OpenAI/Gemini) or your ChatGPT subscription (Codex).",
   "type": "module",
   "license": "Apache-2.0",
   "author": "Prowl Tools",
@@ -9,7 +9,7 @@
     "type": "git",
     "url": "https://github.com/prowl-tools/prowl-code-review.git"
   },
-  "homepage": "https://prowl.tools",
+  "homepage": "https://github.com/prowl-tools/prowl-code-review#readme",
   "bugs": {
     "url": "https://github.com/prowl-tools/prowl-code-review/issues"
   },

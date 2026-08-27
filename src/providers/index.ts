@@ -68,8 +68,8 @@ export function getProvider(name: ProviderName): Provider {
 export interface ProviderDefaults {
   provider?: string;
   model?: string;
-  /** Codex-only knobs (effort, lock) from `.prowl-review.yml`'s `codex:` block (#45). */
-  codex?: { effort?: string; lock?: boolean };
+  /** Codex-only knobs from `.prowl-review.yml`'s `codex:` block (#45). */
+  codex?: { effort?: string; lock?: boolean; timeoutMs?: number; lockTimeoutMs?: number };
 }
 
 /**

@@ -98,6 +98,9 @@ export const DEFAULT_CODEX_EFFORT = "low";
 /** Default single-`codex exec` wall-clock timeout (ms). */
 export const DEFAULT_CODEX_TIMEOUT_MS = 600_000;
 
+/** Largest delay Node will honor without overflowing to an immediate timeout. */
+export const MAX_CODEX_TIMEOUT_MS = 2_147_483_647;
+
 /** Parse a positive-integer env value; undefined when unset/blank/invalid. */
 function parsePositiveIntEnv(value: string | undefined): number | undefined {
   const trimmed = value?.trim();
@@ -388,6 +391,19 @@ export function codexErrorKind(error: unknown): CodexError["kind"] | undefined {
   return isCodexError(error) ? error.kind : undefined;
 }
 
+function validateCodexExecTimeoutMs(timeoutMs: number | undefined): number | undefined {
+  if (timeoutMs === undefined) {
+    return undefined;
+  }
+  if (!Number.isInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > MAX_CODEX_TIMEOUT_MS) {
+    throw new CodexError(
+      `codex.timeoutMs / PROWL_CODEX_TIMEOUT_MS must be a positive integer no greater than ${MAX_CODEX_TIMEOUT_MS}ms (Node's maximum timer delay).`,
+      "failed"
+    );
+  }
+  return timeoutMs;
+}
+
 const RUN_LOGIN = "run `codex login` on this machine (the runner) to sign in with ChatGPT";
 
 function unauthenticatedError(): CodexError {
@@ -491,6 +507,7 @@ export interface CodexExecResult {
 export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExecResult> {
   const spawner = params.spawn ?? realSpawn;
   const baseEnv = params.env ?? process.env;
+  const timeoutMs = validateCodexExecTimeoutMs(params.timeoutMs);
   assertCodexActionSupported(baseEnv);
   const binary = resolveCodexBinary(baseEnv);
   const env = buildCodexChildEnv(baseEnv, params.codexHome);
@@ -555,7 +572,7 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
         clearTimers();
         resolve({ stdout: out, stderr: err, code: exitCode });
       });
-      if (params.timeoutMs && params.timeoutMs > 0) {
+      if (timeoutMs !== undefined) {
         killTimer = setTimeout(() => {
           if (settled) {
             return;
@@ -581,7 +598,7 @@ export async function runCodexExec(params: RunCodexExecParams): Promise<CodexExe
               "failed"
             )
           );
-        }, params.timeoutMs);
+        }, timeoutMs);
       }
       // Deliver the prompt, then CLOSE stdin so `codex exec` stops reading input.
       try {

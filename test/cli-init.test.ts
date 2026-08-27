@@ -30,6 +30,8 @@ describe("prowl-review init (#29)", () => {
     const body = readFileSync(path, "utf8");
     expect(body).toContain(".prowl-review.yml");
     expect(body).toContain("PROWL_AI_KEY");
+    expect(body).toContain("Providers missing required credentials are skipped");
+    expect(body).toContain("keyless codex is usable without an API key");
   });
 
   it("scaffolds a file that is valid once uncommented (defaults are all-optional)", () => {

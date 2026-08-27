@@ -2,6 +2,7 @@ import { z } from "zod";
 import { SEVERITIES } from "../review/findings.js";
 import { BUILTIN_SPECIALIST_KEYS } from "../review/specialists.js";
 import { PROVIDER_NAMES } from "../providers/index.js";
+import { MAX_CODEX_TIMEOUT_MS } from "../providers/codex.js";
 
 /**
  * `.prowl-review.yml` schema (backlog #29).
@@ -246,9 +247,10 @@ const ensembleProviderSchema = z
 /**
  * Multi-provider ensemble review (#53). Opt-in, default off. Each provider's key
  * is read from `PROWL_AI_KEY_<PROVIDER>` (the primary also falls back to
- * `PROWL_AI_KEY`; scoped keys win when both are set); a provider with no key is
- * skipped with a note. With fewer than two usable providers the review runs as a
- * normal single-provider review.
+ * `PROWL_AI_KEY`; scoped keys win when both are set); providers missing required
+ * credentials are skipped with a note, while keyless providers such as `codex`
+ * remain usable without an API key. With fewer than two usable providers the
+ * review runs as a normal single-provider review.
  */
 const ensembleSchema = z
   .object({
@@ -361,7 +363,11 @@ const codexSchema = z
      * Default true — one `auth.json` per serialized stream. Opt out only when a
      * single instance owns the host.
      */
-    lock: z.boolean().optional()
+    lock: z.boolean().optional(),
+    /** Kill one `codex exec` child after this many ms. Default 600000 (10 min). */
+    timeoutMs: z.number().int().positive().max(MAX_CODEX_TIMEOUT_MS).optional(),
+    /** Max ms to wait for the machine-wide Codex lock. Default 600000. */
+    lockTimeoutMs: z.number().int().positive().optional()
   })
   .strict();
 

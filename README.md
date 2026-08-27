@@ -5,29 +5,36 @@
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)](LICENSE)
 [![Node](https://img.shields.io/badge/node-%3E%3D22.13%20%3C23%20%7C%7C%20%3E%3D24-brightgreen.svg)](package.json)
 [![PRs welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](CONTRIBUTING.md)
-[![Docs](https://img.shields.io/badge/docs-review.prowl.tools-06b6d4.svg)](https://review.prowl.tools)
+[![Docs](https://img.shields.io/badge/docs-in--repo-06b6d4.svg)](docs/README.md)
 
-**BYOK (bring-your-own-key) AI code review for pull requests** — the code-review pillar of the [Prowl QA](https://prowl.tools) suite.
+**BYOK (bring-your-own-key) AI code review for pull requests** — a GitHub Action + CLI, open-sourced by [Prowl Tools](https://prowl.tools).
 
-`prowl-review` reviews pull requests (summary + inline comments + `@prowl-review` chat) using your **own** LLM key — Claude (default), OpenAI, or Gemini — with **no usage caps imposed by us**. Because your key pays the provider directly, there's nothing to rate-limit: the only ceiling is your provider's own limits, which dwarf the per-hour caps of commercial reviewers.
+`prowl-review` reviews pull requests (summary + inline comments + `@prowl-review` chat) using your **own** LLM key — Claude (default), OpenAI, or Gemini — or your ChatGPT subscription via the keyless [`codex` provider](#codex-subscription-provider-45), with **no usage caps imposed by us**. Because your key pays the provider directly, there's nothing to rate-limit: the only ceiling is your provider's own limits, which dwarf the per-hour caps of commercial reviewers.
 
 It's delivered as a **GitHub Action + local CLI** (zero hosting), and is built to match — not just approximate — the quality of CodeRabbit/Greptile via agentic cross-file context, multi-pass specialized review, linter/SAST grounding, and false-positive verification.
 
-> Status: **early development.** This package currently contains the project scaffold and CLI surface. See [`docs/backlog.md`](docs/backlog.md) for the roadmap and [`CLAUDE.md`](CLAUDE.md) for the design principles.
+> **Status: maintenance mode (since 2026-08-26).** prowl-review is maintained as its author's own
+> code-review tool and runs on every repository they maintain. It is **not a product**: there is
+> no roadmap and no support promise. Issues and pull requests are welcome — bug fixes, dependency
+> and security updates, and provider API changes are the expected kind — but new features land
+> only when the maintainer needs them. BYOK is still the design: your key (or your ChatGPT
+> subscription via `provider: codex`) pays the provider directly, and nothing is metered, proxied,
+> or collected by us. See [`CONTRIBUTING.md`](CONTRIBUTING.md#maintenance-mode) for what
+> "maintenance" covers and [`docs/backlog.md`](docs/backlog.md) for the record of the decision.
 
 ## Documentation
 
-Full documentation lives at **[review.prowl.tools](https://review.prowl.tools)** —
-getting started, configuration, CLI + bot commands, the ensemble, grounding,
-cross-file context, and repo-wide learnings. Part of the
-[Prowl QA suite](https://prowl.tools).
+Documentation lives next to the code in **[`docs/`](docs/README.md)** (the former
+`review.prowl.tools` site is retired):
 
-Key reference pages also kept in this repo:
-
+- [Getting started](docs/getting-started.md) — quickstart workflow and local pre-push review
+- [Configuration](docs/configuration.md) · [CLI](docs/cli.md) · [Bot commands](docs/bot-commands.md) — reference
+- [GitHub Action](docs/github-action.md) · [Self-hosted runner](docs/self-hosted-runner.md) — running it in CI
+- [Ensemble](docs/ensemble.md) · [Grounding](docs/grounding.md) · [Cross-file context](docs/cross-file-context.md) · [Repo-wide learnings](docs/repo-wide-learnings.md) — how the review is built
 - [Authentication & keys](docs/auth.md) — BYOK setup, provider keys, token scopes
 - [Privacy & data handling](docs/privacy.md) — what leaves your machine and what doesn't
 - [Example review](docs/example-review.md) — a rendered sample walkthrough
-- [Releasing](docs/releasing.md) — npm + Homebrew release process
+- [Releasing](docs/releasing.md) — npm release process
 
 ## Usage (GitHub Action)
 
@@ -390,11 +397,9 @@ device.
 
 ```bash
 npm install -g prowl-review     # or run ad hoc with: npx prowl-review …
-# Homebrew:
-brew install prowl-tools/tap/prowl-review
 ```
 
-npm and npx require Node.js 22.13.0 or newer within Node 22, or Node 24+; Homebrew installs node@22 automatically. The GitHub Action (above) needs no install.
+npm and npx require Node.js 22.13.0 or newer within Node 22, or Node 24+. The GitHub Action (above) needs no install.
 
 ## Local pre-push review (CLI)
 
@@ -502,9 +507,9 @@ inline findings ride on that one verdict review.
 
 **Cost:** roughly **N× a single-provider review** (caching helps within each
 provider, not across). The per-PR budget cap (#18) is **split evenly** across
-providers, and risk-tiering (#31) still applies. A provider with no key is
-skipped with a note; with fewer than two usable keys it runs as a normal
-single-provider review.
+providers, and risk-tiering (#31) still applies. A provider missing required
+credentials is skipped with a note; keyless `codex` is usable without an API key.
+With fewer than two usable providers, it runs as a normal single-provider review.
 
 ## Codex subscription provider (#45)
 
@@ -514,14 +519,13 @@ metered API key, so per-review marginal cost is **$0.00**. It is **keyless** —
 `codex login`); prowl-review never calls an OpenAI endpoint directly and never
 reads or copies `auth.json`.
 
-It is **off by default and opt-in**, and supported **only on self-hosted / local
-infrastructure you control** — under GitHub Actions it runs iff the runner is
-self-hosted (`RUNNER_ENVIRONMENT=self-hosted`), **regardless of repository
-visibility**; a GitHub-hosted runner is refused. OpenAI's guidance ("Do not use
-this workflow for public or open-source repositories") is about `auth.json` in
-CI secrets on hosted/shared runners, which we never do — not about a self-hosted
-runner whose login lives on the host. All Prowl repos are public and run `codex`
-on a self-hosted runner behind a job-level same-repo fork gate. There is **no
+It is **off by default and opt-in**, and supported **only on trusted self-hosted /
+local infrastructure you control** — under GitHub Actions it runs iff the runner
+is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`); a GitHub-hosted runner is
+refused. OpenAI's CI/CD-auth guidance limits this ChatGPT-auth workflow to
+trusted private automation and says not to use it for public or open-source
+repositories. The same-repo + approved-actor gate limits runner scheduling, but
+it does not make public/open-source CI a supported use. There is **no
 Claude/Gemini equivalent**.
 
 ```yaml
@@ -544,24 +548,28 @@ runner**, never in a GitHub secret. The short version (full detail in
 [`docs/self-hosted-runner.md`](docs/self-hosted-runner.md); secrets-bearing steps
 in a private runbook):
 
-- **Dedicated `CODEX_HOME` per host**, its own **`codex login --device-auth`**,
-  **one login per host** — the machine-wide Codex lock serializes multiple runner
-  instances. **Never copy `auth.json`** between hosts/instances.
+- **Dedicated `CODEX_HOME` per serialized session.** The normal setup is one
+  `CODEX_HOME` and one **`codex login --device-auth`** per host, with the
+  machine-wide Codex lock serializing multiple runner instances. If a runner
+  instance needs an independent Codex session, give it its own `CODEX_HOME` and
+  login. **Never copy `auth.json`** between hosts/instances.
 - **Runner service:** `.env` sets `CODEX_HOME=…`; `.path` must include the `codex`
   binary dir (e.g. `/opt/homebrew/bin`). Node comes from the Action's own
   `actions/setup-node` step.
 - **Labels** `[self-hosted, macOS, prowl-review]`; the review job targets them
   while fork-gating jobs stay on hosted `ubuntu-latest`.
-- **Registration:** orgs use one org-level runner in a restricted group; personal
-  accounts allow repo-level runners only (one per opted-in repo). Private repos
-  need no fork gate.
+- **Registration:** use one repository-level runner per opted-in repo; this is
+  the selected Prowl topology and the only runner scope available to
+  personal-account repos. Keep the same-repo gate unless a trusted private
+  workflow enforces an explicit owner-only exception.
 - Copy-paste workflows:
   [`examples/workflows/prowl-review-self-hosted-codex.yml`](examples/workflows/prowl-review-self-hosted-codex.yml)
   (+ the command variant).
 
-**Public repos:** the same-repo fork gate is **required** (OpenAI's *"Do not use
-this workflow for public or open-source repositories."* + GitHub's runner
-warning). **Private repos may drop it.**
+**Public/open-source repos:** this ChatGPT-auth CI/CD workflow is unsupported.
+Use an API-key provider on GitHub-hosted runners instead. For trusted private
+self-hosted workflows, keep the same-repo + approved-actor gate unless an
+explicit owner-only exception removes non-owner fork risk.
 
 ## Auto-generated PR descriptions (#33)
 
@@ -835,10 +843,10 @@ sections — see [`docs/example-review.md`](docs/example-review.md).
 
 ## Contributing
 
-Contributions are welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the
-project layout, conventions, and the Definition of Done, and
-[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). The roadmap is in
-[`docs/backlog.md`](docs/backlog.md).
+Issues and pull requests are welcome, within the [maintenance-mode scope](CONTRIBUTING.md#maintenance-mode).
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup, the project layout, conventions, and the
+Definition of Done, and [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md). There is no roadmap;
+[`docs/backlog.md`](docs/backlog.md) records what is open and what was parked.
 
 ## Security & privacy
 
@@ -852,9 +860,10 @@ Two pages spell out the policy in full:
 
 - **[`docs/auth.md`](docs/auth.md)** — the authentication & key policy: BYOK env-only
   keys, the `PROWL_AI_*` variables and precedence, how the Action passes keys as
-  masked secrets, GitHub-token posting, and **why subscription/OAuth routing isn't
-  supported for Claude or Gemini** (TOS + account-ban risk) — with OpenAI/Codex the
-  only possible, off-by-default future exception.
+  masked secrets, GitHub-token posting, how the opt-in **`codex` provider** (your ChatGPT
+  subscription through the first-party `codex` CLI, self-hosted/local only, never
+  `auth.json` in secrets) fits, and **why there is no Claude or Gemini equivalent**
+  (TOS + account-ban risk).
 - **[`docs/privacy.md`](docs/privacy.md)** — data-privacy positioning: code goes only
   to *your* provider (direct, no proxy), no telemetry, secret redaction +
   credential-file skipping before anything is sent, and zero retention on our side.

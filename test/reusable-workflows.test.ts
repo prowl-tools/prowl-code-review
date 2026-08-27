@@ -169,8 +169,8 @@ function normalizeExpression(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-function shouldRunAutoReview(input: { headRepo: string; repository: string }): boolean {
-  return input.headRepo === input.repository;
+function shouldRunAutoReview(input: { headRepo: string; repository: string; approvedActor: boolean }): boolean {
+  return input.headRepo === input.repository && input.approvedActor;
 }
 
 function shouldRunCommandJob(input: { isPullRequest: boolean; userType: string; authorAssociation: string; body: string }): boolean {
@@ -232,6 +232,11 @@ describe("reusable org workflows (#37)", () => {
     expect(call.inputs).toHaveProperty("org-guidelines-path");
     expect(call.inputs).toHaveProperty("org-guidelines-workspace");
     expect(call.inputs).toHaveProperty("runs-on");
+    if (name === "prowl-review.yml") {
+      expect(call.inputs).toHaveProperty("allowed-actors");
+      expect(call.inputs).toHaveProperty("require-approved-actor");
+      expect((call.inputs["require-approved-actor"] as { default?: unknown }).default).toBe(true);
+    }
   });
 
   it.each(REUSABLE)("%s pins the published action, never the dogfood local action", (name) => {
@@ -286,7 +291,9 @@ describe("reusable org workflows (#37)", () => {
     expect(normalizeExpression(jobs.resolve.if)).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
     );
-    expect(jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
+    expect(normalizeExpression(jobs.review.if)).toBe(
+      "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.approved_actor == 'true'"
+    );
     // Base checkout feeds guidelines from the RESOLVED PR; PR checkout feeds context.
     expect(text).toContain("ref: ${{ needs.resolve.outputs.base_sha }}");
     expect(text).toContain("ref: ${{ needs.resolve.outputs.head_sha }}");
@@ -296,9 +303,10 @@ describe("reusable org workflows (#37)", () => {
   });
 
   it.each([
-    ["same-repo ready PR", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, true],
-    ["same-repo draft PR", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app" }, true],
-    ["fork PR", { headRepo: "contributor/app", repository: "Prowl-qa/app" }, false]
+    ["same-repo ready PR by approved actor", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app", approvedActor: true }, true],
+    ["same-repo draft PR by approved actor", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app", approvedActor: true }, true],
+    ["same-repo PR by unapproved actor", { headRepo: "Prowl-qa/app", repository: "Prowl-qa/app", approvedActor: false }, false],
+    ["fork PR by approved actor", { headRepo: "contributor/app", repository: "Prowl-qa/app", approvedActor: true }, false]
   ])("the auto-review job guard handles %s", (_name, input, expected) => {
     expect(shouldRunAutoReview(input)).toBe(expected);
   });
@@ -545,20 +553,30 @@ describe("single branded checks row (#61)", () => {
   });
 
   it.each(AUTO_REVIEW_TEMPLATES)("$label auto-review job gates on the workflow_run event type and CI conclusion", ({ label, read: readFn }) => {
-    const doc = parseYaml(readFn()) as { jobs: { resolve: { if: string }; review: { if: string; needs: string } } };
+    const doc = parseYaml(readFn()) as {
+      jobs: {
+        resolve: { if: string; "runs-on"?: unknown };
+        "report-unreviewable": { "runs-on"?: unknown };
+        review: { if: string; needs: string };
+      };
+    };
     // Skip push-triggered CI completions; start only on a green pull_request CI run.
     expect(normalizeExpression(doc.jobs.resolve.if)).toBe(
       "github.event.workflow_run.event == 'pull_request' && github.event.workflow_run.conclusion == 'success'"
     );
+    expect(doc.jobs.resolve["runs-on"]).toBe("ubuntu-latest");
+    expect(doc.jobs["report-unreviewable"]["runs-on"]).toBe("ubuntu-latest");
     expect(doc.jobs.review.needs).toBe("resolve");
     if (label === "dogfood") {
-      // Self-hosted Codex dogfood (#64): an explicit job-level same-repo gate keeps
-      // fork PRs off the self-hosted runner, on top of the resolved==true gate.
+      // Self-hosted Codex dogfood (#64): an explicit job-level trust gate keeps
+      // fork PRs and unapproved same-repo authors off the self-hosted runner.
       expect(normalizeExpression(doc.jobs.review.if)).toBe(
-        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.head_repo == github.repository"
+        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.head_repo == github.repository && needs.resolve.outputs.approved_actor == 'true'"
       );
     } else {
-      expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
+      expect(normalizeExpression(doc.jobs.review.if)).toBe(
+        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.approved_actor == 'true'"
+      );
     }
   });
 
@@ -575,12 +593,17 @@ describe("single branded checks row (#61)", () => {
     const resolve = steps.find((step) => step.id === "pr") as { env: Record<string, unknown>; run: string } | undefined;
     expect(resolve).toBeDefined();
     expect(resolve!.env.CHECK_RUN).toBe(label === "dogfood" ? "true" : "${{ inputs.check-run }}");
+    if (label === "reusable") {
+      expect(resolve!.env.REQUIRE_APPROVED_ACTOR).toBe("${{ inputs.require-approved-actor }}");
+      expect(String(resolve!.env.REQUIRE_APPROVED_ACTOR)).not.toContain("inputs.runs-on");
+    }
     expect(doc.jobs.resolve.outputs).toMatchObject({
       resolved: "${{ steps.pr.outputs.resolved }}",
       pr_number: "${{ steps.pr.outputs.pr_number }}",
       base_sha: "${{ steps.pr.outputs.base_sha }}",
       head_sha: "${{ steps.pr.outputs.head_sha }}",
       head_repo: "${{ steps.pr.outputs.head_repo }}",
+      approved_actor: "${{ steps.pr.outputs.approved_actor }}",
       is_draft: "${{ steps.pr.outputs.is_draft }}",
       check_head_sha: "${{ steps.pr.outputs.check_head_sha }}",
       check_conclusion: "${{ steps.pr.outputs.check_conclusion }}",
@@ -598,7 +621,7 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).toContain("resolved=false");
     expect(resolve!.run).toContain("resolved=true");
     // Re-derive trusted base/head and reject if the live head moved after CI.
-    expect(resolve!.run).toContain("[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv");
+    expect(resolve!.run).toContain("[.base.sha, .head.sha, .head.repo.full_name, .draft, .user.login, .author_association] | @tsv");
     expect(resolve!.run).toContain('[ "${head_sha}" != "${HEAD_SHA}" ]');
     expect(resolve!.run).toContain("head moved from CI head");
     // Forks are rejected before secrets; drafts are passed to the action's config-aware policy.
@@ -606,6 +629,8 @@ describe("single branded checks row (#61)", () => {
     expect(resolve!.run).not.toContain('gh api "repos/${GITHUB_REPOSITORY}/check-runs"');
     expect(resolve!.run).toContain('report_check "neutral" "Fork pull request - review skipped"');
     expect(resolve!.run).toContain("Fork pull request - review skipped");
+    expect(resolve!.run).toContain("is_approved_actor");
+    expect(resolve!.run).toContain("Review skipped - unauthorized actor");
     expect(resolve!.run).toContain("is_draft=${is_draft}");
     expect(resolve!.run).not.toContain('[ "${is_draft}" = "true" ]');
 
@@ -668,10 +693,12 @@ describe("single branded checks row (#61)", () => {
     };
     if (label === "dogfood") {
       expect(normalizeExpression(doc.jobs.review.if)).toBe(
-        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.head_repo == github.repository"
+        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.head_repo == github.repository && needs.resolve.outputs.approved_actor == 'true'"
       );
     } else {
-      expect(doc.jobs.review.if).toBe("needs.resolve.outputs.resolved == 'true'");
+      expect(normalizeExpression(doc.jobs.review.if)).toBe(
+        "needs.resolve.outputs.resolved == 'true' && needs.resolve.outputs.approved_actor == 'true'"
+      );
     }
     expect(reviewStep.env.PROWL_REVIEWED_HEAD_SHA).toBe("${{ needs.resolve.outputs.head_sha }}");
     expect(reviewStep.env.PROWL_CHECK_RUN_ID).toBe("${{ steps.open-check.outputs.check_run_id }}");
@@ -717,7 +744,7 @@ case "$url" in
     ;;
   repos/Prowl-qa/app/pulls/2)
     if [[ "$*" == *'.base.sha'* ]]; then
-      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\n'
+      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\toctocat\\tMEMBER\\n'
     else
       printf 'open\\tci-head\\n'
     fi
@@ -742,7 +769,9 @@ esac
             GITHUB_REPOSITORY: "Prowl-qa/app",
             PR_PAYLOAD: JSON.stringify([{ number: 1 }]),
             RUN_ID: "123",
-            HEAD_SHA: "ci-head"
+            HEAD_SHA: "ci-head",
+            REQUIRE_APPROVED_ACTOR: "true",
+            APPROVED_ACTORS: "octocat"
           },
           stdio: "pipe"
         });
@@ -753,6 +782,7 @@ esac
           base_sha: "base-sha",
           head_sha: "ci-head",
           head_repo: "Prowl-qa/app",
+          approved_actor: "true",
           is_draft: "false"
         });
         expect(readFileSync(log, "utf8")).toContain("repos/Prowl-qa/app/actions/runs/123");
@@ -794,7 +824,7 @@ case "$url" in
     ;;
   repos/Prowl-qa/app/pulls/7)
     if [[ "$*" == *'.base.sha'* ]]; then
-      printf 'base-sha\\tci-head\\tcontributor/app\\tfalse\\n'
+      printf 'base-sha\\tci-head\\tcontributor/app\\tfalse\\tcontributor\\tCONTRIBUTOR\\n'
     else
       printf 'open\\tci-head\\n'
     fi
@@ -831,6 +861,162 @@ esac
           check_head_sha: "ci-head",
           check_conclusion: "neutral",
           check_title: "Fork pull request - review skipped"
+        });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review records a neutral replacement check before skipping unapproved same-repo authors",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-author-skip-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '9\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    ;;
+  repos/Prowl-qa/app/pulls/9)
+    if [[ "$*" == *'.base.sha'* ]]; then
+      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\tintruder\\tCOLLABORATOR\\n'
+    else
+      printf 'open\\tci-head\\n'
+    fi
+    ;;
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 9 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head",
+            CHECK_RUN: "true",
+            REQUIRE_APPROVED_ACTOR: "true",
+            APPROVED_ACTORS: "octocat"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({
+          resolved: "false",
+          pr_number: "9",
+          head_sha: "ci-head",
+          check_head_sha: "ci-head",
+          check_conclusion: "neutral",
+          check_title: "Review skipped - unauthorized actor"
+        });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review approves repository owners even when they are not allowlisted",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-owner-approval-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '11\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    ;;
+  repos/Prowl-qa/app/pulls/11)
+    if [[ "$*" == *'.base.sha'* ]]; then
+      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\trepo-owner\\tOWNER\\n'
+    else
+      printf 'open\\tci-head\\n'
+    fi
+    ;;
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 11 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head",
+            REQUIRE_APPROVED_ACTOR: "true",
+            APPROVED_ACTORS: "octocat"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({
+          resolved: "true",
+          pr_number: "11",
+          base_sha: "base-sha",
+          head_sha: "ci-head",
+          head_repo: "Prowl-qa/app",
+          approved_actor: "true",
+          is_draft: "false"
         });
       } finally {
         rmSync(temp, { recursive: true, force: true });
@@ -968,8 +1154,8 @@ esac
 });
 
 // Self-hosted, subscription-backed dogfood reviews (#64). The review/command jobs
-// run keyless `provider: codex` on the Mac mini runner; the fork gate stays on
-// hosted runners and no provider secret reaches the self-hosted job.
+// run keyless `provider: codex` on the Mac mini runner; fork/author gates stay
+// on hosted runners and no provider secret reaches the self-hosted job.
 describe("self-hosted Codex dogfood (#64)", () => {
   const SELF_HOSTED_LABELS = ["self-hosted", "macOS", "prowl-review"];
 
@@ -977,7 +1163,7 @@ describe("self-hosted Codex dogfood (#64)", () => {
     const doc = parseYaml(readRepo(".github/workflows/prowl-review.yml")) as {
       jobs: Record<string, { "runs-on"?: unknown; "timeout-minutes"?: unknown }>;
     };
-    // Only the review job moves to the runner; the fork-gating resolve + the
+    // Only the review job moves to the runner; the fork/author resolve + the
     // neutral-check report job stay on hosted runners (no secrets, fork-safe).
     expect(doc.jobs.review["runs-on"]).toEqual(SELF_HOSTED_LABELS);
     expect(doc.jobs.review["timeout-minutes"]).toBe(30);
@@ -1069,13 +1255,13 @@ describe("self-hosted Codex dogfood (#64)", () => {
     expect(commandDoc.jobs.command.concurrency["cancel-in-progress"]).toBe(false);
   });
 
-  const OPENAI_PUBLIC_CAVEAT = "Do not use this workflow for public or open-source repositories.";
+  const PUBLIC_REPO_UNSUPPORTED = "PUBLIC/OPEN-SOURCE REPOS: do not use this ChatGPT-auth CI/CD workflow there.";
   const SELF_HOSTED_EXAMPLES = [
     "examples/workflows/prowl-review-self-hosted-codex.yml",
     "examples/workflows/prowl-review-command-self-hosted-codex.yml"
   ] as const;
 
-  it.each(SELF_HOSTED_EXAMPLES)("%s is repo-agnostic, keyless, and states the public-repo caveats", (path) => {
+  it.each(SELF_HOSTED_EXAMPLES)("%s is repo-agnostic, keyless, and states public repos are unsupported", (path) => {
     const text = readRepo(path);
     expect(() => parseYaml(text)).not.toThrow();
     // Repo-agnostic: pins the published action, bakes in nothing prowl-tools-specific.
@@ -1085,17 +1271,39 @@ describe("self-hosted Codex dogfood (#64)", () => {
     // Keyless codex; no provider secret referenced (the prose may name PROWL_AI_KEY*).
     expect(text).toContain("ai-provider: codex");
     expect(text).not.toContain("secrets.PROWL_AI_KEY");
-    // Public-repo caveats stated verbatim + the private-repo fork-gate note.
-    expect(text).toContain(OPENAI_PUBLIC_CAVEAT);
-    expect(text).toMatch(/PRIVATE repos may drop the fork gate/i);
+    // Public/open-source use is unsupported, and private fork-gate removal needs
+    // an owner-only policy rather than blanket permission.
+    expect(text).toContain(PUBLIC_REPO_UNSUPPORTED);
+    expect(text).toContain("use an API-key provider on GitHub-hosted runners instead");
+    expect(text).toMatch(/explicit owner-only exception/i);
+    expect(text).not.toMatch(/PRIVATE repos may drop the fork gate/i);
   });
 
-  it("the self-hosted auto-review example gates forks at the job and serializes per PR", () => {
+  it("the GitHub Action docs self-hosted snippet includes the approved-actor gate", () => {
+    const text = readRepo("docs/github-action.md");
+    expect(text).toContain("trusted_head: ${{ steps.pr.outputs.trusted_head }}");
+    expect(text).toContain("approved_actor: ${{ steps.pr.outputs.approved_actor }}");
+    expect(text).toContain("needs.resolve.outputs.trusted_head == 'true'");
+    expect(text).toContain("needs.resolve.outputs.approved_actor == 'true'");
+  });
+
+  it("the self-hosted auto-review example resolves trust on ubuntu and serializes per PR", () => {
     const doc = parseYaml(readRepo("examples/workflows/prowl-review-self-hosted-codex.yml")) as {
       concurrency: { group: string; "cancel-in-progress"?: unknown };
-      jobs: { review: { if: string; "runs-on"?: unknown; "timeout-minutes"?: unknown } };
+      jobs: {
+        resolve: { "runs-on"?: unknown; outputs: Record<string, unknown> };
+        review: { if: string; needs: string; "runs-on"?: unknown; "timeout-minutes"?: unknown };
+      };
     };
-    expect(doc.jobs.review.if).toBe("github.event.pull_request.head.repo.full_name == github.repository");
+    expect(doc.jobs.resolve["runs-on"]).toBe("ubuntu-latest");
+    expect(doc.jobs.resolve.outputs).toMatchObject({
+      trusted_head: "${{ steps.pr.outputs.trusted_head }}",
+      approved_actor: "${{ steps.pr.outputs.approved_actor }}"
+    });
+    expect(doc.jobs.review.needs).toBe("resolve");
+    expect(normalizeExpression(doc.jobs.review.if)).toBe(
+      "needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.approved_actor == 'true'"
+    );
     expect(doc.jobs.review["runs-on"]).toEqual(["self-hosted", "macOS", "prowl-review"]);
     expect(doc.jobs.review["timeout-minutes"]).toBe(30);
     expect(doc.concurrency).toMatchObject({

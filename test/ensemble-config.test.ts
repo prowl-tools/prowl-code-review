@@ -85,7 +85,7 @@ describe("resolveEnsembleConfigs (#53)", () => {
     expect(configs.find((c) => c.provider === "openai")?.apiKey).toBe("openai-key");
   });
 
-  it("skips a provider with no key and notes it (no silent drop)", () => {
+  it("skips a provider missing a required key and notes it (no silent drop)", () => {
     const { configs, notes } = resolveEnsembleConfigs({
       primary,
       providers: [{ provider: "anthropic" }, { provider: "openai" }],

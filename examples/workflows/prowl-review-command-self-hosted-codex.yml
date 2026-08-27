@@ -2,15 +2,14 @@
 # SELF-HOSTED runner using the keyless Codex (ChatGPT subscription) provider
 # (#45/#64). Copy to .github/workflows/prowl-review-command.yml and pin `uses:`.
 #
-# PUBLIC-REPO CAVEATS — read before using this on a public/open-source repo:
-#   - OpenAI's CI/CD authentication guidance says, verbatim:
-#       "Do not use this workflow for public or open-source repositories."
-#   - GitHub advises against self-hosted runners on public repositories: any PR
-#     can execute code on the runner. The ubuntu `resolve` job (no secrets)
-#     computes the fork/trust verdict; the self-hosted `command` job's job-level
-#     same-repo `if:` gate is REQUIRED on a public repo so a fork PR is never
-#     scheduled onto the runner. Codex itself also runs `--sandbox read-only`.
-#   - PRIVATE repos may drop the fork gate (no fork-PR code-execution risk).
+# PUBLIC/OPEN-SOURCE REPOS: do not use this ChatGPT-auth CI/CD workflow there.
+# OpenAI's guidance says not to use it for public or open-source repositories;
+# use an API-key provider on GitHub-hosted runners instead.
+#
+# TRUSTED PRIVATE REPOS: keep the job-level same-repo gate below unless the
+# workflow enforces an explicit owner-only exception. The ubuntu `resolve` job
+# computes the fork/trust verdict; the self-hosted `command` job is scheduled
+# only for same-repo requests.
 #
 # The subscription login lives ONLY on the runner (via `codex login` into a
 # dedicated CODEX_HOME); it is never a GitHub secret, and no PROWL_AI_KEY* is set.
@@ -78,8 +77,8 @@ jobs:
 
   command:
     needs: resolve
-    # Same-repo gate: keeps fork PRs off the self-hosted runner. REQUIRED on a
-    # public repo; a private repo may drop this line (no fork code-execution risk).
+    # Same-repo gate: keeps fork PRs off the self-hosted runner. Keep it unless a
+    # trusted private workflow enforces an explicit owner-only exception.
     if: needs.resolve.outputs.trusted_head == 'true' && needs.resolve.outputs.head_repo == github.repository
     runs-on: [self-hosted, macOS, prowl-review]
     timeout-minutes: 30

@@ -43,15 +43,16 @@ GitHub. Copy
 (auto review) and, for `@prowl-review` commands,
 [`workflows/prowl-review-command-self-hosted-codex.yml`](workflows/prowl-review-command-self-hosted-codex.yml).
 Both are repo-agnostic (`uses: prowl-tools/prowl-code-review@v1`) and carry a
-job-level same-repo gate so fork PRs never land on the runner.
+hosted resolve job plus a job-level same-repo/approved-actor gate so fork PRs and
+unauthorized same-repo PRs never land on the runner.
 
-> **Public/open-source repos:** read the header caveats in each file first —
-> OpenAI's guidance is *"Do not use this workflow for public or open-source
-> repositories."*, and GitHub advises against self-hosted runners on public repos.
-> The fork gate is **required** there. **Private repos may drop the fork gate.**
+> **Public/open-source repos:** this ChatGPT-auth CI/CD workflow is unsupported.
+> Use an API-key provider on GitHub-hosted runners instead. For trusted private
+> self-hosted workflows, keep the same-repo + approved-actor gate unless an
+> explicit owner-only exception removes non-owner fork risk.
 
 Set up the runner (`codex login` into a dedicated `CODEX_HOME`, runner labels,
-one login per host) as described in
+one serialized session per shared `CODEX_HOME`) as described in
 [`docs/self-hosted-runner.md`](../docs/self-hosted-runner.md) and the
 [Codex section of `docs/auth.md`](../docs/auth.md). The subscription login lives
 **only on the runner**, never in GitHub secrets.

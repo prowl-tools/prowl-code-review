@@ -18,7 +18,7 @@ on:
   workflow_call:
     inputs:
       ai-provider:
-        description: "LLM provider override: anthropic | openai | gemini. Blank = CLI default / ensemble."
+        description: "LLM provider override: anthropic | openai | gemini | codex. Blank = CLI default / ensemble."
         type: string
         required: false
         default: ""
@@ -62,6 +62,21 @@ on:
         type: string
         required: false
         default: "ubuntu-latest"
+      require-approved-actor:
+        description: >
+          Require the PR author to be the repository owner or in allowed-actors before scheduling
+          the review job. Keep true for self-hosted runners, including custom labels/groups.
+        type: boolean
+        required: false
+        default: true
+      allowed-actors:
+        description: >
+          Comma/space/newline-separated GitHub logins allowed to schedule an approved-actor-gated
+          auto review. OWNER author association is always allowed. Blank defaults to the repository
+          owner login.
+        type: string
+        required: false
+        default: ""
     secrets:
       # BYOK: provide the key(s) your provider/ensemble needs. With `secrets: inherit`
       # in the caller, these flow through automatically.
@@ -99,13 +114,16 @@ jobs:
     if: >
       github.event.workflow_run.event == 'pull_request' &&
       github.event.workflow_run.conclusion == 'success'
-    runs-on: ${{ inputs.runs-on }}
+    # Keep trust resolution on a hosted runner. The caller's `runs-on` input is
+    # applied only to the review job after fork and author gates pass.
+    runs-on: ubuntu-latest
     outputs:
       resolved: ${{ steps.pr.outputs.resolved }}
       pr_number: ${{ steps.pr.outputs.pr_number }}
       base_sha: ${{ steps.pr.outputs.base_sha }}
       head_sha: ${{ steps.pr.outputs.head_sha }}
       head_repo: ${{ steps.pr.outputs.head_repo }}
+      approved_actor: ${{ steps.pr.outputs.approved_actor }}
       is_draft: ${{ steps.pr.outputs.is_draft }}
       check_head_sha: ${{ steps.pr.outputs.check_head_sha }}
       check_conclusion: ${{ steps.pr.outputs.check_conclusion }}
@@ -122,9 +140,27 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           CHECK_RUN: ${{ inputs.check-run }}
+          REQUIRE_APPROVED_ACTOR: ${{ inputs.require-approved-actor }}
+          APPROVED_ACTORS: ${{ inputs.allowed-actors || github.repository_owner }}
         shell: bash
         run: |
           set -euo pipefail
+
+          is_approved_actor() {
+            local login="$1"
+            local association="$2"
+            if [ "${association}" = "OWNER" ]; then
+              return 0
+            fi
+            local normalized
+            normalized="$(printf '%s' "${APPROVED_ACTORS:-}" | tr ',;' '  ' | tr '\n\r\t' '    ')"
+            for actor in ${normalized}; do
+              if [ "${login}" = "${actor}" ]; then
+                return 0
+              fi
+            done
+            return 1
+          }
 
           report_check() {
             local conclusion="$1"
@@ -187,7 +223,7 @@ jobs:
 
           # Re-derive trusted base/head from the resolved PR (never from the CI
           # payload) so the config/guidelines checkout stays anchored to base code.
-          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft] | @tsv' 2>/dev/null)"; then
+          if ! meta="$(gh api "repos/${GITHUB_REPOSITORY}/pulls/${pr_number}" --jq '[.base.sha, .head.sha, .head.repo.full_name, .draft, .user.login, .author_association] | @tsv' 2>/dev/null)"; then
             report_check "failure" "Review setup failed" "prowl-review could not load pull request #${pr_number} metadata after resolving the completed CI run. Inspect this workflow run for API, rate-limit, or permissions errors."
             echo "Skipping: failed to load complete PR metadata for #${pr_number}."
             exit 0
@@ -196,6 +232,8 @@ jobs:
           head_sha="$(printf '%s' "${meta}" | cut -f2)"
           head_repo="$(printf '%s' "${meta}" | cut -f3)"
           is_draft="$(printf '%s' "${meta}" | cut -f4)"
+          author_login="$(printf '%s' "${meta}" | cut -f5)"
+          author_association="$(printf '%s' "${meta}" | cut -f6)"
           if [ -z "${base_sha}" ] || [ "${base_sha}" = "null" ] ||
             [ -z "${head_sha}" ] || [ "${head_sha}" = "null" ] ||
             [ -z "${head_repo}" ] || [ "${head_repo}" = "null" ]; then
@@ -217,6 +255,11 @@ jobs:
             echo "Skipping fork PR head ${head_repo}; forks do not receive provider secrets."
             exit 0
           fi
+          if [ "${REQUIRE_APPROVED_ACTOR:-false}" = "true" ] && ! is_approved_actor "${author_login}" "${author_association}"; then
+            report_check "neutral" "Review skipped - unauthorized actor" "prowl-review skipped this same-repository pull request because @${author_login} is not an owner or approved actor for the self-hosted review runner."
+            echo "Skipping PR #${pr_number}: author @${author_login} (${author_association:-none}) is not approved for the self-hosted runner."
+            exit 0
+          fi
 
           {
             echo "resolved=true"
@@ -224,13 +267,14 @@ jobs:
             echo "base_sha=${base_sha}"
             echo "head_sha=${head_sha}"
             echo "head_repo=${head_repo}"
+            echo "approved_actor=true"
             echo "is_draft=${is_draft}"
           } >> "$GITHUB_OUTPUT"
 
   report-unreviewable:
     needs: resolve
     if: needs.resolve.outputs.check_conclusion != ''
-    runs-on: ${{ inputs.runs-on }}
+    runs-on: ubuntu-latest
     concurrency:
       group: prowl-review-${{ needs.resolve.outputs.pr_number || needs.resolve.outputs.check_head_sha }}
       cancel-in-progress: false
@@ -288,7 +332,9 @@ jobs:
 
   review:
     needs: resolve
-    if: needs.resolve.outputs.resolved == 'true'
+    if: >
+      needs.resolve.outputs.resolved == 'true' &&
+      needs.resolve.outputs.approved_actor == 'true'
     runs-on: ${{ inputs.runs-on }}
     # Serialize auto reviews with @prowl-review commands for the same PR so pushes
     # do not cancel command side effects; stale-head checks prevent outdated

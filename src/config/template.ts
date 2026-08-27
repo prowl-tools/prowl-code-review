@@ -64,8 +64,9 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 # findings (#53). Opt-in, default off. Each provider's key comes from its own env
 # var: PROWL_AI_KEY_ANTHROPIC / PROWL_AI_KEY_OPENAI / PROWL_AI_KEY_GEMINI (the
 # provider matching your primary also falls back to PROWL_AI_KEY; scoped keys
-# win when both are set). A provider with no key is skipped; with fewer than two
-# keys it runs as a normal review.
+# win when both are set). Providers missing required credentials are skipped;
+# keyless codex is usable without an API key. With fewer than two usable providers,
+# it runs as a normal review.
 # Findings agreed on by multiple providers get a confidence boost + a 🤝 badge.
 # Cost is ~N× a single-provider review (the per-PR budget above is split across
 # providers); cross-file context + linters run once and are shared.

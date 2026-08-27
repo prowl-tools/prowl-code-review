@@ -86,13 +86,85 @@ required for the Action path. To post under a custom GitHub-App identity, supply
 that app's token as `github-token` and set `bot-login` so update-not-duplicate can
 find prowl-review's own prior comments.
 
+### Bring your own bot identity
+
+The bot branding is **not baked into the tool** — nothing "Prowl" or raccoon ships
+inside the package. The Action posts as whatever identity you hand it via
+`github-token` / `bot-login`, so a team can make prowl-review look like their own
+in-house reviewer. It pairs naturally with BYOK: **your key, your bot.**
+
+| Tier | Posts as | Setup |
+| --- | --- | --- |
+| **Default** | `github-actions[bot]` | Nothing — works out of the box with just your AI key. |
+| **Your own brand** | `your-app[bot]` + **your** name & avatar | Register **your own** GitHub App (any name/avatar), add your `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` secrets, mint an installation token in the workflow, and pass it as `github-token` with `bot-login`. The identity is entirely yours. |
+| **Local CLI** | *(no bot — prints to your terminal)* | Run `prowl-review` locally; no GitHub identity involved. |
+
+The App needs `contents: read`, `pull requests: write`, `issues: write`, and
+`checks: write`. Mint a short-lived installation token before prowl-review runs,
+then pass that token and the App bot login to the Action:
+
+```yaml
+steps:
+  - uses: actions/checkout@v4
+  - id: app-token
+    uses: actions/create-github-app-token@v1
+    with:
+      app-id: ${{ secrets.PROWL_APP_ID }}
+      private-key: ${{ secrets.PROWL_APP_PRIVATE_KEY }}
+      permission-contents: read
+      permission-issues: write
+      permission-pull-requests: write
+      permission-checks: write
+  - uses: prowl-tools/prowl-code-review@v1
+    with:
+      ai-key: ${{ secrets.PROWL_AI_KEY }}
+      github-token: ${{ steps.app-token.outputs.token }}
+      bot-login: ${{ steps.app-token.outputs.app-slug }}[bot]
+```
+
+`bot-login` must match the App's login (its slug + `[bot]`) so update-not-duplicate
+still finds prowl-review's prior comments and threads. A ready-to-copy workflow is
+in [`examples/workflows/prowl-review-branded.yml`](../examples/workflows/prowl-review-branded.yml),
+and the [reusable org templates](../examples/reusable/) pick this up automatically
+when `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` are set. An App's power lives in its
+private key (kept in your secrets, never shared), so each adopter registers their
+own — see [Branded bot identity](../README.md#branded-bot-identity-59) in the
+README.
+
+#### Reusing one App across repos and accounts
+
+A GitHub App is a **server-side identity, not a per-device install** — reuse it by
+installing it on more repos, never by copying anything to another machine. Where it
+can go depends on the App's **"Where can this GitHub App be installed?"** setting:
+
+- **More repos under the *same* owner** (the account/org that owns the App):
+  select each repository in the GitHub App installation so the App can access it.
+  `PROWL_APP_ID` / `PROWL_APP_PRIVATE_KEY` can be **org-level secrets** to expose
+  the credentials to authorized workflows, but secrets do not install the App or
+  grant repo access. Limit secret visibility to the repos that actually run it.
+- **Repos under a *different* owner** (e.g. your personal account when the App is
+  org-owned): the App must be set to **"Any account"** (public) to install it there
+  — flip it via **Make public** at the bottom of the App's settings. The private
+  key stays secret, so going public only exposes the App's profile and lets others
+  *install* it (inert without the key). The alternative is a **separate App** under
+  that owner; App names are globally unique, so its bot login won't be identical
+  (e.g. `prowl-review-personal[bot]`).
+
+Running the **CLI** on another machine is unrelated: install `prowl-review` there
+and set your AI key — the branded identity is a CI concept and doesn't live on the
+device.
+
 ### Fork pull requests
 
-GitHub does not expose repository secrets to workflows triggered by fork PRs, so a
-fork PR has no provider key. prowl-review handles this safely — a keyless run is
-skipped rather than failing — and the recommended workflows additionally guard on
-`head.repo.full_name == github.repository`. See the README "Fork pull requests"
-section and [`SECURITY.md`](../SECURITY.md).
+In `pull_request` workflows, GitHub does not expose repository secrets to fork
+PRs, so an API-key fork run has no provider key. prowl-review handles this safely
+by skipping the missing-key run instead of failing, and the recommended
+`pull_request` workflows additionally guard on
+`head.repo.full_name == github.repository`. `pull_request_target` runs in the
+trusted base-repository context and can receive secrets; use it only with trusted
+base config, pass the PR head as an untrusted `workspace-path`, and do not add
+steps that execute fork code. See [Fork pull requests](../README.md#fork-pull-requests-20)
+in the README and [`SECURITY.md`](../SECURITY.md).
 
 ## Why API keys only — the subscription question
 
@@ -135,27 +207,26 @@ instead of a metered key. It is deliberately narrow:
   (or `PROWL_AI_PROVIDER=codex`). Run `codex login` on the machine first; a missing
   or logged-out `codex` binary produces a clear "run `codex login` on this
   machine" error rather than a crash.
-- **Self-hosted / local infrastructure only.** `codex` is supported **only on
-  infrastructure you control** — a self-hosted runner or your laptop — and the
+- **Trusted self-hosted / local infrastructure only.** `codex` is supported **only
+  on infrastructure you control** — a self-hosted runner or your laptop — and the
   subscription login (`codex login`) must live on that machine, **never in GitHub
   Actions secrets**. Under `GITHUB_ACTIONS=true`, prowl-review allows `codex` iff
-  the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of
-  repository visibility**; a GitHub-hosted runner is refused, and a missing
-  `RUNNER_ENVIRONMENT` fails closed. OpenAI's own CI/CD authentication guidance
-  says, verbatim,
-  **"Do not use this workflow for public or open-source repositories."** — that
-  warning is about copying `auth.json` into **CI secrets on GitHub-hosted / shared
-  runners**, which we never do; it does **not** apply to a
-  self-hosted runner whose login lives on the host. All Prowl repos are public and
-  run `codex` on a self-hosted runner behind a **job-level same-repo fork gate**
-  (see [`self-hosted-runner.md`](self-hosted-runner.md)) so a fork PR is never
-  scheduled onto it. Private repos on a self-hosted runner are equally fine.
+  the runner is self-hosted (`RUNNER_ENVIRONMENT=self-hosted`); a GitHub-hosted
+  runner is refused, and a missing `RUNNER_ENVIRONMENT` fails closed. OpenAI's own
+  CI/CD authentication guidance says not to use this workflow for public or
+  open-source repositories, so treat public/open-source CI as unsupported. For
+  trusted private self-hosted workflows, keep the **job-level same-repo +
+  approved-actor gate** (see [`self-hosted-runner.md`](self-hosted-runner.md)) so
+  forks and unauthorized same-repo PRs are never scheduled onto it unless an
+  explicit owner-only exception removes non-owner fork risk.
 - **Never copy `auth.json` between machines or instances.** Refresh tokens are
   single-use; a copied file logs out whichever side refreshes second. Keep one
-  `CODEX_HOME` per machine. When several runner instances share it, prowl-review's
-  machine-wide advisory lock (`$CODEX_HOME/.prowl-review.lock`, on by default for
-  `codex`) serializes `codex` runs so one `auth.json` only ever serves one stream
-  at a time. See backlog #64 for the self-hosted runner rollout.
+  `CODEX_HOME` per serialized session. The normal setup is one shared
+  `CODEX_HOME` per machine plus prowl-review's machine-wide advisory lock
+  (`$CODEX_HOME/.prowl-review.lock`, on by default for `codex`), so one
+  `auth.json` only ever serves one stream at a time. If a runner instance needs an
+  independent Codex session, it needs its own `CODEX_HOME` and its own
+  `codex login`. See backlog #64 for the self-hosted runner rollout.
 - **No Claude/Gemini equivalent, ever.** This exists only because OpenAI offers a
   sanctioned first-party CLI + plan-allowance path; Anthropic and Google do not,
   and their consumer terms forbid it.
@@ -215,20 +286,22 @@ runner**, never in a GitHub secret. In shape (full detail in
 [`self-hosted-runner.md`](./self-hosted-runner.md); secrets-bearing operational
 steps in a private runbook):
 
-- **Dedicated `CODEX_HOME` per host** with its own **`codex login --device-auth`**,
-  **one login per host** — the machine-wide lock serializes multiple runner
-  instances so a single login serves them all. **Never copy `auth.json`** between
-  hosts or instances (single-use refresh tokens).
+- **Dedicated `CODEX_HOME` per serialized session.** The normal setup is one
+  `CODEX_HOME` and one **`codex login --device-auth`** per host, with the
+  machine-wide lock serializing multiple runner instances so a single login serves
+  them all. If a runner instance needs an independent session, give it its own
+  `CODEX_HOME` and login. **Never copy `auth.json`** between hosts or instances
+  (single-use refresh tokens).
 - **Runner service config:** the runner's **`.env`** sets `CODEX_HOME=…`, and its
   **`.path`** must include the `codex` binary directory (e.g. `/opt/homebrew/bin`)
   so `codex` is on `PATH` for the service. Node is provisioned by the Action's own
   `actions/setup-node` step; nothing else is assumed on the host.
 - **Labels:** `[self-hosted, macOS, prowl-review]`, which the review/command jobs
   target; the fork-gating jobs stay on GitHub-hosted `ubuntu-latest`.
-- **Registration scope:** organizations register **one org-level runner** in a
-  restricted runner group; **personal accounts allow repository-level runners
-  only**, so register **one runner per opted-in repo**. Private repos need no
-  fork gate and adopt first.
+- **Registration scope:** register **one repository-level runner per opted-in
+  repo**. This is the selected Prowl topology for the live org repos and is also
+  the only runner scope available to personal-account repos. Keep the same-repo
+  gate unless a trusted private workflow enforces an explicit owner-only exception.
 
 ## Local CLI
 

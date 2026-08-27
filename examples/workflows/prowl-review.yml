@@ -20,7 +20,7 @@ permissions:
 
 jobs:
   review:
-    # Fork PRs don't receive secrets; prowl-review also skips a keyless fork run
+    # Fork PRs don't receive secrets; prowl-review also skips a missing-key fork run
     # safely if this guard is removed. See SECURITY.md / README "Fork pull requests".
     if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest

@@ -4,6 +4,18 @@ All notable changes to Prowl Review will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Maintenance mode (owner decision, 2026-08-26; backlog #67–#71).** prowl-review is now maintained
+  as its author's internal code-review tool, not a product: the README carries a maintenance-mode
+  status block, `CONTRIBUTING.md` defines what "maintenance" covers (dependency/security updates,
+  breakages on the maintainer's repos, provider API changes), and the legacy "Prowl QA" brand
+  strings are gone. The `review.prowl.tools` docs site is retired (#68): its pages now live in
+  `docs/` (`getting-started`, `configuration`, `cli`, `bot-commands`, `github-action`, `ensemble`,
+  `grounding`, `cross-file-context`, `repo-wide-learnings`, index in `docs/README.md`), reconciled
+  against the shipped code (every config key / action input verified; the Codex provider documented
+  throughout). The Homebrew formula is dropped (#70): npm + the `v1` Action tag are the only
+  channels, `packaging/homebrew/` and the tap steps in `docs/releasing.md` are removed.
+
 ### Added
 - **Codex (ChatGPT subscription) provider — `provider: codex` (backlog #45).** A new
   keyless provider that runs reviews through your ChatGPT subscription instead of a metered API
@@ -40,21 +52,20 @@ All notable changes to Prowl Review will be documented in this file.
     provider keys, `GITHUB_TOKEN`, and any `*_TOKEN`/`*_SECRET`/`*_KEY` are never passed to the
     process that runs model-generated shell commands.
   - **Cost reporting** shows `$0.00 (ChatGPT subscription)` while still reporting token counts.
-  - **Policy surface.** Codex is **off by default, opt-in, and self-hosted / local infrastructure
-    only** — for the GitHub Action it is restricted to self-hosted runners (any repository
-    visibility), behind a job-level same-repo fork gate. OpenAI's "Do not use this workflow for
-    public or open-source repositories" line is about `auth.json` in CI secrets on hosted/shared
-    runners, which we never do — not about a self-hosted runner whose login lives on the host;
-    **no Claude/Gemini equivalent, ever**. Documented in
+  - **Policy surface.** Codex is **off by default, opt-in, and trusted self-hosted / local
+    infrastructure only** — for the GitHub Action it is restricted to self-hosted runners, behind a
+    job-level same-repo + approved-actor gate. OpenAI's CI/CD-auth guidance says not to use this
+    workflow for public or open-source repositories, so public/open-source CI should use an API-key
+    provider instead; **no Claude/Gemini equivalent, ever**. Documented in
     `docs/auth.md`, `docs/privacy.md`, `README.md`, the example config, and the `init` template.
 - **Self-hosted Codex runner rollout — repo side (backlog #64).** The dogfood auto-review and
   `@prowl-review` command workflows now run on a self-hosted runner
   (`runs-on: [self-hosted, macOS, prowl-review]`) using keyless `provider: codex`, so reviews are
   subscription-backed ($0.00/review) with **no provider secret in GitHub**.
-  - **Job-level same-repo gate** on the self-hosted jobs (`head_repo == github.repository`) so a
-    fork PR is never scheduled onto the runner; the fork-gating resolve job and the neutral
-    fork-skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split into an
-    ubuntu trust-resolve job and a self-hosted command job.
+  - **Job-level same-repo + approved-actor gate** on the self-hosted auto-review job so fork PRs
+    and unauthorized same-repo PRs are never scheduled onto the runner; the fork/auth resolve job
+    and neutral skip check stay on GitHub-hosted `ubuntu-latest`. The command workflow is split
+    into an ubuntu trust-resolve job and a self-hosted command job.
   - **Per-PR Codex concurrency** (`prowl-review-codex-<repo>-<pr>`) with a 30-minute timeout;
     the shared auto-review/command group is non-cancelling so maintainer commands are not
     interrupted, and machine-wide serialization across repos/instances is the provider's Codex
@@ -66,9 +77,9 @@ All notable changes to Prowl Review will be documented in this file.
   - **Repo-agnostic example workflows** (`examples/workflows/prowl-review-self-hosted-codex.yml`
     + command variant) and docs (`docs/self-hosted-runner.md`, plus Codex sections of
     `docs/auth.md` and `README.md`) covering the shape of runner setup — dedicated `CODEX_HOME`
-    with its own `codex login`, runner `.env`/`.path`, labels, org- vs. repo-level registration,
-    never copying `auth.json`, and the `--sandbox read-only` file-read boundary — with the
-    public-repo caveats stated verbatim. Runner registration and rollout to the other
+    per serialized session, runner `.env`/`.path`, labels, repo-level registration, never copying
+    `auth.json`, and the `--sandbox read-only` file-read boundary — with public/open-source CI
+    marked unsupported for this ChatGPT-auth workflow. Runner registration and rollout to the other
     Prowl/personal repos are still pending.
   - Registered the custom `prowl-review` runner label in `.github/actionlint.yaml`.
 - **Subscription usage-limit resilience & zero-cost reporting for `provider: codex` (backlog #65).**
@@ -96,17 +107,28 @@ All notable changes to Prowl Review will be documented in this file.
     `codex` + API-key ensemble prices each member with its own model.
 
 ### Fixed
-- **Codex Actions guard no longer refuses public repos (blocker for #64/#65).** Under
-  `GITHUB_ACTIONS=true`, `provider: codex` is allowed **iff the runner is self-hosted**
-  (`RUNNER_ENVIRONMENT=self-hosted`) — **regardless of repository visibility**. The production
-  guard ignores `PROWL_RUNNER_ENVIRONMENT`, so workflow-provided overrides cannot bypass the
-  GitHub runner classification. A GitHub-hosted runner is refused with an actionable message
-  ("use a self-hosted runner; never put `auth.json` in Actions secrets"), and a missing
-  `RUNNER_ENVIRONMENT` under Actions fails closed. The previous public/private-repository check —
-  which made every dogfood specialist pass on the public repo fail with "requires a non-public
-  repository" (seen on PR #92) — is removed; the visibility detection is now reused only to add a
-  one-line **review note** reminding public-repo self-hosted runs to keep the job-level same-repo
-  fork gate.
+- Clarified the generated `prowl-review init` ensemble template so keyless `codex`
+  is not described as skipped for missing API credentials.
+- Reusable self-hosted auto-review workflows now keep PR resolution and neutral
+  skip reporting on `ubuntu-latest`, so fork and approved-actor checks run before
+  any self-hosted review job is scheduled.
+- **`codex.timeoutMs` / `codex.lockTimeoutMs` were rejected by the config schema.** The changelog
+  and error messages advertised them and the resolver read them, but the strict `codex:` schema
+  only accepted `effort` and `lock`, so setting either in `.prowl-review.yml` failed validation.
+  Both are now accepted (positive integer ms); the matching `PROWL_CODEX_*_MS` env vars still
+  take precedence. `codex.timeoutMs` is capped at 2,147,483,647 ms (Node's maximum timer delay)
+  in the schema and before `runCodexExec` schedules its timeout; `lockTimeoutMs` remains an
+  elapsed-time limit and is not timer-capped.
+- **Codex Actions guard now enforces the runner environment.** Under `GITHUB_ACTIONS=true`,
+  `provider: codex` is allowed **iff the runner is self-hosted**
+  (`RUNNER_ENVIRONMENT=self-hosted`). The production guard ignores `PROWL_RUNNER_ENVIRONMENT`, so
+  workflow-provided overrides cannot bypass the GitHub runner classification. A GitHub-hosted
+  runner is refused with an actionable message ("use a self-hosted runner; never put `auth.json`
+  in Actions secrets"), and a missing `RUNNER_ENVIRONMENT` under Actions fails closed. The previous
+  public/private-repository runtime check — which made every dogfood specialist pass on the public
+  repo fail with "requires a non-public repository" (seen on PR #92) — is removed; documentation
+  and review notes still warn that OpenAI's CI/CD-auth workflow is unsupported for public or
+  open-source repositories.
 - Requirements-only linked-issue validation now sends all-failed / no-coverage review results
   through the same neutral **"Review skipped/incomplete"** check path as normal reviews, instead
   of letting a gated check report a misleading green "No issues found" result.
