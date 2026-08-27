@@ -62,10 +62,18 @@ on:
         type: string
         required: false
         default: "ubuntu-latest"
+      require-approved-actor:
+        description: >
+          Require the PR author to be the repository owner or in allowed-actors before scheduling
+          the review job. Keep true for self-hosted runners, including custom labels/groups.
+        type: boolean
+        required: false
+        default: true
       allowed-actors:
         description: >
-          Comma/space/newline-separated GitHub logins allowed to schedule a self-hosted auto review.
-          OWNER author association is always allowed. Blank defaults to the repository owner login.
+          Comma/space/newline-separated GitHub logins allowed to schedule an approved-actor-gated
+          auto review. OWNER author association is always allowed. Blank defaults to the repository
+          owner login.
         type: string
         required: false
         default: ""
@@ -132,7 +140,7 @@ jobs:
           RUN_ID: ${{ github.event.workflow_run.id }}
           HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
           CHECK_RUN: ${{ inputs.check-run }}
-          REQUIRE_APPROVED_ACTOR: ${{ contains(inputs.runs-on, 'self-hosted') }}
+          REQUIRE_APPROVED_ACTOR: ${{ inputs.require-approved-actor }}
           APPROVED_ACTORS: ${{ inputs.allowed-actors || github.repository_owner }}
         shell: bash
         run: |

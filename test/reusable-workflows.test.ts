@@ -234,6 +234,8 @@ describe("reusable org workflows (#37)", () => {
     expect(call.inputs).toHaveProperty("runs-on");
     if (name === "prowl-review.yml") {
       expect(call.inputs).toHaveProperty("allowed-actors");
+      expect(call.inputs).toHaveProperty("require-approved-actor");
+      expect((call.inputs["require-approved-actor"] as { default?: unknown }).default).toBe(true);
     }
   });
 
@@ -591,6 +593,10 @@ describe("single branded checks row (#61)", () => {
     const resolve = steps.find((step) => step.id === "pr") as { env: Record<string, unknown>; run: string } | undefined;
     expect(resolve).toBeDefined();
     expect(resolve!.env.CHECK_RUN).toBe(label === "dogfood" ? "true" : "${{ inputs.check-run }}");
+    if (label === "reusable") {
+      expect(resolve!.env.REQUIRE_APPROVED_ACTOR).toBe("${{ inputs.require-approved-actor }}");
+      expect(String(resolve!.env.REQUIRE_APPROVED_ACTOR)).not.toContain("inputs.runs-on");
+    }
     expect(doc.jobs.resolve.outputs).toMatchObject({
       resolved: "${{ steps.pr.outputs.resolved }}",
       pr_number: "${{ steps.pr.outputs.pr_number }}",

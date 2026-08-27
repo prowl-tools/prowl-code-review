@@ -37,6 +37,7 @@ jobs:
       # replacement check visible unless another required status owns the gate.
       check-run: true
     #   allowed-actors: ${{ vars.PROWL_REVIEW_ALLOWED_ACTORS }}
+    #   require-approved-actor: true # keep true for self-hosted runners
     #   min-severity: major
     #   ai-provider: anthropic
     #   org-guidelines-path: https://example.com/review-guidelines.md

@@ -98,16 +98,16 @@ Two things this requires:
   instead, map them: `secrets: { PROWL_AI_KEY: ${{ secrets.PROWL_AI_KEY }} }`.
 - **Tunables** ride as `with:` inputs on the caller — `min-severity`,
   `ai-provider`, `ai-model`, `check-run`, `config-path`, `org-guidelines-path`,
-  `org-guidelines-workspace`, `runs-on`.
+  `org-guidelines-workspace`, `runs-on`, `require-approved-actor`.
 - **Config & guidelines stay trusted.** The reusable workflows load
   `.prowl-review.yml` and `REVIEW_GUIDELINES.md`/`CLAUDE.md`/`LEARNED_PATTERNS.md`
   from the **base** checkout, never from PR code. Set `config-path:
   prowl-base/.prowl-review.yml` to use a committed config.
 - **Self-hosted runners:** pass `runs-on:` to target your own labels for the
-  review job and set `allowed-actors` (usually from
-  `vars.PROWL_REVIEW_ALLOWED_ACTORS`) so only the owner or exact approved logins
-  can schedule auto reviews on the runner. PR resolution and neutral skip
-  reporting stay on `ubuntu-latest`.
+  review job, keep `require-approved-actor: true` (the default), and set
+  `allowed-actors` (usually from `vars.PROWL_REVIEW_ALLOWED_ACTORS`) so only the
+  owner or exact approved logins can schedule auto reviews on the runner. PR
+  resolution and neutral skip reporting stay on `ubuntu-latest`.
 - **Branded identity (#59):** add org secrets `PROWL_APP_ID` + `PROWL_APP_PRIVATE_KEY`
   (from a registered GitHub App with the raccoon avatar) and the reusable workflows
   post as your `prowl-review[bot]` automatically; without them they fall back to

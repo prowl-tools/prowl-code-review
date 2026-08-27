@@ -315,6 +315,10 @@ jobs:
       # workflow_run hides this workflow's Actions row, so keep the branded
       # replacement check visible unless another required status owns the gate.
       check-run: true
+      # Self-hosted runners:
+      # runs-on: prowl-review
+      # require-approved-actor: true # default; keep true for self-hosted runners
+      # allowed-actors: ${{ vars.PROWL_REVIEW_ALLOWED_ACTORS }}
 ```
 
 Templates live in the repo under [`examples/reusable/`](../examples/reusable/).
