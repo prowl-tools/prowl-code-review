@@ -52,14 +52,6 @@ the *product* framing (docs site, marketing placement) is retired. Items 41 (dem
 repo) and 62/#47 (hosted App) are **parked indefinitely** by this decision; #64 continues as
 personal infrastructure, not product work.
 
-68. **Sunset the `prowl-code-review-docs` site (review.prowl.tools)**
-    _Status (2026-08-26): **repo side done — only the hosting teardown is left, and it is the owner's.** Every site page has an equivalent in `docs/` (nine ported + `auth.md`/`example-review.md` merged, index at `docs/README.md`, README "Documentation" points there — branch `maintenance-mode`); the `lucius-mac-mini-prowl-code-review-docs` runner is deregistered (GitHub + Mac mini); the docs repo's `prowl-review-codex` branch is deleted, a retirement banner is on its README, and `prowl-tools/prowl-code-review-docs` is **archived**. **Remaining (owner):** remove the Vercel project for the site and the `review` DNS record in Cloudflare (a temporary redirect to this repo is fine); then close this item._
-    As the owner, I want zero deploys to maintain for a personal tool, so that the only docs are the ones that live next to the code.
-    - Port anything on the Docusaurus site that is not already in this repo's `docs/` (`getting-started`, `configuration`, `github-action`, `cli`, `bot-commands`, `ensemble`, `grounding`, `cross-file-context`, plus the self-hosted/Codex pages from #66) into `docs/` here as plain Markdown; `auth.md`, `privacy.md`, `example-review.md` already exist. Point the README "Documentation" section at `docs/`.
-    - Remove the Vercel project and the `review` DNS record (a redirect to this repo's README for a grace period is fine). Deregister the `lucius-mac-mini-prowl-code-review-docs` runner, abandon its `prowl-review-codex` branch, then archive the `prowl-code-review-docs` repo with a retirement banner. This closes the docs-site half of #66 as won't-do; the `prowl-web` half is superseded by 69.
-    - Update the `review.prowl.tools` badge/link in the README and the `docs` reference in the workspace `CLAUDE.md` subdomain list.
-    - Acceptance: every page on the site has an equivalent in `docs/`; review.prowl.tools no longer serves the site; docs repo archived.
-
 69. **Demote prowl-review on the marketing site**
     _Status (2026-08-26): **owner chose "remove entirely" (no footnote, no redirect) — branch `demote-code-review` pushed in `prowl-web` (PQW-026 resolved there), awaiting the owner's merge + deploy.** The `/code-review` route (page + OG image), `CodeReview` component, product card, nav/docs-hub/sitemap entries, meta copy, and the hunts asserting them are gone; lint/build/tests green; `grep -ri "code-review\|review.prowl" src content next.config.ts .prowl` is empty. Close this item once prowl.tools deploys without `/code-review`._
     As a visitor to prowl.tools, I should see one product (the CLI), so that the site's promises match what is actually being built.
@@ -74,4 +66,4 @@ OAuth) are parked there with dates — see the "Deferred / parked" section. #45 
 subscription provider) was un-parked on 2026-08-24 and **shipped** (completed
 2026-08-24 — see resolved.md), as was its usage-limit resilience & zero-cost
 reporting (#65, completed 2026-08-25 — see resolved.md). Its self-hosted rollout
-(#64) remains in High Priority above. Items #66, #67, #70, #71 closed on 2026-08-26 (see resolved.md); #68 and #69 stay above until the owner-side steps land.
+(#64) remains in High Priority above. Items #66, #67, #70, #71 closed on 2026-08-26 (see resolved.md); #68 closed 2026-08-27 (Vercel + DNS torn down); #69 stays above until prowl-web deploys without `/code-review`.
