@@ -933,6 +933,84 @@ esac
   );
 
   it.each(AUTO_REVIEW_TEMPLATES)(
+    "$label auto-review approves repository owners even when they are not allowlisted",
+    ({ read: readFn }) => {
+      const doc = parseYaml(readFn()) as {
+        jobs: { resolve: { steps: Array<Record<string, unknown>> } };
+      };
+      const resolve = doc.jobs.resolve.steps.find((step) => step.id === "pr") as { run: string } | undefined;
+      expect(resolve).toBeDefined();
+
+      const temp = mkdtempSync(join(tmpdir(), "prowl-review-owner-approval-"));
+      try {
+        const bin = join(temp, "bin");
+        const output = join(temp, "github-output");
+        mkdirSync(bin);
+        writeFileSync(
+          join(bin, "jq"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+cat >/dev/null
+printf '11\\n'
+`
+        );
+        writeFileSync(
+          join(bin, "gh"),
+          `#!/usr/bin/env bash
+set -euo pipefail
+url="$2"
+case "$url" in
+  repos/Prowl-qa/app/actions/runs/123)
+    ;;
+  repos/Prowl-qa/app/pulls/11)
+    if [[ "$*" == *'.base.sha'* ]]; then
+      printf 'base-sha\\tci-head\\tProwl-qa/app\\tfalse\\trepo-owner\\tOWNER\\n'
+    else
+      printf 'open\\tci-head\\n'
+    fi
+    ;;
+  *)
+    echo "unexpected gh call: $*" >&2
+    exit 1
+    ;;
+esac
+`
+        );
+        chmodSync(join(bin, "jq"), 0o755);
+        chmodSync(join(bin, "gh"), 0o755);
+
+        execFileSync("bash", ["-c", resolve!.run], {
+          cwd: temp,
+          env: {
+            ...process.env,
+            PATH: `${bin}${delimiter}${process.env.PATH ?? ""}`,
+            GITHUB_OUTPUT: output,
+            GITHUB_REPOSITORY: "Prowl-qa/app",
+            PR_PAYLOAD: JSON.stringify([{ number: 11 }]),
+            RUN_ID: "123",
+            HEAD_SHA: "ci-head",
+            REQUIRE_APPROVED_ACTOR: "true",
+            APPROVED_ACTORS: "octocat"
+          },
+          stdio: "pipe"
+        });
+
+        expect(outputMap(output)).toMatchObject({
+          resolved: "true",
+          pr_number: "11",
+          base_sha: "base-sha",
+          head_sha: "ci-head",
+          head_repo: "Prowl-qa/app",
+          approved_actor: "true",
+          is_draft: "false"
+        });
+      } finally {
+        rmSync(temp, { recursive: true, force: true });
+      }
+    }
+  );
+
+  it.each(AUTO_REVIEW_TEMPLATES)(
     "$label auto-review records a failed replacement check when PR metadata lookup fails",
     ({ read: readFn }) => {
       const doc = parseYaml(readFn()) as {
