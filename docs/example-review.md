@@ -6,6 +6,14 @@ comments on the diff. It renders live when viewed on GitHub. This example is fro
 a **Claude + Gemini ensemble** run, so it includes the 🤝 consensus badge and the
 per-model breakdown.
 
+The summary is built to fit on one screen: a single status line (impact, effort,
+finding counts), then three collapsed rows — **📝 Walkthrough** (summary,
+findings table, per-model breakdown, nitpicks, optional diagram),
+**🗂️ Changed files** (grouped inventory, plus anything the guardrails did not
+review), and **🔍 Review info** (coverage, grounding and verification notes,
+with bulk context-retrieval chatter rolled up one level deeper). Nothing is
+dropped; it is just one click away instead of competing with the findings.
+
 > A short screen capture / GIF of a live review is tracked as a follow-up; this
 > rendered sample is the canonical "what it looks like" reference in the meantime.
 
@@ -15,25 +23,21 @@ per-model breakdown.
 ## prowl-review
 
 > [!CAUTION]
-> **Impact:** 🔴 High &nbsp;·&nbsp; **Estimated effort:** ▰▰▰▱▱ (3/5)
+> **Impact:** 🔴 High &nbsp;·&nbsp; **Estimated effort:** ▰▰▰▱▱ (3/5) &nbsp;·&nbsp; **Findings:** 🔴 1 &nbsp; 🟠 1 &nbsp; 🟡 1
+
+<details>
+<summary><b>📝 Walkthrough</b></summary>
 
 Adds a token-bucket rate limiter to the public API and wires it into the request
 middleware. The limiter logic is sound, but the middleware applies it after auth
 instead of before, and a refill rounding bug lets bursts slightly exceed the cap.
 
-**Findings:** 🔴 1 &nbsp; 🟠 1 &nbsp; 🟡 1
+### Findings
 
 | Severity | Location | Finding |
 | :-- | :-- | :-- |
 | 🔴 critical | `src/api/middleware.ts:42` | **Rate limit applied after authentication** — unauthenticated requests bypass the limiter, leaving the login route open to brute force. 🤝 2/2 |
 | 🟠 major | `src/api/rate-limit.ts:58` | **Refill rounds up** — `Math.ceil` on the refill interval lets a client exceed the configured burst by up to one token per window. |
-
-<details>
-<summary>🧹 Nitpicks (1)</summary>
-
-- 🟡 minor `src/api/rate-limit.ts:12` — magic number `60_000` for the window; consider a named constant.
-
-</details>
 
 ### Per-model findings
 
@@ -54,7 +58,16 @@ instead of before, and a refill rounding bug lets bursts slightly exceed the cap
 </details>
 
 <details>
-<summary><b>Changed files (3)</b></summary>
+<summary>🧹 Nitpicks (1)</summary>
+
+- 🟡 minor `src/api/rate-limit.ts:12` — magic number `60_000` for the window; consider a named constant.
+
+</details>
+
+</details>
+
+<details>
+<summary><b>🗂️ Changed files (3 · 1 not reviewed)</b></summary>
 
 **src/api/**
 - `src/api/middleware.ts` — modified (+8 −2)
@@ -63,12 +76,31 @@ instead of before, and a refill rounding bug lets bursts slightly exceed the cap
 **test/**
 - `test/rate-limit.test.ts` — added (+36 −0)
 
+**Not reviewed**
+- ignored - matched the ignore list: `package-lock.json`
+
 </details>
 
-> [!NOTE]
-> **Review notes**
-> - Ensemble review (#53): consolidated findings from 2 providers (anthropic, gemini). 🤝 marks findings ≥2 providers independently raised.
-> - Hid 2 low-confidence finding(s) below the confidence floor.
+<details>
+<summary><b>🔍 Review info</b></summary>
+
+**Coverage:** 4/4 passes
+
+- Ensemble review (#53): consolidated findings from 2 providers (anthropic, gemini). 🤝 marks findings ≥2 providers independently raised.
+- Linter grounding: Semgrep not available in the workspace; skipped SAST grounding.
+- Hid 2 low-confidence finding(s) below the confidence floor.
+
+<details>
+<summary>Context retrieval (4 notes · 3 suggested paths skipped)</summary>
+
+- Context retrieval: Skipped Codex-suggested path src/api/limits.ts: File not found: src/api/limits.ts.
+- Context retrieval: Skipped Codex-suggested path src/api/index.ts: File not found: src/api/index.ts.
+- Context retrieval: Skipped Codex-suggested path docs/api.md: File not found: docs/api.md.
+- Context retrieval: Reached max tool rounds (6).
+
+</details>
+
+</details>
 
 ---
 

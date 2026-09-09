@@ -59,8 +59,8 @@ verification pass. Consolidated findings carry a **🤝 N/M consensus badge** in
 summary and an inline note naming the agreeing providers; single-provider
 findings are kept and attributed to the model that raised them.
 
-The walkthrough leads with the consolidated, deduped table, then a **Per-model
-findings** area with one collapsible section per provider, listing that model's
+The summary's Walkthrough row leads with the consolidated, deduped table, then a
+**Per-model findings** area with one collapsible section per provider, listing that model's
 findings in its own words and severity. Inline comments additionally keep a
 collapsible **🔀 N model perspectives** block when models agree on a line — so you
 get the high-signal consensus *and* each model's distinct take, in one place. See

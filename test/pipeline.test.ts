@@ -2714,7 +2714,7 @@ diff --git a/package-lock.json b/package-lock.json
     expect(result.posted).toBe(true);
     expect(result.skipped).toContainEqual({ path: "dist/bundle.js", reason: "ignored" });
     expect(result.payload.body).toContain("✅ No issues found in reviewed files");
-    expect(result.payload.body).toContain("Changed files (1)");
+    expect(result.payload.body).toContain("Changed files (1 · 1 not reviewed)");
     expect(result.payload.body).toContain("No reviewable files remained after filters");
     expect(result.payload.body).toContain("dist/bundle.js");
     expect(result.payload.comments).toHaveLength(0);
@@ -2967,7 +2967,7 @@ diff --git a/package-lock.json b/package-lock.json
 
     const result = await reviewPullRequest(octokit, ref, { config, toolkitRoot: "/repo", deps });
 
-    expect(result.payload.body).toContain("Review notes");
+    expect(result.payload.body).toContain("Review info");
     expect(result.payload.body).toContain("Context retrieval: Reached max tool rounds");
   });
 
