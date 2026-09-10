@@ -361,7 +361,12 @@ describe("fetchReviewCommentBody", () => {
 describe("submitReview", () => {
   it("seeds the summary before the review on a first run so it sits above the findings", async () => {
     const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
-    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
+    await submitReview(
+      octokit,
+      ref,
+      payload({ comments: [comment({ agentPrompt: "Resolve this prowl-review finding." })] }),
+      { commitId: "head", headSha: "head" }
+    );
 
     // Order: seed summary (earlier timestamp → above the review) → post review →
     // update the summary with the posted fingerprints (#22 ordering / #12 marker).
@@ -383,11 +388,14 @@ describe("submitReview", () => {
     // review reads as a complete unit with its inline findings nested (CodeRabbit-style).
     expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.body).toContain("🟠 1 major");
+    expect(review.body).toContain("Prompt for all review comments with AI agents");
+    expect(review.body).toContain("Resolve this prowl-review finding.");
     expect(review.body).not.toContain("summary comment");
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(review.body).not.toContain("prowl-review:state");
     expect(review.comments).toHaveLength(1);
-    expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
+    // Internal fields (`fingerprint`, `severity`, `agentPrompt`) are stripped before Octokit.
+    expect(Object.keys(review.comments?.[0] ?? {}).sort()).toEqual(["body", "line", "path", "side"]);
     expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
 
     // The seed records no reviewed SHA or posted fingerprints yet; the post-review
