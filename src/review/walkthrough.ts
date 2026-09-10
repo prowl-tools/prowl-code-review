@@ -553,8 +553,8 @@ function rolledRetrievalNotes(rolled: string[]): string {
 /**
  * Collapsed "Review info" row: coverage / impact header lines, then the
  * operational notes (grounding, verification, retrieval) as an escaped list,
- * with bulk retrieval chatter rolled up one level deeper. Empty when there is
- * nothing to say, so a quiet review does not grow an empty row.
+ * with bulk retrieval chatter rolled up one level deeper. A fallback body keeps
+ * the one-screen summary's three-row layout stable even when there are no notes.
  */
 function reviewInfoSection(notes: string[] | undefined, headerLines: string[] = []): string {
   const visible = notes?.map((note) => note.trim()).filter(Boolean) ?? [];
@@ -570,7 +570,7 @@ function reviewInfoSection(notes: string[] | undefined, headerLines: string[] = 
     parts.push(rolledRetrievalNotes(rolled));
   }
   if (parts.length === 0) {
-    return "";
+    parts.push("_No additional review information._");
   }
   return detailsBlock("🔍 Review info", parts.join("\n\n"));
 }
@@ -643,14 +643,14 @@ function walkthroughSection(input: WalkthroughInput): string {
 }
 
 /**
- * Walkthrough row for the clean / degraded states: only when the caller gave a
- * summary or a diagram — there is no findings table to recap, so the row is
- * omitted rather than shown empty.
+ * Walkthrough row for the clean / degraded states: use the default summary
+ * fallback when the caller has no summary or diagram so all review states keep
+ * the documented three collapsed rows (#72).
  */
-function optionalWalkthroughSection(input: WalkthroughInput): string {
-  const summary = input.summary?.trim() ? summarySection(input.summary) : "";
+function compactWalkthroughSection(input: WalkthroughInput): string {
+  const summary = summarySection(input.summary);
   const body = joinBlocks([summary, diagramBlock(input.mermaid)]);
-  return body ? detailsBlock("📝 Walkthrough", body) : "";
+  return detailsBlock("📝 Walkthrough", body);
 }
 
 /**
@@ -684,7 +684,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
       .join(" · ");
     sections.push(
       headline,
-      optionalWalkthroughSection(input),
+      compactWalkthroughSection(input),
       changedFilesSection(input.files, lineDeltas, skipped),
       reviewInfoSection(input.notes, [header])
     );
@@ -696,7 +696,7 @@ export function buildWalkthrough(input: WalkthroughInput): string {
         : "⚠️ **Review incomplete** — coverage degraded";
     sections.push(
       header,
-      optionalWalkthroughSection(input),
+      compactWalkthroughSection(input),
       changedFilesSection(input.files, lineDeltas, skipped),
       reviewInfoSection(input.notes)
     );

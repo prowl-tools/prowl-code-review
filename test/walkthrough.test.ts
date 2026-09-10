@@ -63,6 +63,17 @@ describe("deriveEffort", () => {
 describe("buildWalkthrough", () => {
   const files = [makeFile("src/a.ts", 12, 3), makeFile("README.md", 2, 1)];
 
+  function expectThreeCollapsedRows(md: string): void {
+    const walkthrough = md.indexOf("<summary><b>📝 Walkthrough</b></summary>");
+    const changed = md.indexOf("<summary><b>🗂️ Changed files");
+    const reviewInfo = md.indexOf("<summary><b>🔍 Review info</b></summary>");
+    expect(walkthrough).toBeGreaterThan(-1);
+    expect(changed).toBeGreaterThan(-1);
+    expect(reviewInfo).toBeGreaterThan(-1);
+    expect(walkthrough).toBeLessThan(changed);
+    expect(changed).toBeLessThan(reviewInfo);
+  }
+
   it("includes the marker, header, and provided summary", () => {
     const md = buildWalkthrough({ findings: [makeFinding("major")], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
@@ -130,9 +141,10 @@ describe("buildWalkthrough", () => {
     expect(md).not.toContain("Review notes");
   });
 
-  it("omits the Review info row when there is nothing to report", () => {
+  it("renders a Review info fallback when there is nothing to report", () => {
     const md = buildWalkthrough({ findings: [makeFinding("major")], files });
-    expect(md).not.toContain("Review info");
+    expect(md).toContain("<summary><b>🔍 Review info</b></summary>");
+    expect(md).toContain("_No additional review information._");
   });
 
   it("rolls bulk context-retrieval notes into a nested disclosure (#72)", () => {
@@ -367,17 +379,29 @@ describe("buildWalkthrough", () => {
     it("renders a compact clean state when healthy with no findings", () => {
       const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
       expect(md).toContain("✅ No issues found 🚀");
-      // Review info is collapsed, with the pass count.
+      // The one-screen layout keeps all three collapsed rows, with review info carrying the pass count.
+      expectThreeCollapsedRows(md);
+      expect(md).toContain("Automated review of the changes");
       expect(md).toContain("<summary><b>🔍 Review info</b></summary>");
       expect(md).toContain("Estimated effort: ▰▱▱▱▱ (1/5)");
       expect(md).toContain("4/4 passes");
       expect(md).toContain("<summary><b>🗂️ Changed files (2)</b></summary>");
-      // No Walkthrough row without a summary/diagram, and none of the findings-state chrome.
-      expect(md).not.toContain("Walkthrough");
+      // None of the findings-state chrome appears in a clean review.
       expect(md).not.toContain("**Impact:**");
       expect(md).not.toContain("### Findings");
       expect(md).not.toContain("No blocking issues found");
       expect(md).not.toContain("Findings:");
+    });
+
+    it("keeps the three collapsed rows for findings and degraded states with empty optional data", () => {
+      const findings = buildWalkthrough({ findings: [makeFinding("major")], files });
+      expectThreeCollapsedRows(findings);
+      expect(findings).toContain("_No additional review information._");
+
+      const degraded = buildWalkthrough({ findings: [], files, degraded: true });
+      expectThreeCollapsedRows(degraded);
+      expect(degraded).toContain("Automated review of the changes");
+      expect(degraded).toContain("_No additional review information._");
     });
 
     it("stays clean with a caveat headline when files were skipped (#56)", () => {
