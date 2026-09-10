@@ -8,6 +8,12 @@ import type { SkipReason, SkippedFile } from "./diff-types.js";
  * turns the ranked findings + parsed diff into the review's summary body. No
  * GitHub calls; #10 publishes the returned string. Findings detail is carried
  * by inline comments (#10); this summary highlights blockers + counts.
+ *
+ * Layout (#72): one always-visible status line, then three collapsed rows —
+ * **Walkthrough** (summary, findings table, per-model, nitpicks, diagram),
+ * **Changed files** (grouped inventory + anything not reviewed), and
+ * **Review info** (coverage, grounding, verification and retrieval notes) — so
+ * the first comment fits on one screen without scrolling.
  */
 
 /**
@@ -301,15 +307,26 @@ function topDir(path: string): string {
   return slash === -1 ? "(root)" : path.slice(0, slash);
 }
 
+/** Wrap a body in a collapsed `<details>` block with a bold summary row. */
+function detailsBlock(summary: string, body: string): string {
+  // A blank line after <summary> is required for GitHub to render the Markdown
+  // inside the disclosure block.
+  return ["<details>", `<summary><b>${summary}</b></summary>`, "", body, "", "</details>"].join("\n");
+}
+
+/** Pluralize a count-labelled noun for summary rows. */
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 /**
  * Render the grouped changed-file list inside a collapsed `<details>` so the
- * file inventory stays out of the summary's main flow — a count in the summary,
- * the full list one click away (backlog #54).
+ * file inventory stays out of the summary's main flow — a count in the summary
+ * row, the full list one click away (backlog #54). Files the guardrails skipped
+ * are listed in the same block under "Not reviewed" and counted in the row, so
+ * partial coverage is visible without opening it (no silent truncation).
  */
-function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>): string {
-  if (files.length === 0) {
-    return "<details>\n<summary><b>Changed files (0)</b></summary>\n\n_None._\n\n</details>";
-  }
+function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta>, skipped: SkippedFile[] = []): string {
   const groups = new Map<string, DiffFile[]>();
   for (const file of [...files].sort((a, b) => a.path.localeCompare(b.path))) {
     const dir = topDir(file.path);
@@ -321,6 +338,11 @@ function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta
   const body: string[] = [];
   for (const [dir, groupFiles] of [...groups.entries()].sort((a, b) => a[0].localeCompare(b[0]))) {
     const label = dir === "(root)" ? "(root)/" : escapeMarkdownText(`${dir}/`);
+    // A blank line between groups so the heading does not lazily continue the
+    // previous group's last list item.
+    if (body.length > 0) {
+      body.push("");
+    }
     body.push(`**${label}**`);
     for (const file of groupFiles) {
       const { additions, deletions } = lineDeltaFor(file, deltas);
@@ -330,37 +352,26 @@ function changedFilesSection(files: DiffFile[], deltas?: Map<DiffFile, LineDelta
       body.push(`- ${inlineCode(file.path)} — ${file.status} (${delta})`);
     }
   }
-
-  // A blank line after <summary> is required for GitHub to render the Markdown
-  // list inside the disclosure block.
-  return [
-    "<details>",
-    `<summary><b>Changed files (${files.length})</b></summary>`,
-    "",
-    body.join("\n"),
-    "",
-    "</details>"
-  ].join("\n");
-}
-
-/** Render skipped-file notes with untrusted paths in safe code spans. */
-function skippedFilesNote(skipped: SkippedFile[]): string {
-  if (skipped.length === 0) {
-    return "";
+  if (body.length === 0) {
+    body.push("_None._");
+  }
+  if (skipped.length > 0) {
+    body.push("", "**Not reviewed**", ...skippedFileLines(skipped));
   }
 
+  const count = skipped.length > 0 ? `${files.length} · ${skipped.length} not reviewed` : `${files.length}`;
+  return detailsBlock(`🗂️ Changed files (${count})`, body.join("\n"));
+}
+
+/** Render skipped files as one bullet per reason, with untrusted paths in safe code spans. */
+function skippedFileLines(skipped: SkippedFile[]): string[] {
   const byReason = new Map<SkipReason, string[]>();
   for (const { path, reason } of skipped) {
     const list = byReason.get(reason) ?? [];
     list.push(inlineCode(path));
     byReason.set(reason, list);
   }
-
-  const parts: string[] = [];
-  for (const [reason, paths] of byReason) {
-    parts.push(`${SKIP_LABELS[reason]}: ${paths.join(", ")}`);
-  }
-  return parts.join("; ");
+  return [...byReason.entries()].map(([reason, paths]) => `- ${SKIP_LABELS[reason]}: ${paths.join(", ")}`);
 }
 
 /** Render a finding's file/line location with a safe path code span. */
@@ -505,17 +516,63 @@ function escapeReviewNote(note: string): string {
   return escapeMarkdownParagraphFlat(note);
 }
 
-/** Render reviewer-visible operational notes without allowing Markdown injection. */
-function notesSection(notes: string[] | undefined): string {
-  const visible = notes?.map((note) => note.trim()).filter(Boolean) ?? [];
-  if (visible.length === 0) {
-    return "";
+/**
+ * Context-retrieval notes are operational chatter (a skipped suggested path, a
+ * budget hit) that arrives a dozen at a time. Once there are this many they
+ * roll up into one nested disclosure inside Review info instead of a flat
+ * bullet wall; fewer stay inline where they are easy to read.
+ */
+const RETRIEVAL_NOTE_PREFIX = "Context retrieval:";
+const RETRIEVAL_ROLLUP_THRESHOLD = 3;
+const SKIPPED_PATH_NOTE_RE = /^Context retrieval: Skipped .*\bpath\b/i;
+
+/** Split visible notes into the inline list and the rolled-up retrieval group. */
+function splitRetrievalNotes(notes: string[]): { inline: string[]; rolled: string[] } {
+  const rolled = notes.filter((note) => note.startsWith(RETRIEVAL_NOTE_PREFIX));
+  if (rolled.length < RETRIEVAL_ROLLUP_THRESHOLD) {
+    return { inline: notes, rolled: [] };
   }
+  return { inline: notes.filter((note) => !note.startsWith(RETRIEVAL_NOTE_PREFIX)), rolled };
+}
+
+/** Nested disclosure for the rolled-up retrieval notes, labelled with what is inside. */
+function rolledRetrievalNotes(rolled: string[]): string {
+  const skippedPaths = rolled.filter((note) => SKIPPED_PATH_NOTE_RE.test(note)).length;
+  const detail = skippedPaths > 0 ? ` · ${plural(skippedPaths, "suggested path")} skipped` : "";
+  const label = `Context retrieval (${plural(rolled.length, "note")}${detail})`;
   return [
-    "> [!NOTE]",
-    "> **Review notes**",
-    ...visible.map((note) => `> - ${escapeReviewNote(note)}`)
+    "<details>",
+    `<summary>${label}</summary>`,
+    "",
+    rolled.map((note) => `- ${escapeReviewNote(note)}`).join("\n"),
+    "",
+    "</details>"
   ].join("\n");
+}
+
+/**
+ * Collapsed "Review info" row: coverage / impact header lines, then the
+ * operational notes (grounding, verification, retrieval) as an escaped list,
+ * with bulk retrieval chatter rolled up one level deeper. A fallback body keeps
+ * the one-screen summary's three-row layout stable even when there are no notes.
+ */
+function reviewInfoSection(notes: string[] | undefined, headerLines: string[] = []): string {
+  const visible = notes?.map((note) => note.trim()).filter(Boolean) ?? [];
+  const { inline, rolled } = splitRetrievalNotes(visible);
+  const parts: string[] = [];
+  if (headerLines.length > 0) {
+    parts.push(headerLines.join("\n"));
+  }
+  if (inline.length > 0) {
+    parts.push(inline.map((note) => `- ${escapeReviewNote(note)}`).join("\n"));
+  }
+  if (rolled.length > 0) {
+    parts.push(rolledRetrievalNotes(rolled));
+  }
+  if (parts.length === 0) {
+    parts.push("_No additional review information._");
+  }
+  return detailsBlock("🔍 Review info", parts.join("\n\n"));
 }
 
 /** Celebration emoji for a genuinely clean review (a "ship it" rocket, not CodeRabbit's 🎉). */
@@ -532,7 +589,8 @@ export type ReviewCommentState = "findings" | "clean" | "degraded";
  *
  * Skipped files do NOT make a run degraded — a guardrail skip is partial
  * coverage on an otherwise healthy review, surfaced as the clean state's caveat
- * headline + the "Not reviewed" note, not an alarming "Review incomplete" (#56).
+ * headline + the "Not reviewed" list in Changed files, not an alarming
+ * "Review incomplete" (#56).
  */
 export function reviewCommentState(input: WalkthroughInput): ReviewCommentState {
   if (input.findings.length > 0) {
@@ -543,16 +601,14 @@ export function reviewCommentState(input: WalkthroughInput): ReviewCommentState 
   return input.degraded || partialCoverage ? "degraded" : "clean";
 }
 
-/** Render the "Not reviewed" skip alert, or "" when nothing was skipped. */
-function skippedNoteBlock(skipped: SkippedFile[] | undefined): string {
-  return skipped && skipped.length > 0
-    ? `> [!NOTE]\n> **Not reviewed:** ${skippedFilesNote(skipped)}`
-    : "";
-}
-
 /** Render the optional Mermaid diagram block, or "" when none is provided. */
 function diagramBlock(mermaid: string | undefined): string {
   return mermaid?.trim() ? ["### Diagram", fencedCodeBlock("mermaid", mermaid)].join("\n") : "";
+}
+
+/** Join non-empty Markdown blocks with a blank line between them. */
+function joinBlocks(blocks: string[]): string {
+  return blocks.filter((block) => block.trim().length > 0).join("\n\n");
 }
 
 /** Impact/effort/findings header as a GitHub alert keyed to impact (findings state, #54). */
@@ -564,22 +620,45 @@ function impactAlert(impact: Impact, effort: number, counts: Record<Severity, nu
   ].join("\n");
 }
 
-/** Collapsed "Review info" block for the clean state: impact/effort/passes + benign notes. */
-function reviewInfoDetails(input: WalkthroughInput, impact: Impact, effort: number): string {
-  const header = `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effortBar(effort)} (${effort}/5)${
-    input.coverage ? ` · ${input.coverage.passed}/${input.coverage.total} passes` : ""
-  }`;
-  const lines = [header];
-  for (const note of input.notes?.map((n) => n.trim()).filter(Boolean) ?? []) {
-    lines.push(`- ${escapeReviewNote(note)}`);
-  }
-  return ["<details>", "<summary><b>Review info</b></summary>", "", lines.join("\n"), "", "</details>"].join("\n");
+/** "N/M passes" fragment for the Review info header, or "" without coverage data. */
+function passesLine(coverage: WalkthroughInput["coverage"]): string {
+  return coverage ? `${coverage.passed}/${coverage.total} passes` : "";
+}
+
+/**
+ * Collapsed "Walkthrough" row for the findings state: the plain-language
+ * summary, the blocking-findings table, the per-model breakdown (#53), the
+ * nitpick bucket (#58) and the optional diagram. Inline comments already carry
+ * each finding on the diff, so this is the recap, one click away.
+ */
+function walkthroughSection(input: WalkthroughInput): string {
+  const body = joinBlocks([
+    summarySection(input.summary),
+    findingsSection(input.findings, input.providerCount),
+    perModelSections(input.findings, input.providers),
+    nitpickSection(input.findings, input.providerCount),
+    diagramBlock(input.mermaid)
+  ]);
+  return detailsBlock("📝 Walkthrough", body);
+}
+
+/**
+ * Walkthrough row for the clean / degraded states: use the default summary
+ * fallback when the caller has no summary or diagram so all review states keep
+ * the documented three collapsed rows (#72).
+ */
+function compactWalkthroughSection(input: WalkthroughInput): string {
+  const summary = summarySection(input.summary);
+  const body = joinBlocks([summary, diagramBlock(input.mermaid)]);
+  return detailsBlock("📝 Walkthrough", body);
 }
 
 /**
  * Render the review summary markdown in one of three distinct states (#56):
- * `findings` (full report), `clean` (compact "no issues" + collapsibles), or
- * `degraded` (a clear "review incomplete" — never disguised as "Findings: none").
+ * `findings` (status alert + Walkthrough), `clean` (compact "no issues"), or
+ * `degraded` (a clear "review incomplete" — never disguised as "Findings:
+ * none"). Every state shares the same three collapsed rows underneath the
+ * status line so the comment is scannable without scrolling (#72).
  */
 export function buildWalkthrough(input: WalkthroughInput): string {
   const lineDeltas = new Map<DiffFile, LineDelta>();
@@ -587,42 +666,50 @@ export function buildWalkthrough(input: WalkthroughInput): string {
   const impact = input.impact ?? deriveImpact(input.findings, input.files, changedLines);
   const effort = normalizeEffort(input.effort ?? deriveEffort(input.files, changedLines));
   const state = reviewCommentState(input);
+  const skipped = input.skipped ?? [];
 
   const sections: string[] = [REVIEW_MARKER, "## prowl-review"];
 
   if (state === "clean") {
     // When guardrails skipped files the review is still healthy, but it didn't
     // see everything — caveat the headline rather than claiming a blanket pass
-    // (the "Not reviewed" note below lists what was skipped). (#56)
+    // (the "Not reviewed" list in Changed files says what was skipped). (#56)
     const headline =
-      (input.skipped?.length ?? 0) > 0
-        ? `✅ No issues found in reviewed files ${CLEAN_EMOJI}`
-        : `✅ No issues found ${CLEAN_EMOJI}`;
-    sections.push(headline, reviewInfoDetails(input, impact, effort), changedFilesSection(input.files, lineDeltas));
+      skipped.length > 0 ? `✅ No issues found in reviewed files ${CLEAN_EMOJI}` : `✅ No issues found ${CLEAN_EMOJI}`;
+    const header = [
+      `Impact: ${IMPACT_BADGE[impact]} · Estimated effort: ${effortBar(effort)} (${effort}/5)`,
+      passesLine(input.coverage)
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    sections.push(
+      headline,
+      compactWalkthroughSection(input),
+      changedFilesSection(input.files, lineDeltas, skipped),
+      reviewInfoSection(input.notes, [header])
+    );
   } else if (state === "degraded") {
     const failed = input.coverage ? input.coverage.total - input.coverage.passed : 0;
     const header =
       failed > 0 && input.coverage
         ? `⚠️ **Review incomplete** — ${failed}/${input.coverage.total} specialist passes failed; coverage degraded`
         : "⚠️ **Review incomplete** — coverage degraded";
-    sections.push(header, notesSection(input.notes), changedFilesSection(input.files, lineDeltas));
+    sections.push(
+      header,
+      compactWalkthroughSection(input),
+      changedFilesSection(input.files, lineDeltas, skipped),
+      reviewInfoSection(input.notes)
+    );
   } else {
     const counts = severityCounts(input.findings);
     sections.push(
-      summarySection(input.summary),
       impactAlert(impact, effort, counts),
-      // Findings lead; the file inventory is secondary and stays collapsed below.
-      findingsSection(input.findings, input.providerCount),
-      // Per-model breakdown (#53): each model's own findings, collapsed.
-      perModelSections(input.findings, input.providers),
-      changedFilesSection(input.files, lineDeltas),
-      nitpickSection(input.findings, input.providerCount),
-      notesSection(input.notes)
+      walkthroughSection(input),
+      changedFilesSection(input.files, lineDeltas, skipped),
+      reviewInfoSection(input.notes, input.coverage ? [`**Coverage:** ${passesLine(input.coverage)}`] : [])
     );
   }
 
-  sections.push(skippedNoteBlock(input.skipped), diagramBlock(input.mermaid));
-
   // Drop the empty placeholders the per-state blocks may have produced.
-  return sections.filter((section) => section.trim().length > 0).join("\n\n");
+  return joinBlocks(sections);
 }

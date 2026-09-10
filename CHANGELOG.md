@@ -5,6 +5,20 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **One-screen summary comment (backlog #72).** The walkthrough summary now mirrors the shape
+  of a CodeRabbit first comment: a single status line (impact · effort · finding counts, or the
+  clean/degraded headline) over three collapsed rows — **📝 Walkthrough** (plain-language
+  summary, findings table, per-model breakdown, nitpicks, optional Mermaid diagram),
+  **🗂️ Changed files** (grouped inventory; files the guardrails skipped are listed inside under
+  "Not reviewed" and counted in the row title, e.g. `Changed files (19 · 1 not reviewed)`), and
+  **🔍 Review info** (coverage, grounding, verification and retrieval notes). The open
+  "Review notes" and "Not reviewed" alerts are gone; three or more `Context retrieval:` notes
+  roll up into a nested `Context retrieval (N notes · M suggested paths skipped)` disclosure so a
+  dozen "skipped suggested path" lines no longer bury the one note that matters. Nothing is
+  dropped (no silent truncation) — it is one click away instead of competing with the findings.
+  Empty summary or review-info sources render fallback copy so clean, degraded and finding-bearing
+  reviews all retain the same three collapsed rows.
+  `docs/example-review.md` shows the new layout.
 - **Maintenance mode (owner decision, 2026-08-26; backlog #67–#71).** prowl-review is now maintained
   as its author's internal code-review tool, not a product: the README carries a maintenance-mode
   status block, `CONTRIBUTING.md` defines what "maintenance" covers (dependency/security updates,

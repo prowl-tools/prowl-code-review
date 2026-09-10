@@ -63,6 +63,17 @@ describe("deriveEffort", () => {
 describe("buildWalkthrough", () => {
   const files = [makeFile("src/a.ts", 12, 3), makeFile("README.md", 2, 1)];
 
+  function expectThreeCollapsedRows(md: string): void {
+    const walkthrough = md.indexOf("<summary><b>📝 Walkthrough</b></summary>");
+    const changed = md.indexOf("<summary><b>🗂️ Changed files");
+    const reviewInfo = md.indexOf("<summary><b>🔍 Review info</b></summary>");
+    expect(walkthrough).toBeGreaterThan(-1);
+    expect(changed).toBeGreaterThan(-1);
+    expect(reviewInfo).toBeGreaterThan(-1);
+    expect(walkthrough).toBeLessThan(changed);
+    expect(changed).toBeLessThan(reviewInfo);
+  }
+
   it("includes the marker, header, and provided summary", () => {
     const md = buildWalkthrough({ findings: [makeFinding("major")], files, summary: "Adds caching to auth." });
     expect(md.startsWith(REVIEW_MARKER)).toBe(true);
@@ -121,18 +132,82 @@ describe("buildWalkthrough", () => {
     expect(low).not.toContain("(0/5)");
   });
 
-  it("renders review notes as a GitHub note alert (#54)", () => {
+  it("renders review notes inside the collapsed Review info row (#72)", () => {
     const md = buildWalkthrough({ findings: [makeFinding("major")], files, notes: ["Incremental review."] });
-    expect(md).toContain("> [!NOTE]");
-    expect(md).toContain("> **Review notes**");
-    expect(md).toContain("Incremental review.");
+    expect(md).toContain("<summary><b>🔍 Review info</b></summary>");
+    expect(md).toContain("- Incremental review.");
+    // Notes are no longer an open alert competing with the findings.
+    expect(md).not.toContain("> [!NOTE]");
+    expect(md).not.toContain("Review notes");
+  });
+
+  it("renders a Review info fallback when there is nothing to report", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("major")], files });
+    expect(md).toContain("<summary><b>🔍 Review info</b></summary>");
+    expect(md).toContain("_No additional review information._");
+  });
+
+  it("rolls bulk context-retrieval notes into a nested disclosure (#72)", () => {
+    const retrieval = [
+      "Context retrieval: Skipped Codex-suggested path docs/a.md: File not found: docs/a.md.",
+      "Context retrieval: Skipped Codex-suggested path docs/b.md: File not found: docs/b.md.",
+      "Context retrieval: Reached max tool rounds (6)."
+    ];
+    const md = buildWalkthrough({
+      findings: [makeFinding("major")],
+      files,
+      notes: ["Linter grounding: Semgrep not available; skipped SAST grounding.", ...retrieval]
+    });
+    expect(md).toContain("<summary>Context retrieval (3 notes · 2 suggested paths skipped)</summary>");
+    // Every note is still present (nothing dropped), just one level deeper.
+    for (const note of retrieval) {
+      expect(md).toContain(`- ${note.replace(/\(/g, "\\(").replace(/\)/g, "\\)")}`);
+    }
+    // The non-retrieval note stays in the inline list above the nested block.
+    expect(md.indexOf("Linter grounding")).toBeLessThan(md.indexOf("<summary>Context retrieval"));
+    // The nested block sits inside the Review info row.
+    expect(md.indexOf("🔍 Review info")).toBeLessThan(md.indexOf("<summary>Context retrieval"));
+  });
+
+  it("keeps a couple of context-retrieval notes inline instead of rolling them up", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("major")],
+      files,
+      notes: ["Context retrieval: Reached max tool rounds (6).", "Context retrieval: Reached context token budget (2000)."]
+    });
+    expect(md).not.toContain("<summary>Context retrieval");
+    expect(md).toContain("- Context retrieval: Reached max tool rounds \\(6\\).");
+  });
+
+  it("collapses the summary, findings table, nitpicks and diagram under one Walkthrough row (#72)", () => {
+    const md = buildWalkthrough({
+      findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("minor", { title: "nit" })],
+      files,
+      summary: "Adds caching.",
+      mermaid: "graph TD; A-->B"
+    });
+    const walkthrough = md.indexOf("<summary><b>📝 Walkthrough</b></summary>");
+    const changed = md.indexOf("<summary><b>🗂️ Changed files");
+    expect(walkthrough).toBeGreaterThan(-1);
+    // Status alert is the only open content above the rows.
+    expect(md.indexOf("> **Impact:**")).toBeLessThan(walkthrough);
+    // Everything else lives between the Walkthrough row and the Changed files row.
+    for (const fragment of ["Adds caching.", "### Findings", "**SQLi**", "🧹 Nitpicks (1)", "### Diagram", "```mermaid"]) {
+      const at = md.indexOf(fragment);
+      expect(at, fragment).toBeGreaterThan(walkthrough);
+      expect(at, fragment).toBeLessThan(changed);
+    }
+    // Row order: Walkthrough, Changed files, Review info (when present).
+    const withNotes = buildWalkthrough({ findings: [makeFinding("major")], files, notes: ["n"] });
+    expect(withNotes.indexOf("📝 Walkthrough")).toBeLessThan(withNotes.indexOf("🗂️ Changed files"));
+    expect(withNotes.indexOf("🗂️ Changed files")).toBeLessThan(withNotes.indexOf("🔍 Review info"));
   });
 
   it("groups changed files by top directory inside a collapsed details block", () => {
     const md = buildWalkthrough({ findings: [], files });
     // The file inventory is collapsed behind <details>, not a top-level heading (#54).
     expect(md).not.toContain("### Changed files");
-    expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
+    expect(md).toContain("<summary><b>🗂️ Changed files (2)</b></summary>");
     expect(md).toContain("<details>");
     expect(md).toContain("</details>");
     expect(md).toContain("**src/**");
@@ -145,7 +220,7 @@ describe("buildWalkthrough", () => {
   it("renders an empty changed-files list inside a collapsed details block", () => {
     const md = buildWalkthrough({ findings: [], files: [] });
     expect(md).not.toContain("### Changed files");
-    expect(md).toContain("<summary><b>Changed files (0)</b></summary>");
+    expect(md).toContain("<summary><b>🗂️ Changed files (0)</b></summary>");
     expect(md).toContain("_None._");
   });
 
@@ -253,14 +328,17 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("_No blocking issues found._");
   });
 
-  it("reports skipped files (no silent truncation)", () => {
+  it("reports skipped files inside Changed files and counts them in the row (no silent truncation)", () => {
     const md = buildWalkthrough({
       findings: [],
       files,
       skipped: [{ path: "huge.lock", reason: "maxDiffBytes" }]
     });
-    expect(md).toContain("Not reviewed");
-    expect(md).toContain("huge.lock");
+    expect(md).toContain("<summary><b>🗂️ Changed files (2 · 1 not reviewed)</b></summary>");
+    expect(md).toContain("**Not reviewed**\n- skipped - diff size limit reached: `huge.lock`");
+    // The skipped list sits inside the Changed files block, not in a separate alert.
+    expect(md.indexOf("Not reviewed")).toBeLessThan(md.indexOf("</details>", md.indexOf("🗂️ Changed files")));
+    expect(md).not.toContain("> [!NOTE]");
   });
 
   it("renders review notes safely", () => {
@@ -270,7 +348,7 @@ describe("buildWalkthrough", () => {
       notes: ["Reached limit @org/team\n* injected item\n<!-- <details>spoof</details> -->\n### injected"]
     });
 
-    expect(md).toContain("Review notes");
+    expect(md).toContain("Review info");
     expect(md).toContain("Reached limit &#64;org/team \\* injected item &lt;\\!-- &lt;details&gt;spoof&lt;/details&gt; --&gt; \\#\\#\\# injected");
     expect(md).not.toContain("@org/team");
     expect(md).not.toContain("<!-- <details>spoof</details> -->");
@@ -301,16 +379,29 @@ describe("buildWalkthrough", () => {
     it("renders a compact clean state when healthy with no findings", () => {
       const md = buildWalkthrough({ findings: [], files, coverage: { passed: 4, total: 4 } });
       expect(md).toContain("✅ No issues found 🚀");
-      // Review info is collapsed, with the pass count.
-      expect(md).toContain("<summary><b>Review info</b></summary>");
+      // The one-screen layout keeps all three collapsed rows, with review info carrying the pass count.
+      expectThreeCollapsedRows(md);
+      expect(md).toContain("Automated review of the changes");
+      expect(md).toContain("<summary><b>🔍 Review info</b></summary>");
       expect(md).toContain("Estimated effort: ▰▱▱▱▱ (1/5)");
       expect(md).toContain("4/4 passes");
-      expect(md).toContain("<summary><b>Changed files (2)</b></summary>");
-      // None of the verbose findings-state chrome.
+      expect(md).toContain("<summary><b>🗂️ Changed files (2)</b></summary>");
+      // None of the findings-state chrome appears in a clean review.
       expect(md).not.toContain("**Impact:**");
       expect(md).not.toContain("### Findings");
       expect(md).not.toContain("No blocking issues found");
       expect(md).not.toContain("Findings:");
+    });
+
+    it("keeps the three collapsed rows for findings and degraded states with empty optional data", () => {
+      const findings = buildWalkthrough({ findings: [makeFinding("major")], files });
+      expectThreeCollapsedRows(findings);
+      expect(findings).toContain("_No additional review information._");
+
+      const degraded = buildWalkthrough({ findings: [], files, degraded: true });
+      expectThreeCollapsedRows(degraded);
+      expect(degraded).toContain("Automated review of the changes");
+      expect(degraded).toContain("_No additional review information._");
     });
 
     it("stays clean with a caveat headline when files were skipped (#56)", () => {
@@ -322,7 +413,7 @@ describe("buildWalkthrough", () => {
       });
       // Partial coverage on a healthy review: clean + honest caveat, not degraded.
       expect(md).toContain("✅ No issues found in reviewed files 🚀");
-      expect(md).toContain("> [!NOTE]");
+      expect(md).toContain("🗂️ Changed files (2 · 1 not reviewed)");
       expect(md).toContain("Not reviewed");
       expect(md).toContain("huge.lock");
       expect(md).not.toContain("Review incomplete");

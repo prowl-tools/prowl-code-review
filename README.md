@@ -492,7 +492,7 @@ Consolidated findings carry a **🤝 N/M consensus badge** in the summary and an
 inline note naming the agreeing providers; single-provider findings are kept and
 attributed to the model that raised them.
 
-**See what each model said.** The walkthrough leads with the consolidated,
+**See what each model said.** The Walkthrough row leads with the consolidated,
 deduped table (🤝 marks agreement), then a **Per-model findings** area with one
 collapsible section per provider — Anthropic, Gemini, … — listing that model's
 findings in its own words and severity. Inline comments additionally keep a
@@ -500,7 +500,9 @@ collapsible **🔀 N model perspectives** block when models agree on a line. So 
 get the high-signal consensus *and* each model's distinct take, in one place.
 
 **Cohesive review publishing.** The walkthrough is a single comment that's
-**updated in place** on every push (not re-posted), and inline findings are
+**updated in place** on every push (not re-posted) and fits on one screen: a
+status line (impact · effort · finding counts) over three collapsed rows —
+**📝 Walkthrough**, **🗂️ Changed files**, **🔍 Review info** — and inline findings are
 published as one GitHub `COMMENT` review with a `comments[]` batch. When the
 approval gate (#52) sets an explicit Request-changes/Approve verdict, those
 inline findings ride on that one verdict review.
@@ -833,8 +835,9 @@ See [`docs/eval.md`](docs/eval.md) for details and [`bench/README.md`](bench/REA
 
 Copy-paste starters live in [`examples/`](examples/) (auto-review workflow,
 command workflow, and a `.prowl-review.yml`). For a rendered sample of the
-published walkthrough — summary, findings table, 🤝 consensus, per-model
-sections — see [`docs/example-review.md`](docs/example-review.md).
+published walkthrough — status line, then the collapsed Walkthrough (summary,
+findings table, 🤝 consensus, per-model sections), Changed files and Review info
+rows — see [`docs/example-review.md`](docs/example-review.md).
 
 **Rolling out across a whole org?** Define the workflow once in your org's
 `.github` repo and have every repo opt in with a few lines — see the reusable
