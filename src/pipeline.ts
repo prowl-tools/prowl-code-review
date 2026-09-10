@@ -2299,6 +2299,7 @@ async function reviewPullRequestImpl(
       summaryBody,
       event: options.event ?? approval.event,
       agentPrompt: options.agentPrompt,
+      inlineMinSeverity: options.inlineMinSeverity,
       suggestions: options.suggestions
     });
 

@@ -53,14 +53,14 @@ instead of before, and a refill rounding bug lets bursts slightly exceed the cap
 <summary>🟩 gemini — 2 findings</summary>
 
 - 🔴 critical `src/api/middleware.ts:42` — Rate limiting is bypassed for unauthenticated requests; move it ahead of auth.
-- 🟡 minor `src/api/rate-limit.ts:12` — Inline window size; extract a constant.
+- 🔵 trivial `src/api/rate-limit.ts:12` — Inline window size; extract a constant.
 
 </details>
 
 <details>
 <summary>🧹 Nitpicks (1)</summary>
 
-- 🟡 minor `src/api/rate-limit.ts:12` — magic number `60_000` for the window; consider a named constant.
+- 🔵 trivial `src/api/rate-limit.ts:12` — magic number `60_000` for the window; consider a named constant.
 
 </details>
 

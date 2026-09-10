@@ -745,7 +745,7 @@ describe("submitReview", () => {
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
-  it("summarizes current findings on a verdict review when some inline findings are already posted", async () => {
+  it("counts only net-new comments on a verdict review when some inline findings are already posted", async () => {
     const prior = {
       id: 77,
       body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
@@ -766,7 +766,8 @@ describe("submitReview", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**Actionable comments posted: 2**");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
+    expect(review.body).not.toContain("**Actionable comments posted: 2**");
     expect(review.body).toContain("### Review details");
     expect(review.comments).toHaveLength(1);
     expect(JSON.stringify(review.comments?.[0])).toContain("fp-b");

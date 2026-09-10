@@ -20,6 +20,8 @@ import type { Finding } from "./findings.js";
  *    unbalanced brackets (it replaces specific lines inside a larger block), so
  *    we never reject on delimiter balance, and prose is allowed for prose files
  *    (Markdown, text, reStructuredText, AsciiDoc) where it is a real edit.
+ *    Shell files get a small command-aware escape hatch because commands like
+ *    `echo refresh the generated documentation now.` can look like English.
  *
  * (Sandbox apply-and-typecheck/lint of the fix is a heavier, opt-in future
  * extension — it would execute untrusted fix code, which conflicts with the
@@ -47,6 +49,16 @@ const PROSE_FILE_RE = /\.(?:md|mdx|markdown|txt|text|rst|adoc|asciidoc)$/i;
 
 /** Punctuation that essentially never appears in a plain English sentence but does in code. */
 const CODE_PUNCTUATION_RE = /[{}()[\];=<>`$@#\\|/*]/;
+const SHELL_FILE_RE = /\.(?:bash|fish|ksh|sh|zsh)$/i;
+const SHELL_COMMAND_START_RE =
+  /^(?:(?:builtin|command|env|exec|noglob|sudo|time)\s+)*(?:(?:\.|:|\[)\s|(?:alias|awk|bg|break|cat|case|cd|chmod|chown|continue|cp|curl|declare|do|docker|done|echo|elif|else|esac|eval|exit|export|false|fg|fi|find|for|git|grep|jobs|kill|kubectl|ln|local|make|mkdir|mv|node|npm|npx|pnpm|printf|pwd|python|python3|read|readonly|return|rm|sed|set|shift|sort|source|tar|tee|test|then|touch|trap|true|umask|unalias|unset|until|wait|while|xargs|yarn)\b|[A-Za-z_][A-Za-z0-9_]*=)/;
+
+function nonBlankLines(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+}
 
 /**
  * True when a suggestion reads as an English paragraph rather than code: every
@@ -55,14 +67,19 @@ const CODE_PUNCTUATION_RE = /[{}()[\];=<>`$@#\\|/*]/;
  * symbol-bearing line (an import, an assignment, a call) is never prose.
  */
 export function looksLikeProse(text: string): boolean {
-  const lines = text
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = nonBlankLines(text);
   if (lines.length === 0 || !/[.!?]$/.test(lines[lines.length - 1])) {
     return false;
   }
   return lines.every((line) => !CODE_PUNCTUATION_RE.test(line) && line.split(/\s+/).length >= 4);
+}
+
+function looksLikeShellCode(text: string, file: string | undefined): boolean {
+  if (!file || !SHELL_FILE_RE.test(file)) {
+    return false;
+  }
+  const lines = nonBlankLines(text);
+  return lines.length > 0 && lines.every((line) => CODE_PUNCTUATION_RE.test(line) || SHELL_COMMAND_START_RE.test(line));
 }
 
 // Lines that are clearly a model leaving the real code out (truncation), rather
@@ -102,7 +119,7 @@ export function validateSuggestion(
     return { ok: false, reason: "placeholder" };
   }
   const proseTarget = options.file !== undefined && PROSE_FILE_RE.test(options.file);
-  if (!proseTarget && looksLikeProse(text)) {
+  if (!proseTarget && !looksLikeShellCode(text, options.file) && looksLikeProse(text)) {
     return { ok: false, reason: "prose" };
   }
   return { ok: true };

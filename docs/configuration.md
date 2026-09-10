@@ -133,7 +133,7 @@ window resets. Full policy in [Auth](auth.md#codex-subscription-provider-45) and
 | `review.minConfidence` | `0.5` | Drop non-critical findings below this confidence (0–1). |
 | `review.maxFindings` | `25` | Cap findings surfaced. |
 | `review.maxInlineComments` | `20` | Cap inline comments; overflow rolls into the summary (`0` = none inline). |
-| `review.inlineMinSeverity` | `minor` | Findings at/above this severity post as actionable inline comments (with a committable fix and an agent prompt); anything below stays in the summary's collapsed Nitpicks bucket. Set `major` to keep minor findings off the diff. |
+| `review.inlineMinSeverity` | `minor` | Findings at/above this severity post as actionable inline comments; committable fixes appear only after suggestion validation and the confidence floor, and prompts are omitted when `agentPrompt: false`. Anything below stays in the summary's collapsed Nitpicks bucket. Set `major` to keep minor findings off the diff. |
 | `review.verify` | `true` | Skeptical false-positive verification pass. |
 | `review.verifyConfidence` | `0.8` | Non-blocking findings at/above this confidence skip verification. |
 | `review.incremental` | `true` | On a re-push, review only the delta since the last reviewed commit. |

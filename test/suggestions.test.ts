@@ -67,6 +67,17 @@ describe("validateSuggestion (#39)", () => {
     }
   });
 
+  it("accepts English-looking shell commands for shell files without allowing plain advice (#73)", () => {
+    const command = "echo refresh the generated documentation now.";
+    const advice = "Refresh the generated documentation now.";
+
+    expect(looksLikeProse(command)).toBe(true);
+    expect(validateSuggestion(command)).toEqual({ ok: false, reason: "prose" });
+    expect(validateSuggestion(command, { file: "scripts/rebuild-docs.sh" })).toEqual({ ok: true });
+    expect(shouldCommitSuggestion(finding({ file: "scripts/rebuild-docs.sh", suggestion: command }))).toBe(true);
+    expect(validateSuggestion(advice, { file: "scripts/rebuild-docs.sh" })).toEqual({ ok: false, reason: "prose" });
+  });
+
   it("rejects a suggestion carrying a leaked redaction marker", () => {
     expect(validateSuggestion('const key = "[REDACTED:llm-key]";').reason).toBe("redacted");
     expect(validateSuggestion('const key = "[REDACTED:[nested-value]]";').reason).toBe("redacted");

@@ -4175,6 +4175,43 @@ describe("reviewPullRequest issue validation (#32)", () => {
     expect(result.payload.body).toContain("ran linked-issue requirements validation against the full PR diff");
   });
 
+  it("honors inlineMinSeverity during requirements-only review", async () => {
+    const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
+    const ignoredDelta = `diff --git a/package-lock.json b/package-lock.json
+--- a/package-lock.json
++++ b/package-lock.json
+@@ -1,1 +1,2 @@
+ {}
++{"x":1}
+`;
+    const deps = {
+      ...makeDeps(),
+      fetchPriorState: vi.fn(async () => priorState),
+      fetchComparisonDiff: vi.fn(async () => ignoredDelta),
+      fetchPullRequest: vi.fn(async () => ({ meta: { ...meta, body: "Closes #5" }, diff: `${DIFF}\n${ignoredDelta}` })),
+      fetchIssue: vi.fn(async (_o: unknown, r: { number: number }) => ({
+        ref: { owner: "o", repo: "r", number: r.number },
+        title: "Theme",
+        body: "Must support dark mode."
+      })),
+      runReview: vi.fn(async () =>
+        reviewResult([finding({ severity: "minor", title: "Minor requirements gap", confidence: 0.9 })])
+      )
+    };
+
+    const result = await reviewPullRequest(octokit, ref, {
+      config,
+      toolkitRoot: "/repo",
+      issueValidation: { enabled: true },
+      inlineMinSeverity: "major",
+      deps
+    });
+
+    expect(result.payload.comments).toHaveLength(0);
+    expect(result.payload.body).toContain("Nitpicks");
+    expect(result.payload.body).toContain("Minor requirements gap");
+  });
+
   it("posts a neutral incomplete check when a requirements-only review has no coverage", async () => {
     const priorState: ReviewState = { v: 1, lastReviewedSha: "old-sha", postedFindings: [] };
     const ignoredDelta = `diff --git a/package-lock.json b/package-lock.json
