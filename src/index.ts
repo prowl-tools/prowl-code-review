@@ -315,6 +315,7 @@ export {
 // Suggested-fix validation (#39): gate committable suggestions by confidence + structure.
 export {
   validateSuggestion,
+  looksLikeProse,
   shouldCommitSuggestion,
   summarizeSuggestionGating,
   DEFAULT_SUGGESTION_MIN_CONFIDENCE,
@@ -391,6 +392,8 @@ export {
   parseFindingsResult,
   findingKey,
   isBlockingFinding,
+  isInlineFinding,
+  DEFAULT_INLINE_MIN_SEVERITY,
   SEVERITIES,
   SEVERITY_ORDER,
   type Finding,

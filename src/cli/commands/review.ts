@@ -907,6 +907,7 @@ type ResolvedReviewOptions = Pick<
   | "agentPrompt"
   | "ignore"
   | "maxInlineComments"
+  | "inlineMinSeverity"
   | "specialists"
   | "riskTiering"
   | "incremental"
@@ -1145,6 +1146,7 @@ export function resolveReviewOptions(
     minConfidence: config.review?.minConfidence,
     maxFindings: config.review?.maxFindings,
     maxInlineComments: config.review?.maxInlineComments,
+    inlineMinSeverity: config.review?.inlineMinSeverity,
     verify: cli.verify === false ? false : config.review?.verify,
     verifyConfidence: config.review?.verifyConfidence,
     // CLI --no-incremental (or config) forces a full-PR review (#23).

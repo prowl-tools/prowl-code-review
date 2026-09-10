@@ -381,7 +381,7 @@ describe("submitReview", () => {
     expect(review.event).toBe("COMMENT");
     // Self-contained findings summary (no "see the other comment" pointer) so the
     // review reads as a complete unit with its inline findings nested (CodeRabbit-style).
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.body).toContain("🟠 1 major");
     expect(review.body).not.toContain("summary comment");
     expect(review.body).not.toContain(REVIEW_MARKER);
@@ -739,7 +739,7 @@ describe("submitReview", () => {
     const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
     expect(review.event).toBe("REQUEST_CHANGES");
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.comments).toHaveLength(1);
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);
@@ -766,7 +766,7 @@ describe("submitReview", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**prowl-review** flagged 2 findings");
+    expect(review.body).toContain("**Actionable comments posted: 2**");
     expect(review.body).toContain("### Review details");
     expect(review.comments).toHaveLength(1);
     expect(JSON.stringify(review.comments?.[0])).toContain("fp-b");
@@ -817,7 +817,7 @@ describe("submitReview", () => {
 
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.body).toContain("### Review details");
     expect(review.body).toContain("1 more finding (inline comment cap: 1)");
     expect(review.comments).toHaveLength(1);

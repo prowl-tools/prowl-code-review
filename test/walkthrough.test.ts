@@ -181,7 +181,7 @@ describe("buildWalkthrough", () => {
 
   it("collapses the summary, findings table, nitpicks and diagram under one Walkthrough row (#72)", () => {
     const md = buildWalkthrough({
-      findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("minor", { title: "nit" })],
+      findings: [makeFinding("critical", { title: "SQLi" }), makeFinding("trivial", { title: "nit" })],
       files,
       summary: "Adds caching.",
       mermaid: "graph TD; A-->B"
@@ -265,7 +265,7 @@ describe("buildWalkthrough", () => {
 
   it("escapes raw HTML in finding titles and bodies", () => {
     const md = buildWalkthrough({
-      findings: [makeFinding("minor", { title: "<b>Title</b>", body: "See <script>alert(1)</script> & fix" })],
+      findings: [makeFinding("trivial", { title: "<b>Title</b>", body: "See <script>alert(1)</script> & fix" })],
       files
     });
 
@@ -278,7 +278,7 @@ describe("buildWalkthrough", () => {
   it("escapes Markdown metacharacters and mentions in finding titles and bodies", () => {
     const md = buildWalkthrough({
       findings: [
-        makeFinding("minor", {
+        makeFinding("trivial", {
           title: "Notify @team *important* | #123",
           body: "Use [link](url)\n- item one\n1. item two\ncc @some-user"
         })
@@ -299,14 +299,15 @@ describe("buildWalkthrough", () => {
     expect(md).toContain("`img.png` — modified (binary)");
   });
 
-  it("lists blocking findings prominently and nitpicks in a collapsed section (#58)", () => {
+  it("lists actionable findings prominently and nitpicks in a collapsed section (#58/#73)", () => {
     const md = buildWalkthrough({
       findings: [
         makeFinding("critical", { title: "SQLi" }),
-        makeFinding("minor", {
+        makeFinding("trivial", {
           title: "nit",
           body: "Fix the lint warning.\n- keep this escaped",
-          suggestion: "  const value = 1;\n    nested();"
+          suggestion: "  const value = 1;\n    nested();",
+          confidence: 0.9
         })
       ],
       files
@@ -323,9 +324,49 @@ describe("buildWalkthrough", () => {
     expect(md.indexOf("### Findings")).toBeLessThan(md.indexOf("Nitpicks"));
   });
 
-  it("notes findings-free reviews", () => {
-    const md = buildWalkthrough({ findings: [makeFinding("minor")], files });
-    expect(md).toContain("_No blocking issues found._");
+  it("notes reviews with only nitpicks", () => {
+    const md = buildWalkthrough({ findings: [makeFinding("trivial")], files });
+    expect(md).toContain("_No actionable findings._");
+  });
+
+  it("lists minor findings in the Findings table by default, and honors inlineMinSeverity (#73)", () => {
+    const findings = [makeFinding("minor", { title: "Minor issue" })];
+    const byDefault = buildWalkthrough({ findings, files });
+    expect(byDefault).toContain("| 🟡 minor | `src/a.ts:5` | **Minor issue** |");
+    expect(byDefault).not.toContain("Nitpicks");
+
+    const majorFloor = buildWalkthrough({ findings, files, inlineMinSeverity: "major" });
+    expect(majorFloor).toContain("_No actionable findings._");
+    expect(majorFloor).toContain("🧹 Nitpicks (1)");
+  });
+
+  it("shows a nitpick's prose or low-confidence fix as a Proposed fix line, never a suggestion block (#73)", () => {
+    const prose = buildWalkthrough({
+      findings: [
+        makeFinding("trivial", {
+          title: "cadence",
+          suggestion: "Keep the safety poll cadence close to the previous 100ms behavior, or use a shorter adaptive interval.",
+          confidence: 0.95
+        })
+      ],
+      files
+    });
+    expect(prose).toContain("_Proposed fix:_ Keep the safety poll cadence close to the previous 100ms behavior, or use a shorter adaptive interval.");
+    expect(prose).not.toContain("```suggestion");
+
+    const lowConfidence = buildWalkthrough({
+      findings: [makeFinding("trivial", { suggestion: "const value = 1;", confidence: 0.5 })],
+      files
+    });
+    expect(lowConfidence).toContain("_Proposed fix:_ const value = 1;");
+    expect(lowConfidence).not.toContain("```suggestion");
+
+    const custom = buildWalkthrough({
+      findings: [makeFinding("trivial", { suggestion: "const value = 1;", confidence: 0.5 })],
+      files,
+      suggestions: { minConfidence: 0.4 }
+    });
+    expect(custom).toContain("```suggestion\nconst value = 1;\n```");
   });
 
   it("reports skipped files inside Changed files and counts them in the row (no silent truncation)", () => {

@@ -1,7 +1,8 @@
 import type { DiffFile } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
-import { SEVERITIES, SEVERITY_ORDER, isBlockingFinding } from "./findings.js";
+import { SEVERITIES, SEVERITY_ORDER, isInlineFinding } from "./findings.js";
 import type { SkipReason, SkippedFile } from "./diff-types.js";
+import { DEFAULT_SUGGESTION_MIN_CONFIDENCE, hasSuggestion, shouldCommitSuggestion } from "./suggestions.js";
 
 /**
  * Structured walkthrough summary (backlog #9) — a pure markdown formatter that
@@ -75,6 +76,14 @@ export interface WalkthroughInput {
   impact?: Impact;
   /** Override the derived effort (1–5). */
   effort?: number;
+  /**
+   * Severity floor for inline comments (default `minor`, #73): findings at/above
+   * it are listed in the Findings table (they post on the diff); the rest are
+   * nitpicks in the collapsed bucket.
+   */
+  inlineMinSeverity?: Severity;
+  /** Suggested-fix gating (#39): a nitpick's fix is committable only above `minConfidence`. */
+  suggestions?: { minConfidence?: number };
   /** Specialist-pass coverage, for the review-info line and degraded detection (#56). */
   coverage?: { passed: number; total: number };
   /**
@@ -404,12 +413,18 @@ function findingBullet(finding: Finding, providerCount?: number): string {
   return withConsensus(bullet, finding, providerCount);
 }
 
-/** One nitpick rendered with enough detail to fix it without an inline comment. */
-function nitpickDetail(finding: Finding, providerCount?: number): string {
+/**
+ * One nitpick rendered with enough detail to fix it without an inline comment.
+ * The fix is a committable block only when it clears the same gate inline
+ * comments use (#39/#73); otherwise it is shown as a plain "Proposed fix" line,
+ * so advice phrased as prose never becomes a one-click commit.
+ */
+function nitpickDetail(finding: Finding, providerCount?: number, suggestionMinConfidence?: number): string {
   const parts = [findingBullet(finding, providerCount), "", escapeMarkdownParagraphBlock(finding.body)];
-  const suggestion = finding.suggestion;
-  if (suggestion?.trim()) {
-    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", suggestion, { preserveWhitespace: true }));
+  if (shouldCommitSuggestion(finding, suggestionMinConfidence)) {
+    parts.push("", "_Suggested fix:_", fencedCodeBlock("suggestion", finding.suggestion ?? "", { preserveWhitespace: true }));
+  } else if (hasSuggestion(finding)) {
+    parts.push("", `_Proposed fix:_ ${escapeMarkdownParagraphFlat(finding.suggestion ?? "")}`);
   }
   return parts.join("\n");
 }
@@ -420,16 +435,16 @@ function tableCellSafe(value: string): string {
 }
 
 /**
- * Render blocking findings as a compact table (severity · location · finding) —
- * scannable rather than a flat bullet wall (#54). Nitpicks go in their own
- * collapsed section.
+ * Render the actionable findings (those that post inline, #73) as a compact
+ * table (severity · location · finding) — scannable rather than a flat bullet
+ * wall (#54). Nitpicks go in their own collapsed section.
  */
-function findingsSection(findings: Finding[], providerCount?: number): string {
-  const blockers = findings.filter(isBlockingFinding);
-  if (blockers.length === 0) {
-    return "### Findings\n_No blocking issues found._";
+function findingsSection(findings: Finding[], providerCount?: number, inlineMinSeverity?: Severity): string {
+  const actionable = findings.filter((finding) => isInlineFinding(finding, inlineMinSeverity));
+  if (actionable.length === 0) {
+    return "### Findings\n_No actionable findings._";
   }
-  const rows = blockers.map((finding) => {
+  const rows = actionable.map((finding) => {
     // The title is already paragraph-escaped (pipes included) and the badge has
     // no pipes/newlines, so the cell is table-safe without re-escaping.
     const title = withConsensus(`**${escapeMarkdownParagraphFlat(finding.title)}**`, finding, providerCount);
@@ -441,12 +456,17 @@ function findingsSection(findings: Finding[], providerCount?: number): string {
 }
 
 /**
- * Render non-blocking (`minor` and below) findings in a collapsed "Nitpicks"
- * disclosure so polish doesn't clutter the review or the diff (#58). Empty when
- * there are no nitpicks.
+ * Render findings below the inline floor in a collapsed "Nitpicks" disclosure
+ * so polish doesn't clutter the review or the diff (#58/#73). Empty when there
+ * are no nitpicks.
  */
-function nitpickSection(findings: Finding[], providerCount?: number): string {
-  const nits = findings.filter((finding) => !isBlockingFinding(finding));
+function nitpickSection(
+  findings: Finding[],
+  providerCount?: number,
+  inlineMinSeverity?: Severity,
+  suggestionMinConfidence: number = DEFAULT_SUGGESTION_MIN_CONFIDENCE
+): string {
+  const nits = findings.filter((finding) => !isInlineFinding(finding, inlineMinSeverity));
   if (nits.length === 0) {
     return "";
   }
@@ -454,7 +474,7 @@ function nitpickSection(findings: Finding[], providerCount?: number): string {
     "<details>",
     `<summary>🧹 Nitpicks (${nits.length})</summary>`,
     "",
-    nits.map((finding) => nitpickDetail(finding, providerCount)).join("\n\n"),
+    nits.map((finding) => nitpickDetail(finding, providerCount, suggestionMinConfidence)).join("\n\n"),
     "",
     "</details>"
   ].join("\n");
@@ -634,9 +654,9 @@ function passesLine(coverage: WalkthroughInput["coverage"]): string {
 function walkthroughSection(input: WalkthroughInput): string {
   const body = joinBlocks([
     summarySection(input.summary),
-    findingsSection(input.findings, input.providerCount),
+    findingsSection(input.findings, input.providerCount, input.inlineMinSeverity),
     perModelSections(input.findings, input.providers),
-    nitpickSection(input.findings, input.providerCount),
+    nitpickSection(input.findings, input.providerCount, input.inlineMinSeverity, input.suggestions?.minConfidence),
     diagramBlock(input.mermaid)
   ]);
   return detailsBlock("📝 Walkthrough", body);

@@ -581,16 +581,31 @@ describe("buildReviewPayload", () => {
     expect(payload.event).toBe("REQUEST_CHANGES");
   });
 
-  it("keeps nitpick (minor) findings out of inline comments (#58)", () => {
+  it("posts minor findings inline by default and keeps trivial/info as nitpicks (#73)", () => {
+    const payload = buildReviewPayload({
+      findings: [
+        f({ line: 6, severity: "major", title: "real bug" }),
+        f({ line: 6, severity: "minor", category: "lint", title: "minor issue" }),
+        f({ line: 6, severity: "trivial", category: "style", title: "trivial nit" })
+      ],
+      diff,
+      summaryBody: "## walkthrough\n"
+    });
+    expect(payload.comments.map((c) => c.severity)).toEqual(["major", "minor"]);
+    expect(payload.comments[1].body).toContain("minor issue");
+    expect(payload.body).not.toContain("trivial nit");
+  });
+
+  it("honors inlineMinSeverity: major restores the pre-#73 gate (#58)", () => {
     const payload = buildReviewPayload({
       findings: [
         f({ line: 6, severity: "major", title: "real bug" }),
         f({ line: 6, severity: "minor", category: "lint", title: "nit" })
       ],
       diff,
-      summaryBody: "## walkthrough\n"
+      summaryBody: "## walkthrough\n",
+      inlineMinSeverity: "major"
     });
-    // Only the blocking finding anchors inline; the nitpick is handled in the summary.
     expect(payload.comments).toHaveLength(1);
     expect(payload.comments[0].body).toContain("real bug");
     expect(payload.body).not.toContain("nit");
@@ -599,7 +614,7 @@ describe("buildReviewPayload", () => {
   it("keeps nitpick findings in the walkthrough summary when using the full review body (#58)", () => {
     const findings = [
       f({ line: 6, severity: "major", title: "real bug" }),
-      f({ line: 6, severity: "minor", category: "lint", title: "nit", body: "Fix the lint warning." })
+      f({ line: 6, severity: "trivial", category: "lint", title: "nit", body: "Fix the lint warning." })
     ];
     const summaryBody = buildWalkthrough({ findings, files: diff.files });
     const payload = buildReviewPayload({ findings, diff, summaryBody });
@@ -609,6 +624,13 @@ describe("buildReviewPayload", () => {
     expect(payload.body).toContain("Nitpicks");
     expect(payload.body).toContain("nit");
     expect(payload.body).toContain("Fix the lint warning.");
+  });
+
+  it("carries each comment's raw agent prompt for the all-comments block, unless prompts are off (#73)", () => {
+    const withPrompt = buildReviewPayload({ findings: [f({ line: 6, title: "real bug" })], diff, summaryBody: "x" });
+    expect(withPrompt.comments[0].agentPrompt).toContain("Title: real bug");
+    const without = buildReviewPayload({ findings: [f({ line: 6 })], diff, summaryBody: "x", agentPrompt: false });
+    expect(without.comments[0].agentPrompt).toBeUndefined();
   });
 });
 
@@ -745,16 +767,32 @@ describe("buildPublishedReviewBody", () => {
     ...over
   });
 
-  it("leads with a self-contained findings summary + severity breakdown (no pointer)", () => {
+  it("leads with the actionable comment count + severity breakdown (no pointer) (#73)", () => {
     const body = buildPublishedReviewBody([rc({ severity: "critical" }), rc({ severity: "major" }), rc({ severity: "major" })]);
-    expect(body).toContain("**prowl-review** flagged 3 findings");
-    expect(body).toContain("🔴 1 critical · 🟠 2 major");
+    expect(body).toContain("**Actionable comments posted: 3** · 🔴 1 critical · 🟠 2 major");
     // Never punts to another comment.
     expect(body).not.toMatch(/summary comment|full review context|see the/i);
   });
 
-  it("uses the singular noun for a single finding", () => {
-    expect(buildPublishedReviewBody([rc()])).toContain("flagged 1 finding");
+  it("offers one collapsed prompt covering every comment when they carry agent prompts (#73)", () => {
+    const body = buildPublishedReviewBody([
+      rc({ agentPrompt: "Resolve this prowl-review finding.\n\nTitle: first" }),
+      rc({ agentPrompt: "Resolve this prowl-review finding.\n\nTitle: second" })
+    ]);
+    expect(body).toContain("<summary>🧰 Prompt for all review comments with AI agents</summary>");
+    expect(body).toContain("Resolve all 2 prowl-review findings below, one at a time.");
+    expect(body).toContain("--- Finding 1 of 2 ---\nResolve this prowl-review finding.\n\nTitle: first");
+    expect(body).toContain("--- Finding 2 of 2 ---");
+    expect(body).toContain("Title: second");
+    // Without prompts (agentPrompt: false) the block is simply absent.
+    expect(buildPublishedReviewBody([rc(), rc()])).not.toContain("Prompt for all review comments");
+  });
+
+  it("keeps the all-comments prompt within the review body limit", () => {
+    const huge = rc({ agentPrompt: "x".repeat(70_000) });
+    const body = buildPublishedReviewBody([huge]);
+    expect(body.length).toBeLessThanOrEqual(65_536);
+    expect(body).toContain("Prompt for all review comments");
   });
 
   it("renders severity breakdowns in severity order and omits zero-count severities", () => {
@@ -774,13 +812,13 @@ describe("buildPublishedReviewBody", () => {
   it("prefixes the verdict on a REQUEST_CHANGES review and still summarizes findings", () => {
     const body = buildPublishedReviewBody([rc()], "REQUEST_CHANGES");
     expect(body).toContain("🚧 **prowl-review requested changes.**");
-    expect(body).toContain("**prowl-review** flagged 1 finding");
+    expect(body).toContain("**Actionable comments posted: 1**");
   });
 
   it("prefixes the verdict on an APPROVE review and still summarizes findings", () => {
     const body = buildPublishedReviewBody([rc()], "APPROVE");
     expect(body).toContain("✅ **prowl-review approved these changes.**");
-    expect(body).toContain("**prowl-review** flagged 1 finding");
+    expect(body).toContain("**Actionable comments posted: 1**");
   });
 
   it("renders an APPROVE verdict with no findings as a clean approval", () => {

@@ -119,6 +119,7 @@ export const CONFIG_TEMPLATE = `# .prowl-review.yml — configuration for prowl-
 #   minConfidence: 0.5       # drop non-critical findings below this confidence (0–1)
 #   maxFindings: 25          # cap the number of findings surfaced
 #   maxInlineComments: 20    # cap inline comments; overflow rolls into the summary (0 = none inline)
+#   inlineMinSeverity: minor # post inline at/above: critical | major | minor | trivial | info (below → Nitpicks)
 #   verify: true             # run the skeptical false-positive verification pass
 #   verifyConfidence: 0.8    # non-blocking findings at/above this confidence skip verification (0–1)
 #   incremental: true        # on a re-push, review only the delta since the last reviewed commit (#23)

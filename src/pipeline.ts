@@ -251,6 +251,12 @@ export interface ReviewPullRequestOptions {
   /** Cap inline comments per review; overflow rolls into the summary (default 20, #25). */
   maxInlineComments?: number;
   /**
+   * Severity floor for inline comments (default `minor`, #73): findings at/above
+   * it post as actionable comments on the diff; anything below stays in the
+   * summary's collapsed Nitpicks bucket.
+   */
+  inlineMinSeverity?: Severity;
+  /**
    * Suggested-fix validation (#39): only render a committable `suggestion` block
    * for findings at/above `minConfidence` (default 0.8) that pass structural
    * validation. Lower-confidence fixes stay in the agent prompt, not one-click.
@@ -640,7 +646,7 @@ function suggestionGatingNotes(findings: Finding[], minConfidence: number): stri
   if (withheldInvalid > 0) {
     notes.push(
       `Withheld a one-click fix on ${withheldInvalid} finding(s) whose suggested code didn't pass ` +
-        "validation (empty, truncated, or redacted) (#39)."
+        "validation (empty, truncated, redacted, or prose rather than code) (#39)."
     );
   }
   return notes;
@@ -2251,6 +2257,8 @@ async function reviewPullRequestImpl(
       skipped,
       coverage: requirementsCoverage,
       degraded: requirementsDegraded,
+      inlineMinSeverity: options.inlineMinSeverity,
+      suggestions: options.suggestions,
       notes: [
         ...incrementalNotesList,
         ...approvalNotes(approval),
@@ -2609,6 +2617,8 @@ async function reviewPullRequestImpl(
     degraded,
     providerCount,
     providers: ensembleProviders?.filter((p) => p.ok).map((p) => p.provider),
+    inlineMinSeverity: options.inlineMinSeverity,
+    suggestions: options.suggestions,
     notes: [
       ...incrementalNotesList,
       ...approvalNotes(approval),
@@ -2644,6 +2654,7 @@ async function reviewPullRequestImpl(
     event: options.event ?? approval.event,
     agentPrompt: options.agentPrompt,
     maxInlineComments: options.maxInlineComments,
+    inlineMinSeverity: options.inlineMinSeverity,
     providerCount,
     suggestions: options.suggestions
   });

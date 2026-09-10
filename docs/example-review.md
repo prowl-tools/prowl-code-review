@@ -104,13 +104,33 @@ instead of before, and a refill rounding bug lets bursts slightly exceed the cap
 
 ---
 
-## Inline comment
+## Actionable comments
 
-Major+ findings also post as inline comments on the diff. Each carries a severity
-badge, a committable ` ```suggestion ` block when a safe fix exists, and (unless
-`agentPrompt: false`) a copy-paste "Resolve with an AI agent" prompt. Minor
-nitpicks stay in the summary's collapsed section. Posted on
-`src/api/middleware.ts:42`:
+Findings at or above `review.inlineMinSeverity` (default `minor`) also post as
+one GitHub review whose body leads with the actionable count and a collapsed
+prompt covering every comment, so the whole review can be handed to a coding
+agent at once:
+
+> **Actionable comments posted: 2** · 🔴 1 critical · 🟠 1 major
+>
+> <details><summary>🧰 Prompt for all review comments with AI agents</summary>
+>
+> ```text
+> Resolve all 2 prowl-review findings below, one at a time.
+>
+> --- Finding 1 of 2 ---
+> Resolve this prowl-review finding.
+> …
+> ```
+>
+> </details>
+
+Each inline comment carries a severity badge, a committable ` ```suggestion `
+block when a safe fix exists (high confidence, structurally valid, and real code
+rather than prose), and (unless `agentPrompt: false`) a copy-paste "Resolve with
+an AI agent" prompt. Trivial/info nitpicks stay in the summary's collapsed
+section, where a fix that fails the same gate is shown as a plain "Proposed fix"
+line instead of a one-click commit. Posted on `src/api/middleware.ts:42`:
 
 > 🔴 **[critical] Rate limit applied after authentication**
 >

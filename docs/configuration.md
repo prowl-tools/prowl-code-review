@@ -33,6 +33,7 @@ review:
   minConfidence: 0.5        # drop low-confidence non-critical findings
   maxFindings: 25           # cap findings surfaced
   maxInlineComments: 20     # cap inline comments; overflow rolls into the summary
+  inlineMinSeverity: minor  # post inline at/above this severity; below → Nitpicks bucket
   verify: true              # skeptical false-positive verification pass
   verifyConfidence: 0.8     # findings at/above this confidence skip verification
   incremental: true         # on re-run, review only the delta since last review
@@ -132,6 +133,7 @@ window resets. Full policy in [Auth](auth.md#codex-subscription-provider-45) and
 | `review.minConfidence` | `0.5` | Drop non-critical findings below this confidence (0–1). |
 | `review.maxFindings` | `25` | Cap findings surfaced. |
 | `review.maxInlineComments` | `20` | Cap inline comments; overflow rolls into the summary (`0` = none inline). |
+| `review.inlineMinSeverity` | `minor` | Findings at/above this severity post as actionable inline comments (with a committable fix and an agent prompt); anything below stays in the summary's collapsed Nitpicks bucket. Set `major` to keep minor findings off the diff. |
 | `review.verify` | `true` | Skeptical false-positive verification pass. |
 | `review.verifyConfidence` | `0.8` | Non-blocking findings at/above this confidence skip verification. |
 | `review.incremental` | `true` | On a re-push, review only the delta since the last reviewed commit. |
