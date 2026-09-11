@@ -5,6 +5,23 @@ All notable changes to Prowl Review will be documented in this file.
 ## [Unreleased]
 
 ### Changed
+- **Actionable comments for minor findings + CodeRabbit-shaped review body (backlog #73).**
+  Findings graded `minor` now post as actionable inline comments (severity badge, gated
+  committable fix, per-finding agent prompt) instead of being buried in the summary's collapsed
+  Nitpicks bucket — since the June calibration work (#58) the speculative/hedged findings that
+  motivated the old `major`+ gate are already dropped upstream by the confidence floor and the
+  verification pass, so a surviving `minor` is a real, fixable issue. The floor is configurable
+  via `review.inlineMinSeverity` (default `minor`; `major` restores the previous behavior,
+  including requirements-only linked-issue reviews); `trivial`/`info` stay in the Nitpicks bucket.
+  The published review body now leads with **Actionable comments posted: N** (+ severity
+  breakdown) for the net-new comments attached to that review and a collapsed **🧰 Prompt for all
+  review comments with AI agents** block that concatenates each attached comment's agent prompt, so
+  a whole review can be handed to a coding agent at once. Suggested-fix validation rejects
+  **prose aimed at a source file** (a model sometimes puts its advice in the suggestion field —
+  as a committable block that would splice a sentence into the code) while preserving
+  punctuation-free shell commands in shell scripts; prose is still allowed for Markdown/text
+  targets. The Nitpicks bucket now runs the same suggestion gate as inline comments and shows a
+  withheld fix as a plain "Proposed fix" line.
 - **One-screen summary comment (backlog #72).** The walkthrough summary now mirrors the shape
   of a CodeRabbit first comment: a single status line (impact · effort · finding counts, or the
   clean/degraded headline) over three collapsed rows — **📝 Walkthrough** (plain-language

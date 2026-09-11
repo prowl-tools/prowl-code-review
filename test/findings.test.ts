@@ -4,7 +4,9 @@ import {
   parseFindingsResult,
   findingKey,
   FindingSchema,
-  isBlockingFinding
+  isBlockingFinding,
+  isInlineFinding,
+  DEFAULT_INLINE_MIN_SEVERITY
 } from "../src/review/findings.js";
 import type { Finding, Severity } from "../src/review/findings.js";
 
@@ -139,5 +141,24 @@ describe("isBlockingFinding", () => {
   it.each(cases)("classifies %s findings as blocking=%s", (severity, expected) => {
     const finding = FindingSchema.parse({ ...VALID, severity }) as Finding;
     expect(isBlockingFinding(finding)).toBe(expected);
+  });
+});
+
+describe("isInlineFinding (#73)", () => {
+  const of = (severity: Severity) => FindingSchema.parse({ ...VALID, severity }) as Finding;
+
+  it("defaults the inline floor to minor", () => {
+    expect(DEFAULT_INLINE_MIN_SEVERITY).toBe("minor");
+    expect(isInlineFinding(of("critical"))).toBe(true);
+    expect(isInlineFinding(of("major"))).toBe(true);
+    expect(isInlineFinding(of("minor"))).toBe(true);
+    expect(isInlineFinding(of("trivial"))).toBe(false);
+    expect(isInlineFinding(of("info"))).toBe(false);
+  });
+
+  it("honors a configured floor in both directions", () => {
+    expect(isInlineFinding(of("minor"), "major")).toBe(false); // pre-#73 behavior
+    expect(isInlineFinding(of("major"), "major")).toBe(true);
+    expect(isInlineFinding(of("info"), "info")).toBe(true); // everything inline
   });
 });

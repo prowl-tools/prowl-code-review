@@ -468,9 +468,9 @@ export async function submitReview(
     }
   } else {
     // Verdict path (#52): one review carries the REQUEST_CHANGES/APPROVE event
-    // plus net-new inline comments. The body summarizes the current payload,
-    // not only net-new comments, so deduped/capped/unmapped findings still make
-    // a request-changes review actionable.
+    // plus net-new inline comments. The headline/prompt count describes the
+    // comments actually attached to this review; details keep the current
+    // payload actionable when findings were deduped, capped, or unmapped.
     if (options.shouldPublish && !(await options.shouldPublish())) {
       return { posted, cancelled: true };
     }
@@ -481,7 +481,7 @@ export async function submitReview(
       pull_number: ref.pull_number,
       event: payload.event,
       ...(options.commitId ? { commit_id: options.commitId } : {}),
-      body: buildPublishedReviewBody(payload.comments, payload.event, { detailsBody }),
+      body: buildPublishedReviewBody(newInline, payload.event, { detailsBody }),
       ...(reviewComments.length > 0 ? { comments: reviewComments } : {})
     });
     posted = true;

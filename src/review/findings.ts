@@ -163,9 +163,25 @@ export function findingKey(finding: Finding): string {
 
 /**
  * A finding is "blocking" when its severity is `major` or worse — i.e. a problem
- * the code actually exhibits. `minor` and below are nitpicks: surfaced in a
- * collapsed section, not as prominent/inline comments (#58).
+ * the code actually exhibits. This is the fixed bar used for verification and
+ * the "blocking" framing (#58); which findings post *inline* is a separate,
+ * configurable presentation choice — see {@link isInlineFinding} (#73).
  */
 export function isBlockingFinding(finding: Finding): boolean {
   return SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER.major;
+}
+
+/** Default severity floor for inline comments: `minor` and above post on the diff (#73). */
+export const DEFAULT_INLINE_MIN_SEVERITY: Severity = "minor";
+
+/**
+ * A finding posts as an actionable inline comment when its severity is at or
+ * above `minSeverity` (`review.inlineMinSeverity`, default `minor`, #73).
+ * Anything below is a nitpick: kept in the summary's collapsed Nitpicks bucket
+ * rather than on the diff. Speculative / hedged findings are already graded
+ * `info` and filtered upstream by the confidence floor + verification pass, so
+ * a surviving `minor` is a real, fixable issue worth an actionable comment.
+ */
+export function isInlineFinding(finding: Finding, minSeverity: Severity = DEFAULT_INLINE_MIN_SEVERITY): boolean {
+  return SEVERITY_ORDER[finding.severity] <= SEVERITY_ORDER[minSeverity];
 }

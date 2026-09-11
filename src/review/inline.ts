@@ -1,6 +1,6 @@
 import type { ParsedDiff } from "./diff-types.js";
 import type { Finding, Severity } from "./findings.js";
-import { isBlockingFinding } from "./findings.js";
+import { isInlineFinding } from "./findings.js";
 import { sanitizeGitHubMarkdown } from "./markdown-sanitize.js";
 import { findingFingerprint, GITHUB_COMMENT_BODY_LIMIT } from "./state.js";
 import { hasSuggestion, shouldCommitSuggestion, DEFAULT_SUGGESTION_MIN_CONFIDENCE } from "./suggestions.js";
@@ -38,6 +38,12 @@ export interface ReviewComment {
   severity: Severity;
   /** Stable fingerprint of the source finding, for update-not-duplicate dedup (#12/#22). */
   fingerprint: string;
+  /**
+   * Raw "resolve this finding" prompt text (#57), kept so the published review
+   * body can offer one aggregated prompt for every comment (#73). Internal —
+   * stripped before the comment is sent to GitHub.
+   */
+  agentPrompt?: string;
 }
 
 /** Default ceiling on inline comments per review, so a big PR isn't carpet-bombed (#25). */
@@ -154,13 +160,38 @@ function appendPublishedReviewDetails(body: string, detailsBody: string | undefi
   return `${body}${PUBLISHED_REVIEW_DETAIL_PREFIX}${details.slice(0, detailBudget).trimEnd()}${PUBLISHED_REVIEW_TRUNCATION_NOTICE}`;
 }
 
+/** Headroom kept for the verdict line + separators when sizing the all-comments prompt. */
+const ALL_COMMENTS_PROMPT_HEADROOM = 1_024;
+
+/**
+ * One collapsed prompt covering every inline comment in the review (#73), so a
+ * coding agent can be handed the whole review at once instead of one finding at
+ * a time. Built from the per-comment prompts; "" when none carry one (agent
+ * prompts disabled) or the block cannot fit in the published body.
+ */
+function allCommentsPromptBlock(comments: ReviewComment[], maxChars: number): string {
+  const prompts = comments.map((comment) => comment.agentPrompt?.trim()).filter((p): p is string => Boolean(p));
+  if (prompts.length === 0) {
+    return "";
+  }
+  const content = [
+    `Resolve all ${prompts.length} prowl-review finding${prompts.length === 1 ? "" : "s"} below, one at a time.`,
+    "",
+    ...prompts.flatMap((prompt, index) => [`--- Finding ${index + 1} of ${prompts.length} ---`, prompt, ""])
+  ]
+    .join("\n")
+    .trimEnd();
+  return fitAgentPromptBlock(content, maxChars, ALL_COMMENTS_PROMPT_TITLE) ?? "";
+}
+
 /**
  * Body for the published GitHub review (the `createReview` event) — distinct from
- * the persistent walkthrough summary comment. It leads with a self-contained
- * findings summary (count + severity breakdown) so the review reads as a complete
- * unit with its inline findings nested underneath, rather than a "see the other
- * comment" pointer. The full walkthrough (impact/effort, changed files,
- * per-model, nitpicks, notes) stays in the updatable summary comment (#22/#12).
+ * the persistent walkthrough summary comment. It leads with the actionable
+ * comment count + severity breakdown and a collapsed prompt covering every
+ * comment (#73), so the review reads as a complete unit with its inline findings
+ * nested underneath, rather than a "see the other comment" pointer. The full
+ * walkthrough (impact/effort, changed files, per-model, nitpicks, notes) stays
+ * in the updatable summary comment (#22/#12).
  */
 export function buildPublishedReviewBody(
   comments: ReviewComment[],
@@ -168,9 +199,11 @@ export function buildPublishedReviewBody(
   options: { detailsBody?: string } = {}
 ): string {
   const count = comments.length;
-  const noun = count === 1 ? "finding" : "findings";
   const breakdown = severityBreakdown(comments);
-  const findingSummary = count > 0 ? `**prowl-review** flagged ${count} ${noun}${breakdown ? `\n\n${breakdown}` : ""}` : "";
+  const headline = count > 0 ? `**Actionable comments posted: ${count}**${breakdown ? ` · ${breakdown}` : ""}` : "";
+  const prompt =
+    count > 0 ? allCommentsPromptBlock(comments, PUBLISHED_REVIEW_BODY_LIMIT - headline.length - ALL_COMMENTS_PROMPT_HEADROOM) : "";
+  const findingSummary = [headline, prompt].filter(Boolean).join("\n\n");
 
   if (event === "REQUEST_CHANGES") {
     const verdict = "🚧 **prowl-review requested changes.**";
@@ -332,11 +365,14 @@ function suggestionBlock(code: string): string {
   return `${fence}suggestion\n${code.replace(/\n$/, "")}\n${fence}`;
 }
 
+const AGENT_PROMPT_TITLE = "🤖 Resolve with an AI agent";
+const ALL_COMMENTS_PROMPT_TITLE = "🧰 Prompt for all review comments with AI agents";
+
 /** Wrap sanitized prompt content in a collapsed fenced block. */
-function agentPromptDetailsBlock(content: string, fence = fenceFor(content)): string {
+function agentPromptDetailsBlock(content: string, fence = fenceFor(content), title = AGENT_PROMPT_TITLE): string {
   return [
     "<details>",
-    "<summary>🤖 Resolve with an AI agent</summary>",
+    `<summary>${title}</summary>`,
     "",
     `${fence}text\n${content}\n${fence}`,
     "",
@@ -345,9 +381,9 @@ function agentPromptDetailsBlock(content: string, fence = fenceFor(content)): st
 }
 
 /** Fit a prompt block into the available published-comment budget, or omit it. */
-function fitAgentPromptBlock(content: string, maxChars?: number): string | undefined {
+function fitAgentPromptBlock(content: string, maxChars?: number, title = AGENT_PROMPT_TITLE): string | undefined {
   const fence = fenceFor(content);
-  const full = agentPromptDetailsBlock(content, fence);
+  const full = agentPromptDetailsBlock(content, fence, title);
   if (maxChars === undefined || full.length <= maxChars) {
     return full;
   }
@@ -356,14 +392,14 @@ function fitAgentPromptBlock(content: string, maxChars?: number): string | undef
   }
 
   const suffix = `\n\n${AGENT_PROMPT_TRUNCATION_NOTICE}\n\n${AGENT_PROMPT_INSTRUCTION}`;
-  const fixedOverhead = agentPromptDetailsBlock("", fence).length + suffix.length;
+  const fixedOverhead = agentPromptDetailsBlock("", fence, title).length + suffix.length;
   const budgetForContent = maxChars - fixedOverhead;
   if (budgetForContent <= 0) {
     return undefined;
   }
 
   const truncatedContent = `${content.slice(0, budgetForContent).trimEnd()}${suffix}`;
-  return agentPromptDetailsBlock(truncatedContent, fence);
+  return agentPromptDetailsBlock(truncatedContent, fence, title);
 }
 
 /**
@@ -411,6 +447,11 @@ const AGENT_PROMPT_INSTRUCTION =
  * does not push the published GitHub comment over its body limit.
  */
 function agentPromptBlock(finding: Finding, maxChars?: number): string | undefined {
+  return fitAgentPromptBlock(agentPromptContent(finding), maxChars);
+}
+
+/** The sanitized prompt text for one finding, shared by the per-comment and all-comments blocks. */
+function agentPromptContent(finding: Finding): string {
   const lines = [
     "Resolve this prowl-review finding.",
     "",
@@ -426,9 +467,7 @@ function agentPromptBlock(finding: Finding, maxChars?: number): string | undefin
     lines.push("", "Suggested fix:", finding.suggestion ?? "");
   }
   lines.push("", AGENT_PROMPT_INSTRUCTION);
-
-  const content = sanitizeForCodeFence(lines.join("\n"));
-  return fitAgentPromptBlock(content, maxChars);
+  return sanitizeForCodeFence(lines.join("\n"));
 }
 
 /** Return true when a suggestion would replace more than one line. */
@@ -810,7 +849,8 @@ export function buildInlineComments(
       side: "RIGHT",
       body: formatFindingComment(finding, options),
       severity: finding.severity,
-      fingerprint: findingFingerprint(finding)
+      fingerprint: findingFingerprint(finding),
+      ...(options.agentPrompt !== false ? { agentPrompt: agentPromptContent(finding) } : {})
     };
 
     if (canAnchorRange && endLine !== undefined) {
@@ -830,9 +870,9 @@ export function buildInlineComments(
  * inline comments for the findings that anchor to the diff. Unmapped findings
  * are appended to the body with full detail so non-inline findings are not lost.
  *
- * Only blocking findings (`major`+) become inline/unmapped comments; nitpicks
- * (`minor` and below) live in the summary's collapsed nitpick section instead of
- * peppering the diff (#58).
+ * Findings at/above `inlineMinSeverity` (default `minor`, #73) become
+ * inline/unmapped comments; anything below is a nitpick that lives in the
+ * summary's collapsed nitpick section instead of peppering the diff (#58).
  *
  * `agentPrompt` (default on) appends a copy-paste "Resolve with an AI agent"
  * block to every finding comment — inline and unmapped alike (#57).
@@ -848,6 +888,8 @@ export function buildReviewPayload(input: {
   event?: ReviewEvent;
   agentPrompt?: boolean;
   maxInlineComments?: number;
+  /** Severity floor for inline comments (default `minor`, #73); below it → Nitpicks bucket. */
+  inlineMinSeverity?: Severity;
   /** Ensemble size (#53); ≥2 enables the cross-provider consensus note on inline comments. */
   providerCount?: number;
   /** Suggested-fix validation (#39): committable-suggestion confidence floor. */
@@ -859,8 +901,8 @@ export function buildReviewPayload(input: {
     suggestionMinConfidence: input.suggestions?.minConfidence ?? DEFAULT_SUGGESTION_MIN_CONFIDENCE
   };
   const cap = input.maxInlineComments ?? DEFAULT_MAX_INLINE_COMMENTS;
-  const blocking = input.findings.filter(isBlockingFinding);
-  const { comments, unmapped, overflow } = buildInlineComments(blocking, input.diff, {
+  const actionable = input.findings.filter((finding) => isInlineFinding(finding, input.inlineMinSeverity));
+  const { comments, unmapped, overflow } = buildInlineComments(actionable, input.diff, {
     ...commentOptions,
     maxComments: cap
   });

@@ -1174,6 +1174,11 @@ describe("resolveReviewOptions (#29 — CLI > config > default precedence)", () 
     expect(resolveDebugLogPath({ debug: "trace.jsonl" }, {}, workspace, {} as NodeJS.ProcessEnv)).toBeNull();
   });
 
+  it("passes the config inlineMinSeverity through, undefined for the default (#73)", () => {
+    expect(resolveReviewOptions({}, {}, env).inlineMinSeverity).toBeUndefined();
+    expect(resolveReviewOptions({}, { review: { inlineMinSeverity: "major" } }, env).inlineMinSeverity).toBe("major");
+  });
+
   it("passes the config maxInlineComments through (incl. 0), undefined for the default (#25)", () => {
     expect(resolveReviewOptions({}, {}, env).maxInlineComments).toBeUndefined();
     expect(resolveReviewOptions({}, { review: { maxInlineComments: 5 } }, env).maxInlineComments).toBe(5);

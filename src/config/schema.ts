@@ -36,6 +36,12 @@ const reviewSchema = z
     maxFindings: z.number().int().positive().optional(),
     /** Cap inline comments per review; overflow rolls into the summary. Default 20 (#25). */
     maxInlineComments: z.number().int().nonnegative().optional(),
+    /**
+     * Severity floor for inline comments. Findings at/above it post as actionable
+     * comments on the diff; anything below stays in the summary's collapsed
+     * Nitpicks bucket. Default `minor` (#73); set `major` for the pre-#73 behavior.
+     */
+    inlineMinSeverity: severityEnum.optional(),
     /** Run the skeptical false-positive verification pass. Default true. */
     verify: z.boolean().optional(),
     /** Findings at/above this confidence skip verification (0–1). Default 0.8. */

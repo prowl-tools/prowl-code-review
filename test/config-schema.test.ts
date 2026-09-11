@@ -158,6 +158,11 @@ describe("configSchema (#29)", () => {
     expect(() => configSchema.parse({ review: { reviewDrafts: 1 } })).toThrow();
   });
 
+  it("accepts inlineMinSeverity as a severity and rejects anything else (#73)", () => {
+    expect(configSchema.parse({ review: { inlineMinSeverity: "major" } })).toEqual({ review: { inlineMinSeverity: "major" } });
+    expect(() => configSchema.parse({ review: { inlineMinSeverity: "medium" } })).toThrow();
+  });
+
   it("accepts maxInlineComments incl. 0 and rejects negative/non-int (#25)", () => {
     expect(configSchema.parse({ review: { maxInlineComments: 0 } })).toEqual({ review: { maxInlineComments: 0 } });
     expect(() => configSchema.parse({ review: { maxInlineComments: -1 } })).toThrow();

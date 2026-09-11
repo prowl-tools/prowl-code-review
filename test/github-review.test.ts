@@ -361,7 +361,12 @@ describe("fetchReviewCommentBody", () => {
 describe("submitReview", () => {
   it("seeds the summary before the review on a first run so it sits above the findings", async () => {
     const { octokit, createComment, updateComment, createReview } = mockOctokit([]);
-    await submitReview(octokit, ref, payload(), { commitId: "head", headSha: "head" });
+    await submitReview(
+      octokit,
+      ref,
+      payload({ comments: [comment({ agentPrompt: "Resolve this prowl-review finding." })] }),
+      { commitId: "head", headSha: "head" }
+    );
 
     // Order: seed summary (earlier timestamp → above the review) → post review →
     // update the summary with the posted fingerprints (#22 ordering / #12 marker).
@@ -381,13 +386,16 @@ describe("submitReview", () => {
     expect(review.event).toBe("COMMENT");
     // Self-contained findings summary (no "see the other comment" pointer) so the
     // review reads as a complete unit with its inline findings nested (CodeRabbit-style).
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.body).toContain("🟠 1 major");
+    expect(review.body).toContain("Prompt for all review comments with AI agents");
+    expect(review.body).toContain("Resolve this prowl-review finding.");
     expect(review.body).not.toContain("summary comment");
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(review.body).not.toContain("prowl-review:state");
     expect(review.comments).toHaveLength(1);
-    expect(review.comments?.[0]).not.toHaveProperty("fingerprint"); // internal field stripped
+    // Internal fields (`fingerprint`, `severity`, `agentPrompt`) are stripped before Octokit.
+    expect(Object.keys(review.comments?.[0] ?? {}).sort()).toEqual(["body", "line", "path", "side"]);
     expect(review.comments?.[0]?.body).toContain("prowl-review:finding fp-a");
 
     // The seed records no reviewed SHA or posted fingerprints yet; the post-review
@@ -739,13 +747,13 @@ describe("submitReview", () => {
     const review = createReview.mock.calls[0][0] as { event?: string; body?: string; comments?: unknown[] };
     expect(review.event).toBe("REQUEST_CHANGES");
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.comments).toHaveLength(1);
     expect(review.body).not.toContain(REVIEW_MARKER);
     expect(createComment).toHaveBeenCalledTimes(1);
   });
 
-  it("summarizes current findings on a verdict review when some inline findings are already posted", async () => {
+  it("counts only net-new comments on a verdict review when some inline findings are already posted", async () => {
     const prior = {
       id: 77,
       body: `${REVIEW_MARKER}\n## prowl-review\n${serializeState({ v: 1, postedFindings: ["fp-a"] })}`,
@@ -766,7 +774,8 @@ describe("submitReview", () => {
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
     expect(review.body).toContain("requested changes");
-    expect(review.body).toContain("**prowl-review** flagged 2 findings");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
+    expect(review.body).not.toContain("**Actionable comments posted: 2**");
     expect(review.body).toContain("### Review details");
     expect(review.comments).toHaveLength(1);
     expect(JSON.stringify(review.comments?.[0])).toContain("fp-b");
@@ -817,7 +826,7 @@ describe("submitReview", () => {
 
     expect(createReview).toHaveBeenCalledTimes(1);
     const review = createReview.mock.calls[0][0] as { body?: string; comments?: unknown[] };
-    expect(review.body).toContain("**prowl-review** flagged 1 finding");
+    expect(review.body).toContain("**Actionable comments posted: 1**");
     expect(review.body).toContain("### Review details");
     expect(review.body).toContain("1 more finding (inline comment cap: 1)");
     expect(review.comments).toHaveLength(1);
