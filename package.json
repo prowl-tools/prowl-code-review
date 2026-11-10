@@ -65,7 +65,7 @@
   },
   "dependencies": {
     "@actions/github": "^9.1.1",
-    "commander": "^15.0.0",
+    "commander": "^15.1.0",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   },
